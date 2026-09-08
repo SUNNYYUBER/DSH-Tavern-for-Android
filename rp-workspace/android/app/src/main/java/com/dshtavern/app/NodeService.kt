@@ -36,7 +36,7 @@ class NodeService : Service() {
         private const val RUNTIME_DIR = "dsh-runtime"
         private const val RUNTIME_ZIP = "dsh-runtime.zip"
         /** 解压哨兵：§4.16.2 前端 dsht-rp-ui client 变更随 runtime.zip 重发布 → v97（覆盖安装强制重解压） */
-        private const val RUNTIME_SENTINEL = ".installed-v176"
+        private const val RUNTIME_SENTINEL = ".installed-v187"
         private const val DSH_PORT = 3080
         private const val OUTPUT_CAP = 200
         private const val PROOT_ROOTFS_DIR = "proot-rootfs"
@@ -459,6 +459,11 @@ class NodeService : Service() {
             }
         }
         sentinel.writeText("ok")
+        // 【2026-09-08 鲁棒性】历史哨兵清理：每次升级只写新文件不删旧（实机 28 个残留
+        // .installed-v123..v177），build-info 的目录序 find() 因此恒报最旧版本。解压
+        // 成功发布新哨兵后，清掉其余 .installed-v* 旧标记（幂等）。
+        runtimeDir.listFiles { f -> f.name.startsWith(".installed-v") && f.name != RUNTIME_SENTINEL }
+            ?.forEach { it.delete() }
     }
 
     /**

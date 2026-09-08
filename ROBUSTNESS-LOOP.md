@@ -106,6 +106,9 @@ fold-ready 补丁热推后，迁移大会话（319 turn）渲染 27 条 turn-pro
 - **实机验证（emulator-5554）**：GET 200 `{sentinel:".installed-v178", dshVersion:"0.1.2-rc.1", fixTag:"wb-fix-0908"}` ✅；POST 无 body 400（payload 守卫正常）✅。
 - **环境教训（与主史 L2320「冒烟被残留进程骗过」同族）**：模拟器 force-stop 是异步的、启动慢（本次 node 注册耗时 10-120 秒不等），**重启后必须以 logcat 的 `[dsht-rp] data plane on webServer route` 标记为同步点再发请求**，`sleep N` 不可靠——本次前两轮"改了没生效"的假象即此因（curl 打到垂死旧进程）。
 - **顺手实证**：设备哨兵 28 个残留（v123-v178，BUG-009 的 Kotlin 侧清理因热推无法更新仍在）——arm64 v184 APK 内已固化，模拟器需下次出 x86_64 包才吸收。
+- **【坑 #22】esbuild 相对 outfile 路径双胞胎（本轮最大教训）**：WorkBuddy 侧复刻构建时 `--outfile=dsh-runtime-android/...`（相对路径），cwd=`packages` → esbuild 在 **`packages/dsh-runtime-android/`** 新建整棵目录树写产物；而热推 push 与 tar 打包分别用了不同 cwd——push 源恰好也在 packages 下（所以设备热推"成功"），tar 却在真 `rp-workspace/dsh-runtime-android` 打包 → **v185 APK 进的是 21:13 旧产物**。三个误导性证据曾让定位走了弯路：① push 后设备 GET 指纹 200（推的是新文件）；② staging md5 与设备"一致"（一致地旧）；③ esbuild 输出 "Done"（确实写了，写错地方）。**对策：BuildBuddy 侧所有 esbuild --outfile 一律绝对路径；打 zip 前必须 python zipfile 抽验关键产物内容（fixTag 指纹）**。
+- **本机构建链已复刻（不依赖 build-dsht.ps1/PowerShell）**：WorkBuddy PowerShell 沙箱禁止启动 node.exe（进程白名单），Bash 可用 → 构建链 = Bash 版 node esbuild（绝对 outfile）→ python 提 sentinel（无 BOM）→ Windows bsdtar `-a -c -f` 打 zip → **zip 内容抽验** → gradle unix shell 脚本（JAVA_HOME=jdk-21）assembleDebug/-Release → 拷根目录固定路径。v186（x86_64 debug）/ v187（arm64 release 正式签名）双包验证通过。
+- **交付纪律（用户拍板，长期有效）：每次改完的最后一步 = 编译出最新版本 APK**（x86_64 debug → 模拟器；arm64 release → 根目录固定路径真机包）；`_pending-deploy` 旧包随手清理防混淆。
 
 ---
 
