@@ -353,6 +353,28 @@ Dsht-Patch "$nmDst\dsh-terminal-bash\lib\index.js" 'DSHT-ANDROID-TERM-ARGS' `
     1 'P1-4b terminal-bash DEFAULT_BASH_ARGS'
 
 # ---------------------------------------------------------------------------
+# P2. dsh-client-ui-chat：TurnProcessNodeView 折叠行大会话不可见修复（2026-09-08 实机根因）
+# 官方条件 processWindowReady 含 `&& !historyIncomplete`，而 historyIncomplete = hasMore
+# （会话还有更早历史未加载）。RP 大会话（百余轮）几乎恒 hasMore=true → 所有轮次折叠行
+# 永不渲染（「查无此人」）。语义修正：折叠只要求「本轮 process 窗口完整在已加载区间」，
+# 不要求整个会话历史加载完。已加载区间连续 [firstSeq(=order[0].anchorSeq), 最新]，
+# processStartSeq >= firstSeq 即本轮完整 → 放行折叠。firstSeq 为 null 时维持官方行为。
+$chatUi = "$nmDst\dsh-client-ui-chat\lib\client.js"
+Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-OLDEST' `
+    'historyIncomplete: hasMore,' `
+    ("historyIncomplete: hasMore,`n" +
+     "`t`t`t`t`t`tdshtOldestSeq: firstSeq, /* DSHT-CHAT-FOLD-OLDEST: 最老已加载节点 seq（本轮折叠放行判定） */") `
+    1 'P2-1a ChatNodeList 传入 firstSeq'
+Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-SEAT' `
+    'function ChatNodeSeat\(\{ nodeKey, useChatNode, useChatNodeProcess, historyIncomplete, compactTranscript,' `
+    'function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess, historyIncomplete, dshtOldestSeq, compactTranscript,' `
+    1 'P2-1b ChatNodeSeat 接收 dshtOldestSeq'
+Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-READY' `
+    'processPresentation\.turn === processSpec\.turn && processPresentation\.turnClosed && !historyIncomplete;' `
+    ('processPresentation.turn === processSpec.turn && processPresentation.turnClosed && (!historyIncomplete || (typeof dshtOldestSeq === "number" && processSpec.processStartSeq >= dshtOldestSeq)); /* DSHT-CHAT-FOLD-READY: 本轮窗口完整在已加载区间即可折叠，不要求全会话历史加载完 */') `
+    1 'P2-1c processWindowReady 放宽'
+
+# ---------------------------------------------------------------------------
 Step 4.5 'composition 补丁：session 持久化改明文（迁移写入前置条件）'
 # WebView 无 zstd 编码器，迁移管线只能写明文 session.jsonl；官方支持 compression:'none' 配置
 # （dsh-session-persistence-jsonl 读写都按该配置的文件名后缀走）。幂等：已打补丁则跳过。
