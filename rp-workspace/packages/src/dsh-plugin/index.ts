@@ -16,11 +16,14 @@
  */
 
 import { spawn } from 'node:child_process'
+import { createReadStream } from 'node:fs'
 import { access, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
+import { createInterface } from 'node:readline'
 import { randomUUID } from 'node:crypto'
+import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
 import z from '@deepseek-ai/schemastery'
 import JSZip from 'jszip'
 import { triggerWorldInfo, visibleMessageCursor } from '../lore/trigger.ts'
@@ -456,6 +459,20 @@ export function filterTemplateStatements<T extends object>(messages: T[]): { mes
 let atomicWriteSeq = 0
 /** /macros/register|unregister 读改写串行链（并发注册防丢更新；catch 兜底保证链永不拒绝） */
 let macroWriteChain: Promise<{ status: number; body: Record<string, unknown> }> = Promise.resolve({ status: 200, body: {} })
+
+/** 【鲁棒轮 2026-09-09】live 会话手术（rollback/edit/regenerate）per-session 串行链——
+ *  三个路由的 live 路径都要「捕获视图 → await replayUndoLog（文件 IO 让出事件循环）→
+ *  append replace」；并发请求 B 在 A 的 await 窗口里捕获同一视图 → B 的 replace 指向已被
+ *  A 顶替的旧 seq 区间（错位 marker + meter 双记）。非 live 路径有 withSessionLock +
+ *  内容比对，live 路径此前完全裸奔。链兜底 catch 保证永拒绝。 */
+const liveSurgeryChains = new Map<string, Promise<unknown>>()
+function withLiveSurgery<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = liveSurgeryChains.get(sessionId) ?? Promise.resolve()
+  const next = prev.then(fn, fn) // 前序失败不阻塞后续手术
+  liveSurgeryChains.set(sessionId, next.then(() => undefined, () => undefined))
+  void liveSurgeryChains.get(sessionId) // 触发 catch 规避 unhandledrejection
+  return next
+}
 export async function atomicWriteFile(path: string, content: string): Promise<void> {
   const tmp = `${path}.${Date.now()}.${atomicWriteSeq++}.${Math.random().toString(36).slice(2, 8)}.tmp`
   const handle = await open(tmp, 'wx')
@@ -1848,10 +1865,14 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           await rename(join(root, h.project, h.sdir), targetDir)
           moved = true
         }
-        // 整读单文件只发生在命中的少数待修复会话上；首行替换，事件行原样保留
-        const full = await readFile(join(root, targetProject, h.sdir, 'session.jsonl'), 'utf8')
+        // 整读单文件只发生在命中的少数待修复会话上；首行替换，事件行原样保留。
+        // 【鲁棒轮收尾】原子发布 + .bak 备份（repairAllSessionSeqs 同款规范）——原裸
+        // writeFile 中途被杀 = torn session.jsonl 会话打不开。
+        const sessionPath = join(root, targetProject, h.sdir, 'session.jsonl')
+        const full = await readFile(sessionPath, 'utf8')
         const nl = full.indexOf('\n')
-        await writeFile(join(root, targetProject, h.sdir, 'session.jsonl'), newLine + (nl === -1 ? '' : full.slice(nl)), 'utf8')
+        await atomicWriteFile(`${sessionPath}.bak`, full)
+        await atomicWriteFile(sessionPath, newLine + (nl === -1 ? '' : full.slice(nl)))
         repaired.push({ sessionId: h.sessionId, from: h.cwd, to: canonical, moved })
       } catch (e) {
         errors.push(`${h.sessionId}: ${(e as Error).message}`)
@@ -2117,7 +2138,20 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
 
   const saveSessionState = async (sessionId: string, state: SessionRpState): Promise<void> => {
     await mkdir(join(dshHome, 'rp', 'state'), { recursive: true })
-    await writeFile(join(dshHome, 'rp', 'state', `${sessionId}.json`), JSON.stringify(state), 'utf8')
+    // 【鲁棒轮 2026-09-09】字段级 merge 写——rp/state/<sid>.json 多写方共享（本插件 cursor/
+    // presetId/loreTimed、dsht-plugin-memory sheets、MVU variables/state）。原实现整文件
+    // 覆写：pre-step 在 t0 读入 → 用户 t1 切预设（写 presetId）→ pre-step t2 用 t0 旧树
+    // 整文件写回 → presetId 静默丢失（下一轮回落默认预设）。改为保存前重读最新盘面合并
+    // （本次写入的键优先），其余键保留最新值；原子写防撕裂。
+    const path = join(dshHome, 'rp', 'state', `${sessionId}.json`)
+    let merged: Record<string, unknown> = state as unknown as Record<string, unknown>
+    try {
+      const latest = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+      if (latest && typeof latest === 'object' && !Array.isArray(latest)) {
+        merged = { ...latest, ...state }
+      }
+    } catch { /* 首写/读失败 → 整树写 */ }
+    await atomicWriteText(path, JSON.stringify(merged))
   }
 
   /**
@@ -2411,7 +2445,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       ]
       const sessionDir = join(dshHome, 'sessions', projectKey(`rp/${WELCOME_SLUG}`), sessionId)
       await mkdir(sessionDir, { recursive: true })
-      await writeFile(join(sessionDir, 'session.jsonl'), lines.join('\n') + '\n', 'utf8')
+      // 【鲁棒轮收尾】原子发布（欢迎会话首建；半写文件会被幂等跳过——原子写消除该窗口）
+      await atomicWriteFile(join(sessionDir, 'session.jsonl'), lines.join('\n') + '\n')
       console.log('[dsht-rp] welcome workspace created (rp/_start + guide session)')
     } catch (e) {
       console.log(`[dsht-rp] welcome workspace skipped: ${(e as Error).message}`)
@@ -3612,6 +3647,36 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'max-age=3600' })
               return (res.end as (b?: Buffer | string) => void)(JSON.stringify({ name }))
             }
+            // ---- /rp/build-info：构建版本可见性（2026-09-08 用户痛点「我装的到底是不是最新包」）----
+            // 读 filesDir/dsh-runtime/.installed-v* 哨兵（APK 内 NodeService.RUNTIME_SENTINEL
+            // 写入的解压标记）+ node 运行时真实版本——手机上一眼对出安装包新旧。
+            // dsh-runtime 缺席（PC 纯前端验证）→ sentinel: null。
+            // 【2026-09-08 死代码修复】本分支原被并行编辑错位到 POST-only 区（GET 块 L3650
+            // 兜底 return 之后）——GET 恒 404 text/plain、POST 恒 400 bad json，实机实证。
+            // 迁回 GET 块兜底之前，恢复 GET 语义。
+            if (sub === '/rp/build-info') {
+              let sentinel: string | null = null
+              try {
+                const runtimeDir = join(dshHome, '..', 'dsh-runtime')
+                const entries = await readdir(runtimeDir)
+                // 【2026-09-08 鲁棒性】历史哨兵不清理（NodeService 每次升级写新文件不删旧，
+                // 实机 28 个残留）——find() 目录序会取到最旧的，版本显示恒滞后。改为解析
+                // vNNN 数值取最大（= 最近一次成功解压的标记）。
+                let maxV = -1
+                for (const e of entries) {
+                  if (!e.startsWith('.installed-v')) continue
+                  const n = Number(e.slice('.installed-v'.length))
+                  if (Number.isFinite(n) && n > maxV) { maxV = n; sentinel = e }
+                }
+                if (maxV < 0) sentinel = null
+              } catch { /* PC 验证环境无 runtime 目录 */ }
+              let dshVersion: string | null = null
+              try {
+                const pkg = JSON.parse(readFileSync(join(dshHome, '..', 'dsh-runtime', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8')) as { version?: string }
+                dshVersion = pkg.version ?? null
+              } catch { /* PC 无 node_modules 布局 */ }
+              return send(200, { sentinel, dshVersion, fixTag: 'wb-fix-0908' })
+            }
             return sendText(404, 'not found', 'text/plain')
           }
           // §4.16.1 断点续跑：DELETE 语义清 checkpoint（= POST {reset:true} 的等价形式；
@@ -3628,6 +3693,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           for await (const c of req) chunks.push(c as Buffer)
           let payload: Record<string, unknown>
           try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return send(400, { error: 'bad json' }) }
+          // 【鲁棒轮 2026-09-09】body 为 JSON null/数组时 payload.xxx 抛 TypeError → 统一 500；
+          // 显式 400 让调用方看到真实错误（合法 JSON 但形状不对）。
+          if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return send(400, { error: 'bad json: body must be an object' })
 
           try {
             // T2.11：数据面诊断（嵌入导入中心「运行时诊断」面板消费）
@@ -4006,11 +4074,22 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                   let lines = 0
                   let lastTime: number | null = null
                   try {
-                    const text = await readFile(f, 'utf8')
-                    const rows = text.split('\n').filter(r => r.trim() !== '')
-                    lines = Math.max(0, rows.length - 1)
-                    try { header = JSON.parse(rows[0] ?? '{}') as Record<string, unknown> } catch { /* 坏行忽略 */ }
-                    const lastRow = rows[rows.length - 1]
+                    // 【鲁棒轮 2026-09-09】流式逐行（内存恒定）——原实现整文件读入 + split：
+                    // rp-import 适配会话可到 254MB（代码下方 repairAllSessionSeqs 自己设了
+                    // 8MiB 上限），手机端审计/自动清理一扫即 OOM 崩整个 node 进程。
+                    // 只需 header（首非空行）+ 行数 + 最后一行 time。
+                    let count = 0
+                    let firstRow = ''
+                    let lastRow = ''
+                    const rl = createInterface({ input: createReadStream(f, { encoding: 'utf8' }), crlfDelay: Infinity })
+                    for await (const row of rl) {
+                      if (row.trim() === '') continue
+                      if (count === 0) firstRow = row
+                      lastRow = row
+                      count++
+                    }
+                    lines = Math.max(0, count - 1)
+                    try { header = JSON.parse(firstRow) as Record<string, unknown> } catch { /* 坏行忽略 */ }
                     try { lastTime = Number((JSON.parse(lastRow) as { time?: unknown }).time ?? 0) || null } catch { /* 无 time */ }
                   } catch { continue }
                   const parent = typeof header.parentSession === 'string' ? header.parentSession : null
@@ -4115,9 +4194,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 const wsAbs = await realpath(cwd).catch(() => cwd)
                 const target = join(dshHome, 'sessions', projectKey(wsAbs), encodeSegment(sessionId), 'session.jsonl')
                 const existed = await readFile(target, 'utf8').then(() => true, () => false)
-                if (existed) await writeFile(`${target}.bak2`, await readFile(target, 'utf8'), 'utf8')
+                if (existed) await atomicWriteFile(`${target}.bak2`, await readFile(target, 'utf8'))
                 await mkdir(join(target, '..'), { recursive: true })
-                await writeFile(target, conv.content, 'utf8')
+                // 【鲁棒轮收尾】原子发布——裸 writeFile 中途被杀 = torn session 会话打不开
+                await atomicWriteFile(target, conv.content)
                 console.log(`[dsht-rp] convert-chat(file): ${sessionId} ← ${filePath} → ${conv.turns} turns, ${conv.variantGroups} variant groups, ${conv.skipped} skipped`)
                 return send(200, {
                   written: true, path: relative(join(dshHome, 'sessions'), target).split(sep).join('/'),
@@ -4200,9 +4280,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                     const conv = convertChatFile(text, { sessionId, createdAt, cwd: wsAbs })
                     const target = join(dshHome, 'sessions', projectKey(wsAbs), encodeSegment(sessionId), 'session.jsonl')
                     const existed = await readFile(target, 'utf8').then(() => true, () => false)
-                    if (existed) await writeFile(`${target}.bak2`, await readFile(target, 'utf8'), 'utf8')
+                    if (existed) await atomicWriteFile(`${target}.bak2`, await readFile(target, 'utf8'))
                     await mkdir(join(target, '..'), { recursive: true })
-                    await writeFile(target, conv.content, 'utf8')
+                    // 【鲁棒轮收尾】原子发布（同 convert-chat 文件模式）
+                    await atomicWriteFile(target, conv.content)
                     // MVU 变量：chat_metadata.variables → rp/state/<sessionId>.json（裸对象形态）
                     try {
                       const meta = JSON.parse(text.split('\n')[0]) as { chat_metadata?: { variables?: unknown } }
@@ -4210,7 +4291,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                       if (vars && typeof vars === 'object' && Object.keys(vars as object).length > 0) {
                         const statePath = join(dshHome, 'rp', 'state', `${sessionId}.json`)
                         await mkdir(dirname(statePath), { recursive: true })
-                        await writeFile(statePath, JSON.stringify(vars), 'utf8')
+                        await atomicWriteText(statePath, JSON.stringify(vars))
                       }
                     } catch { /* 变量缺失不阻塞 */ }
                     converted++
@@ -4249,13 +4330,27 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               const live = ctx.sessions?.get(sessionId) as
                 | { surface?: { nodes?: number[] }; events?: Record<string | number, { type?: unknown; time?: unknown; data?: { content?: unknown } } | undefined>; append?: (type: string, data: unknown, opts?: { surfaceOp?: { op: 'replace'; start: number; end: number }; sourceEventSeqs?: number[] }) => unknown }
                 | undefined
+              // 【2026-09-08 用户语义】回退到此处 = 「内容回输入框」：includeAnchor=true 时
+              // 锚消息本身连同其后一切一起移出上下文（文本由前端放回 composer 供修改重发，
+              // ST「回退」同语义）。掩码 rolledBackTo = anchor-1 → UI 连锚一起隐藏。
+              const includeAnchor = payload.includeAnchor === true
               if (live !== undefined && typeof live.append === 'function' && Array.isArray(live.surface?.nodes)) {
-                // ---- live：逻辑回退（官方原语）----
+                // ---- live：逻辑回退（官方原语）——【鲁棒轮】per-session 串行（withLiveSurgery），
+                // 防 await replayUndoLog 窗口内并发请求捕获过期视图 → 错位 replace ----
+                return await withLiveSurgery(sessionId, async () => {
                 const view = live.surface.nodes
                 const anchor = isEdit ? editSeq : keepThroughSeq // edit 锚点消息本身也移出视图
+                // 【2026-09-08 大会话修复】锚不在当前视图不再硬报错：视图窗口化/此前压缩
+                // 后旧 seq 不在 surface.nodes（实机 155 轮会话 seq=1362 实证）。取视图中
+                // 第一个 > 锚 的 seq 作为 replace 起点——「锚之后的一切移出上下文」语义
+                // 不变（视图早于锚的节点本就应保留）。视图全部 ≤ 锚 → no-op。
+                let start: number
                 const idx = view.indexOf(anchor)
-                if (idx === -1) return send(400, { error: `目标消息 seq=${anchor} 不在当前视图（可能已被回退/折叠）` })
-                const start = isEdit ? anchor : (idx + 1 < view.length ? view[idx + 1] : -1)
+                if (idx !== -1) {
+                  start = includeAnchor ? anchor : (idx + 1 < view.length ? view[idx + 1] : -1)
+                } else {
+                  start = view.find(q => q > anchor) ?? -1
+                }
                 if (start === -1 || start > view[view.length - 1]) return send(200, { logical: true, replaced: 0, note: 'no-op（目标之后没有可回退的视图内容）' })
                 const end = view[view.length - 1]
                 const seqs = view.filter(q => q >= start)
@@ -4263,24 +4358,32 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 let shadowed = 0
                 for (const q of seqs) {
                   // 坑 #22：sessionEventAt 替代 live.events?.[q]（0.1.2 无公开 events）
-                  const d = ((sessionEventAt(live, q)?.data) ?? {}) as { content?: unknown }
+                  const raw = (sessionEventAt(live, q)?.data ?? {}) as { content?: unknown; message?: { content?: unknown } }
+                  // 【鲁棒轮 2026-09-09】assistant/message 的 payload 是 {turn,step,message:{...}}
+                  // ——原实现直接读 data.content 恒 undefined → 每条 assistant 消息只计 4
+                  // token（meter 严重少记；chat/update 路由 5710 行早已同口径解包，此处补齐）
+                  const d = (raw.message && typeof raw.message === 'object' ? raw.message : raw) as { content?: unknown }
                   const blocks = Array.isArray(d.content) ? d.content as Array<Record<string, unknown>> : []
                   shadowed += blocks.reduce((t, b) => t + (b && (b.type === 'text' || b.type === 'reasoning') && typeof b.text === 'string' ? Math.ceil((b.text as string).length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4
                 }
-                live.append('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed })
+                // 【2026-09-08 鲁棒性】undo 回放挪到 claim 之前：compaction/prune claim 必须
+                // **紧邻** marker replace（影子化协议铁律）——旧顺序 claim → await replayUndoLog
+                // → marker，await 窗口里运行中 turn 的 append 会插进两者之间，投影/meter 漂移。
                 const anchorTime = typeof sessionEventAt(live, anchor)?.time === 'number' ? sessionEventAt(live, anchor)?.time as number : Date.now()
-                // 变量回滚：undo 日志里晚于锚点时刻的变量写逆序恢复（编辑/回退语义一致）
                 const undo = await replayUndoLog(dshHome, sessionId, anchorTime)
+                live.append('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed })
                 const markerText = isEdit
                   ? `[消息已编辑] 该消息原文及其后的回复已从上下文移除，编辑后的新消息随后发出。`
-                  : `[已回退] 该消息之后的对话已从上下文移除（事件仍保留在日志，可经 /expand 查看）。`
+                  : includeAnchor
+                    ? `[已回退] 该消息及其后的对话已从上下文移除（原文已放回输入框；事件仍保留在日志，可经 /expand 查看）。`
+                    : `[已回退] 该消息之后的对话已从上下文移除（事件仍保留在日志，可经 /expand 查看）。`
                 live.append('user/message', {
                   id: `dsht-rp-${isEdit ? 'edit' : 'rollback'}-${randomUUID()}`,
                   role: 'user',
                   content: [{ type: 'text', text: markerText }],
                   source: isEdit
                     ? { kind: 'plugin', plugin: 'dsht-rp', editedFrom: anchor }
-                    : { kind: 'plugin', plugin: 'dsht-rp', rolledBackTo: keepThroughSeq },
+                    : { kind: 'plugin', plugin: 'dsht-rp', rolledBackTo: includeAnchor ? anchor - 1 : keepThroughSeq },
                 }, { surfaceOp: { op: 'replace', start, end }, sourceEventSeqs: seqs })
                 logLine(`${isEdit ? 'session-edit' : 'session-rollback'}(live): ${sessionId} 锚 seq ${anchor} → replace [${start},${end}] ${seqs.length} 事件；变量回滚 ${undo.restored} 条`)
                 console.log(`[dsht-rp] ${isEdit ? 'session-edit' : 'session-rollback'}: ${sessionId} (live) replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`)
@@ -4290,6 +4393,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 }
                 rollbackMaskCache.clear()
                 return send(200, { logical: true, replaced: seqs.length, variablesRestored: undo.restored, ...(isEdit ? { editedSeq: anchor } : { truncatedTo: keepThroughSeq }) })
+                }) // end withLiveSurgery
               }
               // ---- 非 live：文件截断（原路径）----
               if (!isEdit) {
@@ -4324,12 +4428,19 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 // 回放后截断 undo 日志。
                 const cutoff = sessionContentMaxTime(r.content)
                 const undo = await replayUndoLog(dshHome, sessionId, cutoff)
+                rollbackMaskCache.clear() // 掩码缓存按 mtime 失效已覆盖；显式 clear 与 edit/regenerate 分支一致（mtime 粒度内重复回退防串值）
                 logLine(`session-rollback: ${sessionId} 截到 seq ${keepThroughSeq}（留 ${r.kept} 事件，截 ${r.dropped}；变量回滚 ${undo.restored} 条；文件快照回滚 ${fsnap.restoredTurns.length} turn/${fsnap.filesRestored + fsnap.filesDeleted} 文件）`)
                 console.log(`[dsht-rp] session-rollback: ${sessionId} → kept=${r.kept} dropped=${r.dropped} undoRestored=${undo.restored} snapshotTurns=${fsnap.restoredTurns.join(',')}`)
                 return send(200, { kept: r.kept, dropped: r.dropped, variablesRestored: undo.restored, fileSnapshots: { turns: fsnap.restoredTurns, restored: fsnap.filesRestored, deleted: fsnap.filesDeleted, errors: fsnap.errors } })
               }
               // edit 非 live：文件截断到目标消息之前（原 R20 语义）
               {
+                // 【鲁棒轮 2026-09-09】live 会话 409 守卫（rollback/regenerate 非 live 分支
+                // 同款）——edit 漏了：会话已 attach 但 surface 异常降级时会直接做文件手术，
+                // 随后 live flush 把内存旧事件写回 → 内容复活/seq gap。
+                if (ctx.sessions?.get(sessionId) !== undefined) {
+                  return send(409, { error: 'session live（内存态权威）：先在 DSH 里关闭该会话再编辑' })
+                }
                 const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId)
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` })
                 const file = join(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl')
@@ -4387,8 +4498,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 | { surface?: { nodes?: number[] }; events?: Record<string | number, { type?: unknown; time?: unknown; data?: { content?: unknown; source?: { kind?: unknown } } | undefined }> | Map<string | number, { type?: unknown; time?: unknown; data?: { content?: unknown; source?: { kind?: unknown } } | undefined }>; append?: (type: string, data: unknown, opts?: { surfaceOp?: { op: 'replace'; start: number; end: number }; sourceEventSeqs?: number[] }) => unknown }
                 | undefined
               if (live !== undefined && typeof live.append === 'function' && Array.isArray(live.surface?.nodes)) {
-                // live：找事件流里最后一条真 user 消息
-                // 坑 #22：sessionEventsSnapshot 替代 live.events（0.1.2 无公开 events）
+                // live：找事件流里最后一条真 user 消息——【鲁棒轮】per-session 串行（同 rollback）
+                return await withLiveSurgery(sessionId, async () => {
                 const evList: Array<{ seq: number; time?: number; text: string }> = []
                 let n = 0
                 for (const ev of sessionEventsSnapshot(live)) {
@@ -4404,20 +4515,27 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 if (anchorEv === undefined) return send(400, { error: '会话里没有用户消息（无可重新生成的锚点）' })
                 const view = live.surface.nodes
                 const idx = view.indexOf(anchorEv.seq)
-                if (idx === -1) return send(400, { error: `锚消息 seq=${anchorEv.seq} 不在当前视图` })
-                if (idx + 1 >= view.length) return send(200, { logical: true, replaced: 0, lastUserText: anchorEv.text, note: 'no-op（锚消息之后没有可重生成的视图内容）' })
-                const start = view[idx + 1]
+                // 【2026-09-08 大会话修复】锚不在视图不再硬报错（回退路由同款降级）——
+                // 取视图中第一个 > 锚 的 seq 作为 replace 起点；视图全部 ≤ 锚 → no-op。
+                const start = idx !== -1
+                  ? (idx + 1 < view.length ? view[idx + 1] : -1)
+                  : (view.find(q => q > anchorEv.seq) ?? -1)
+                if (start === -1 || start > view[view.length - 1]) return send(200, { logical: true, replaced: 0, lastUserText: anchorEv.text, note: 'no-op（锚消息之后没有可重生成的视图内容）' })
                 const end = view[view.length - 1]
                 const seqs = view.filter(q => q >= start)
                 let shadowed = 0
                 for (const q of seqs) {
-                  const d = ((sessionEventAt(live, q)?.data) ?? {}) as { content?: unknown }
-                  const blocks = Array.isArray(d.content) ? d.content as Array<Record<string, unknown>> : []
+                  // 【鲁棒轮 2026-09-09】assistant/message 解包 data.message（同 rollback 补齐——
+                  // 原实现每条 assistant 消息只计 4 token，meter 少记）
+                  const raw = ((sessionEventAt(live, q)?.data) ?? {}) as { content?: unknown; message?: { content?: unknown } }
+                  const d = (raw.message && typeof raw.message === 'object' ? raw.message : raw) as { content?: unknown }
+                  const blocks = Array.isArray(d.content) ? d.content as Array<{ type?: unknown; text?: unknown }> : []
                   shadowed += blocks.reduce((t, b) => t + (b && (b.type === 'text' || b.type === 'reasoning') && typeof b.text === 'string' ? Math.ceil((b.text as string).length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4
                 }
-                live.append('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed })
+                // 【2026-09-08 鲁棒性】undo 回放挪到 claim 之前（紧邻铁律，同 session-rollback）
                 const anchorTime = typeof anchorEv.time === 'number' ? anchorEv.time : Date.now()
                 const undo = await replayUndoLog(dshHome, sessionId, anchorTime)
+                live.append('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed })
                 const markerText = `[重新生成中] 该消息此前的回复已从上下文移除，正在以原消息重新生成。`
                 live.append('user/message', {
                   id: `dsht-rp-regenerate-${randomUUID()}`,
@@ -4433,6 +4551,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 }
                 rollbackMaskCache.clear()
                 return send(200, { logical: true, replaced: seqs.length, lastUserText: anchorEv.text, variablesRestored: undo.restored })
+                }) // end withLiveSurgery
               }
               // 非 live：文件截断（原路径）
               {
@@ -5658,8 +5777,17 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 const oldSource = (oldMsg.source && typeof oldMsg.source === 'object' ? oldMsg.source : {}) as Record<string, unknown>
                 const oldThData = oldSource['thData'] !== undefined ? oldSource['thData'] : null
                 const data = t.data !== undefined ? t.data : oldThData
-                // 计量（core 估价器同款——replace 必须带紧邻 claim）
-                const shadowedTokens = Math.ceil(text.length / 4) + 4
+                // 计量（core 估价器同款——replace 必须带紧邻 claim）。
+                // 【2026-09-08 鲁棒性】shadowedTokenCount 按**被影子化的旧事件**内容计
+                // （meter 记账对象 = 移出视图的旧事件，与 session-rollback 路由同口径）——
+                // 旧实现用替换后的新文本长度：新文本更短 → meter 少记移出量、更长 → 多记。
+                const oldBlocks = Array.isArray(oldMsg.content)
+                  ? oldMsg.content as Array<Record<string, unknown>>
+                  : []
+                let shadowedTokens = oldBlocks.reduce((t2, b) =>
+                  t2 + (b && (b['type'] === 'text' || b['type'] === 'reasoning') && typeof b['text'] === 'string'
+                    ? Math.ceil((b['text'] as string).length / 4) + 4
+                    : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4
                 live.append('compaction/prune', { shadowedRange: { start: seq, end: seq }, shadowedSeqs: [seq], shadowedTokenCount: shadowedTokens })
                 const turn = typeof oldData.turn === 'number' ? oldData.turn : 1
                 const step = typeof oldData.step === 'number' ? oldData.step : 1
