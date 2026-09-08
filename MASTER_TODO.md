@@ -27,7 +27,7 @@
 - **工作区清场**：`.audit`（约 9.8k 文件）与根 `tmp`（约 32k 文件）的一次性探针/截图归档至 `D:\DSH-RolePlay-archive\`，工作区只留活代码。历史文档引用的 tmp 脚本（verify-fixes.mjs、audit2-*.mjs、parse-check.ps1 等）以归档目录为准。
 - **v0.3 功能冻结**：冻结范围、兼容分级（Tier 1 承诺 / Tier 2 尽力+时间盒 / Tier 3 明确不承诺）与「收口/探索」双模式，见 **docs/V0.3-FREEZE.md**。v0.3 只做四类事：验证债闭环、发布三硬门槛（大扫除/README/Releases+更新开关）、Tier 1 缺陷、审计报告抓到的两个疑似缺口。
 - **兼容面完整性审计**：TH/正则/MVU 三模块对 ST 源码逐特性对比，报告见 **docs/COMPAT-AUDIT-2026-09-08.md**。结论先行：缺口几乎全部是「记名登记过的设计决策」，不是当初搬运没做——"修了又冒"的根因是兼容面长尾 + 修复未沉淀回归，对策已写进冻结清单 §2。
-- **PC 线冻结**：BitFun + agenthub + PC 副本冻结为只读参考，不再主动演进；PC 副本同步铁律降级为按需同步（见 docs/SYNC-PC-COPY-RULE.md 顶部状态变更）。Android 线（本仓库）是唯一产品线。
+- **仓库边界澄清（2026-09-08 用户澄清，勘正同日早前「PC 线冻结」误读）**：本仓库（DSHTavern 安卓版）是唯一在研项目；BitFun / agenthub 是另一个完全独立的项目，与本仓库无代码互通，不纳入本档管辖。PC 副本（.a Agent RolePlay Project）唯一关联 = 回退插件 dsht-plugin-undo 两侧同步（铁律不变，仅限此插件；其余插件在 PC 无副本、无需同步）。
 
 ---
 

@@ -1,11 +1,10 @@
-# RP 插件改动同步 PC 副本（2026-09-08 起降级为「按需同步」）
+# 回退插件改动同步 PC 副本（仅限 dsht-plugin-undo）
 
-> **⚠️ 状态变更（2026-09-08，用户拍板）**：PC 线（BitFun + agenthub + PC 副本）冻结为只读参考（见 docs/V0.3-FREEZE.md §6）。下述"每一次改动必须同步"不再默认生效，降级为**按需同步**：仅当用户主动要求在 PC 线使用某项新能力时，才对该项做一次性产物部署，并在 MASTER_TODO 中标注「PC 副本按需同步（仅此项）」。以下规则原文保留，供按需同步时参照执行。
+> **范围澄清（2026-09-08，用户澄清）**：本规则的适用范围**仅限回退/编辑插件 dsht-plugin-undo**——它是唯一在本仓库（DSHTavern）与 PC 副本两侧都存在的插件（PC 侧部署于 `.a Agent RolePlay Project\.dsh-home`），所以改它时两侧都改，铁律不变。
+> **除回退插件外，两侧没有任何其它互通任务**：dsht-rp-ui / dsh-plugin / 其它 dsht-plugin-* 在 PC 副本没有部署副本，改动无需同步；PC 副本目录里的 BitFun / agenthub 是**另一个完全独立的项目**，与本仓库无代码互通。此前「一切 RP 链路上的插件均需同步」的表述系误读，特此勘正。
 
 ## 规则
-每一次改动回退/编辑插件（dsht-plugin-undo）以及一切 RP 链路上的插件
-（dsht-rp-ui / dsht-plugin-* / dsh-plugin 的 rp 数据面 / ProcessFolder /
-chat-windowing / RegexPanel / 预设与记忆等）时，**必须同步 PC 副本项目**：
+每一次改动回退/编辑插件（dsht-plugin-undo）源码后，**必须同步 PC 副本项目**的部署产物：
 
 ```
 D:\SillyTavern-1.16.0\SillyTavern（now using）\SillyTavern-1.16.0\.a Agent RolePlay Project
