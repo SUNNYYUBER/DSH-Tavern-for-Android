@@ -28,11 +28,18 @@
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { rpApi } from './rpc.ts'
 import { useRpSlug } from './RpStateFloat.tsx'
+import { notifyDisplayMutation } from './RpNativeChat.tsx'
 import {
   buildIframeDocument, deepMergeAssign, deepMergeInsert, getButtonEventId, handleBridgeCall,
   parseIncomingMessage, type ScriptStatus, type SessionScript, type ThBridgeDeps, type ThChatMessage,
   type ThContextSnapshot, type VarScope,
 } from './th-shim.ts'
+
+// 【Kemini 适配 2026-09-08】这些桥 API 成功后需要失效 RP 显示面缓存并重渲染
+// （display 正则三源 / 预设 prompt_order·regex_scripts 直接影响楼层 display 管线）
+const TH_DISPLAY_MUTATION_APIS = new Set([
+  'regexes:replace', 'preset:put', 'preset:delete', 'preset:rename', 'preset:load', 'display:reload',
+])
 
 // getTavernHelperVersion 必须返回真 TH 语义的 semver：MVU bundle 等脚本会拿它跑
 // compare-versions（>= 4.0.14 判定）——非 semver 字符串会让整包 ready 回调炸掉、Mvu 挂不上。
@@ -275,6 +282,7 @@ class SessionRuntime {
 
   /** 重载全部脚本（真 TH reloadAll 同款：销毁 iframe 重建） */
   reloadAll(): void {
+    this.mountGen += 1 // 【鲁棒轮】让 await 窗口内的旧 mountScript 续体全部放弃
     for (const f of this.frames.values()) f.remove()
     this.frames.clear()
     for (const s of this.scripts) this.mountScript(s)
@@ -330,6 +338,7 @@ class SessionRuntime {
 
   destroy(): void {
     this.destroyed = true
+    this.mountGen += 1 // 【鲁棒轮】让 await 窗口内的旧 mountScript 续体全部放弃
     if (this.consoleNotifyTimer) { clearTimeout(this.consoleNotifyTimer); this.consoleNotifyTimer = 0 }
     for (const f of this.frames.values()) f.remove()
     this.frames.clear()
@@ -383,7 +392,15 @@ class SessionRuntime {
     return this.container
   }
 
+  /** 【鲁棒轮 2026-09-09】挂载代数：reloadAll/destroy 递增——mountScript 的
+   *  await fetchFrameVars 窗口（首载网络请求，秒级）内用户点「重载」时，旧续体
+   *  恢复后 statuses 已被新挂载重写，原「statuses.has 守卫」永不命中 → 同脚本
+   *  双 iframe 双执行（旧帧不在 frames 里，reload/destroy 永远摘不掉，桥回包
+   *  错投新帧脚本挂死）。恢复后 gen 不匹配即放弃。 */
+  private mountGen = 0
+
   private async mountScript(script: SessionScript): Promise<void> {
+    const gen = this.mountGen
     const status: ScriptStatus = {
       phase: 'loading',
       missing: [],
@@ -395,7 +412,7 @@ class SessionRuntime {
     //（fetchFrameVars 模块级 5s TTL 缓存：8 个脚本只 1 发请求）
     let frameVars: Record<string, unknown> | undefined
     try { frameVars = await fetchFrameVars(this.sessionId, this.slug) } catch { /* 拉不到 = 空缓存 */ }
-    if (this.destroyed || !this.statuses.has(script.id)) return // 等待期运行时销毁/重载
+    if (this.destroyed || gen !== this.mountGen || !this.statuses.has(script.id)) return // 等待期运行时销毁/重载
     const iframe = document.createElement('iframe')
     // 同源形态复刻（用户拍板的定案）：真酒馆助手（TH/JS-Slash-Runner）的脚本 iframe 是
     // srcdoc + same-origin（sandbox 无限制），predefine.js 直接 window.parent.$、从 parent
@@ -539,33 +556,49 @@ class SessionRuntime {
         th: 'result', callId: call.callId, ok, ...(ok ? { value } : { error }),
       }, '*')
     }
+    // 【Kemini 适配 2026-09-08】display 相关变更桥成功后自动失效+重渲染——
+    // 脚本直接 replaceTavernRegexes / updatePresetWith（Kemini 思维链开关）后，
+    // displayRegexCache 不失效会「切了没反应」。
     handleBridgeCall(this.bridgeDeps, call.scriptId, call.api, call.args)
-      .then(value => respond(true, value ?? null))
+      .then(value => {
+        respond(true, value ?? null)
+        if (TH_DISPLAY_MUTATION_APIS.has(call.api)) notifyDisplayMutation()
+      })
       .catch((e: Error) => respond(false, undefined, e.message))
   }
 
   private readonly bridgeDeps: ThBridgeDeps = {
-    varsGet: (scope, scriptId) => thVarsGet(scope, this.slug, this.sessionId, scriptId),
+    // 【Kemini 适配 2026-09-08】builtin.reloadAndRenderChatWithoutEvents 通道
+    displayReload: () => { notifyDisplayMutation(); return Promise.resolve() },
+    // 【通用修复 2026-09-09】scope='script' 但 scriptId 为空（楼层渲染 shim 上下文——渲染产出的
+    // 脚本不属于任何注册脚本）→ 降级 'chat' 作用域。原样直发 = host 400 "scriptId required"
+    // → 脚本变量链路死 → 状态栏等交互元素全部无响应（wuwa 实测抓到）。真 TH 语义：非注册
+    // 脚本上下文的 script 作用域无意义，回退 chat 树。
+    varsGet: (scope, scriptId) => thVarsGet(scope === 'script' && !scriptId ? 'chat' : scope, this.slug, this.sessionId, scriptId),
     varsPut: async (scope, tree, scriptId) => {
+      if (scope === 'script' && !scriptId) scope = 'chat'
       if (scope === 'message') return void await thMessageVarsReplace(this.sessionId, tree)
       await thApi('variables', { scope, slug: this.slug, sessionId: this.sessionId, scriptId, variables: tree })
     },
     varsMerge: async (scope, vars, mode, scriptId) => {
+      if (scope === 'script' && !scriptId) scope = 'chat'
       if (scope === 'message') return void await thMessageVarsPut(this.sessionId, mode, vars)
       const cur = await thVarsGet(scope, this.slug, this.sessionId, scriptId)
       const next = mode === 'insert' ? deepMergeInsert(cur, vars) : deepMergeAssign(cur, vars)
       await thApi('variables', { scope, slug: this.slug, sessionId: this.sessionId, scriptId, variables: next })
     },
     varsDelete: async (scope, path, scriptId) => {
+      if (scope === 'script' && !scriptId) scope = 'chat'
       if (scope === 'message') return void await thMessageVarsDelete(this.sessionId, path)
       await thApi('variables', { scope, slug: this.slug, sessionId: this.sessionId, scriptId, path }, 'DELETE')
     },
     varsAll: async (scriptId) => {
+      const scriptScope = scriptId ? 'script' : 'chat'
       const [global, preset, character, script, chat, message] = await Promise.all([
         thVarsGet('global', '', '', ''),
         thVarsGet('preset', '', this.sessionId, ''),
         thVarsGet('character', this.slug, '', ''),
-        thVarsGet('script', '', this.sessionId, scriptId),
+        thVarsGet(scriptScope, '', this.sessionId, scriptId),
         thVarsGet('chat', '', this.sessionId, ''),
         thVarsGet('message', '', this.sessionId, '').catch(() => ({}) as Record<string, unknown>),
       ])
@@ -577,6 +610,7 @@ class SessionRuntime {
       )
     },
     buttonsGet: (scriptId) => [...(this.statuses.get(scriptId)?.buttons ?? [])],
+    buttonsExists: (scriptId) => this.statuses.has(scriptId),
     buttonsSet: (scriptId, buttons) => {
       const st = this.statuses.get(scriptId)
       if (!st) return
