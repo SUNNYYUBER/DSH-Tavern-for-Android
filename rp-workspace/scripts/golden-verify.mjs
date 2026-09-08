@@ -6,7 +6,14 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { chromium } = require('D:/DSH RolePlay/rp-workspace/tools-pw/node_modules/playwright-core');
 const EXE = 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
-const TOKEN = fs.readFileSync('D:/DSH RolePlay/tmp/dsht-token.txt', 'utf8').trim();
+const { execSync } = await import('node:child_process');
+function refreshToken() {
+  try {
+    execSync('C:/Users/Administrator/.android/sdk/platform-tools/adb.exe -s emulator-5554 shell "run-as com.dshtavern.app cat files/.dsh/dsht-token" > "D:/DSH RolePlay/tmp/dsht-token.txt"', { timeout: 20000 });
+  } catch (e) { console.log('[verify] token 刷新失败:', e.message.slice(0, 60)); }
+  return fs.readFileSync('D:/DSH RolePlay/tmp/dsht-token.txt', 'utf8').trim();
+}
+const TOKEN = refreshToken();
 const CMD = process.argv[2] ?? 'probe';
 const CARD_RE = new RegExp(process.argv[3] ?? 'wuwa|Solaris', 'i');
 
@@ -61,4 +68,73 @@ const frames = page.frames().map(f => ({ url: f.url().slice(0, 80), name: f.name
 console.log('[verify] frames:', JSON.stringify(frames, null, 1));
 await page.screenshot({ path: 'D:/DSH RolePlay/tmp/verify-current.png' });
 console.log('[verify] console 尾部:', logs.slice(-4).join(' / ') || '(none)');
+
+// verify 模式：逐元素点击 + 响应判定
+if (CMD === 'verify') {
+  const TOKEN2 = refreshToken();
+  await page.goto(`http://127.0.0.1:43080/?token=${TOKEN2}`, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+  await page.waitForTimeout(15000);
+  // 进 wuwa
+  await page.evaluate((re) => {
+    const rx = new RegExp(re, 'i');
+    const items = Array.from(document.querySelectorAll('a, [role="button"], div, span'))
+      .filter(e => e.offsetWidth && rx.test((e.innerText || '').trim()) && (e.innerText || '').trim().length < 60);
+    items[0]?.click();
+  }, CARD_RE.source);
+  await page.waitForTimeout(5000);
+  await page.waitForSelector('#send_textarea', { state: 'visible', timeout: 90000 }).catch(() => {});
+  await page.waitForTimeout(12000);
+
+  // 收集主文档可交互元素（可见、视口内或可滚动到）
+  const els = await page.evaluate(() => {
+    const out = [];
+    const seen = new Set();
+    for (const e of document.querySelectorAll('button, [role="button"], [onclick], [class*="button" i], [class*="btn" i]')) {
+      if (!e.offsetWidth && !e.offsetHeight) continue;
+      const r = e.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0 || r.bottom < 0) continue;
+      const key = (e.id || '') + '|' + String(e.className).slice(0, 40) + '|' + (e.innerText || '').slice(0, 20);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ i: out.length, tag: e.tagName.toLowerCase(), cls: String(e.className).slice(0, 45), text: (e.innerText || e.title || '').replace(/\s+/g, ' ').trim().slice(0, 36) || '(icon)', x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) });
+    }
+    return out;
+  });
+  console.log('[verify] 待测元素:', els.length);
+  if (!els.length) {
+    const diag = await page.evaluate(() => ({
+      url: location.href.slice(0, 70),
+      bodyHead: document.body.innerText.replace(/\s+/g, ' ').slice(0, 250),
+      ta: !!document.querySelector('#send_textarea'),
+    }));
+    console.log('[verify] 0元素诊断:', JSON.stringify(diag));
+    await page.screenshot({ path: 'D:/DSH RolePlay/tmp/verify-0elem.png' });
+  }
+  const results = [];
+  for (const el of els) {
+    const before = {
+      reqs: 0, dom: '',
+    };
+    const netCounter = { n: 0 };
+    const onReq = () => { netCounter.n++; };
+    page.on('request', onReq);
+    const domBefore = await page.evaluate(() => document.body.innerHTML.length + ':' + document.querySelectorAll('iframe').length);
+    try {
+      await page.mouse.click(el.x, el.y);
+    } catch { /* 越界等 */ }
+    await page.waitForTimeout(2000);
+    const domAfter = await page.evaluate(() => document.body.innerHTML.length + ':' + document.querySelectorAll('iframe').length);
+    page.off('request', onReq);
+    const responded = netCounter.n > 0 || domBefore !== domAfter;
+    results.push({ ...el, responded, net: netCounter.n });
+    console.log(`[verify] ${responded ? '响应' : '无响应'} net=${netCounter.n} | ${el.tag} ${el.cls.slice(0, 30)} "${el.text}" @(${el.x},${el.y})`);
+  }
+  const fail = results.filter(r => !r.responded);
+  console.log(`[verify] === 汇总: ${results.length - fail.length}/${results.length} 响应，${fail.length} 无响应 ===`);
+  fs.writeFileSync('D:/DSH RolePlay/loop-mvu-interact/verify-report.json', JSON.stringify({ ts: new Date().toISOString(), total: results.length, failed: fail, all: results }, null, 1));
+  console.log('[verify] 报告: loop-mvu-interact/verify-report.json');
+  await browser.close();
+  process.exit(0);
+}
+
 await browser.close();
