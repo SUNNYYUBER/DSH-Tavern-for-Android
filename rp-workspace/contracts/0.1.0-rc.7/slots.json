@@ -1,0 +1,107 @@
+{
+  "total": 42,
+  "slots": [
+    "conversation.chat.assistant-actions",
+    "conversation.chat.commandview",
+    "conversation.chat.node",
+    "conversation.chat.turnTail",
+    "conversation.composer",
+    "conversation.composer.bar",
+    "conversation.composer.dock",
+    "conversation.details.tool",
+    "conversation.hero.agentPreset",
+    "conversation.hero.brand.mark",
+    "conversation.hero.workspace",
+    "conversation.hero.workspace.directoryFlow",
+    "conversation.input.attachments",
+    "conversation.input.dock",
+    "conversation.input.left",
+    "conversation.input.model",
+    "conversation.input.overlay",
+    "conversation.input.plan",
+    "conversation.input.right",
+    "conversation.message.images",
+    "conversation.session",
+    "conversation.session.header",
+    "conversation.session.header.actions",
+    "conversation.session.header.utilities",
+    "conversation.view",
+    "root",
+    "settings.action",
+    "settings.close",
+    "settings.general.item",
+    "settings.header",
+    "settings.onboarding",
+    "settings.plugins.tab",
+    "settings.section",
+    "settings.trigger",
+    "sidebar.brand.mark",
+    "sidebar.brand.name",
+    "sidebar.footer.action",
+    "sidebar.settings",
+    "sidebar.workspaces",
+    "sidebar.workspaces.directoryFlow",
+    "tool.call.toolview",
+    "tool.view.cordis"
+  ],
+  "byFile": {
+    "dsh-client-runtime/lib/types/client/slots.d.ts": [
+      "root"
+    ],
+    "dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts": [
+      "conversation.session",
+      "conversation.session.header",
+      "conversation.session.header.actions",
+      "conversation.session.header.utilities",
+      "conversation.view",
+      "conversation.chat.node",
+      "conversation.message.images",
+      "conversation.chat.commandview",
+      "conversation.chat.turnTail",
+      "conversation.chat.assistant-actions",
+      "conversation.details.tool",
+      "conversation.composer",
+      "conversation.hero.workspace",
+      "conversation.hero.brand.mark",
+      "conversation.hero.agentPreset",
+      "conversation.input.dock",
+      "conversation.composer.dock",
+      "conversation.input.left",
+      "conversation.input.right",
+      "conversation.composer.bar",
+      "conversation.input.attachments",
+      "conversation.input.plan",
+      "conversation.input.model"
+    ],
+    "dsh-client-ui-cordis/lib/types/client/slots.d.ts": [
+      "tool.view.cordis"
+    ],
+    "dsh-client-ui-input-trigger/lib/types/client/slots.d.ts": [
+      "conversation.input.overlay"
+    ],
+    "dsh-client-ui-settings/lib/types/client/contract/slots.d.ts": [
+      "settings.trigger",
+      "settings.header",
+      "settings.action",
+      "settings.close",
+      "settings.section",
+      "settings.plugins.tab",
+      "settings.onboarding",
+      "settings.general.item"
+    ],
+    "dsh-client-ui-sidebar/lib/types/client/contract/slots.d.ts": [
+      "sidebar.brand.mark",
+      "sidebar.brand.name",
+      "sidebar.workspaces",
+      "sidebar.settings",
+      "sidebar.footer.action"
+    ],
+    "dsh-client-ui-tool/lib/types/client/contract/slots.d.ts": [
+      "tool.call.toolview"
+    ],
+    "dsh-client-ui-workspace/lib/types/client/contract/slots.d.ts": [
+      "conversation.hero.workspace.directoryFlow",
+      "sidebar.workspaces.directoryFlow"
+    ]
+  }
+}

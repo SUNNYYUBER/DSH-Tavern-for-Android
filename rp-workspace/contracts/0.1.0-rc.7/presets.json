@@ -1,0 +1,19 @@
+{
+  "presets": [
+    {
+      "preset": "code",
+      "file": "dsh/config/agent-presets/code/agent.cordis.yml",
+      "lines": [
+        "- id: tool-presentation",
+        "mode: code",
+        "name: '@deepseek-ai/dsh-agent-tool-presentation'"
+      ]
+    }
+  ],
+  "legalModes": [
+    "native",
+    "code",
+    "both"
+  ],
+  "configLine": "const Config = z.object({ mode: z.union([ ⏎ \t\"native\", ⏎ \t\"code\", ⏎ \t\"both\" ⏎ ]).required() }); ⏎ /**"
+}

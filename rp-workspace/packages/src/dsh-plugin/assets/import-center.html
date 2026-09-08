@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>DSHTavern 导入</title>
+<style>
+  /* ---- 兜底 token：iframe 是独立 document，宿主 --dsw-alias-* 不注入——这里给
+   * 一套默认值（浅/深双主题），保证虚线框/卡片分层正常渲染。宿主主题初始化时同步。---- */
+  :root {
+    --dsw-alias-bg-base: #f5f6fa;
+    --dsw-alias-bg-layer-1: #ffffff;
+    --dsw-alias-bg-layer-3: #eef0f5;
+    --dsw-alias-border-l1: #e4e7ee;
+    --dsw-alias-border-l2: #d3d7e0;
+    --dsw-alias-label-primary: #1c2433;
+    --dsw-alias-label-secondary: #4b5568;
+    --dsw-alias-label-tertiary: #8b93a7;
+    --dsw-alias-label-dimmed: #a9b0c0;
+    --dsw-alias-state-business-primary: #3d7eff;
+    --dsw-alias-button-primary-fill: #1c2433;
+    --dsw-alias-label-primary-foreground: #ffffff;
+    --dsw-alias-interactive-bg-hover: rgba(28, 36, 51, 0.06);
+    --dsw-alias-bg-module-platform: rgba(61, 126, 255, 0.08);
+    --dsw-alias-brand-primary: #3d7eff;
+    --dsw-shadow-lv1: 0 1px 3px rgba(16, 24, 40, 0.06);
+    --dsw-static-green-100: #e8f8ee; --dsw-static-green-500: #2eb25c; --dsw-static-green-900: #1a6b3c;
+    --dsw-static-amber-100: #fdf3e0; --dsw-static-amber-500: #eba12a; --dsw-static-amber-600: #c98119;
+    --dsw-static-red-100: #fdeaea; --dsw-static-red-500: #e65a5a; --dsw-static-red-600: #d44343;
+    --dsw-static-deepseek-50: #eef4ff; --dsw-static-deepseek-400: #5b96ff; --dsw-static-deepseek-600: #2b6ae0;
+    --dsw-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --ds-font-family-code: ui-monospace, 'Cascadia Code', Consolas, monospace;
+    --ds-transition-duration-fast: 0.12s; --ds-transition-duration: 0.2s;
+    --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  :root[data-ds-dark-theme] {
+    --dsw-alias-bg-base: #0f1626;
+    --dsw-alias-bg-layer-1: #182136;
+    --dsw-alias-bg-layer-3: #1f2a42;
+    --dsw-alias-border-l1: #263349;
+    --dsw-alias-border-l2: #33435e;
+    --dsw-alias-label-primary: #e8ecf4;
+    --dsw-alias-label-secondary: #aab6c8;
+    --dsw-alias-label-tertiary: #75849b;
+    --dsw-alias-label-dimmed: #5c6a80;
+    --dsw-alias-state-business-primary: #4d8dff;
+    --dsw-alias-button-primary-fill: #e8ecf4;
+    --dsw-alias-label-primary-foreground: #0f1626;
+    --dsw-alias-interactive-bg-hover: rgba(232, 236, 244, 0.07);
+    --dsw-alias-bg-module-platform: rgba(77, 141, 255, 0.12);
+    --dsw-alias-brand-primary: #4d8dff;
+    --dsw-shadow-lv1: 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    max-width: 720px; margin: 0 auto;
+    padding: 12px 16px 24px;
+    font-family: var(--dsw-font-family);
+    background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 0 14px; border-bottom: 1px solid var(--dsw-alias-border-l1); margin-bottom: 14px;
+  }
+  header h1 { font-size: 17px; font-weight: 600; line-height: 24px; }
+  header h1 small { display: block; font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-tertiary); font-weight: 400; }
+  .header-actions { display: flex; align-items: center; gap: 8px; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground);
+    border: none; border-radius: 18px; height: 36px; padding: 0 16px;
+    font-size: 14px; line-height: 22px; font-weight: 500; font-family: inherit; cursor: pointer;
+    transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+  }
+  .btn:active { opacity: .8; }
+  .btn.ghost {
+    background: transparent; color: var(--dsw-alias-label-primary);
+    border: 1px solid var(--dsw-alias-border-l2);
+  }
+  .btn.ghost:hover { background: var(--dsw-alias-interactive-bg-hover); }
+  .btn.small { height: 28px; border-radius: 14px; padding: 0 12px; font-size: 12px; line-height: 18px; }
+  .btn:disabled { opacity: .4; }
+  .iconbtn {
+    width: 28px; height: 28px; border-radius: 50%; border: none; background: transparent;
+    color: var(--dsw-alias-label-secondary); font-size: 15px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .iconbtn:hover { background: var(--dsw-alias-interactive-bg-hover); }
+  section {
+    background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l1);
+    border-radius: 16px; padding: 18px; margin-bottom: 14px;
+    box-shadow: var(--dsw-shadow-lv1);
+  }
+  section > h2 { font-size: 15px; font-weight: 600; line-height: 22px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+  section > .desc { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; margin-bottom: 12px; }
+  .drop {
+    display: block; width: 100%;
+    border: 1.5px dashed var(--dsw-alias-border-l2); border-radius: 12px; padding: 20px 16px;
+    text-align: center; color: var(--dsw-alias-label-secondary); cursor: pointer;
+    transition: border-color var(--ds-transition-duration) var(--ds-ease-in-out),
+      background var(--ds-transition-duration) var(--ds-ease-in-out);
+  }
+  .drop:hover, .drop.drag { border-color: var(--dsw-alias-state-business-primary); background: var(--dsw-alias-interactive-bg-hover); }
+  .drop input[type=file] { display: none; }
+  .drop .icon { font-size: 26px; margin-bottom: 4px; }
+  .result { margin-top: 12px; }
+  .card {
+    background: var(--dsw-alias-bg-layer-3); border: 1px solid var(--dsw-alias-border-l1);
+    border-radius: 12px; padding: 12px 14px; margin-top: 10px;
+  }
+  .kv { display: flex; gap: 8px; padding: 3px 0; font-size: 13px; line-height: 20px; }
+  .kv .k { color: var(--dsw-alias-label-secondary); min-width: 90px; flex-shrink: 0; }
+  .kv .v { flex: 1; min-width: 0; word-break: break-all; }
+  .badge {
+    display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 11px; line-height: 14px;
+    background: var(--dsw-static-deepseek-50); color: var(--dsw-static-deepseek-600); margin-left: 6px;
+  }
+  :root[data-ds-dark-theme] .badge { background: rgba(103, 158, 254, .15); color: var(--dsw-static-deepseek-400); }
+  .badge.ok { background: var(--dsw-static-green-100); color: var(--dsw-static-green-900); }
+  :root[data-ds-dark-theme] .badge.ok { background: rgba(78, 209, 126, .15); color: var(--dsw-static-green-500); }
+  .badge.warn { background: var(--dsw-static-amber-100); color: var(--dsw-static-amber-600); }
+  :root[data-ds-dark-theme] .badge.warn { background: rgba(247, 173, 49, .15); color: var(--dsw-static-amber-500); }
+  .badge.err { background: var(--dsw-static-red-100); color: var(--dsw-static-red-600); }
+  :root[data-ds-dark-theme] .badge.err { background: rgba(242, 90, 90, .15); color: var(--dsw-static-red-500); }
+  details { margin-top: 10px; }
+  details summary {
+    cursor: pointer; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 20px;
+    padding: 6px 0; user-select: none; -webkit-user-select: none;
+  }
+  details summary:hover { color: var(--dsw-alias-label-primary); }
+  details .inner { padding: 8px 12px; background: var(--dsw-alias-bg-base); border-radius: 8px; font-size: 12px; line-height: 18px; }
+  pre {
+    background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px;
+    padding: 10px; font-size: 11px; line-height: 18px; overflow-x: auto; white-space: pre-wrap;
+    word-break: break-all; max-height: 300px; overflow-y: auto;
+    font-family: var(--ds-font-family-code); color: var(--dsw-alias-label-secondary);
+  }
+  .stats { display: flex; flex-wrap: wrap; gap: 12px; margin: 10px 0; }
+  .stat { text-align: center; min-width: 70px; }
+  .stat .num { font-size: 22px; font-weight: 600; line-height: 30px; color: var(--dsw-alias-label-primary); }
+  .stat .lbl { font-size: 11px; line-height: 14px; color: var(--dsw-alias-label-tertiary); }
+  .hint { color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; margin-top: 8px; }
+  /* ---- 分享 / 授权目录文件行 ---- */
+  .zrow { display: flex; align-items: center; gap: 10px; padding: 8px 2px; border-top: 1px solid var(--dsw-alias-border-l1); }
+  .zrow:first-child { border-top: none; }
+  .zrow .zn { flex: 1; min-width: 0; word-break: break-all; font-size: 13px; line-height: 18px; }
+  .zrow .zs { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
+  .empty { text-align: center; color: var(--dsw-alias-label-tertiary); padding: 20px; font-size: 13px; }
+  .progress-wrap { margin-top: 10px; }
+  .progress-bar {
+    height: 6px; border-radius: 3px; background: var(--dsw-alias-bg-module-platform);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; width: 0%; background: var(--dsw-alias-state-business-primary); border-radius: 3px;
+    transition: width .25s var(--ds-ease-in-out);
+  }
+  .progress-text { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-top: 4px; display: flex; justify-content: space-between; }
+  .progress-text .pct { color: var(--dsw-alias-state-business-primary); font-weight: 500; }
+  /* ---- §4.16.1 屏5：批次类目级进度（复用 progress-bar；类目行紧凑排布）---- */
+  .cat-row { display: flex; align-items: center; gap: 10px; padding: 3px 0; font-size: 12px; line-height: 18px; }
+  .cat-row .cat-name { width: 68px; flex-shrink: 0; color: var(--dsw-alias-label-secondary); }
+  .cat-row .progress-bar { flex: 1; }
+  .cat-row .cat-count { flex-shrink: 0; min-width: 86px; text-align: right; color: var(--dsw-alias-label-tertiary); font-variant-numeric: tabular-nums; }
+  .export-done {
+    margin-top: 12px; padding: 12px; border-radius: 8px;
+    background: var(--dsw-static-green-100); border: 1px solid rgba(34, 197, 94, .3);
+    font-size: 13px;
+  }
+  :root[data-ds-dark-theme] .export-done { background: rgba(78, 209, 126, .08); }
+  footer {
+    text-align: center; color: var(--dsw-alias-label-dimmed); font-size: 11px; line-height: 16px; padding: 16px 0 6px;
+  }
+  /* ---- 新手引导（Onboarding）：三步横排指示 + 当前步卡片 ---- */
+  #welcome { border: 1px solid var(--dsw-alias-border-l2); }
+  .steps { display: flex; gap: 8px; margin: 14px 0; }
+  .step {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 12px 8px; border-radius: 12px; border: 1px solid transparent;
+    text-align: center; cursor: pointer; font-size: 12px; line-height: 18px;
+    color: var(--dsw-alias-label-secondary);
+    transition: background var(--ds-transition-duration) var(--ds-ease-in-out);
+  }
+  .step:hover { background: var(--dsw-alias-interactive-bg-hover); }
+  .step .n {
+    width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 500; border: 1.5px solid var(--dsw-alias-border-l2);
+    color: var(--dsw-alias-label-secondary);
+  }
+  .step.done .n { background: var(--dsw-static-green-500); border-color: var(--dsw-static-green-500); color: #fff; }
+  .step.current .n { border-color: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-state-business-primary); }
+  .step.current { border-color: var(--dsw-alias-state-business-primary); background: var(--dsw-static-deepseek-50); }
+  :root[data-ds-dark-theme] .step.current { background: rgba(103, 158, 254, .1); }
+  .step.done { color: var(--dsw-alias-label-primary); }
+  .step-panel { margin-top: 6px; }
+  /* ---- R11 竖屏适配：文件选择区/按钮/诊断区全宽，字号与触控目标触控友好 ---- */
+  @media (max-width: 700px) {
+    body { max-width: none; padding: 10px 12px calc(20px + env(safe-area-inset-bottom)); font-size: 14px; }
+    header { padding: 4px 0 10px; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    header h1 { font-size: 16px; }
+    section { padding: 14px; border-radius: 14px; margin-bottom: 12px; }
+    section > h2 { font-size: 14px; }
+    section > .desc { font-size: 12.5px; }
+    .btn { height: 44px; border-radius: 22px; font-size: 15px; }
+    .btn.small { height: 36px; border-radius: 18px; font-size: 13px; padding: 0 14px; }
+    .iconbtn { width: 40px; height: 40px; font-size: 17px; }
+    .drop { padding: 24px 14px; font-size: 14px; min-height: 88px; }
+    .steps { flex-direction: column; gap: 6px; }
+    .step { flex-direction: row; justify-content: flex-start; gap: 10px; padding: 10px 12px; min-height: 44px; text-align: left; }
+    .step .n { flex-shrink: 0; }
+    .zrow { flex-wrap: wrap; }
+    details summary { padding: 10px 0; font-size: 14px; }
+    details .inner { font-size: 12.5px; }
+    .kv { font-size: 14px; flex-wrap: wrap; }
+    .kv .k { min-width: 76px; }
+    pre { font-size: 12px; }
+    .stat { min-width: 60px; }
+    .stat .num { font-size: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<script>
+/* ===== DSHTNative 桥 polyfill（嵌入 DSH webUI 的 iframe 内）=====
+ * 原桥是 Android WebView 的 JS Bridge（DSHTNative.*）。嵌入模式经 node 侧
+ * dsht-rp-plugin 的 webServer 同源路由走同步 XHR——PC 与 Android 完全一致，
+ * 彻底摆脱独立 appassets 页 + Kotlin 桥。
+ */
+(function () {
+  function sync(method, url, body) {
+    var xhr = new XMLHttpRequest()
+    xhr.open(method, url, false)
+    if (body !== undefined) xhr.setRequestHeader('Content-Type', 'application/json')
+    xhr.send(body)
+    if (xhr.status >= 400) throw new Error(url + ': HTTP ' + xhr.status + ' ' + xhr.responseText.slice(0, 200))
+    return xhr.responseText
+  }
+  window.DSHTNative = {
+    openDsh: function () { if (window.parent && parent !== window) parent.postMessage({ type: 'dsht-rp-ui:import-close' }, '*') },
+    openRpChat: function () { if (window.parent && parent !== window) parent.postMessage({ type: 'dsht-rp-ui:import-close' }, '*') },
+    getDiag: function () {
+      try { return sync('POST', '/dsht-rp/diag', '{}') }
+      catch (e) { return JSON.stringify({ state: 'FAILED', lastError: e.message, output: [] }) }
+    },
+    rpc: function (method, payloadJson) {
+      return sync('POST', '/api/' + method,
+        JSON.stringify({ type: 'client-request', rpcId: 'dsht-iframe-' + Date.now(), method: method, payload: JSON.parse(payloadJson) }))
+    },
+    listRpWorkspaces: function () {
+      return sync('POST', '/dsht-rp/rp/workspaces', '{}')
+    },
+  }
+})()
+</script>
+
+<header>
+  <h1>数据迁移<small>SillyTavern → DSH（上传后由适配 agent 亲自转换，过程在会话里可见）</small></h1>
+  <div class="header-actions">
+    <button class="iconbtn" id="themeBtn" onclick="toggleTheme()" title="切换深浅主题">🌙</button>
+    <button class="btn ghost small" id="openDshBtn" onclick="nativeOpenDsh()">← 返回 DSH</button>
+  </div>
+</header>
+
+<!-- ============ 新手引导（首次使用三步走；API 配置指引指向 DSH 官方设置）============ -->
+<section id="welcome" style="display:none">
+  <h2>欢迎使用 DSHTavern <span class="badge" id="welcomeBadge">新手引导</span></h2>
+  <p class="desc">第一次使用？跟着三步走完就能开始角色扮演。迁移由适配 agent 执行（需要先在 DSH 设置 → 模型中配好 API——<b>强烈建议填你手里性能最强的模型</b>，理由见下方「导入适配原理」）。</p>
+  <div class="steps">
+    <div class="step" id="step1" onclick="nativeOpenDsh()">
+      <div class="n">1</div>
+      <div>配置 API 密钥</div>
+    </div>
+    <div class="step" id="step2" onclick="scrollToSection('zipSection')">
+      <div class="n">2</div>
+      <div>导入角色卡 / 数据</div>
+    </div>
+    <div class="step" id="step3" onclick="nativeOpenRpChat()">
+      <div class="n">3</div>
+      <div>开始角色扮演</div>
+    </div>
+  </div>
+  <div class="step-panel" id="stepPanel"></div>
+</section>
+
+<!-- ============ 导入适配原理（大白话说明，常显折叠）============ -->
+<section id="howSection">
+  <details>
+    <summary><b>导入适配原理（建议先看）</b></summary>
+    <div class="inner" style="display:flex;flex-direction:column;gap:8px">
+      <div>🤖 <b>迁移不是格式拷贝，是 AI 翻译。</b>你上传的 SillyTavern 数据由「适配 agent」（挂了 st-migration 技能的角色扮演专家）亲自阅读、理解、再写成 DSHTavern 的原生格式——角色卡、世界书、聊天记录、预设、变量全都如此。整个过程会在一个会话里直播，你能看到它每一步在做什么。</div>
+      <div>⚡ <b>因为它需要 AI 模型参与，模型越强迁移越准。</b>变量结构、深度提示、正则这些细节一旦翻错，聊天就会出怪问题。所以请在「DSH 设置 → 模型」里配置<b>你手里性能最强的模型</b>来跑迁移，别用小模型省这点钱。</div>
+      <div>🧩 <b>DSHTavern 的局限要心里有数：</b>SillyTavern 的插件生态（各类扩展脚本）适配还在进行中，不是每个 ST 插件都有对应能力；角色卡/世界书/预设/变量这些核心数据没这个问题。</div>
+      <div>🩹 <b>出问题不用慌：</b>如果导入失败、导入后行为不对、或插件出毛病，直接把问题现象用大白话发给<b>任意一个会话</b>里的 harness（比如「刚才导入的角色卡开场白没出来」），它会自己排查原因并修好。</div>
+    </div>
+  </details>
+</section>
+
+<!-- ============ data 整包迁移 ============ -->
+<section id="zipSection">
+  <h2>📦 从 SillyTavern 整体迁移 <span class="badge ok">data.zip</span></h2>
+  <p class="desc">选择整个 data 文件夹的 zip 压缩包。文件上传落盘后，会自动创建一个「ST 数据适配」工作区会话——适配 agent（挂载 st-migration skill）亲自完成转换，你在会话里看它干活、收迁移报告。</p>
+  <div class="drop" id="zipDrop" onclick="document.getElementById('zipFile').click()">
+    <div class="icon">📦</div>
+    <div>点击选择 data 压缩包</div>
+    <div style="font-size:11px;margin-top:4px">支持 .zip（整个 data 文件夹打包；大包自动分片上传）</div>
+    <input type="file" id="zipFile" accept=".zip,application/zip" onchange="handleFile(this, 'zip', 'zipResult')">
+  </div>
+  <div class="result" id="zipResult"><div class="empty">尚未导入 data 包</div></div>
+</section>
+
+<!-- ============ 批次与预览（§4.6 diff 预览屏 + §4.16.1 断点续跑）============ -->
+<section id="batchSection">
+  <h2>🗂 导入批次 <span class="badge">预览 / 断点续跑</span></h2>
+  <p class="desc">整包迁移先「预览」再开工：分类清单标出<span class="badge ok">新增</span><span class="badge warn">覆盖/更新</span>与明确<span class="badge err">丢弃</span>项，确认后才交给适配 agent。带「中断可续跑」徽章的批次从断点继续——已完成类目不重做。开工后这里实时显示逐类目进度与预估剩余时间。</p>
+  <div id="batchList"><div class="empty">读取中…</div></div>
+  <div id="progressArea"></div>
+  <div class="result" id="previewArea"></div>
+</section>
+
+<!-- ============ 分享 / 授权目录导入（仅 Android 原生桥可见；免 root 读 TauriTavern 导出）============ -->
+<section id="shareSection" style="display:none">
+  <h2>📲 从 TauriTavern 导入 <span class="badge">分享 / 授权目录</span></h2>
+  <p class="desc">TauriTavern 的导出 zip 在共享存储里，不用 root 也能拿到：① 在 TauriTavern（或文件管理器）里把 zip「分享」给 DSHTavern，出现在下方「分享接收」并自动开始导入；② 或授权其导出目录后直接从清单里挑选。选中后走与上方相同的分片上传 → 适配 agent 流程。</p>
+  <div id="inboxList"></div>
+  <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
+    <button class="btn ghost small" onclick="grantTree()">授权导出目录…</button>
+    <span class="hint" id="treeStatus" style="margin-top:0"></span>
+  </div>
+  <div id="treeList"></div>
+</section>
+
+<!-- ============ 角色卡导入 ============ -->
+<section id="cardSection">
+  <h2>🎴 角色卡导入 <span class="badge">PNG / JSON</span></h2>
+  <p class="desc">单张 SillyTavern V1/V2/V3 角色卡（含内嵌世界书/正则/深度提示）。同样交给适配 agent 处理并跳转会话。</p>
+  <div class="drop" id="cardDrop" onclick="document.getElementById('cardFile').click()">
+    <div class="icon">🎴</div>
+    <div>点击选择角色卡文件</div>
+    <div style="font-size:11px;margin-top:4px">支持 .png（含卡数据）/ .json</div>
+    <input type="file" id="cardFile" accept=".png,.json,image/png,application/json" onchange="handleFile(this, 'file', 'cardResult')">
+  </div>
+  <div class="result" id="cardResult"><div class="empty">尚未导入角色卡</div></div>
+</section>
+
+<!-- ============ 世界书导入 ============ -->
+<section>
+  <h2>📚 世界书导入 <span class="badge">JSON</span></h2>
+  <p class="desc">单本 SillyTavern 世界书（lorebook）。导入后成为 DSH skill，角色工作区可按需绑定。</p>
+  <div class="drop" id="loreDrop" onclick="document.getElementById('loreFile').click()">
+    <div class="icon">📖</div>
+    <div>点击选择世界书文件</div>
+    <div style="font-size:11px;margin-top:4px">支持 .json（世界书格式）</div>
+    <input type="file" id="loreFile" accept=".json,application/json" onchange="handleFile(this, 'file', 'loreResult')">
+  </div>
+  <div class="result" id="loreResult"><div class="empty">尚未导入世界书</div></div>
+</section>
+
+<!-- ============ 运行时诊断 ============ -->
+<section>
+  <h2>🔧 运行时诊断 <span class="badge">node / 端口</span></h2>
+  <p class="desc">node 进程与 DSH 服务的实时状态（含插件数据面摘要）。排障时看这里。每 3 秒自动刷新。</p>
+  <div class="result" id="diagResult"><div class="empty">读取中…</div></div>
+</section>
+
+<footer>DSHTavern · 数据只写本机 $DSH_HOME · 转换由适配 agent 在会话中执行</footer>
+
+<!-- 引擎 bundle（esbuild 直出，build-dsht.ps1 Step 5）：window.DSHT 预览/续跑客户端。
+     404（旧插件资产）时页面内联 fetch 兜底，功能不缺席。 -->
+<script src="/dsht-rp/import-center/app.js"></script>
+
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+const HAS_NATIVE = typeof DSHTNative !== 'undefined'
+
+function nativeOpenDsh() { if (HAS_NATIVE) DSHTNative.openDsh() }
+function nativeOpenRpChat() { if (HAS_NATIVE) DSHTNative.openRpChat() }
+
+// ---------- 主题管理（对齐 DSH：根元素 data-ds-dark-theme 一属性切换）----------
+function applyTheme(dark) {
+  document.documentElement.toggleAttribute('data-ds-dark-theme', dark)
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+  document.getElementById('themeBtn').textContent = dark ? '☀️' : '🌙'
+}
+function toggleTheme() {
+  const dark = !document.documentElement.hasAttribute('data-ds-dark-theme')
+  localStorage.setItem('dsht-theme', dark ? 'dark' : 'light')
+  applyTheme(dark)
+}
+(function initTheme() {
+  try {
+    if (window.parent && parent !== window && parent.document.documentElement.hasAttribute('data-ds-dark-theme')) {
+      applyTheme(true)
+      return
+    }
+  } catch (e) { /* 跨源/独立页忽略 */ }
+  const pref = localStorage.getItem('dsht-theme')
+  applyTheme(pref ? pref === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches)
+})()
+
+// ---------- 新手引导（Onboarding）：实时检测三步完成态 ----------
+function scrollToSection(id) {
+  const el = document.getElementById(id)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+async function checkOnboarding() {
+  const welcome = document.getElementById('welcome')
+  let hasKey = false, hasChars = false
+  try {
+    const r = JSON.parse(DSHTNative.rpc('credentials.describe', JSON.stringify({ refs: ['DEEPSEEK_API_KEY'] })))
+    hasKey = !!r.result?.value?.credentials?.DEEPSEEK_API_KEY?.configured
+  } catch (_e) { /* 无凭据 */ }
+  if (!hasKey) {
+    try {
+      const r = JSON.parse(DSHTNative.rpc('llm.providers', JSON.stringify({})))
+      hasKey = (r.result?.value?.providers || []).some(p => p.declared === true)
+    } catch (_e) { /* 目录不可用 */ }
+  }
+  try {
+    const r = JSON.parse(DSHTNative.listRpWorkspaces())
+    hasChars = (r.workspaces || []).length > 0
+  } catch (_e) { /* 无工作区 */ }
+
+  const step1 = document.getElementById('step1')
+  const step2 = document.getElementById('step2')
+  const step3 = document.getElementById('step3')
+  const panel = document.getElementById('stepPanel')
+  const badge = document.getElementById('welcomeBadge')
+  const allDone = hasKey && hasChars
+  const show = !(allDone && localStorage.getItem('dsht-onboarded') === '1')
+  welcome.style.display = show ? 'block' : 'none'
+  if (!show) return
+  if (allDone) localStorage.setItem('dsht-onboarded', '1')
+
+  step1.className = 'step ' + (hasKey ? 'done' : 'current')
+  step2.className = 'step ' + (hasChars ? 'done' : (hasKey ? 'current' : ''))
+  step3.className = 'step' + (hasKey && hasChars ? ' current' : '')
+  badge.className = 'badge ' + (hasKey ? 'ok' : 'warn')
+  badge.textContent = hasKey ? (hasChars ? '✓ 全部就绪' : '进行中') : '第 1 步待完成'
+
+  if (!hasKey) {
+    panel.innerHTML = `<div class="card"><b>先配置 API 密钥</b>——迁移由适配 agent 执行，agent 与角色扮演对话都依赖模型 API。配置入口在 <b>DSH 官方设置 → 模型</b>（支持 DeepSeek 官方或任意 OpenAI 兼容端点）。配置完返回此处继续。
+      <div style="margin-top:8px"><button class="btn small" onclick="nativeOpenDsh()">→ 去 DSH 设置</button></div></div>`
+  } else if (!hasChars) {
+    panel.innerHTML = `<div class="card"><b>API 已就绪。</b>下一步导入你的角色卡或 SillyTavern 数据包。
+      <div style="margin-top:8px"><button class="btn small" onclick="scrollToSection('zipSection')">→ 去导入</button></div></div>`
+  } else {
+    panel.innerHTML = `<div class="card"><b>一切就绪！</b>返回 DSH 后点侧栏底部「🎭 角色扮演」，点开角色卡即可开始（聊天即原生会话流）。此引导卡片下次不再显示。
+      <div style="margin-top:8px"><button class="btn small" onclick="nativeOpenRpChat()">→ 开始角色扮演</button></div></div>`
+  }
+}
+
+// ---------- R0：上传 → import-stage → import-kickoff → 跳转适配会话 ----------
+// 前端不再跑转换流水线（analyzeDataZip/exportToDshFiles 已切断）——文件分片 POST 落盘，
+// 后端为批次创建适配工作区会话并发出开工消息，父窗口负责跳转。
+
+const CHUNK = 8 * 1024 * 1024 // 8MB 原始字节/片（base64 后 ~11MB/请求）
+
+function u8ToBase64(u8) {
+  let bin = ''
+  const STEP = 0x8000
+  for (let i = 0; i < u8.length; i += STEP) {
+    bin += String.fromCharCode.apply(null, u8.subarray(i, i + STEP))
+  }
+  return btoa(bin)
+}
+
+async function postJson(url, body) {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const json = await resp.json().catch(() => ({}))
+  if (!resp.ok || json.error) throw new Error(json.error || `HTTP ${resp.status}`)
+  return json
+}
+
+// 进度条/渲染小工具（handleFile 与原生桥导入共用）
+function makeProgressSetter(outId) {
+  return (pct, stage) => {
+    const fill = document.getElementById(outId + '-fill')
+    const stageEl = document.getElementById(outId + '-stage')
+    const pctEl = document.getElementById(outId + '-pct')
+    if (fill) fill.style.width = `${pct}%`
+    if (stageEl) stageEl.textContent = stage
+    if (pctEl) pctEl.textContent = `${pct}%`
+  }
+}
+function progressHtml(outId, name, size) {
+  return `
+    <div class="empty">📦 ${esc(name)}（${(size / 1048576).toFixed(1)}MB）</div>
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill" id="${outId}-fill"></div></div>
+      <div class="progress-text"><span id="${outId}-stage">上传中…</span><span class="pct" id="${outId}-pct">0%</span></div>
+    </div>`
+}
+function errorHtml(e) {
+  return `<div class="card" style="border-color:var(--dsw-static-red-500)"><div class="kv"><span class="k">导入失败</span><span class="v" style="color:var(--dsw-static-red-500)">${esc(e.message)}</span></div></div>`
+}
+
+// 分片上传公共循环：getChunkBase64(i) 返回第 i 片的 base64（File.slice 或原生桥 readInboxChunk）
+async function stageUpload(name, format, total, getChunkBase64, setProgress) {
+  let batchId = ''
+  let staged = null
+  for (let i = 0; i < total; i++) {
+    const chunk = await getChunkBase64(i)
+    const resp = await postJson('/dsht-rp/rp/import-stage', {
+      name,
+      format,
+      ...(batchId ? { batchId } : {}),
+      chunk,
+      index: i,
+      done: i === total - 1,
+    })
+    batchId = resp.batchId
+    if (resp.manifest) staged = resp
+    setProgress(Math.round(((i + 1) / total) * 70), `上传中… ${i + 1}/${total} 片`)
+  }
+  if (!staged) throw new Error('上传未完成（缺少服务端确认）')
+  return { batchId, staged }
+}
+
+// 上传后公共收尾：整包走「预览确认 → kickoff」门禁（§4.6）；单卡/单书保持快路径直接 kickoff
+async function finishImport(fileName, batchId, staged, out, setProgress) {
+  const m = staged.manifest || {}
+  setProgress(100, '已落盘')
+  refreshBatches()
+  if (m.kind === 'st-data') {
+    // §4.6 diff 预览门禁：整包迁移先看预览（导入什么/覆盖什么/丢弃什么），确认后才 kickoff。
+    // openPreview 会解锁批次行里原本置灰的「开始迁移」按钮。
+    out.innerHTML = `
+      <div class="export-done">
+        📦 ${esc(fileName)} 已落盘（批次 ${esc(batchId)}）
+        <div class="hint">整包迁移先预览再开工——已在下方「导入批次」生成分类清单，确认清单后点「✅ 确认开始迁移」。着急的话也可以点「跳过预览直接导入」。</div>
+      </div>`
+    await openPreview(batchId)
+    return
+  }
+  // 开工：workspace.create/rename + 会话 + 开工消息（后端 loopback 完成）——单项导入快路径
+  const kickoff = await postJson('/dsht-rp/rp/import-kickoff', { batchId })
+  setProgress(100, '已创建适配会话')
+
+  // 通知父窗口跳转会话（父窗口刷新 session 基线后 openSession）
+  notifyParentKickoff(kickoff.sessionId, batchId)
+
+  const kindLabel = { 'single-card': '单张角色卡', 'single-book': '单本世界书' }[m.kind] || '数据'
+  out.innerHTML = `
+    <div class="export-done">
+      ✅ 已交给适配 agent（${kindLabel} · 批次 ${esc(batchId)}）
+      <div class="hint">正在跳转到「ST 数据适配」会话——转换过程、校验回执与迁移报告都在会话里可见。没跳转的话点右上角「← 返回 DSH」后在侧边栏找「ST 数据适配 · ${esc(fileName.replace(/\.(zip|png|json)$/i, ''))}」工作区。</div>
+    </div>`
+}
+
+// 通知父窗口跳转会话（父窗口刷新 session 基线后 openSession；跨源/独立页忽略）
+function notifyParentKickoff(sessionId, batchId) {
+  try {
+    if (window.parent && parent !== window) {
+      parent.postMessage({ type: 'dsht-rp-ui:import-kickoff', sessionId, batchId }, '*')
+    }
+  } catch (e) { /* 独立页忽略 */ }
+}
+
+// ---------- 批次修复 10：单卡/单书重名导入提示 ----------
+// 上传前查重（角色卡对 /rp/workspaces 的 name，世界书对 /rp/books 的 name）；
+// 重名只提示——实际「名称（N）」重命名由后端/适配 agent 落盘时做。
+async function findDuplicateName(kind, file) {
+  const base = file.name.replace(/\.(png|json)$/i, '').trim()
+  if (!base) return null
+  try {
+    if (kind === 'card') {
+      const r = await postJson('/dsht-rp/rp/workspaces', {})
+      return (r.workspaces || []).some(w => w && w.name === base) ? base : null
+    }
+    const r = await postJson('/dsht-rp/rp/books', {})
+    return (r.books || []).some(b => b && b.name === base) ? base : null
+  } catch (e) { return null } // 查重失败不阻塞导入
+}
+
+async function handleFile(input, format, outId) {
+  const file = input.files?.[0]
+  if (!file) return
+  const out = document.getElementById(outId)
+  const setProgress = makeProgressSetter(outId)
+  // 单卡/单书重名提示（整包 zip 不查——批次内多资源由 agent 逐个处理）
+  if (outId === 'cardResult' || outId === 'loreResult') {
+    const isCard = outId === 'cardResult'
+    const dup = await findDuplicateName(isCard ? 'card' : 'book', file)
+    if (dup !== null && !window.confirm(`已存在同名${isCard ? '角色' : '世界书'}「${dup}」，继续导入将保存为「${dup}（N）」。仍要导入吗？`)) {
+      out.innerHTML = '<div class="empty">已取消导入（同名已存在）</div>'
+      input.value = ''
+      return
+    }
+  }
+  out.innerHTML = progressHtml(outId, file.name, file.size)
+  try {
+    // 分片上传（小文件天然单片）
+    const total = Math.max(1, Math.ceil(file.size / CHUNK))
+    const { batchId, staged } = await stageUpload(file.name, format, total, async (i) => {
+      const buf = new Uint8Array(await file.slice(i * CHUNK, (i + 1) * CHUNK).arrayBuffer())
+      return u8ToBase64(buf)
+    }, setProgress)
+    await finishImport(file.name, batchId, staged, out, setProgress)
+  } catch (e) {
+    out.innerHTML = errorHtml(e)
+  }
+  input.value = ''
+}
+
+// ---------- §4.6 预览步骤 + §4.16.1 断点续跑：批次列表 / 预览屏 / 门禁 kickoff ----------
+// 路由契约的单一事实源在 app.js（window.DSHT.*，由 browser-entry.ts 打包）；
+// 这里对 bundle 缺席（旧插件资产 404）做内联 fetch 兜底。
+const previewedBatches = new Set() // 已加载过预览的批次（批次行「开始迁移」按钮解锁）
+
+async function apiPreview(batchId) {
+  if (window.DSHT && typeof window.DSHT.fetchImportPreview === 'function') return window.DSHT.fetchImportPreview(batchId)
+  return postJson('/dsht-rp/rp/import-preview', { batchId })
+}
+async function apiKickoff(batchId, resumeFrom) {
+  if (window.DSHT && typeof window.DSHT.kickoffImport === 'function') {
+    return window.DSHT.kickoffImport(batchId, { resumeFrom: !!resumeFrom })
+  }
+  return postJson('/dsht-rp/rp/import-kickoff', { batchId, ...(resumeFrom ? { resumeFrom: true } : {}) })
+}
+
+// ---------- §4.16.1 屏5 执行 / 屏6 报告：批次进度（类目级进度条 + 预估剩余时间）----------
+// 数据源 GET /rp/import-progress?batchId=（服务端用 meta.json manifest 计数 × checkpoint 逐类目
+// done 算好，前端只渲染）；30s 轮询节流——服务端对 claims 的预览扫描有 60s 缓存，轮询不重复扫盘。
+async function apiProgress(batchId) {
+  if (window.DSHT && typeof window.DSHT.fetchImportProgress === 'function') return window.DSHT.fetchImportProgress(batchId)
+  const r = await fetch('/dsht-rp/rp/import-progress?batchId=' + encodeURIComponent(batchId))
+  const json = await r.json().catch(() => ({}))
+  if (!r.ok || json.error) throw new Error(json.error || `HTTP ${r.status}`)
+  return json
+}
+
+// 类目名（与 SKILL.md / checkpoint stage 契约一一对应）
+const STAGE_LABELS = {
+  api: 'API 配置', books: '世界书', cards: '角色卡', chats: '聊天记录',
+  presets: '预设', persona: '用户人设', misc: '杂项',
+}
+
+let progressTimer = null   // 进行中的轮询句柄（切批次/完成时先清）
+let progressBatchId = ''   // 当前盯的批次
+let progressFails = 0      // 连续失败计数（连错 3 次停轮询，保留最后一次画面）
+
+// 单条类目行：total>0 → 进度条 + done/total；total=0 且 done>0 → 「N done」（checkpoint 有数、
+// manifest 没计数的类目——如实展示 done 数本身）；两者皆 0 → 不渲染（不涉及的类目）
+function progressCategoryRow(c) {
+  if (!c || (c.total <= 0 && c.done <= 0)) return ''
+  const pct = Math.round((c.ratio || 0) * 100)
+  const count = c.total > 0 ? `${c.done}/${c.total} · ${pct}%` : `${c.done} done`
+  return `<div class="cat-row">
+    <span class="cat-name">${esc(STAGE_LABELS[c.name] || c.name)}</span>
+    <div class="progress-bar"><div class="progress-fill" style="width:${Math.min(100, pct)}%"></div></div>
+    <span class="cat-count">${esc(count)}</span>
+  </div>`
+}
+
+function renderProgress(batchId, pg) {
+  const area = document.getElementById('progressArea')
+  if (!area || !pg) return
+  const pct = Math.round((pg.overall.ratio || 0) * 100)
+  // 预估剩余：服务端外推（null = 数据不足），显示「—」不编数字
+  const eta = pg.etaMinutes == null ? '—' : (pg.etaMinutes === 0 ? '< 1 分钟' : `约 ${pg.etaMinutes} 分钟`)
+  const stateNote = pg.stage === 'done'
+    ? '<span class="badge ok">迁移完成</span>'
+    : pg.uncertain
+      ? '<span class="badge warn">适配 agent 尚未回报进度</span>（刚开工或正在分析包结构；有类目完成就会亮起来）'
+      : `当前类目：<b>${esc(STAGE_LABELS[pg.stage] || pg.stage)}</b>`
+  const claims = (pg.claims || []).length
+    ? `<div class="kv"><span class="k">待认领</span><span class="v"><span class="badge warn">${pg.claims.length} 项</span> ${esc(pg.claims[0].name)}${pg.claims.length > 1 ? ` 等 ${pg.claims.length} 项` : ''}——照常导入，完成后在「角色扮演」界面手动绑定</span></div>`
+    : ''
+  area.innerHTML = `
+    <div class="card">
+      <div class="kv"><span class="k">迁移进度</span><span class="v">${stateNote} · 批次 ${esc(batchId)}</span></div>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" style="width:${Math.min(100, pct)}%"></div></div>
+        <div class="progress-text"><span>总进度 ${pg.overall.done}/${pg.overall.total || 0}</span><span>预估剩余 ${eta} · <span class="pct">${pct}%</span></span></div>
+      </div>
+      ${(pg.categories || []).map(progressCategoryRow).join('')}
+      ${claims}
+    </div>`
+}
+
+async function pollProgressOnce() {
+  try {
+    const r = await apiProgress(progressBatchId)
+    renderProgress(progressBatchId, r.progress)
+    progressFails = 0
+    if (r.progress && r.progress.stage === 'done') stopProgressPolling()
+  } catch (e) {
+    if (++progressFails >= 3) stopProgressPolling() // 连错 3 次停（保留最后一次画面；不弹错误打断用户）
+  }
+}
+
+function startProgressPolling(batchId) {
+  if (progressTimer) clearInterval(progressTimer)
+  progressBatchId = batchId
+  progressFails = 0
+  void pollProgressOnce()
+  progressTimer = setInterval(pollProgressOnce, 30000)
+}
+function stopProgressPolling() {
+  if (progressTimer) clearInterval(progressTimer)
+  progressTimer = null
+}
+
+// 页面加载/批次刷新时自动盯「已开工且未交报告」的最新批次（列表按新→旧排序，取第一个命中）
+function autoWatchProgress(batches) {
+  if (progressTimer || !Array.isArray(batches)) return
+  const active = batches.find(b => b && b.kickoff && b.kickoff.sessionId && !b.hasReport)
+  if (active) startProgressPolling(active.batchId)
+}
+
+// 批次列表：/rp/import-batches（GET）+ checkpoint 状态（服务端摘要，非空 = 中断过可续跑）
+async function refreshBatches() {
+  const out = document.getElementById('batchList')
+  let batches = []
+  try {
+    const r = await fetch('/dsht-rp/rp/import-batches').then(r => r.json())
+    batches = (r && r.batches) || []
+  } catch (e) {
+    out.innerHTML = `<div class="empty">批次清单不可用：${esc(e.message)}</div>`
+    return
+  }
+  if (!batches.length) {
+    out.innerHTML = '<div class="empty">暂无批次（上传 data 包后出现在这里）</div>'
+    return
+  }
+  out.innerHTML = batches.map(b => {
+    const m = b.manifest || {}
+    const kindLabel = { 'st-data': 'ST 数据包', 'single-card': '单张卡', 'single-book': '单本书' }[m.kind] || '数据'
+    const counts = m.kind ? `${m.cards ?? 0} 卡 · ${m.books ?? 0} 书 · ${m.chats ?? 0} 聊 · ${m.presets ?? 0} 预设` : ''
+    const cp = b.checkpoint
+    const cpBadge = cp
+      ? `<span class="badge warn" title="已完成类目：${esc(cp.stages.join('、'))}（${esc(String(cp.doneCount))} 项，${esc(cp.updatedAt)} 更新）">中断可续跑</span>`
+      : ''
+    const reportBadge = b.hasReport ? '<span class="badge ok">已交报告</span>' : ''
+    // 未预览时「开始迁移」置灰（§4.6 门禁）；「跳过预览直接导入」保持老路径可用
+    const startBtn = cp
+      ? `<button class="btn small" onclick="kickoffBatch('${esc(b.batchId)}', true)">▶ 断点续跑</button>`
+      : `<button class="btn small" ${previewedBatches.has(b.batchId) ? '' : 'disabled title="先点「预览」确认清单后才能开始迁移"'} onclick="kickoffBatch('${esc(b.batchId)}')">开始迁移</button>
+         <button class="btn ghost small" onclick="kickoffBatch('${esc(b.batchId)}', false, true)">跳过预览直接导入</button>`
+    return `<div class="zrow">
+      <div class="zn">📦 ${esc(b.name || b.batchId)}${cpBadge}${reportBadge}
+        <div class="zs">${esc(b.batchId)} · ${kindLabel}${counts ? ' · ' + esc(counts) : ''}${b.stagedAt ? ' · ' + esc(new Date(b.stagedAt).toLocaleString('zh-CN')) : ''}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn ghost small" onclick="openPreview('${esc(b.batchId)}')">预览</button>
+        ${startBtn}
+      </div>
+    </div>`
+  }).join('')
+  // §4.16.1 屏5：页面加载/刷新时自动盯「已开工且未交报告」的最新批次（轮询进度）
+  autoWatchProgress(batches)
+}
+
+// 拉预览并渲染（只读扫描，不改任何文件；完成后解锁该批次的 kickoff 门禁）
+async function openPreview(batchId) {
+  const area = document.getElementById('previewArea')
+  scrollToSection('batchSection')
+  area.innerHTML = '<div class="empty">生成预览中（只读扫描批次数据，不改任何文件）…</div>'
+  try {
+    const r = await apiPreview(batchId)
+    previewedBatches.add(batchId)
+    renderPreview(batchId, r.preview)
+    refreshBatches()
+  } catch (e) {
+    area.innerHTML = errorHtml(e)
+  }
+}
+
+// 目标徽章：新 → 绿「新增」；同名/已绑定 → 黄「覆盖/更新」（agent 落盘语义：幂等覆盖同名 slug）
+function badgeForTarget(t) {
+  if (t === '新工作区' || t === '新 skill') return '<span class="badge ok">新增</span>'
+  if (t === '已存在(同名)' || t === '已绑定') return '<span class="badge warn">覆盖/更新</span>'
+  return '<span class="badge">' + esc(String(t)) + '</span>'
+}
+
+function renderPreview(batchId, p) {
+  const cats = []
+  if (p.cards && p.cards.length) cats.push(`
+    <details open><summary>🎴 角色卡 × ${p.cards.length}</summary><div class="inner">
+      ${p.cards.map(c => `<div class="kv"><span class="k">${esc(c.name)} ${badgeForTarget(c.target)}</span><span class="v">${c.avatar ? '有立绘 · ' : ''}内嵌正则 ${c.regexCount} 条 · ${c.hasEmbeddedWorldInfo ? '含内嵌世界书 · ' : ''}备选开场白 ${c.alternateGreetings} 条 · 目标 ${esc(c.slug)}</span></div>`).join('')}
+    </div></details>`)
+  if (p.books && p.books.length) cats.push(`
+    <details open><summary>📚 世界书 × ${p.books.length}</summary><div class="inner">
+      ${p.books.map(bk => `<div class="kv"><span class="k">${esc(bk.name)} ${badgeForTarget(bk.target)}</span><span class="v">${bk.entryCount} 条目${bk.ejsEntries ? ` · EJS 模板 ${bk.ejsEntries} 条（将转条件槽位/模板渲染）` : ''}${bk.boundBy && bk.boundBy.length ? ' · 绑定于 ' + esc(bk.boundBy.join('、')) : ''}</span></div>`).join('')}
+    </div></details>`)
+  if (p.chats && p.chats.length) cats.push(`
+    <details><summary>💬 聊天 × ${p.chats.length}（展开逐条核对）</summary><div class="inner">
+      ${p.chats.map(ch => `<div class="kv"><span class="k">${esc(ch.name)}${ch.targetSessionId ? ' <span class="badge">已存在</span>' : ''}</span><span class="v">${ch.messageCount}${ch.approx ? '+' : ''} 条消息${ch.targetSessionId ? ' · 目标会话 ' + esc(ch.targetSessionId) : ''}${ch.orphan ? ' · <span style="color:var(--dsw-static-amber-600)">对不上角色，将进待认领</span>' : ''}</span></div>`).join('')}
+    </div></details>`)
+  if (p.presets && p.presets.length) cats.push(`
+    <details open><summary>🎛 ST 预设 × ${p.presets.length}</summary><div class="inner">
+      ${p.presets.map(pr => `<div class="kv"><span class="k">${esc(pr.displayName)} ${pr.targetPresetId ? '<span class="badge warn">覆盖/更新</span>' : '<span class="badge ok">新增</span>'}</span><span class="v">${pr.promptCount} prompts${pr.ejs ? ' · 含 EJS 模板（将转条件槽位）' : ''}${pr.targetPresetId ? ' · 目标 ' + esc(pr.targetPresetId) : ''}</span></div>`).join('')}
+    </div></details>`)
+  if (p.dropped && p.dropped.length) cats.push(`
+    <details open><summary>🚫 明确丢弃 × ${p.dropped.length}（设计决策不导入，去向见原因）</summary><div class="inner">
+      ${p.dropped.map(d => `<div class="kv"><span class="k" style="color:var(--dsw-static-amber-600)">${esc(d.path)}</span><span class="v">${esc(d.reason)}</span></div>`).join('')}
+    </div></details>`)
+  // §4.16.1 待认领入口：预览里对不上任何角色的孤儿聊天单列一区——列出 orphan 项 +
+  // 一句话解释 + 「仍要导入」说明（默认导入不拦截）；没有 orphan 项则不显示该区
+  const orphans = (p.chats || []).filter(ch => ch.orphan)
+  if (orphans.length) cats.push(`
+    <details open><summary>🙋 待认领 × ${orphans.length}（归属不明；默认仍导入，不拦截）</summary><div class="inner">
+      <div class="hint" style="margin-top:0">这些项<b>无法确定归属</b>（chats 目录名对不上包里任何角色卡）。迁移会<b>照常导入</b>，先放进 rp/_orphan「待认领」工作区；导入完成后在<b>「角色扮演」界面</b>找到正确角色，把聊天手动绑定过去即可。</div>
+      ${orphans.map(ch => `<div class="kv"><span class="k">${esc(ch.name)}</span><span class="v">${ch.messageCount}${ch.approx ? '+' : ''} 条消息 · 无法确定归属，导入后手动绑定</span></div>`).join('')}
+    </div></details>`)
+  if (!cats.length) cats.push('<div class="empty">批次里没识别到可导入的资源（unpacked 目录为空或结构未知）</div>')
+  document.getElementById('previewArea').innerHTML = `
+    <div class="card">
+      <div class="kv"><span class="k">批次</span><span class="v">${esc(batchId)} · ${esc(p.kind)} · ST 数据根 ${esc(p.stRoot || '-')}</span></div>
+      ${p.ejsTemplates ? `<div class="kv"><span class="k">EJS 模板</span><span class="v"><span class="badge warn">转换提示</span> ${p.ejsTemplates} 处含 EJS &lt;%%&gt; 语法——迁移时转条件槽位 / 由模板引擎渲染</span></div>` : ''}
+      ${cats.join('')}
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn" onclick="kickoffBatch('${esc(batchId)}')">✅ 确认以上清单，开始迁移</button>
+        <button class="btn ghost" onclick="kickoffBatch('${esc(batchId)}', false, true)">跳过预览直接导入</button>
+      </div>
+    </div>`
+  scrollToSection('batchSection')
+}
+
+// 开工（确认后）/ 续跑（checkpoint 批次）：kickoff + 通知父窗口跳转会话
+async function kickoffBatch(batchId, resumeFrom = false, skipPreviewNote = false) {
+  const area = document.getElementById('previewArea')
+  scrollToSection('batchSection')
+  area.innerHTML = `<div class="empty">${resumeFrom ? '正在唤醒适配会话（从断点继续，已完成类目不重做）…' : '正在创建适配会话…'}</div>`
+  try {
+    const r = await apiKickoff(batchId, resumeFrom)
+    notifyParentKickoff(r.sessionId, batchId)
+    const cpNote = r.resumed && r.checkpoint ? `（续跑：跳过 ${esc(r.checkpoint.stages.join('、'))}，只补缺失类目）` : ''
+    area.innerHTML = `
+      <div class="export-done">
+        ✅ ${resumeFrom ? '已发续跑指令' : '已交给适配 agent'}（批次 ${esc(batchId)} · 会话 ${esc(r.sessionId)}）${cpNote}
+        <div class="hint">${skipPreviewNote && !resumeFrom ? '已按你的选择跳过预览。' : ''}正在跳转到「ST 数据适配」会话——没跳转的话在侧边栏找该工作区。下方会实时显示逐类目迁移进度。</div>
+      </div>`
+    startProgressPolling(batchId) // §4.16.1 屏5：开工即轮询类目级进度
+    refreshBatches()
+  } catch (e) {
+    area.innerHTML = errorHtml(e)
+  }
+}
+
+// ---------- Android 原生桥：分享 inbox + SAF 授权目录（免 root 读 TauriTavern 导出）----------
+// MainActivity 注入 window.DSHTShare（顶层与同源 iframe 均可达）。PC / 纯浏览器无此对象 → 区块隐藏。
+const SHARE = (typeof window.DSHTShare !== 'undefined' && typeof window.DSHTShare.readSharedInbox === 'function') ? window.DSHTShare : null
+const BRIDGE_CHUNK = 4 * 1024 * 1024 // 桥读取单片 4MB（base64 经 JSBridge 传输，比 fetch 分片保守）
+
+function bridgeCall(fn, ...args) {
+  try {
+    const r = JSON.parse(fn(...args))
+    return r && typeof r === 'object' ? r : { ok: false, error: '桥返回异常' }
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) } }
+}
+
+let lastAutoImportSig = ''
+
+// inbox 文件（分享接收 / 授权目录落盘）→ 既有分片上传（结果渲染进 zipResult，与「选择 data 压缩包」同出口）
+async function importInboxFile(name, size) {
+  const out = document.getElementById('zipResult')
+  const setProgress = makeProgressSetter('zipResult')
+  out.innerHTML = progressHtml('zipResult', name, size)
+  try {
+    const total = Math.max(1, Math.ceil(size / BRIDGE_CHUNK))
+    const { batchId, staged } = await stageUpload(name, 'zip', total, (i) => {
+      const r = bridgeCall(SHARE.readInboxChunk.bind(SHARE), name, i * BRIDGE_CHUNK, BRIDGE_CHUNK)
+      if (!r.ok || !r.data) throw new Error(r.error || `读取第 ${i + 1} 片失败`)
+      return r.data
+    }, setProgress)
+    await finishImport(name, batchId, staged, out, setProgress)
+    bridgeCall(SHARE.removeInboxFile.bind(SHARE), name) // 一次性消费，清暂存
+    refreshShareUI()
+  } catch (e) {
+    out.innerHTML = errorHtml(e)
+  }
+}
+
+// 授权目录文件：先由原生侧流式落 inbox（避开 SAF 随机读低效），再走统一 inbox 导入
+async function importTreeFile(name) {
+  const staged = bridgeCall(SHARE.stageTreeFile.bind(SHARE), name)
+  if (!staged.ok) {
+    document.getElementById('zipResult').innerHTML = errorHtml({ message: staged.error || '读取授权目录文件失败' })
+    return
+  }
+  await importInboxFile(staged.name, staged.size)
+}
+
+function grantTree() {
+  bridgeCall(SHARE.requestTreeGrant.bind(SHARE))
+  document.getElementById('treeStatus').textContent = '请在系统目录选择器里选中 TauriTavern 的导出目录…'
+}
+
+function refreshShareUI() {
+  if (!SHARE) return
+  document.getElementById('shareSection').style.display = ''
+  const inbox = bridgeCall(SHARE.readSharedInbox.bind(SHARE))
+  const files = (inbox.ok && inbox.files) || []
+  document.getElementById('inboxList').innerHTML = files.length
+    ? files.map(f => `<div class="zrow"><div class="zn">${esc(f.name)}<div class="zs">${(f.size / 1048576).toFixed(1)}MB · 分享接收</div></div><button class="btn small" onclick="importInboxFile('${esc(f.name)}', ${f.size})">导入</button></div>`).join('')
+    : '<div class="empty" style="padding:10px">暂无分享进来的压缩包（在 TauriTavern 里把导出 zip「分享」→ 选 DSHTavern）</div>'
+  maybeAutoImport(files)
+  const tree = bridgeCall(SHARE.listTreeZips.bind(SHARE))
+  const treeStatus = document.getElementById('treeStatus')
+  const treeList = document.getElementById('treeList')
+  if (!tree.ok) {
+    treeStatus.textContent = tree.error || '读取授权目录失败'
+    treeList.innerHTML = ''
+  } else if (!tree.granted) {
+    treeStatus.textContent = '未授权目录'
+    treeList.innerHTML = ''
+  } else {
+    treeStatus.textContent = '已授权导出目录'
+    const tz = tree.files || []
+    treeList.innerHTML = tz.length
+      ? tz.map(f => `<div class="zrow"><div class="zn">${esc(f.name)}<div class="zs">${(f.size / 1048576).toFixed(1)}MB · 授权目录</div></div><button class="btn small" onclick="importTreeFile('${esc(f.name)}')">导入</button></div>`).join('')
+      : '<div class="empty" style="padding:10px">授权目录里还没有 .zip 导出包</div>'
+  }
+}
+
+// 分享到达时若导入中心开着：自动选中最新 inbox 文件走既有 import-stage 流程
+//（守卫：同一文件只自动一次 + 只接 5 分钟内刚进来的——历史暂存不打扰）
+function maybeAutoImport(files) {
+  const f = files && files[0]
+  if (!f) return
+  const sig = f.name + ':' + f.mtime
+  if (sig === lastAutoImportSig) return
+  if (Date.now() - f.mtime > 5 * 60 * 1000) return
+  lastAutoImportSig = sig
+  void importInboxFile(f.name, f.size)
+}
+
+// ---------- 运行时诊断（每 3 秒自动刷新）----------
+function refreshDiag() {
+  const out = document.getElementById('diagResult')
+  try {
+    const d = JSON.parse(DSHTNative.getDiag())
+    const stateLabel = { RUNNING: '运行中', FAILED: '异常' }[d.state] || d.state
+    const stateBadge = d.state === 'FAILED' ? 'err' : (d.state === 'RUNNING' && d.portOpen) ? 'ok' : 'warn'
+    out.innerHTML = `
+      <div class="card">
+        <div class="kv"><span class="k">插件数据面</span><span class="v"><span class="badge ${stateBadge}">${esc(stateLabel)}</span> DSH 服务端口 ${d.port}（当前请求可达 = 运行中）</span></div>
+        <div class="kv"><span class="k">DSH_HOME</span><span class="v">${esc(d.dshHome)}</span></div>
+        <div class="kv"><span class="k">已导入数据</span><span class="v">${d.workspaces} 工作区 · ${d.skills} 世界书 skill · ${d.sessions} 会话</span></div>
+        ${d.lastError ? `<div class="kv"><span class="k">最后错误</span><span class="v" style="color:var(--dsw-static-red-500)">${esc(d.lastError)}</span></div>` : ''}
+        ${d.output && d.output.length ? `<details><summary>📜 最近日志（尾部 15 行）</summary><div class="inner"><pre>${esc((d.output || []).slice(-15).join('\n'))}</pre></div></details>` : ''}
+      </div>`
+  } catch (e) {
+    out.innerHTML = `<div class="empty">诊断不可用：${esc(e.message)}</div>`
+  }
+}
+refreshDiag()
+setInterval(refreshDiag, 3000)
+checkOnboarding()
+// 批次列表（含 checkpoint「中断可续跑」徽章）：首载 + 分享导入等变更时机由 refreshBatches 手动触发
+refreshBatches()
+// Android 原生桥：原生侧 dsht-share:changed 事件（分享落盘 / 目录授权完成）+ 4s 轮询兜底
+if (SHARE) {
+  window.addEventListener('dsht-share:changed', () => refreshShareUI())
+  refreshShareUI()
+  setInterval(refreshShareUI, 4000)
+}
+</script>
+</body>
+</html>

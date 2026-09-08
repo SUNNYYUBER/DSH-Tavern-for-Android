@@ -1,0 +1,20 @@
+{
+  "formatVersion": 0,
+  "formatLine": "const SESSION_FORMAT_VERSION = 0",
+  "headerFields": [
+    "cwd",
+    "parentSession",
+    "seedLength",
+    "origin",
+    "agentPreset",
+    "version",
+    "id",
+    "createdAt",
+    "delegationDepth"
+  ],
+  "packChunks": [
+    "packChunks: z.boolean().default(DEFAULT_PACK_CHUNKS),",
+    "function eventLines(events, packChunks) {",
+    "return (packChunks ? packChunkRuns(events) : events).map((record) => JSON.stringify(record)).join(\"\\n\");"
+  ]
+}

@@ -1,0 +1,51 @@
+/**
+ * 批次修复 1b：角色卡工作区空白会话的「开场白选择窗」。
+ *
+ * 场景（用户定案）：在角色卡工作区用原生「＋」新建的 session 是白板（无开场白）。
+ * 本组件挂在 conversation.input.dock 席位：检测当前会话属于 RP 工作区（cwd 含 /rp/<slug>）
+ * 且对话为空时，显示两个选项——
+ *   「💬 带开场白开始」：调 /rp/open-chat 物化开场白（等同 ST「开始新聊天」）
+ *   「留空（自定义用途）」：写卡/测试等，本次不再提示
+ * 非角色卡工作区（cwd 不含 /rp/）不显示；选择只对当前 sessionId 记忆（会话级）。
+ */
+import { useState } from 'react';
+import { rpApi } from './rpc.ts';
+import { useRpSlug } from './RpStateFloat.tsx';
+/** 已选择「留空」的会话（模块级记忆，页面生命周期内不再提示） */
+const dismissed = new Set();
+export function RpGreetingDock(props) {
+    const [busy, setBusy] = useState(false);
+    const [done, setDone] = useState(false);
+    const s = (props.session ?? {});
+    const sessionId = s.sessionId ?? s.id ?? '';
+    const cwd = s.header?.cwd ?? s.cwd;
+    // dock 席位 props 不带 cwd（在宿主 useSessions().byId）——缺失时向 host 补取
+    const { slug } = useRpSlug(cwd, sessionId);
+    const msgCount = s.chat?.order?.length ?? s.surface?.nodes?.length ?? 0;
+    if (!slug || !sessionId || msgCount > 0 || dismissed.has(sessionId) || done)
+        return null;
+    const withGreeting = async () => {
+        if (busy)
+            return;
+        setBusy(true);
+        try {
+            await rpApi('rp/open-chat', { slug, sessionId });
+            setDone(true); // open-chat 落盘后会话不再为空，组件自然隐去
+        }
+        catch (e) {
+            window.alert(`注入开场白失败：${e.message}`);
+        }
+        finally {
+            setBusy(false);
+        }
+    };
+    return (<div className="dsht-rp-greeting-dock" role="note">
+      <span className="txt">这是「{slug}」的空白会话——</span>
+      <button type="button" className="dsht-rp-btn" disabled={busy} onClick={() => { void withGreeting(); }}>
+        {busy ? '注入中…' : '💬 带开场白开始'}
+      </button>
+      <button type="button" className="dsht-rp-btn" disabled={busy} onClick={() => { dismissed.add(sessionId); setDone(true); }}>
+        留空（自定义用途）
+      </button>
+    </div>);
+}

@@ -1,0 +1,10 @@
+{
+  "loaderSource": "cordis-plugin-loader/lib/index.js",
+  "features": [
+    "const outcomes = await Promise.allSettled(config.map((options) => this.create(options)));",
+    "await Promise.allSettled(tasks);",
+    "const failures = (await Promise.allSettled([...this.entries()].map((entry) => entry._await()))).filter((outcome) => outcome.status === \"rejected\").map((outcome) => outcome.reason);"
+  ],
+  "modulesSource": "dsh-client-modules/lib/client.js",
+  "moduleGraph": []
+}

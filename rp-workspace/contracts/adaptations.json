@@ -1,0 +1,98 @@
+[
+  {
+    "contract": "loader.services",
+    "file": "packages/src/dsh-plugin/index.ts",
+    "line": 164,
+    "snippet": "// @adapt contract:loader.services"
+  },
+  {
+    "contract": "session-api.eventAt",
+    "file": "packages/src/dsh-plugin/index.ts",
+    "line": 201,
+    "snippet": "// @adapt contract:session-api.eventAt"
+  },
+  {
+    "contract": "session-api.flush",
+    "file": "packages/src/dsh-plugin/index.ts",
+    "line": 221,
+    "snippet": "// @adapt contract:session-api.flush"
+  },
+  {
+    "contract": "session-api.eventAt",
+    "file": "packages/src/dsh-plugin/index.ts",
+    "line": 233,
+    "snippet": "// @adapt contract:session-api.eventAt"
+  },
+  {
+    "contract": "session-api.events-snapshot",
+    "file": "packages/src/dsh-plugin/index.ts",
+    "line": 242,
+    "snippet": "// @adapt contract:session-api.events-snapshot"
+  },
+  {
+    "contract": "wire.auth-cookie",
+    "file": "packages/src/dsh-plugin/index.ts",
+    "line": 1489,
+    "snippet": "// @adapt contract:wire.auth-cookie"
+  },
+  {
+    "contract": "wire-api.method-slash",
+    "file": "packages/src/dsh-plugin/index.ts",
+    "line": 1518,
+    "snippet": "// @adapt contract:wire-api.method-slash"
+  },
+  {
+    "contract": "wire-api.payload-args",
+    "file": "packages/src/dsh-plugin/index.ts",
+    "line": 1524,
+    "snippet": "// @adapt contract:wire-api.payload-args"
+  },
+  {
+    "contract": "persistence.format",
+    "file": "packages/src/dsht-plugin-shared/session-surgery.ts",
+    "line": 17,
+    "snippet": "// @adapt contract:persistence.format"
+  },
+  {
+    "contract": "slots.register",
+    "file": "packages/src/dsht-rp-ui/src/client/index.tsx",
+    "line": 51,
+    "snippet": "// @adapt contract:slots.register"
+  },
+  {
+    "contract": "webview.abort-signal-any",
+    "file": "packages/src/dsht-rp-ui/src/client/index.tsx",
+    "line": 71,
+    "snippet": "// @adapt contract:webview.abort-signal-any"
+  },
+  {
+    "contract": "slots.sidebar.footer.action",
+    "file": "packages/src/dsht-rp-ui/src/client/index.tsx",
+    "line": 161,
+    "snippet": "// @adapt contract:slots.sidebar.footer.action"
+  },
+  {
+    "contract": "slots.conversation.chat.node",
+    "file": "packages/src/dsht-rp-ui/src/client/index.tsx",
+    "line": 232,
+    "snippet": "// @adapt contract:slots.conversation.chat.node"
+  },
+  {
+    "contract": "slots.conversation.chat.node",
+    "file": "packages/src/dsht-rp-ui/src/client/index.tsx",
+    "line": 241,
+    "snippet": "// @adapt contract:slots.conversation.chat.node"
+  },
+  {
+    "contract": "slots.conversation.chat.assistant-actions",
+    "file": "packages/src/dsht-rp-ui/src/client/index.tsx",
+    "line": 248,
+    "snippet": "// @adapt contract:slots.conversation.chat.assistant-actions"
+  },
+  {
+    "contract": "slots.conversation.chat.assistant-actions",
+    "file": "packages/src/dsht-rp-ui/src/client/index.tsx",
+    "line": 257,
+    "snippet": "// @adapt contract:slots.conversation.chat.assistant-actions"
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "name": "dsht-plugin-mobile",
+  "version": "1.0.0",
+  "description": "Host-agnostic mobile adaptation for DSH web (CSS five-piece set + data-* host anchors; hamburger/scrim drawer nav)",
+  "type": "module",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  }
+}

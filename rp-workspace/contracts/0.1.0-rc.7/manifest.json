@@ -1,0 +1,13 @@
+{
+  "version": "0.1.0-rc.7",
+  "capturedAt": "2026-09-08T06:39:11.193Z",
+  "files": [
+    "session-api.json",
+    "wire-api.json",
+    "slots.json",
+    "loader.json",
+    "persistence.json",
+    "settings.json",
+    "presets.json"
+  ]
+}

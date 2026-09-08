@@ -1,0 +1,16 @@
+{
+  "name": "dsht-rp-ui",
+  "version": "1.0.0",
+  "description": "DSHTavern RP surface as a native DSH web UI plugin (sidebar actions + full-screen RP overlay)",
+  "type": "module",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  }
+}

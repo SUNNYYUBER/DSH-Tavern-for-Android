@@ -1,0 +1,65 @@
+/**
+ * T2.7：会话内预设切换（conversation.session.header.actions list 席位）。
+ *
+ * 用户定案：DSHT 必须能在 session 里随时换预设（DSH 原生 agentPreset.select
+ * 对已开始会话返回 agent-preset-locked——历史在该组合下产生）。解法 = RP 预设
+ * 是组装层关注点：切换写会话状态文件（/dsht-rp/preset/select），下一轮 pre-step
+ * 注入新预设内容（快照消息），历史零搁浅。
+ */
+import { useEffect, useState } from 'react';
+import { rpApi } from './rpc.ts';
+export function RpPresetSwitch({ useSession, sessionId }) {
+    const [presets, setPresets] = useState([]);
+    const [current, setCurrent] = useState('');
+    const [switching, setSwitching] = useState(false);
+    // 会话切换时重读（sessionId 变化即重挂/重取）
+    useEffect(() => {
+        let alive = true;
+        void (async () => {
+            try {
+                const [list, state] = await Promise.all([
+                    rpApi('preset/list'),
+                    rpApi('preset/state', { sessionId }),
+                ]);
+                if (!alive)
+                    return;
+                setPresets(list.presets ?? []);
+                setCurrent(state.presetId ?? '');
+            }
+            catch { /* 数据面不可达时控件静默 */ }
+        })();
+        return () => { alive = false; };
+    }, [sessionId]);
+    /** 清单实时化：点开下拉时重拉（迁移/管理面板写入的新预设不等会话重开即可见） */
+    const refreshList = async () => {
+        try {
+            const list = await rpApi('preset/list');
+            setPresets(list.presets ?? []);
+        }
+        catch { /* 数据面不可达保持旧清单 */ }
+    };
+    const select = async (presetId) => {
+        if (switching)
+            return;
+        setSwitching(true);
+        try {
+            await rpApi('preset/select', { sessionId, presetId: presetId || null });
+            setCurrent(presetId);
+            // 预设 display 正则随预设切换而变 → 渲染链脚本清单缓存失效（下条消息重拉）
+            invalidateWsCache();
+        }
+        catch { /* 失败回显旧值：下次渲染纠正 */ }
+        finally {
+            setSwitching(false);
+        }
+    };
+    if (presets.length === 0)
+        return null;
+    return (<label className="dsht-rp-preset-switch" title="RP 预设（切换即时生效于下一轮）">
+      <span className="ps-ico">🎛</span>
+      <select className="ps-select" value={current} disabled={switching} onFocus={() => { void refreshList(); }} onChange={e => { void select(e.target.value); }}>
+        <option value="">RP 预设：未启用</option>
+        {presets.map(p => <option key={p.id} value={p.id}>{p.displayName}</option>)}
+      </select>
+    </label>);
+}

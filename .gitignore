@@ -1,0 +1,43 @@
+# ===== vendor / 上游 runtime（scripts/build-dsht.ps1 可完整重建，不入库）=====
+node_modules/
+deepseek-harness/
+dsh-runtime/
+dsh-runtime-android/
+dsh-runtime-x64/
+dsh-runtime-src/
+downloads/
+pc-verify-home/
+
+# ===== 构建产物 / 交付物 =====
+*.apk
+*.aab
+dist/
+_pending-deploy/
+**/android/app/build/
+**/android/build/
+**/android/.gradle/
+**/android/local.properties
+**/android/app/src/main/assets/dsh-runtime.zip
+**/android/captures/
+**/.kotlin/
+
+# ===== 签名文件（严禁入库）=====
+*.keystore
+*.jks
+**/keystore.properties
+
+# ===== 大体积测试输入（不入库，本机保留）=====
+test-data-zip/
+
+# ===== 已归档的一次性探针/审计暂存（2026-09-08 移至 D:\DSH-RolePlay-archive）=====
+.audit/
+tmp/
+
+# ===== 编辑器 / 系统 =====
+.trae/
+.vscode/
+.idea/
+*.log
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,44 @@
+{
+  "exported": {
+    "client/contract/slots.d.ts": [
+      "export interface SettingsGeneralItemOwnerProps {",
+      "export interface SettingsPluginsTabOwnerProps {",
+      "export interface SettingsTriggerOwnerProps {",
+      "export interface SettingsHeaderOwnerProps {",
+      "export interface SettingsSectionOwnerProps {",
+      "export interface SettingsOnboardingOwnerProps {"
+    ],
+    "client/index.d.ts": [
+      "export type { SettingsGeneralItemOwnerProps, SettingsHeaderOwnerProps, SettingsOnboardingOwnerProps, SettingsPluginsTabOwnerProps, SettingsSectionOwnerProps, SettingsTriggerOwnerProps, } from './contract/slots.ts';",
+      "export type { SettingsScopeController, SettingsScopeBinder } from './settings-scope.ts';",
+      "export type { SettingsSchemaService } from './schema.ts';",
+      "export type { SchemaNode } from './schema.ts';",
+      "export type { SettingsDescribeFace, SettingsDescribeView, SettingsMirrorSnapshot } from './settings-mirror.ts';",
+      "export declare const inject: string[];",
+      "export declare function apply(ctx: ClientContext): void;"
+    ],
+    "client/schema.d.ts": [
+      "export type SchemaNode = Schema;",
+      "export declare class SettingsSchemaService extends Service {"
+    ],
+    "client/settings-mirror.d.ts": [
+      "export interface SettingsDescribeView {",
+      "export interface SettingsMirrorSnapshot {",
+      "export interface SettingsDescribeFace {",
+      "export declare class SettingsDescribeMirror implements SettingsDescribeFace {"
+    ],
+    "client/settings-scope.d.ts": [
+      "export declare class SettingsScopeController<T> implements SettingsScope<T> {",
+      "export declare class SettingsScopeBinder extends Service {"
+    ],
+    "index.d.ts": [
+      "export declare function apply(): void;"
+    ],
+    "invariant.d.ts": [
+      "export declare const name = \"client-ui-settings-invariant\";",
+      "export declare const inject: string[];",
+      "export declare const apply: (ctx: Context) => Promise<() => void>;"
+    ]
+  },
+  "configBlocks": {}
+}

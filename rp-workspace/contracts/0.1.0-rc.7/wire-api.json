@@ -1,0 +1,69 @@
+{
+  "source": "dsh-client-connection/lib/client.js",
+  "rules": [
+    "const CHANNEL_PATTERN = /^\\/[A-Za-z0-9._~-]+$/;",
+    "const ENDPOINT_SEGMENT_PATTERN = /^[A-Za-z0-9_$.-]+$/;",
+    "if (!CHANNEL_PATTERN.test(channel) || segments.some((segment) => segment === \"\" || segment === \".\" || segment === \"..\" || !ENDPOINT_SEGMENT_PATTERN.test(segment))) throw new Error(`connection: invalid RPC target ${JSON.stringify(`${channel}/${endpoint}`)}`);",
+    "method: endpoint,",
+    "args: array(unknown())",
+    "assertTarget(channel, endpoint);",
+    "function assertTarget(channel, endpoint) {",
+    "* client-request → client mints; server-request → host mints (answerable frames get a stable",
+    "type: literal(\"client-request\"),",
+    "type: \"client-request\","
+  ],
+  "endpointPackages": [
+    "dsh-api-gateway",
+    "dsh-api-remotes"
+  ],
+  "endpoints": [
+    {
+      "method": "agent-preset/selected",
+      "file": "lib/types/remote-events.js"
+    },
+    {
+      "method": "commands/change",
+      "file": "lib/types/remote-events.js"
+    },
+    {
+      "method": "cordis/dynamic-package",
+      "file": "lib/types/remote-events.js"
+    },
+    {
+      "method": "cordis/dynamic-retract",
+      "file": "lib/types/remote-events.js"
+    },
+    {
+      "method": "cordis/inspect-query",
+      "file": "lib/types/remote-events.js"
+    },
+    {
+      "method": "cordis/inspect-query-resolved",
+      "file": "lib/types/remote-events.js"
+    },
+    {
+      "method": "cordis/request-run",
+      "file": "lib/types/remote-events.js"
+    },
+    {
+      "method": "cordis/request-run-resolved",
+      "file": "lib/types/remote-events.js"
+    },
+    {
+      "method": "credentials/updated",
+      "file": "lib/types/remote-events.js"
+    },
+    {
+      "method": "internal/service",
+      "file": "lib/types/index.js"
+    },
+    {
+      "method": "llm/adapters-updated",
+      "file": "lib/types/remote-events.js"
+    },
+    {
+      "method": "settings/document-updated",
+      "file": "lib/types/remote-events.js"
+    }
+  ]
+}

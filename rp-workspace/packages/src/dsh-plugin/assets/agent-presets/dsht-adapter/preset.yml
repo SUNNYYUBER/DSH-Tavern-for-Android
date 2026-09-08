@@ -1,0 +1,3 @@
+name: ST 数据适配
+description: SillyTavern 数据迁移专用——PTC 模式（Code Mode 工具呈现）+ st-migration skill，在 rp-import 批次目录里把 ST 数据适配为 DSH 原生形态。
+order: 10

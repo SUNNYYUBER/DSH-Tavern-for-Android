@@ -1,0 +1,20 @@
+{
+  "name": "dshtavern-rp-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "DSHTavern RP plugin workspace (M1: assembly/knowledge/preset/import core)",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b tsconfig.json"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "jszip": "^3.10.1"
+  }
+}

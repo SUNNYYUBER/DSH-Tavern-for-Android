@@ -1,0 +1,121 @@
+{
+  "source": "dsh-session/lib/types/index.d.ts",
+  "classes": [
+    {
+      "className": "Session",
+      "line": 106,
+      "methods": [
+        {
+          "name": "create",
+          "static": true,
+          "signature": "static create(id: SessionId, seed?: readonly SessionEvent[], header?: SessionHeader): Session;"
+        },
+        {
+          "name": "fromRestore",
+          "static": true,
+          "signature": "static fromRestore(id: SessionId, seed: readonly SessionEvent[], header: SessionHeader): Session;"
+        },
+        {
+          "name": "constructor",
+          "static": false,
+          "signature": "private constructor();"
+        },
+        {
+          "name": "append",
+          "static": false,
+          "signature": "append<T extends SessionEventType>(type: T, data: SessionEventMap[T], ...opts: T extends SurfaceEventType ? [opts: SurfaceIntent] : []): SessionEvent<T>;"
+        },
+        {
+          "name": "requestHeader",
+          "static": false,
+          "signature": "requestHeader(): EpochHeader | undefined;"
+        },
+        {
+          "name": "requestContext",
+          "static": false,
+          "signature": "requestContext(): RequestContext | undefined;"
+        },
+        {
+          "name": "deriveMessages",
+          "static": false,
+          "signature": "deriveMessages(): Message[];"
+        },
+        {
+          "name": "deriveEventMessage",
+          "static": false,
+          "signature": "deriveEventMessage(event: SessionEvent): Message | null;"
+        }
+      ],
+      "getters": [
+        {
+          "name": "surface",
+          "signature": "get surface(): SessionSurface;"
+        },
+        {
+          "name": "id",
+          "signature": "get id(): SessionId;"
+        },
+        {
+          "name": "events",
+          "signature": "get events(): readonly SessionEvent[];"
+        },
+        {
+          "name": "seq",
+          "signature": "get seq(): number;"
+        }
+      ]
+    },
+    {
+      "className": "SessionStore",
+      "line": 290,
+      "methods": [
+        {
+          "name": "constructor",
+          "static": false,
+          "signature": "constructor(ctx: Context);"
+        },
+        {
+          "name": "create",
+          "static": false,
+          "signature": "create(id?: SessionId, options?: CreateSessionOptions): Session;"
+        },
+        {
+          "name": "prepare",
+          "static": false,
+          "signature": "prepare(id?: SessionId, options?: PrepareSessionOptions): Session;"
+        },
+        {
+          "name": "enter",
+          "static": false,
+          "signature": "enter(session: Session): () => void;"
+        },
+        {
+          "name": "announce",
+          "static": false,
+          "signature": "announce(session: Session): void;"
+        },
+        {
+          "name": "flush",
+          "static": false,
+          "signature": "flush(session: Session): Promise<boolean>;"
+        },
+        {
+          "name": "get",
+          "static": false,
+          "signature": "get(id: SessionId): Session | undefined;"
+        },
+        {
+          "name": "list",
+          "static": false,
+          "signature": "list(): Session[];"
+        },
+        {
+          "name": "fork",
+          "static": false,
+          "signature": "fork(source: SessionForkSource, boundary?: number, childSessionId?: SessionId): Session;"
+        }
+      ],
+      "getters": []
+    }
+  ]
+}
