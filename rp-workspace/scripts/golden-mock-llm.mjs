@@ -25,4 +25,4 @@ http.createServer((req, res) => {
       usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
     }));
   });
-}).listen(31101, '127.0.0.1', () => console.log('[mock-llm] listening http://127.0.0.1:31101'));
+}).listen(31101, '0.0.0.0', () => console.log('[mock-llm] listening http://0.0.0.0:31101 (模拟器内用 http://10.0.2.2:31101)'));

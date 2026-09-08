@@ -18,7 +18,7 @@
 import { spawn } from 'node:child_process'
 import { createReadStream } from 'node:fs'
 import { access, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -2944,6 +2944,25 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       if (typeof s.maxTokens === 'number') out.maxTokens = s.maxTokens
       if (Array.isArray(s.stopSequences) && s.stopSequences.length > 0) out.stop = s.stopSequences
       if (typeof s.reasoningEffort === 'string' && s.reasoningEffort) out.reasoningEffort = s.reasoningEffort
+      // ---- Golden Master 对照（DSHT 侧 dump，2026-09-09）：rp/golden/dsht-ENABLED 存在时落盘最终请求配置 ----
+      // 与 ST/TauriTavern 侧 golden-master 采集器（CHAT_COMPLETION_PROMPT_READY 挂点）配对，
+      // 同卡同输入产出两侧 dump 后逐项 diff。失败绝不影响主链路。
+      try {
+        if (existsSync(join(dshHome, 'rp', 'golden', 'dsht-ENABLED'))) {
+          const gdir = join(dshHome, 'rp', 'golden', 'dsht')
+          await mkdir(gdir, { recursive: true })
+          const seqFile = join(gdir, 'seq.txt')
+          let seq = 0
+          try { seq = parseInt((await readFile(seqFile, 'utf8')).trim() || '0', 10) || 0 } catch { /* 首次 */ }
+          seq += 1
+          await writeFile(join(gdir, `dump-${String(seq).padStart(3, '0')}.json`), JSON.stringify({
+            tag: 'agent_request_config', seq, env: 'dshtavern', ts: new Date().toISOString(),
+            cwd: agent.session?.header?.cwd ?? null,
+            data: { config: out },
+          }, null, 1))
+          await writeFile(seqFile, String(seq))
+        }
+      } catch { /* golden dump 失败不影响请求 */ }
       return out
     } catch { return config }
   })
@@ -3972,13 +3991,17 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               const adapterDir = join(dshHome, 'rp-import', '_adapter')
               await mkdir(adapterDir, { recursive: true })
               const wsDir = await realpath(adapterDir).catch(() => adapterDir)
-              const ws = await rpc('workspace.create', { path: wsDir })
+              // 0.1.2 wire 信封（R21 同族修复，2026-09-09）：kickoff 的 4 处 loopback 调用
+              // 此前为裸形状（R21 适配时只改了 register-workspaces 路径，kickoff 漏网）——
+              // workspace.create 报 missing "request"。统一包 { request: {...} } 信封，
+              // session.prompt 补 0.1.2 必填 requestId。
+              const ws = await rpc('workspace.create', { request: { path: wsDir } })
               const workspace = ws.workspace as { workspaceId?: string } | undefined
               const workspaceId = workspace?.workspaceId
               // 2. 命名「ST 数据适配」（固定标题；rename 失败不阻塞）
               if (workspaceId) {
                 try {
-                  await rpc('workspace.rename', { workspaceId, title: 'ST 数据适配' })
+                  await rpc('workspace.rename', { request: { workspaceId, title: 'ST 数据适配' } })
                 } catch (e) {
                   console.log(`[dsht-rp] kickoff rename failed: ${(e as Error).message}`)
                 }
@@ -3988,15 +4011,17 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               let presetUsed: string | null = 'dsht-adapter'
               try {
                 const created = await rpc('session.create', {
-                  ...(workspaceId ? { workspaceId } : { cwd: wsDir }),
-                  agentPreset: 'dsht-adapter',
+                  request: {
+                    ...(workspaceId ? { workspaceId } : { cwd: wsDir }),
+                    agentPreset: 'dsht-adapter',
+                  },
                 })
                 sessionId = String(created.sessionId ?? '')
               } catch (e) {
                 const code = (e as Error & { code?: string }).code ?? ''
                 if (!code.startsWith('agent-preset')) throw e
                 presetUsed = null
-                const created = await rpc('session.create', workspaceId ? { workspaceId } : { cwd: wsDir })
+                const created = await rpc('session.create', { request: workspaceId ? { workspaceId } : { cwd: wsDir } })
                 sessionId = String(created.sessionId ?? '')
                 console.log(`[dsht-rp] kickoff: dsht-adapter preset 不可用（${(e as Error).message}），退默认 preset`)
               }
@@ -4022,7 +4047,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 // §4.16.1 断点续跑：resumeFrom=true 且 checkpoint 非空时追加续跑指示（否则空串）
                 await resumeNote(),
               ].join('\n')
-              await rpc('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text: kickoffText }] })
+              await rpc('session.prompt', { request: { requestId: randomUUID(), sessionId, mode: 'queue', content: [{ type: 'text', text: kickoffText }] } })
               // 5. 幂等记录
               meta.kickoff = { sessionId, workspaceId: workspaceId ?? null, preset: presetUsed, at: new Date().toISOString() }
               await writeFile(metaPath, JSON.stringify(meta, null, 1), 'utf8')

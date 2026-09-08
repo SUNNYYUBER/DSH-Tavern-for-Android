@@ -1,4 +1,4 @@
-﻿# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
+﻿﻿# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
 # 用法：
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.8        # 完整流程：装新版本 DSH → 平台适配 → 验证 → 打包 → APK
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.7 -SkipInstall  # runtime 已就绪，只跑后半段（打包/APK/sentinel）
@@ -301,8 +301,8 @@ $prootWrap = @"
 			const dshtProotRootfs = process.env.DSHT_PROOT_ROOTFS;
 			if (dshtProotBin && dshtProotRootfs && existsSync(dshtProotBin) && existsSync(join(dshtProotRootfs, "bin/busybox"))) {
 				const dshtStaticBinds = [];
-				for (const p of ["/proc", "/dev", "/system/bin/linker64", "/apex/com.android.runtime", "/system/lib64", process.env.DSHT_NATIVE_LIB_DIR, process.env.DSHT_RUNTIME_LIB_DIR, process.env.TMPDIR])
-					if (p && existsSync(p) && !dshtStaticBinds.includes(p)) dshtStaticBinds.push(p);
+                                for (const p of ["/proc", "/dev", "/system/bin/linker64", "/apex/com.android.runtime", "/system/lib64", "/sdcard", "/storage/emulated", process.env.DSHT_NATIVE_LIB_DIR, process.env.DSHT_RUNTIME_LIB_DIR, process.env.TMPDIR])
+                                        if (p && existsSync(p) && !dshtStaticBinds.includes(p)) dshtStaticBinds.push(p);
 				if (globalThis.__dshtProotOk === void 0) {
 					const dshtProbe = spawnSync(dshtProotBin, ["--kill-on-exit", "-r", dshtProotRootfs, ...dshtStaticBinds.flatMap((b) => ["-b", b]), "/bin/true"], { timeout: 10000 });
 					globalThis.__dshtProotOk = dshtProbe.status === 0;
@@ -373,6 +373,18 @@ Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-READY' `
     'processPresentation\.turn === processSpec\.turn && processPresentation\.turnClosed && !historyIncomplete;' `
     ('processPresentation.turn === processSpec.turn && processPresentation.turnClosed && (!historyIncomplete || (typeof dshtOldestSeq === "number" && processSpec.processStartSeq >= dshtOldestSeq)); /* DSHT-CHAT-FOLD-READY: 本轮窗口完整在已加载区间即可折叠，不要求全会话历史加载完 */') `
     1 'P2-1c processWindowReady 放宽'
+
+# P3-5a. dsh-session-title：标题剥 HTML/协议标签（2026-09-09 实机截图：会话标题显示「<status> [...]」）
+# 官方 normalize（cleanTitleText）只清控制字符/转义序列——RP 场景首条消息/LLM 生成的标题
+# 常含 <interactive_input>/<status> 等协议标签，标题栏裸显标签名。补丁在 cleanTitleText
+# 开头剥成对标签与未闭合标签尾，其余行为不变。
+Dsht-Patch "$nmDst\dsh-session-title\lib\index.js" 'DSHT-TITLE-DETAG' `
+    'function cleanTitleText\(input\) \{\r?\n\treturn input\.replace\(OSC_SEQUENCE' `
+    ("`tfunction cleanTitleText(input) {`n" +
+     "`t`t/* DSHT-TITLE-DETAG: RP 首条消息/LLM 标题常含 <status> 等协议标签——先剥成对标签与未闭合标签尾再走官方 normalize */`n" +
+     "`t`tinput = input.replace(/<[^<>]{0,200}>/gu, `" `" ).replace(/<[^<>]{0,200}`$/u, `" `" );`n" +
+     "`t`treturn input.replace(OSC_SEQUENCE") `
+    1 'P3-5a session-title 剥协议标签'
 
 # ---------------------------------------------------------------------------
 Step 4.5 'composition 补丁：session 持久化改明文（迁移写入前置条件）'
