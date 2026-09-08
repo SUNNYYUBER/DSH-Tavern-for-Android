@@ -20,11 +20,25 @@ const r = await page.evaluate(async () => {
   const text = await res.text();
   const cards = Array.from(document.querySelectorAll('#extensions_settings, #extensions_settings2'))
     .map(c => c.innerText).join('\n');
+  let charsApi = null;
+  try {
+    const cr = await fetch('/api/characters/all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const cj = await cr.json().catch(() => null);
+    charsApi = { status: cr.status, count: Array.isArray(cj) ? cj.length : null, sample: Array.isArray(cj) ? cj.slice(0, 3).map(c => c.name) : String(cj).slice(0, 80) };
+  } catch (e) { charsApi = { err: e.message }; }
   return {
     fetchStatus: res.status,
-    scriptHead: text.slice(0, 80),
+    scriptHead: text.slice(0, 60),
     goldenInPanel: /golden/i.test(cards),
-    swCount: navigator.serviceWorker?.controller ? 1 : 0,
+    chNameCount: document.querySelectorAll('.character_select .ch_name').length,
+    chNameSample: Array.from(document.querySelectorAll('.character_select .ch_name')).slice(0, 3).map(e => e.textContent?.trim() || '(空)'),
+    charsApi,
+    busTest: await (async () => {
+      try {
+        const m = await import(new URL('script.js', location.href).href);
+        return { ok: true, hasEventSource: !!m.eventSource, exports: Object.keys(m).length };
+      } catch (e) { return { ok: false, err: e.message.slice(0, 100) }; }
+    })(),
   };
 });
 console.log(JSON.stringify(r, null, 1));
