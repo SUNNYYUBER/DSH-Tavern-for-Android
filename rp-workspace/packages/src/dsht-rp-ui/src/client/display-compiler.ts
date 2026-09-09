@@ -327,10 +327,15 @@ function buildReplacement(script: RegexScript, match: string, captures: readonly
   replacement = replacement.replace(/\$(\d{1,2})/gu, (token, digits: string) => {
     const index = Number(digits)
     if (index >= 1 && index <= captures.length) return captures[index - 1]
+    if (index === 0) return match
     if (digits.length === 2) {
       const fallback = Number(digits[0])
       if (fallback >= 1 && fallback <= captures.length) return captures[fallback - 1] + digits[1]
     }
+    // 【TT 对照修复 2026-09-09】正则无捕获组时 $N = 整个 match（ST/TT 行为）。
+    // 原实现返回字面 token：<interactive_input>$1</interactive_input> 类规则会把
+    // 用户消息毁成字面 $1 残留（实测发送内容错误）。
+    if (captures.length === 0) return match
     return token
   })
   for (const trim of script.trimStrings) replacement = replacement.split(trim).join('')
@@ -415,10 +420,15 @@ export function runDisplayScripts(
 // iframe 文档骨架（移植 dsh-tavern client.js L883-941，MIT）
 // ---------------------------------------------------------------------------
 
-export const FRAME_MAX_HEIGHT = 12000
+export const FRAME_MAX_HEIGHT = 3000
 export const FRAME_MIN_HEIGHT = 48
 
-/** 参考源码 clampTavernFrameHeight */
+/** 参考源码 clampTavernFrameHeight。
+ *  【2026-09-09 抖动修复】MAX 12000 是桌面参考值——手机视口 ~850px 时 12000 ≈ 14 屏，
+ *  且帧内文档若用 vh/百分比布局，高度上报会形成反馈循环（iframe 变高 → vh 值变 →
+ *  内容变高 → 再上报）一路爬到 12000 顶格，表现为「画面跳来跳去」。降到 3000（≈3.5
+ *  屏）封顶后循环快速收敛到 mount 容器内部滚动（height≥MAX 时 overflow:auto），
+ *  正常内容（状态栏 ~500px、思维链折叠 ~200px）不受影响；超长文档帧内部滚动可接受。 */
 export function clampFrameHeight(value: number): number {
   return Math.max(FRAME_MIN_HEIGHT, Math.min(FRAME_MAX_HEIGHT, Math.ceil(Number(value) || FRAME_MIN_HEIGHT)))
 }
@@ -543,6 +553,14 @@ async function postJson<T>(url: string): Promise<T> {
 
 /** 【审查修复 2026-09-05】缓存键带 slug::sessionId——单槽无键会 5s 内切会话串数据 */
 const renderCtxCacheMap = new Map<string, TimedCache<Promise<DisplayMacroCtx | null>>>()
+
+/** 【鲁棒轮 2026-09-09】display 数据面缓存清除（Kemini 开关链）：脚本 replaceTavernRegexes/
+ *  updatePresetWith 后 notifyDisplayMutation 调用——不清的话 epoch 重跑在 5s TTL 窗口内
+ *  仍拿旧 ctx/entries，「切了没反应」在窗口期内复发。 */
+export function invalidateDisplayDataCache(): void {
+  renderCtxCacheMap.clear()
+  renderEntriesCache.clear()
+}
 
 /** 加载显示期宏上下文（identity + variables 并行；任一失败 → null = 原文透传） */
 export function loadDisplayRenderCtx(slug: string, sessionId: string): Promise<DisplayMacroCtx | null> {
