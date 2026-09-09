@@ -86,51 +86,54 @@ async function readFrame(f) {
   try { return await f.evaluate(() => window.__mc ?? -1); } catch { return -1; }
 }
 
-// 收集元素（主文档 + 所有 frame），注入标记
-const targets = [];
-let idx = 0;
+// 交错收集+点击（应对楼层 iframe 动态重建）：每帧内"收一个→点一个→读突变→去标记"，
+// 帧内无新元素（收敛）则换下一帧。重建后重收的新元素自然被覆盖。
+const results = [];
+let n = 0;
 for (const f of page.frames()) {
   const isMain = f === page.mainFrame();
-  try {
-    const els = await f.evaluate(() => {
-      const out = [];
-      for (const e of document.querySelectorAll('button, [role="button"], [onclick], [class*="button" i], [class*="btn" i], [class*="clickable" i], summary, details > summary')) {
-        if (!e.offsetWidth && !e.offsetHeight) continue;
-        const r = e.getBoundingClientRect();
-        if (r.width <= 0 || r.height <= 0) continue;
-        const key = e.tagName + '|' + String(e.className).slice(0, 30) + '|' + (e.innerText || '').slice(0, 16);
-        if (out.some(o => o.key === key)) continue;
-        // 聚焦过滤器：只测卡交互元素（有文本的按钮/状态栏类），跳过纯 icon 与重复
-        const hasText = (e.innerText || '').trim().length > 0;
-        const isRpish = /mvu|status|rp|th|script/i.test(String(e.className));
-        if (!hasText && !isRpish) continue;
-        const mark = 'vfy' + Math.random().toString(36).slice(2, 8);
-        e.setAttribute('data-vfy', mark);
-        out.push({ mark, tag: e.tagName.toLowerCase(), cls: String(e.className).slice(0, 40), text: (e.innerText || e.title || '').replace(/\s+/g, ' ').trim().slice(0, 36) || '(icon)' });
-      }
-      return out;
-    });
-    for (const el of els) targets.push({ frame: f, isMain, ...el, n: idx++ });
-  } catch (e) { console.log('[v2] frame 收集失败:', e.message.slice(0, 50)); }
-}
-console.log(`[v2] 待测元素（含 iframe）: ${targets.length}`);
-for (const t of targets) console.log(`  #${t.n} [${t.isMain ? 'main' : 'iframe'}] <${t.tag}> ${t.cls.slice(0, 30)} "${t.text}"`);
-
-// 逐元素点击 + MutationObserver 判定
-const results = [];
-for (const t of targets) {
-  await armFrame(t.frame).catch(() => {});
-  let clickErr = '';
-  try {
-    await t.frame.locator(`[data-vfy="${t.mark}"]`).click({ force: true, timeout: 2000 });
-  } catch (e) { clickErr = e.message.slice(0, 40); }
-  await page.waitForTimeout(1500);
-  const mc = await readFrame(t.frame);
-  const responded = !clickErr && mc > 0;
-  results.push({ ...t, frameUrl: t.isMain ? 'main' : t.frame.url().slice(0, 50), responded, mc, clickErr });
-  console.log(`[v2] ${responded ? '响应' : '无响应'} mut=${mc} | #${t.n} [${t.isMain ? 'main' : 'iframe'}] "${t.text}" ${clickErr ? 'clickErr:' + clickErr : ''}`);
-  // 清标记
-  try { await t.frame.evaluate(m => { document.querySelector(`[data-vfy="${m}"]`)?.removeAttribute('data-vfy'); }, t.mark); } catch {}
+  const seen = new Set();
+  let stale = 0;
+  const LIMIT = 40;
+  while (stale < 3 && results.filter(r => r.frame === f).length < LIMIT) {
+    let el = null;
+    try {
+      el = await f.evaluate(() => {
+        window.__seen = window.__seen || new Set();
+        const seenSet = window.__seen;
+        for (const e of document.querySelectorAll('button, [role="button"], [onclick], [class*="button" i], [class*="btn" i], [class*="clickable" i], summary')) {
+          if (!e.offsetWidth && !e.offsetHeight) continue;
+          const r = e.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) continue;
+          const hasText = (e.innerText || '').trim().length > 0;
+          const isRpish = /mvu|status|rp|th|script/i.test(String(e.className));
+          if (!hasText && !isRpish) continue;
+          const key = e.tagName + '|' + String(e.className).slice(0, 30) + '|' + (e.innerText || '').slice(0, 16);
+          if (e.dataset.vfyDone === '1' || seenSet.has(key)) continue;
+          seenSet.add(key);
+          const mark = 'vfy' + Math.random().toString(36).slice(2, 8);
+          e.setAttribute('data-vfy', mark);
+          return { mark, tag: e.tagName.toLowerCase(), cls: String(e.className).slice(0, 40), text: (e.innerText || e.title || '').replace(/\s+/g, ' ').trim().slice(0, 36) || '(icon)', key };
+        }
+        return null;
+        function dummy() {}
+      }).catch(() => null);
+    } catch { el = null; }
+    // seenSet 在 evaluate 内部——改为主侧维护：用返回 key 在主侧判重（重收同一元素会再次打标，click 后标记即可）
+    if (!el) { stale++; continue; }
+    stale = 0;
+    if (results.some(r => r.key === el.key && r.frame === f)) { try { await f.evaluate(m => { document.querySelector(`[data-vfy="${m}"]`)?.removeAttribute('data-vfy'); }, el.mark); } catch {} continue; }
+    await armFrame(f).catch(() => {});
+    let clickErr = '';
+    try { await f.locator(`[data-vfy="${el.mark}"]`).click({ force: true, timeout: 2000 }); } catch (e) { clickErr = e.message.slice(0, 40); }
+    await page.waitForTimeout(1500);
+    const mc = await readFrame(f);
+    const responded = !clickErr && mc > 0;
+    const rec = { n: n++, frame: f, isMain, frameUrl: isMain ? 'main' : f.url().slice(0, 50), ...el, responded, mc, clickErr };
+    results.push(rec);
+    console.log(`[v2] ${responded ? '响应' : '无响应'} mut=${mc} | #${rec.n} [${isMain ? 'main' : 'iframe'}] "${el.text}" ${clickErr ? 'clickErr:' + clickErr : ''}`);
+    try { await f.evaluate(m => { document.querySelector(`[data-vfy="${m}"]`)?.removeAttribute('data-vfy'); }, el.mark); } catch {}
+  }
 }
 const fail = results.filter(r => !r.responded);
 console.log(`[v2] === 汇总: ${results.length - fail.length}/${results.length} 响应，${fail.length} 无响应 ===`);
