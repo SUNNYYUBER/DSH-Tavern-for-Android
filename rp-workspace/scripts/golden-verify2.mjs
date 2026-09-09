@@ -64,7 +64,7 @@ if (nav2.length && nav2[0].len > nav[0].len) {
   await page.mouse.click(nav2[0].x, nav2[0].y);
 }
 await page.waitForTimeout(5000);
-await page.waitForSelector('#send_textarea', { state: 'visible', timeout: 90000 }).catch(() => {});
+await page.waitForSelector('textarea:not(.bhn1Oq_searchInput)', { state: 'attached', timeout: 60000 }).catch(() => {});
 await page.waitForTimeout(12000);
 await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach(d => d.close()));
 

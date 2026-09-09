@@ -54,7 +54,7 @@ async function navTo(reSrc, label) {
     rows.sort((a, b) => b.len - a.len);
     if (rows[0]) { document.elementFromPoint(rows[0].x, rows[0].y)?.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
   }, reSrc);
-  const ok = await page.waitForSelector('#send_textarea', { state: 'visible', timeout: 60000 }).then(() => true).catch(() => false);
+  const ok = await page.waitForSelector('textarea:not(.bhn1Oq_searchInput)', { state: 'attached', timeout: 60000 }).then(() => true).catch(() => false);
   console.log(`[mvu] ${label} 导航: wsLen=${r1} send_textarea=${ok}`);
   return ok;
 }
