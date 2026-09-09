@@ -18,7 +18,7 @@
 import { spawn } from 'node:child_process'
 import { createReadStream } from 'node:fs'
 import { access, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -2931,6 +2931,39 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   // ST 预设的 temperature/max_tokens/stop/reasoning_effort 随预设走。宿主适配器
   // （dsh-llm-deepseek）仅透传 temperature/max_tokens/stop 三键 + 配置管线 reasoningEffort；
   // topP/topK/minP/topA/penalties/seed/logitBias 宿主不支持（AUDIT_TASKLIST 标注为宿主限制）。
+  // ---- Golden Master 对照（DSHT 侧 dump#3，2026-09-09）：provider 层 fetch 拦截 ----
+  // pre-step 的 messages 只是本轮增量；"发给 LLM 的最终完整 payload"在 provider 出站请求里。
+  // ENABLED 开关存在时 patch globalThis.fetch（只读透传不改请求），把 LLM chat 请求体落盘
+  // golden/dsht/llm-NNN.json，与 TT 侧 chat_completion_prompt_ready（25 条完整组装）配对 diff。
+  try {
+    if (existsSync(join(dshHome, 'rp', 'golden', 'dsht-ENABLED')) && !(globalThis as Record<string, unknown>).__dshtGoldenFetchPatched) {
+      ;(globalThis as Record<string, unknown>).__dshtGoldenFetchPatched = true
+      const gdir0 = join(dshHome, 'rp', 'golden', 'dsht')
+      mkdirSync(gdir0, { recursive: true })
+      const seqFile0 = join(gdir0, 'llm-seq.txt')
+      const gFetch = globalThis.fetch.bind(globalThis)
+      globalThis.fetch = (async (input: unknown, init?: unknown) => {
+        try {
+          const url = typeof input === 'string' ? input : (input as { url?: string })?.url ?? String(input)
+          const body = typeof init === 'object' && init !== null ? (init as { body?: unknown }).body : undefined
+          if (typeof body === 'string' && body.length > 200 && /chat\/completions|\/v1\/messages|provider\/v1/i.test(url)) {
+            let seq = 0
+            try { seq = parseInt((readFileSync(seqFile0, 'utf8')).trim() || '0', 10) || 0 } catch { /* 首次 */ }
+            seq += 1
+            writeFileSync(join(gdir0, `llm-${String(seq).padStart(3, '0')}.json`), JSON.stringify({
+              tag: 'provider_llm_request', seq, env: 'dshtavern', ts: new Date().toISOString(),
+              url: url.slice(0, 200),
+              data: { body: JSON.parse(body) },
+            }, null, 1))
+            writeFileSync(seqFile0, String(seq))
+          }
+        } catch { /* golden dump 失败不影响请求 */ }
+        return gFetch(input as Parameters<typeof gFetch>[0], init as Parameters<typeof gFetch>[1])
+      }) as typeof fetch
+      console.log('[dsht-rp] golden: provider fetch 拦截已启用（llm dump → rp/golden/dsht/）')
+    }
+  } catch { /* patch 失败不阻塞插件 */ }
+
   ctx.on('agent/request', async (payload: unknown, next: () => Promise<unknown>) => {
     const config = (await next()) as Record<string, unknown>
     try {
@@ -2974,6 +3007,26 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
 
     const slug = rpSlugFromCwd(agent.session.header.cwd, dshHome)
     console.log(`[dsht-rp] pre-step: cwd=${agent.session.header.cwd ?? '(none)'} slug=${slug ?? '(not-rp)'} turn=${(raw as LikePreStepEvent).turn}`)
+    // ---- Golden Master 对照（DSHT 侧 dump#2，2026-09-09）：messages 全文落盘 ----
+    // agent/request 瀑布只有采样参数；真正发给 LLM 的消息序列在此（pre-step）。
+    // rp/golden/dsht-ENABLED 存在时落盘，与 TT/ST 侧 chat_completion_prompt_ready 配对 diff。
+    try {
+      if (existsSync(join(dshHome, 'rp', 'golden', 'dsht-ENABLED'))) {
+        const gdir = join(dshHome, 'rp', 'golden', 'dsht')
+        await mkdir(gdir, { recursive: true })
+        const seqFile = join(gdir, 'msg-seq.txt')
+        let seq = 0
+        try { seq = parseInt((await readFile(seqFile, 'utf8')).trim() || '0', 10) || 0 } catch { /* 首次 */ }
+        seq += 1
+        await writeFile(join(gdir, `msg-${String(seq).padStart(3, '0')}.json`), JSON.stringify({
+          tag: 'agent_prestep_messages', seq, env: 'dshtavern', ts: new Date().toISOString(),
+          cwd: agent.session.header.cwd ?? null,
+          turn: (raw as LikePreStepEvent).turn ?? null,
+          data: { messages },
+        }, null, 1))
+        await writeFile(seqFile, String(seq))
+      }
+    } catch { /* golden dump 失败不影响主链路 */ }
     if (slug === null) return decision
     try {
       signal.throwIfAborted()
