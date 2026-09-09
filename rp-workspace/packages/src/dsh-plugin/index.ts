@@ -2976,7 +2976,17 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       if (typeof s.temperature === 'number') out.temperature = s.temperature
       if (typeof s.maxTokens === 'number') out.maxTokens = s.maxTokens
       if (Array.isArray(s.stopSequences) && s.stopSequences.length > 0) out.stop = s.stopSequences
-      if (typeof s.reasoningEffort === 'string' && s.reasoningEffort) out.reasoningEffort = s.reasoningEffort
+      // 【TT 对照修复 2026-09-09】reasoning_effort 值域映射：ST/TT 预设的 'auto' 等"由 provider
+      // 自行决定"语义，在 DSH provider 侧不被支持（实测报 does not support reasoning effort "auto"，
+      // 发送直接失败）。TT 的行为 = 不支持的值不发该字段。此处仅透传 DSH 支持的档位。
+      const REASONING_EFFORT_SUPPORTED = new Set(['minimal', 'low', 'medium', 'high'])
+      if (typeof s.reasoningEffort === 'string' && REASONING_EFFORT_SUPPORTED.has(s.reasoningEffort)) {
+        out.reasoningEffort = s.reasoningEffort
+      } else {
+        // 'auto' / 未知值：TT 语义 = 不发该字段（provider 自行决定）。显式删除，
+        // 避免 DSH config 默认残留 'auto' 触发 provider 校验拒绝（实测报错）。
+        delete out.reasoningEffort
+      }
       // ---- Golden Master 对照（DSHT 侧 dump，2026-09-09）：rp/golden/dsht-ENABLED 存在时落盘最终请求配置 ----
       // 与 ST/TauriTavern 侧 golden-master 采集器（CHAT_COMPLETION_PROMPT_READY 挂点）配对，
       // 同卡同输入产出两侧 dump 后逐项 diff。失败绝不影响主链路。
