@@ -30,7 +30,13 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 CHECK_ONLY = "--check" in sys.argv
 DST = args[0] if args else os.path.join(WS, "dsh-runtime-android")
 if not os.path.isabs(DST):
-    DST = os.path.join(WS, DST)
+    # 【2026-09-11 心跳 44】相对路径解析要能区分「相对仓库根」与「相对 rp-workspace」，
+    # 否则 `rp-workspace/dsh-runtime-android` 会被再拼一次 WS →
+    # `rp-workspace/rp-workspace/dsh-runtime-android`（与 build-plugins.sh 的 L18 同类缺陷：
+    # 路径双前缀，报 FileNotFoundError 而非明确错误）。优先选「已存在」的解析结果。
+    _as_is = os.path.abspath(DST)
+    _under_ws = os.path.join(WS, DST)
+    DST = _as_is if os.path.isdir(_as_is) else _under_ws
 NM = os.path.join(DST, "node_modules", "@deepseek-ai")
 STUBS = os.path.join(WS, "stubs")
 

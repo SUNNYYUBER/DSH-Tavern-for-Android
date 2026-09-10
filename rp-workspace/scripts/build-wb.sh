@@ -39,6 +39,17 @@ build_one() {
 
   say "=== 构建开始: $ARCH ==="
 
+  # 【2026-09-11 心跳 44 新增】平台补丁必须在打包前跑一遍。
+  # 背景：build-wb.sh 此前**从不调用** apply-platform-patches.py —— 补丁靠人工预打。
+  # 一旦 staging（dsh-runtime-android）被重新生成/覆盖，补丁就**静默消失**，
+  # 而 A1~A6 断言全部照过、APK 照出（本项目「构建/部署断链」家族的又一例）。
+  # 实测踩中：0.1.5 的 flock 平台适配（Step 4.6）若不进包，**任何会话都无法 resume
+  # → 所有消息都发不出去**，且现象是"点发送毫无反应"，极难归因。
+  # 脚本本身幂等（marker 检测）+ 断言（命中数不符即失败退出），失败必须中止构建。
+  say "[0.5/7] 平台补丁（apply-platform-patches.py，幂等 + 命中数断言）"
+  "$PY" "$WS/scripts/apply-platform-patches.py" "$DST" \
+    || die "平台补丁失败——产物形态可能变了，禁止带病打包"
+
   say "[0/7] 确保我方插件就位（dsht-rp-plugin 等 7 个）"
   # 【2026-09-11 修复】原判据只查「产物文件是否存在」→ 除 dsht-rp-plugin（[1/6] 每次重打）外
   # 的 6 个插件**一旦存在就永不重建**：源码改了也不进包，静默部署旧逻辑
@@ -47,6 +58,12 @@ build_one() {
   # 改为 make 式**新鲜度戳**：产物缺失、或 `packages/src` 下有比戳更新的文件 → 重建。
   local STAMP="$DST/.plugins-stamp"
   local NEED=0
+  # dsht-plugin-undo 的说明（2026-09-11 心跳 44 核实）：它是**被 dsht-rp-plugin 取代的遗留实现**
+  # （回退/编辑/重新生成现已由 /dsht-rp/rp/session-rollback、/dsht-rp/rp/session-edit 承担；
+  #  全仓客户端 0 处引用 dsht-undo）。它**有意不 compose 进 profile**（NodeService.kt pluginRows
+  #  里没有它），故 /dsht-undo/* 路由 404 属预期，**不是缺陷**。
+  #  ⚠️ 不要"顺手"把它加进 pluginRows —— 会与 rp-plugin 的路由功能重复注册。
+  #  这里保留在构建列表里只是为了产物形式统一；后续若确认无用应整体删除（含源码）。
   for p in dsht-rp-plugin dsht-plugin-mvu dsht-plugin-tavern-helper \
            dsht-plugin-prompt-template dsht-plugin-memory dsht-plugin-mobile dsht-plugin-undo; do
     [ -f "$DST/node_modules/$p/lib/index.js" ] || { NEED=1; say "  产物缺失: $p"; break; }
