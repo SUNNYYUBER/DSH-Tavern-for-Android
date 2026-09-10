@@ -1020,80 +1020,220 @@ function getChatHistoryDetail() {
 }
 
 // ---- 正则（桥到 host /regexes/*；character 作用域的 slug 取自快照）----
-function getTavernRegexes() {
-  return call('regexes:get', [null, null]).then(function (r) {
-    return (r && Array.isArray(r.regexes)) ? r.regexes : [];
+// 【T-20 契约适配 2026-09-10】真 TH 公开契约（JS-Slash-Runner @types/function/tavern_regex.d.ts）
+// 与我方内部存储形状（engine.ts RegexScript，ST 磁盘格式）有 9 处偏差 + 1 处极性反转。
+// 内部存储不动，只在**门面**做双向映射，防「脚本不报错、静默拿 undefined」：
+//   script_name↔scriptName / find_regex↔findRegex / replace_string↔replaceString
+//   trim_strings↔trimStrings / run_on_edit↔runOnEdit / min_depth↔minDepth / max_depth↔maxDepth
+//   enabled↔!disabled（极性反转！）
+//   source{user_input,ai_output,slash_command,world_info} ↔ placement:number[]
+//   destination{display,prompt} ↔ markdownOnly/promptOnly（display=false→markdownOnly；prompt=false→promptOnly）
+var DSHT_PLACEMENT_KEYS = ['user_input', 'ai_output', 'slash_command', 'world_info'];
+/** 内部 RegexScript → 真 TH TavernRegex（出口） */
+function dshtRegexToTh(s) {
+  if (!s || typeof s !== 'object') return s;
+  var pl = Array.isArray(s.placement) ? s.placement : [];
+  var out = {
+    id: s.id,
+    script_name: s.scriptName,
+    enabled: s.disabled !== true, // 极性反转：内部 disabled ⇄ 契约 enabled
+    find_regex: s.findRegex,
+    replace_string: s.replaceString,
+    trim_strings: Array.isArray(s.trimStrings) ? s.trimStrings : [],
+    source: {
+      user_input: pl.indexOf(1) !== -1,
+      ai_output: pl.indexOf(2) !== -1,
+      slash_command: pl.indexOf(3) !== -1,
+      world_info: pl.indexOf(5) !== -1,
+    },
+    // 契约 destination 语义（d.ts：「仅格式显示」=markdownOnly /「仅格式提示词」=promptOnly）：
+    //   display = 参与显示渲染 = !promptOnly（promptOnly 脚本不参与显示）
+    //   prompt  = 参与提示词   = !markdownOnly（markdownOnly 脚本不参与提示词）
+    destination: { display: s.promptOnly !== true, prompt: s.markdownOnly !== true },
+    run_on_edit: s.runOnEdit === true,
+    min_depth: (typeof s.minDepth === 'number') ? s.minDepth : null,
+    max_depth: (typeof s.maxDepth === 'number') ? s.maxDepth : null,
+  };
+  if (typeof s._dshtScope === 'string') out.scope = s._dshtScope === 'character' ? 'character' : 'global';
+  return out;
+}
+/** 真 TH TavernRegex → 内部 RegexScript（入口；也接受已是内部形状的对象——兼容老脚本） */
+function dshtThToRegex(t) {
+  if (!t || typeof t !== 'object') return null;
+  // 已是内部形状（有 camelCase 字段）→ 原样规范化，避免二次映射把 enabled 又翻回去
+  var looksInternal = (t.scriptName !== undefined || t.findRegex !== undefined || t.disabled !== undefined);
+  if (looksInternal) {
+    return {
+      id: String(t.id == null ? '' : t.id),
+      scriptName: String(t.scriptName == null ? '' : t.scriptName),
+      findRegex: String(t.findRegex == null ? '' : t.findRegex),
+      replaceString: String(t.replaceString == null ? '' : t.replaceString),
+      trimStrings: Array.isArray(t.trimStrings) ? t.trimStrings : [],
+      placement: Array.isArray(t.placement) ? t.placement : [],
+      disabled: t.disabled === true,
+      markdownOnly: t.markdownOnly === true,
+      promptOnly: t.promptOnly === true,
+      runOnEdit: t.runOnEdit === true,
+      substituteRegex: typeof t.substituteRegex === 'number' ? t.substituteRegex : 0,
+      minDepth: (typeof t.minDepth === 'number') ? t.minDepth : null,
+      maxDepth: (typeof t.maxDepth === 'number') ? t.maxDepth : null,
+      _dshtScope: typeof t._dshtScope === 'string' ? t._dshtScope : 'global',
+    };
+  }
+  var src = (t.source && typeof t.source === 'object') ? t.source : {};
+  var dst = (t.destination && typeof t.destination === 'object') ? t.destination : {};
+  var placement = [];
+  for (var i = 0; i < DSHT_PLACEMENT_KEYS.length; i++) {
+    var k = DSHT_PLACEMENT_KEYS[i];
+    // 未给 source（老脚本只传 placement）→ 按真 TH 默认全 false，避免误判"全部生效"
+    if (src[k] === true) placement.push(DSHT_REGEX_PLACEMENT[k]);
+  }
+  return {
+    id: String(t.id == null ? '' : t.id),
+    scriptName: String(t.script_name == null ? '' : t.script_name),
+    findRegex: String(t.find_regex == null ? '' : t.find_regex),
+    replaceString: String(t.replace_string == null ? '' : t.replace_string),
+    trimStrings: Array.isArray(t.trim_strings) ? t.trim_strings : [],
+    placement: placement,
+    // 极性反转：契约 enabled=false → 内部 disabled=true
+    disabled: t.enabled === false,
+    // 极性/结构双反算：promptOnly=「不参与显示」(display=false)；markdownOnly=「不参与提示词」(prompt=false)
+    markdownOnly: dst.prompt === false,
+    promptOnly: dst.display === false,
+    runOnEdit: t.run_on_edit === true,
+    substituteRegex: typeof t.substitute_regex === 'number' ? t.substitute_regex : 0,
+    minDepth: (typeof t.min_depth === 'number') ? t.min_depth : null,
+    maxDepth: (typeof t.max_depth === 'number') ? t.max_depth : null,
+    _dshtScope: (t.scope === 'character') ? 'character' : 'global',
+  };
+}
+/** 真 TH TavernRegexOption → 内部 {scope, slug}；未知形态**显式抛错**（N2：不再静默降级 global） */
+function dshtResolveRegexOption(option) {
+  var o = (option && typeof option === 'object') ? option : {};
+  var type = o.type;
+  // 兼容旧 scope 形态（d.ts「使用旧 scope 参数时」）
+  if (type === undefined && typeof o.scope === 'string') type = o.scope;
+  var ctxSlug = (latestContext && typeof latestContext.slug === 'string') ? latestContext.slug : null;
+  if (type === 'global') return { scope: 'global', slug: null };
+  if (type === 'character') return { scope: 'character', slug: ctxSlug };
+  if (type === 'preset') return { scope: 'preset', slug: null };
+  // 旧形态 'all'（ReplaceTavernRegexesOption）与未识别 → 显式报错
+  throw new Error('getTavernRegexes/replaceTavernRegexes: 不支持的 option（真 TH 契约：{type:"global"|"character"|"preset"}，收到 ' + JSON.stringify(option) + '）');
+}
+function getTavernRegexes(option) {
+  var r;
+  try { r = dshtResolveRegexOption(option); } catch (e) {
+    // 未给 option 是旧调用习惯（真 TH 必填）——降级返回三源合并视图并记名，避免硬崩老脚本
+    if (option === undefined || option === null) r = { scope: 'all', slug: null };
+    else { reportMissing('getTavernRegexes:bad-option'); throw e; }
+  }
+  return call('regexes:get', [r.slug, null]).then(function (res) {
+    var list = (res && Array.isArray(res.regexes)) ? res.regexes : [];
+    // scope 过滤（真 TH 按 option 只返回该组；缺省 all 返回全部——向后兼容）
+    if (r.scope !== 'all') list = list.filter(function (s) { return (s._dshtScope || 'global') === r.scope; });
+    var out = list.map(dshtRegexToTh);
+    // 【T-20】顺带把**全量**映射结果填进同步 API 的预热缓存（供 formatAsTavernRegexedString）
+    latestRegexesCache = ((res && Array.isArray(res.regexes)) ? res.regexes : []).map(dshtRegexToTh);
+    return out;
   });
 }
-function replaceTavernRegexes(regexes, options) {
-  var o = (options && typeof options === 'object') ? options : {};
-  var scope = 'global';
-  if (o.type === 'scoped' && (o.scope === 'character' || o.scope === 'preset')) scope = o.scope;
-  var slug = null;
-  if (scope === 'character' && latestContext && typeof latestContext.slug === 'string') slug = latestContext.slug;
-  return call('regexes:replace', [Array.isArray(regexes) ? regexes : [], scope, slug, null]);
+function replaceTavernRegexes(regexes, option) {
+  var r = dshtResolveRegexOption(option); // N2：未知形态显式抛错，不再静默改全局
+  var scope = r.scope === 'all' ? 'global' : r.scope;
+  var list = (Array.isArray(regexes) ? regexes : []).map(dshtThToRegex).filter(function (x) { return x !== null; });
+  return call('regexes:replace', [list, scope, r.slug, null]);
 }
-// 【实机审计修复 2026-09-05】P1：updateTavernRegexesWith——按 _dshtScope 分组整组写回。
-// regexes:get 返回三源合并视图（每条带 _dshtScope: global/character/preset）；updater 改完
-// 后逐作用域 regexes:replace 整组替换（与真 TH「按 option 取→改→写回」等效；去掉内部
-// _dshtScope 标记再落盘，防标记污染数据面文件）。
+// 【实机审计修复 2026-09-05】P1：updateTavernRegexesWith——按作用域分组整组写回。
+// 【T-20 N3 修复 2026-09-10】真 TH 签名 (updater, option) 必带 option，且**只作用于该作用域**；
+// 原实现忽略 option + 三作用域全部写回 → 脚本只想改全局正则，结果把角色/预设正则一并覆盖。
+// 现在：按 option 过滤出目标作用域（updater 收到的就是该组），只写回该作用域。
 function updateTavernRegexesWith(updater, option) {
-  void option;
-  return getTavernRegexes().then(function (regexes) {
+  var r = dshtResolveRegexOption(option); // 未知形态显式抛错（N2 同款）
+  return getTavernRegexes(option).then(function (regexes) {
     return Promise.resolve(updater(JSON.parse(JSON.stringify(regexes)))).then(function (next) {
-      var byScope = { global: [], character: [], preset: [] };
-      var list = Array.isArray(next) ? next : [];
-      for (var i = 0; i < list.length; i++) {
-        var s = list[i];
-        if (!s || typeof s !== 'object') continue;
-        var scope = (s._dshtScope === 'character' || s._dshtScope === 'preset') ? s._dshtScope : 'global';
-        var clean = {};
-        for (var k in s) { if (k !== '_dshtScope') clean[k] = s[k]; }
-        byScope[scope].push(clean);
+      var list = (Array.isArray(next) ? next : []).map(dshtThToRegex).filter(function (x) { return x !== null; });
+      // 只写回 option 指定的作用域（'all' 才三组齐写——旧调用习惯的兼容路径）
+      var scopes = r.scope === 'all' ? ['global', 'character', 'preset'] : [r.scope];
+      var jobs = [];
+      for (var i = 0; i < scopes.length; i++) {
+        var sc = scopes[i];
+        var bucket = [];
+        for (var j = 0; j < list.length; j++) {
+          var s = list[j];
+          if ((s._dshtScope || 'global') !== sc) continue;
+          var clean = {};
+          for (var k in s) { if (k !== '_dshtScope') clean[k] = s[k]; }
+          bucket.push(clean);
+        }
+        jobs.push(call('regexes:replace', [bucket, sc, sc === 'character' ? r.slug : null, null]));
       }
-      var slug = (latestContext && typeof latestContext.slug === 'string') ? latestContext.slug : null;
-      return Promise.all([
-        call('regexes:replace', [byScope.global, 'global', null, null]),
-        call('regexes:replace', [byScope.character, 'character', slug, null]),
-        call('regexes:replace', [byScope.preset, 'preset', null, null]),
-      ]).then(function () { return list; });
+      return Promise.all(jobs).then(function () { return regexes; });
     });
   });
 }
-// 【实机审计修复 2026-09-05】P1：formatAsTavernRegexedString——对文本跑正则脚本
-// （display 正则/宏管线消费同一批 RegexScript 形状）。placement 数值抄 ST regex_placement
-// 枚举（USER_INPUT=1 / AI_OUTPUT=2 / SLASH_COMMAND=3 / WORLD_INFO=5 / REASONING=6）；
-// destination 过滤按 ST 语义：display = 非 promptOnly，prompt = 非 markdownOnly；
-// {{match}} → $&（正则捕获组 $1 由 JS replace 原生支持）；substituteRegex 宏替换不做（诚实边界）。
-var DSHT_REGEX_PLACEMENT = { user_input: 1, ai_output: 2, slash_command: 3, world_info: 5, reasoning: 6 };
-function formatAsTavernRegexedString(text, source, destination) {
-  var placement = DSHT_REGEX_PLACEMENT[source];
-  if (placement === undefined) return Promise.resolve(String(text == null ? '' : text));
-  return getTavernRegexes().then(function (regexes) {
-    var result = String(text == null ? '' : text);
-    for (var i = 0; i < regexes.length; i++) {
-      var s = regexes[i];
-      if (!s || typeof s !== 'object' || s.disabled === true) continue;
-      if (!Array.isArray(s.placement) || s.placement.indexOf(placement) === -1) continue;
-      if (destination === 'display' && s.promptOnly === true) continue;
-      if (destination === 'prompt' && s.markdownOnly === true) continue;
-      if (typeof s.findRegex !== 'string' || s.findRegex === '') continue;
-      try {
-        var re = new RegExp(s.findRegex, 'g');
-        // '{{match}}' → '$&'（$$& 转义出字面 $&，再由外层 replace 解释为原匹配文本）。
-        // 【鲁棒轮 2026-09-09】对齐 ST 引擎：全局 + 大小写不敏感（/gi）——字符串单次 replace
-        // 只换第一处且漏 {{Match}} 变体，第二个占位符按字面文本进输出。
-        var rep = typeof s.replaceString === 'string' ? s.replaceString.replace(/{{match}}/gi, '$$&') : '';
-        result = result.replace(re, rep);
-      } catch (e) { /* 坏正则跳过（与 ST 引擎容错一致） */ }
-    }
-    return result;
+// 【T-20 修复 2026-09-10】formatAsTavernRegexedString——真 TH 契约：同步返回 string，且
+// option.depth 不填则忽略深度限制。原实现返回 Promise → 脚本按同步用会拿到字符串化的
+// Promise 字面量；且读内部 camelCase 形状（契约已改 snake_case）。
+// 同步实现靠**缓存的正则清单**（regexes:get 结果随上下文快照刷新到 latestRegexesCache）。
+var latestRegexesCache = [];
+/** 缓存预热（幂等；in-flight 去重）。调用点：① 脚本首次用同步 API 时惰性触发
+ *  ② getTavernRegexes/replaceTavernRegexes 异步调用成功后顺带刷新（T-20 2026-09-10）。
+ *  注意：**不在 applyContextSnapshot 里触发**——那会破坏「同步面不过桥」不变量
+ *  （getChatMessages 等同步 API 的测试断言 callsOf === 0）。 */
+var regexCacheInflight = null;
+function dshtRefreshRegexCache() {
+  if (regexCacheInflight !== null) return regexCacheInflight;
+  regexCacheInflight = call('regexes:get', [null, null]).then(function (res) {
+    var list = (res && Array.isArray(res.regexes)) ? res.regexes : [];
+    latestRegexesCache = list.map(dshtRegexToTh);
+    return latestRegexesCache;
+  }).catch(function () { return latestRegexesCache; }).then(function (v) {
+    regexCacheInflight = null;
+    return v;
   });
+  return regexCacheInflight;
 }
-// 【实机审计修复 2026-09-05】P1：isCharacterTavernRegexesEnabled——ST 查
-// extension_settings.character_allowed_regex 白名单；DSH 角色作用域正则恒并入生效
-// （regexes:get 三源合并即含 character 组），恒 true。
+var DSHT_REGEX_PLACEMENT = { user_input: 1, ai_output: 2, slash_command: 3, world_info: 5, reasoning: 6 };
+function formatAsTavernRegexedString(text, source, destination, option) {
+  var placement = DSHT_REGEX_PLACEMENT[source];
+  var result = String(text == null ? '' : text);
+  if (placement === undefined) return result;
+  // 缓存未预热 → 惰性触发（本次用现有缓存返回，下次调用即有数据；同步契约不阻塞）
+  if (latestRegexesCache.length === 0) { try { void dshtRefreshRegexCache(); } catch (e) { /* noop */ } }
+  var opt = (option && typeof option === 'object') ? option : {};
+  var depth = (typeof opt.depth === 'number') ? opt.depth : null;
+  for (var i = 0; i < latestRegexesCache.length; i++) {
+    var s = latestRegexesCache[i];
+    if (!s || typeof s !== 'object') continue;
+    if (s.enabled === false) continue; // 契约形状：enabled（真值=启用）
+    var src = (s.source && typeof s.source === 'object') ? s.source : {};
+    var srcKey = (source === 'reasoning') ? 'ai_output' : source; // 契约 source 无 reasoning 位
+    if (src[srcKey] !== true) continue;
+    var dst = (s.destination && typeof s.destination === 'object') ? s.destination : {};
+    // 契约语义：destination 位为 false = 该用途不适用（display=false 即「仅格式提示词」脚本，display 跳过）
+    if (destination === 'display' && dst.display === false) continue;
+    if (destination === 'prompt' && dst.prompt === false) continue;
+    // depth 过滤（t.d.ts：不填则不考虑深度选项）
+    if (depth !== null) {
+      if (typeof s.min_depth === 'number' && depth < s.min_depth) continue;
+      if (typeof s.max_depth === 'number' && depth > s.max_depth) continue;
+    }
+    if (typeof s.find_regex !== 'string' || s.find_regex === '') continue;
+    try {
+      var re = new RegExp(s.find_regex, 'g');
+      var rep = typeof s.replace_string === 'string' ? s.replace_string.replace(/{{match}}/gi, '$$&') : '';
+      result = result.replace(re, rep);
+    } catch (e) { /* 坏正则跳过（与 ST 引擎容错一致） */ }
+  }
+  return result;
+}
+// 【T-20 N5 修复 2026-09-10】isCharacterTavernRegexesEnabled——我方 regexes:get 三源合并
+// 即含 character 组（角色正则恒并入生效），语义上恒 true（诚实：无 _dshtScope 白名单机制）。
 function isCharacterTavernRegexesEnabled() { return true; }
+// 正则缓存预热：上下文快照刷新时同步（formatAsTavernRegexedString 是同步 API，需预热数据）
+if (typeof window !== 'undefined') {
+  setTimeout(function () { void dshtRefreshRegexCache(); }, 0);
+}
 
 // ---- 世界书（名单与条目读 + 【实机审计修复 2026-09-05】P1 写面：整表替换 / 全局·角色书单重绑 / 会话书）----
 function getWorldbooks() {

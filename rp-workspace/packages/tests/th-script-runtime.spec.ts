@@ -586,25 +586,46 @@ describe('shim：聊天消息只读（桥）', () => {
 })
 
 describe('shim：正则（桥）', () => {
-  it('getTavernRegexes → regexes:get（全量合并视图），解包 regexes', async () => {
+  // 【T-20 2026-09-10 契约修订】出口形状 = 真 TH TavernRegex（snake_case + enabled），
+  // 准据 tavern_regex.d.ts；旧断言 camelCase 是修复前的错误契约（见 docs/TH-REGEX-SOURCE-DIFF）
+  it('getTavernRegexes → regexes:get（scope 过滤 + 出口映射为真 TH snake_case 形状）', async () => {
     const f = makeFrame('s1')
-    runScript(f, `window.__r = null; getTavernRegexes().then(function (r) { window.__r = r; });`)
+    runScript(f, `window.__r = null; getTavernRegexes({ type: 'global' }).then(function (r) { window.__r = r; });`)
     expect(callsOf(f)[0]).toMatchObject({ api: 'regexes:get', args: [null, null] })
-    resolveCall(f, 0, { regexes: [{ scriptName: 'x', findRegex: 'a', _dshtScope: 'global' }], presetId: 'p1', slug: 'ws-1' })
+    resolveCall(f, 0, { regexes: [{ scriptName: 'x', findRegex: 'a', disabled: false, placement: [1], _dshtScope: 'global' }], presetId: 'p1', slug: 'ws-1' })
     await settled(f)
-    expect(vm.runInContext('window.__r', f.ctx)).toEqual([{ scriptName: 'x', findRegex: 'a', _dshtScope: 'global' }])
+    expect(vm.runInContext('window.__r', f.ctx)).toEqual([{
+      id: undefined,
+      script_name: 'x',
+      enabled: true,
+      find_regex: 'a',
+      replace_string: undefined,
+      trim_strings: [],
+      source: { user_input: true, ai_output: false, slash_command: false, world_info: false },
+      destination: { display: true, prompt: true },
+      run_on_edit: false,
+      min_depth: null,
+      max_depth: null,
+      scope: 'global',
+    }])
   })
 
-  it('replaceTavernRegexes：{type:global} → global；scoped → character/preset；character slug 取自快照', () => {
+  it('replaceTavernRegexes：{type:global|character|preset} 三形态（真 TH TavernRegexOption）；character slug 取自快照', () => {
     const f = makeFrame('s1')
     pushContext(f, { slug: 'ws-1' })
-    runScript(f, `replaceTavernRegexes([{ scriptName: 'x' }], { type: 'global' });`)
-    runScript(f, `replaceTavernRegexes([{ scriptName: 'y' }], { type: 'scoped', scope: 'character' });`)
-    runScript(f, `replaceTavernRegexes([{ scriptName: 'z' }], { type: 'scoped', scope: 'preset' });`)
+    runScript(f, `replaceTavernRegexes([{ script_name: 'x' }], { type: 'global' });`)
+    runScript(f, `replaceTavernRegexes([{ script_name: 'y' }], { type: 'character' });`)
+    runScript(f, `replaceTavernRegexes([{ script_name: 'z' }], { type: 'preset' });`)
     const calls = callsOf(f)
-    expect(calls[0]).toMatchObject({ api: 'regexes:replace', args: [[{ scriptName: 'x' }], 'global', null, null] })
-    expect(calls[1]).toMatchObject({ api: 'regexes:replace', args: [[{ scriptName: 'y' }], 'character', 'ws-1', null] })
-    expect(calls[2]).toMatchObject({ api: 'regexes:replace', args: [[{ scriptName: 'z' }], 'preset', null, null] })
+    expect(calls[0]).toMatchObject({ api: 'regexes:replace' })
+    expect((calls[0]!.args as unknown[])[1]).toBe('global')
+    expect((calls[0]!.args as unknown[])[2]).toBe(null)
+    expect((calls[1]!.args as unknown[])[1]).toBe('character')
+    expect((calls[1]!.args as unknown[])[2]).toBe('ws-1')
+    expect((calls[2]!.args as unknown[])[1]).toBe('preset')
+    // 契约形状入口 → 内部形状（script_name → scriptName）
+    const bucket = (calls[0]!.args as unknown[])[0] as Array<Record<string, unknown>>
+    expect(bucket[0]).toMatchObject({ scriptName: 'x', disabled: false })
   })
 })
 
@@ -644,54 +665,59 @@ describe('shim：P1/P2 长尾 API', () => {
     expect(put.args[3]).toBe(false)
   })
 
-  it('updateTavernRegexesWith：get 合并视图 → updater → 按 _dshtScope 分组整组写回（标记剥除）', async () => {
+  // 【T-20 N3 2026-09-10 契约修订】真 TH 语义：updater 只作用于 option 指定的作用域，
+  // 且只写回该作用域（原实现三组齐写 = 静默扩大写入范围）
+  it('updateTavernRegexesWith(updater, option)：只取/只写 option 作用域（标记剥除）', async () => {
     const f = makeFrame('s1')
     pushContext(f, { slug: 'ws-1' })
     runScript(f, `
       window.__r = null;
       updateTavernRegexesWith(function (rx) {
         return rx.map(function (s) {
-          return s.scriptName === 'a' ? { scriptName: 'a', findRegex: 'z', _dshtScope: 'global' } : s;
-        }).concat([{ scriptName: 'new', findRegex: 'n', _dshtScope: 'global' }]);
-      }).then(function (r) { window.__r = r; });
+          return s.script_name === 'a' ? Object.assign({}, s, { find_regex: 'z' }) : s;
+        }).concat([{ script_name: 'new', find_regex: 'n', enabled: true, source: { user_input: true }, destination: { display: true, prompt: true } }]);
+      }, { type: 'global' }).then(function (r) { window.__r = r; });
     `)
     resolveCall(f, 0, {
       regexes: [
-        { scriptName: 'a', findRegex: 'a', _dshtScope: 'global' },
-        { scriptName: 'b', findRegex: 'b', _dshtScope: 'character' },
+        { scriptName: 'a', findRegex: 'a', disabled: false, _dshtScope: 'global' },
+        { scriptName: 'b', findRegex: 'b', disabled: false, _dshtScope: 'character' },
       ],
     })
     await settled(f)
     const calls = callsOf(f)
-    expect(calls[1]).toMatchObject({
-      api: 'regexes:replace',
-      args: [[{ scriptName: 'a', findRegex: 'z' }, { scriptName: 'new', findRegex: 'n' }], 'global', null, null],
-    })
-    expect(calls[2]).toMatchObject({
-      api: 'regexes:replace',
-      args: [[{ scriptName: 'b', findRegex: 'b' }], 'character', 'ws-1', null], // _dshtScope 已剥除
-    })
-    expect(calls[3]).toMatchObject({ api: 'regexes:replace', args: [[], 'preset', null, null] })
+    // 只有一次写回（global），不再三组齐写
+    const replaces = calls.filter(c => c.api === 'regexes:replace')
+    expect(replaces).toHaveLength(1)
+    expect((replaces[0]!.args as unknown[])[1]).toBe('global')
+    // 写回内容：契约形状入口 → 内部形状；_dshtScope 已剥除；角色组那条不在 global 桶里
+    const bucket = (replaces[0]!.args as unknown[])[0] as Array<Record<string, unknown>>
+    expect(bucket.map(x => x.scriptName).sort()).toEqual(['a', 'new'])
+    expect(bucket.every(x => x._dshtScope === undefined)).toBe(true)
   })
 
-  it('formatAsTavernRegexedString：placement/destination/disabled 过滤 + {{match}}；isCharacterTavernRegexesEnabled 恒 true', async () => {
+  it('formatAsTavernRegexedString：同步返回 string（真 TH 契约），用预热缓存过滤', async () => {
     const f = makeFrame('s1')
-    runScript(f, `
-      window.__r = null;
-      formatAsTavernRegexedString('hello world', 'ai_output', 'display').then(function (t) { window.__r = t; });
-    `)
+    // 先用异步 API 预热缓存（模拟真实链路：脚本先 getTavernRegexes 再同步格式化）
+    runScript(f, `window.__r0 = null; getTavernRegexes({ type: 'global' }).then(function (r) { window.__r0 = r; });`)
     resolveCall(f, 0, {
       regexes: [
-        { scriptName: 'ok', findRegex: 'world', replaceString: '{{match}}!', placement: [2] },
-        { scriptName: 'promptOnly', findRegex: 'hello', replaceString: 'X', placement: [2], promptOnly: true },
-        { scriptName: 'wrongPlacement', findRegex: 'hello', replaceString: 'Y', placement: [1] },
+        { scriptName: 'ok', findRegex: 'world', replaceString: '{{match}}!', placement: [2], disabled: false },
+        { scriptName: 'promptOnly', findRegex: 'hello', replaceString: 'X', placement: [2], disabled: false, promptOnly: true },
+        { scriptName: 'wrongPlacement', findRegex: 'hello', replaceString: 'Y', placement: [1], disabled: false },
         { scriptName: 'disabled', findRegex: 'hello', replaceString: 'Z', placement: [2], disabled: true },
       ],
     })
     await settled(f)
-    expect(vm.runInContext('window.__r', f.ctx)).toBe('hello world!') // display 跳过 promptOnly；{{match}} → 原匹配
+    await settled(f) // 契约链多一跳（call promise → 映射 → 缓存写入）再断言
+    // 同步调用（真 TH 契约：直接返回 string）——缓存已由上面的 getTavernRegexes 填充
+    const out = vm.runInContext(`formatAsTavernRegexedString('hello world', 'ai_output', 'display')`, f.ctx)
+    expect(typeof out).toBe('string')
+    // 契约语义：destination.display=false 的脚本（promptOnly /「仅格式提示词」）在 display 跳过；
+    // wrongPlacement（source.ai_output=false）与 disabled（enabled=false）同样跳过。
+    // 唯一命中：ok（'world' → '{{match}}!' = 'world!'）→ 'hello world!'
+    expect(out).toBe('hello world!')
     expect(vm.runInContext('isCharacterTavernRegexesEnabled()', f.ctx)).toBe(true)
-    expect(callsOf(f).slice(1)).toHaveLength(0) // isCharacterTavernRegexesEnabled 不过桥
   })
 
   it('世界书写面桥：getWorldbook / replaceLorebookEntries / rebindGlobal / rebindChar / chatGetOrCreate', async () => {
