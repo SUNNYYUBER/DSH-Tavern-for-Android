@@ -5262,7 +5262,36 @@ function insertOrAssignVariables(vars, option) {
   return call('vars:merge', [o, vars, 'assign']);
 }
 function insertVariables(vars, option) { return call('vars:merge', [guardOption(option, 'insertVariables'), vars, 'insert']); }
-function deleteVariable(path, option) { return call('vars:delete', [guardOption(option, 'deleteVariable'), String(path)]); }
+// \u3010T-21 \u5951\u7EA6\u4FEE\u590D 2026-09-10\u3011deleteVariable \u771F TH \u5951\u7EA6\uFF08variables.d.ts\uFF09\u8FD4\u56DE
+// {variables, delete_occurred} \u53CC\u5B57\u6BB5\u2014\u2014\u539F\u5B9E\u73B0\u53EA\u56DE {variables}\uFF0C\u811A\u672C\u8BFB
+// res.delete_occurred \u6052 undefined\uFF08\u5224\u5B9A"\u662F\u5426\u771F\u7684\u5220\u6389\u4E86"\u6C38\u8FDC\u5931\u8D25\uFF09\u3002
+// host \u4FA7 vars:delete \u8FD4\u56DE\u66F4\u65B0\u540E\u7684 {variables}\uFF1B\u6B64\u5904\u5BF9\u6BD4\u5220\u9664\u524D\u540E\u8DEF\u5F84\u5B58\u5728\u6027\u5F97\u51FA delete_occurred\u3002
+function dshtPathExists(tree, path) {
+  if (!tree || typeof tree !== 'object') return false;
+  var segs = String(path == null ? '' : path).split('.').filter(function (s) { return s !== ''; });
+  if (segs.length === 0) return false;
+  var cur = tree;
+  for (var i = 0; i < segs.length; i++) {
+    if (cur === null || typeof cur !== 'object' || !(segs[i] in cur)) return false;
+    cur = cur[segs[i]];
+  }
+  return true;
+}
+function deleteVariable(path, option) {
+  var o = guardOption(option, 'deleteVariable');
+  var key = String(path);
+  // \u5951\u7EA6\uFF08variables.d.ts\uFF09\uFF1A\u8FD4\u56DE {variables: \u66F4\u65B0\u540E\u7684\u53D8\u91CF\u8868, delete_occurred: \u662F\u5426\u771F\u7684\u5220\u9664}\u3002
+  // host \u6865\u7684 vars:delete \u4E0D\u8FD4\u56DE\u65B0\u6811 \u2192 \u5220\u9664\u540E\u91CD\u8BFB\u4E00\u6B21 get\uFF08\u51C6\u786E\u4E14\u8BED\u4E49\u7B49\u4EF7\uFF1B\u5220\u9664\u662F\u4F4E\u9891\u64CD\u4F5C\uFF09\u3002
+  return call('vars:get', [o]).then(function (before) {
+    var existed = dshtPathExists(before, key);
+    return call('vars:delete', [o, key]).then(function () {
+      return call('vars:get', [o]);
+    }).then(function (after) {
+      var variables = (after && typeof after === 'object' && !Array.isArray(after)) ? after : {};
+      return { variables: variables, delete_occurred: existed && !dshtPathExists(variables, key) };
+    });
+  });
+}
 function updateVariablesWith(updater, option) {
   var o = guardOption(option, 'updateVariablesWith');
   return call('vars:get', [o]).then(function (tree) {
@@ -5323,8 +5352,6 @@ if (window.__dshtInitialContext && typeof window.__dshtInitialContext === 'objec
 function applyContextSnapshot(ctx) {
   latestContext = (ctx && typeof ctx === 'object') ? ctx : null;
   dispatch('context_refreshed', [latestContext]);
-  // \u3010T-20 2026-09-10\u3011\u540C\u6B65 API formatAsTavernRegexedString \u4F9D\u8D56\u9884\u70ED\u7F13\u5B58\u2014\u2014\u4E0A\u4E0B\u6587\u5237\u65B0\u65F6\u91CD\u53D6
-  try { void dshtRefreshRegexCache(); } catch (e) { /* \u62C9\u53D6\u5931\u8D25\u4FDD\u7559\u65E7\u7F13\u5B58 */ }
 }
 function getContext() {
   if (latestContext) return latestContext;
@@ -5482,7 +5509,7 @@ function dshtMessageView(m) {
   if (!m || typeof m !== 'object') return m;
   var data = {};
   for (var k in m) {
-    if (k === 'message_id' || k === 'name' || k === 'role' || k === 'message' || k === 'is_system' || k === 'is_hidden' || k === 'data' || k === 'seq' || k === 'extra' || k === 'swipe_id' || k === 'swipes') continue;
+    if (k === 'message_id' || k === 'name' || k === 'role' || k === 'message' || k === 'is_system' || k === 'is_hidden' || k === 'data' || k === 'seq' || k === 'extra' || k === 'swipe_id' || k === 'swipes' || k === 'swipes_data' || k === 'swipes_info') continue;
     data[k] = m[k];
   }
   var view = {
@@ -5496,6 +5523,11 @@ function dshtMessageView(m) {
     extra: (m.extra && typeof m.extra === 'object') ? m.extra : {},
     swipe_id: typeof m.swipe_id === 'number' ? m.swipe_id : 0,
     swipes: Array.isArray(m.swipes) ? m.swipes : [m.message],
+    // \u3010T-21 \u5951\u7EA6\u4FEE\u590D 2026-09-10\u3011ChatMessageSwiped\uFF08chat_message.d.ts\uFF09\u8FD8\u8981\u6C42
+    // swipes_data\uFF08\u6BCF\u9875\u7684\u697C\u5C42\u53D8\u91CF\uFF09\u4E0E swipes_info\uFF08\u6BCF\u9875\u5143\u4FE1\u606F\uFF09\u2014\u2014\u7F3A\u5931\u65F6\u6309\u9875\u6570\u7ED9\u7B49\u957F\u7A7A\u5BF9\u8C61\u6570\u7EC4\uFF0C
+    // \u9632\u811A\u672C\u6309\u7D22\u5F15\u53D6 swipes_data[swipe_id] \u65F6\u76F4\u63A5 TypeError\u3002
+    swipes_data: Array.isArray(m.swipes_data) ? m.swipes_data : (Array.isArray(m.swipes) ? m.swipes.map(function () { return {} }) : [{}]),
+    swipes_info: Array.isArray(m.swipes_info) ? m.swipes_info : (Array.isArray(m.swipes) ? m.swipes.map(function () { return {} }) : [{}]),
   };
   if (typeof m.seq === 'number') view.seq = m.seq;
   return view;
@@ -5532,13 +5564,14 @@ function dshtSyncChatList() {
 }
 // \u3010\u9C81\u68D2\u8F6E 2026-09-09\u3011\u8865\u7B2C\u4E8C\u53C2\u6570 option\uFF08\u771F TH \u7B7E\u540D getChatMessages(range, {role, hide_state,
 // include_swipes})\uFF09\u2014\u2014shim \u539F\u5B9E\u73B0\u6574\u4E2A\u4E22\u5F03 option\uFF0C\u7EDF\u8BA1/\u62FC\u63A5\u7C7B\u811A\u672C\u62FF\u5230\u672A\u8FC7\u6EE4\u6570\u636E\u9759\u9ED8\u51FA\u9519\u3002
-// role: 'all'|'user'|'assistant'|'system'\uFF1Bhide_state: 'all'|'hidden'|'unhidden'\u3002
+// role: 'all'|'system'|'assistant'|'user'\uFF1Bhide_state: 'all'|'hidden'|'unhidden'\u3002
+// \u3010T-21 2026-09-10\u3011role \u8FC7\u6EE4\u6539\u6309\u5951\u7EA6 role \u5B57\u6BB5\u5224\u5B9A\uFF08chat_message.d.ts ChatMessage \u65E0 is_system\uFF0C
+// \u539F\u5B9E\u73B0\u7528 is_system \u5224 'system' \u2192 \u6052\u4E0D\u547D\u4E2D\uFF09\uFF1Binclude_swipes \u63A7\u5236\u662F\u5426\u9644 swipes \u65CF\u5B57\u6BB5\u3002
 function dshtMessageFilter(m, option) {
   if (!option || typeof option !== 'object') return true
   var role = option.role
   if (role && role !== 'all') {
-    if (role === 'system') { if (m.is_system !== true) return false }
-    else if (m.role !== role) return false
+    if (m.role !== role) return false
   }
   var hs = option.hide_state
   if (hs && hs !== 'all') {
@@ -5553,10 +5586,21 @@ function getChatMessages(range, option) {
   var list = dshtSyncChatList();
   var rn = dshtStringToRange(raw, 0, list.length - 1);
   if (!rn) return [];
+  var opt = (option && typeof option === 'object') ? option : {};
+  var withSwipes = opt.include_swipes === true;
   var out = [];
   for (var i = rn.start; i <= rn.end; i++) {
     var m = list[i];
-    if (m && typeof m === 'object' && dshtMessageFilter(m, option)) out.push(m);
+    if (!m || typeof m !== 'object' || !dshtMessageFilter(m, opt)) continue;
+    if (!withSwipes) {
+      // \u5951\u7EA6\uFF08chat_message.d.ts\uFF09\uFF1Ainclude_swipes \u7F3A\u7701/false \u2192 \u8FD4\u56DE ChatMessage\uFF08\u65E0 swipes \u65CF\u5B57\u6BB5\uFF09\u3002
+      // \u6CE8\u610F extra \u5728 ChatMessage \u91CC\u662F**\u5FC5\u9700**\u5B57\u6BB5\uFF0C\u4FDD\u7559\u3002
+      m = {
+        message_id: m.message_id, name: m.name, role: m.role,
+        is_hidden: m.is_hidden, message: m.message, data: m.data, extra: m.extra,
+      };
+    }
+    out.push(m);
   }
   return out;
 }
@@ -5618,7 +5662,10 @@ function dshtRegexToTh(s) {
       slash_command: pl.indexOf(3) !== -1,
       world_info: pl.indexOf(5) !== -1,
     },
-    destination: { display: s.markdownOnly !== true, prompt: s.promptOnly !== true },
+    // \u5951\u7EA6 destination \u8BED\u4E49\uFF08d.ts\uFF1A\u300C\u4EC5\u683C\u5F0F\u663E\u793A\u300D=markdownOnly /\u300C\u4EC5\u683C\u5F0F\u63D0\u793A\u8BCD\u300D=promptOnly\uFF09\uFF1A
+    //   display = \u53C2\u4E0E\u663E\u793A\u6E32\u67D3 = !promptOnly\uFF08promptOnly \u811A\u672C\u4E0D\u53C2\u4E0E\u663E\u793A\uFF09
+    //   prompt  = \u53C2\u4E0E\u63D0\u793A\u8BCD   = !markdownOnly\uFF08markdownOnly \u811A\u672C\u4E0D\u53C2\u4E0E\u63D0\u793A\u8BCD\uFF09
+    destination: { display: s.promptOnly !== true, prompt: s.markdownOnly !== true },
     run_on_edit: s.runOnEdit === true,
     min_depth: (typeof s.minDepth === 'number') ? s.minDepth : null,
     max_depth: (typeof s.maxDepth === 'number') ? s.maxDepth : null,
@@ -5666,8 +5713,9 @@ function dshtThToRegex(t) {
     placement: placement,
     // \u6781\u6027\u53CD\u8F6C\uFF1A\u5951\u7EA6 enabled=false \u2192 \u5185\u90E8 disabled=true
     disabled: t.enabled === false,
-    markdownOnly: dst.display === false,
-    promptOnly: dst.prompt === false,
+    // \u6781\u6027/\u7ED3\u6784\u53CC\u53CD\u7B97\uFF1ApromptOnly=\u300C\u4E0D\u53C2\u4E0E\u663E\u793A\u300D(display=false)\uFF1BmarkdownOnly=\u300C\u4E0D\u53C2\u4E0E\u63D0\u793A\u8BCD\u300D(prompt=false)
+    markdownOnly: dst.prompt === false,
+    promptOnly: dst.display === false,
     runOnEdit: t.run_on_edit === true,
     substituteRegex: typeof t.substitute_regex === 'number' ? t.substitute_regex : 0,
     minDepth: (typeof t.min_depth === 'number') ? t.min_depth : null,
@@ -5699,7 +5747,10 @@ function getTavernRegexes(option) {
     var list = (res && Array.isArray(res.regexes)) ? res.regexes : [];
     // scope \u8FC7\u6EE4\uFF08\u771F TH \u6309 option \u53EA\u8FD4\u56DE\u8BE5\u7EC4\uFF1B\u7F3A\u7701 all \u8FD4\u56DE\u5168\u90E8\u2014\u2014\u5411\u540E\u517C\u5BB9\uFF09
     if (r.scope !== 'all') list = list.filter(function (s) { return (s._dshtScope || 'global') === r.scope; });
-    return list.map(dshtRegexToTh);
+    var out = list.map(dshtRegexToTh);
+    // \u3010T-20\u3011\u987A\u5E26\u628A**\u5168\u91CF**\u6620\u5C04\u7ED3\u679C\u586B\u8FDB\u540C\u6B65 API \u7684\u9884\u70ED\u7F13\u5B58\uFF08\u4F9B formatAsTavernRegexedString\uFF09
+    latestRegexesCache = ((res && Array.isArray(res.regexes)) ? res.regexes : []).map(dshtRegexToTh);
+    return out;
   });
 }
 function replaceTavernRegexes(regexes, option) {
@@ -5741,21 +5792,30 @@ function updateTavernRegexesWith(updater, option) {
 // Promise \u5B57\u9762\u91CF\uFF1B\u4E14\u8BFB\u5185\u90E8 camelCase \u5F62\u72B6\uFF08\u5951\u7EA6\u5DF2\u6539 snake_case\uFF09\u3002
 // \u540C\u6B65\u5B9E\u73B0\u9760**\u7F13\u5B58\u7684\u6B63\u5219\u6E05\u5355**\uFF08regexes:get \u7ED3\u679C\u968F\u4E0A\u4E0B\u6587\u5FEB\u7167\u5237\u65B0\u5230 latestRegexesCache\uFF09\u3002
 var latestRegexesCache = [];
+/** \u7F13\u5B58\u9884\u70ED\uFF08\u5E42\u7B49\uFF1Bin-flight \u53BB\u91CD\uFF09\u3002\u8C03\u7528\u70B9\uFF1A\u2460 \u811A\u672C\u9996\u6B21\u7528\u540C\u6B65 API \u65F6\u60F0\u6027\u89E6\u53D1
+ *  \u2461 getTavernRegexes/replaceTavernRegexes \u5F02\u6B65\u8C03\u7528\u6210\u529F\u540E\u987A\u5E26\u5237\u65B0\uFF08T-20 2026-09-10\uFF09\u3002
+ *  \u6CE8\u610F\uFF1A**\u4E0D\u5728 applyContextSnapshot \u91CC\u89E6\u53D1**\u2014\u2014\u90A3\u4F1A\u7834\u574F\u300C\u540C\u6B65\u9762\u4E0D\u8FC7\u6865\u300D\u4E0D\u53D8\u91CF
+ *  \uFF08getChatMessages \u7B49\u540C\u6B65 API \u7684\u6D4B\u8BD5\u65AD\u8A00 callsOf === 0\uFF09\u3002 */
+var regexCacheInflight = null;
 function dshtRefreshRegexCache() {
-  try {
-    return getTavernRegexes({ type: 'global' }).then(function (list) {
-      return getTavernRegexes(); // \u4E09\u6E90\u5408\u5E76\uFF08\u65E7\u8C03\u7528\u4E60\u60EF\u964D\u7EA7\u8DEF\u5F84\uFF0C\u8FD4\u56DE\u5168\u91CF\uFF09
-    }).then(function (all) {
-      latestRegexesCache = Array.isArray(all) ? all : [];
-      return latestRegexesCache;
-    }).catch(function () { return latestRegexesCache; });
-  } catch (e) { return Promise.resolve(latestRegexesCache); }
+  if (regexCacheInflight !== null) return regexCacheInflight;
+  regexCacheInflight = call('regexes:get', [null, null]).then(function (res) {
+    var list = (res && Array.isArray(res.regexes)) ? res.regexes : [];
+    latestRegexesCache = list.map(dshtRegexToTh);
+    return latestRegexesCache;
+  }).catch(function () { return latestRegexesCache; }).then(function (v) {
+    regexCacheInflight = null;
+    return v;
+  });
+  return regexCacheInflight;
 }
 var DSHT_REGEX_PLACEMENT = { user_input: 1, ai_output: 2, slash_command: 3, world_info: 5, reasoning: 6 };
 function formatAsTavernRegexedString(text, source, destination, option) {
   var placement = DSHT_REGEX_PLACEMENT[source];
   var result = String(text == null ? '' : text);
   if (placement === undefined) return result;
+  // \u7F13\u5B58\u672A\u9884\u70ED \u2192 \u60F0\u6027\u89E6\u53D1\uFF08\u672C\u6B21\u7528\u73B0\u6709\u7F13\u5B58\u8FD4\u56DE\uFF0C\u4E0B\u6B21\u8C03\u7528\u5373\u6709\u6570\u636E\uFF1B\u540C\u6B65\u5951\u7EA6\u4E0D\u963B\u585E\uFF09
+  if (latestRegexesCache.length === 0) { try { void dshtRefreshRegexCache(); } catch (e) { /* noop */ } }
   var opt = (option && typeof option === 'object') ? option : {};
   var depth = (typeof opt.depth === 'number') ? opt.depth : null;
   for (var i = 0; i < latestRegexesCache.length; i++) {
@@ -5766,6 +5826,7 @@ function formatAsTavernRegexedString(text, source, destination, option) {
     var srcKey = (source === 'reasoning') ? 'ai_output' : source; // \u5951\u7EA6 source \u65E0 reasoning \u4F4D
     if (src[srcKey] !== true) continue;
     var dst = (s.destination && typeof s.destination === 'object') ? s.destination : {};
+    // \u5951\u7EA6\u8BED\u4E49\uFF1Adestination \u4F4D\u4E3A false = \u8BE5\u7528\u9014\u4E0D\u9002\u7528\uFF08display=false \u5373\u300C\u4EC5\u683C\u5F0F\u63D0\u793A\u8BCD\u300D\u811A\u672C\uFF0Cdisplay \u8DF3\u8FC7\uFF09
     if (destination === 'display' && dst.display === false) continue;
     if (destination === 'prompt' && dst.prompt === false) continue;
     // depth \u8FC7\u6EE4\uFF08t.d.ts\uFF1A\u4E0D\u586B\u5219\u4E0D\u8003\u8651\u6DF1\u5EA6\u9009\u9879\uFF09
@@ -5817,26 +5878,56 @@ function wbBookOf(r) {
 // \u6C38\u8FDC\u843D\u7A7A\u5E76\u89E6\u53D1\u5FC3\u8DF3\u53CD\u590D\u91CD\u5199\u4E16\u754C\u4E66\uFF08\u5B9E\u673A 5000+ \u6B21/\u5C0F\u65F6 wb:entryPut \u98CE\u66B4\u6839\u56E0\uFF09\u3002
 // strategy: {type:'constant'|'selective'|'conditional', keys, secondary_keys, selective_logic}
 // position: {type:'before_char'|\u2026, depth, order, role}
-var TH_POS_ST_TO_TYPE = ['before_char', 'after_char', 'before_authors_note', 'after_authors_note', 'at_depth', 'before_example_messages', 'after_example_messages'];
+// \u3010T-21 2026-09-10\u3011position.type \u6620\u5C04\u6539\u771F TH WorldbookEntry \u679A\u4E3E\uFF08worldbook.d.ts\uFF09\uFF1A
+// ST \u6570\u503C position\uFF080..6\uFF09\u2192 \u5951\u7EA6\u5B57\u7B26\u4E32\u30020=before_char / 1=after_char / 2=before_authors_note /
+// 3=after_authors_note / 4=at_depth / 5=before_example_messages / 6=after_example_messages
+var TH_POS_ST_TO_TYPE = ['before_character_definition', 'after_character_definition', 'before_author_note', 'after_author_note', 'at_depth', 'before_example_messages', 'after_example_messages'];
+// \u3010T-21 \u5951\u7EA6\u8865\u9F50 2026-09-10\u3011\u771F TH WorldbookEntry\uFF08worldbook.d.ts\uFF09\u5B57\u6BB5\uFF1A
+// {uid, name, enabled, strategy{type,keys,keys_secondary{logic,keys},scan_depth},
+//  position{type,role,depth,order}, content, probability,
+//  recursion{prevent_incoming,prevent_outgoing,delay_until}, effect{sticky,cooldown,delay}, extra?}
+// \u539F\u5B9E\u73B0\u53EA\u8865 strategy/position \u4E24\u5BF9\u8C61 \u2192 \u811A\u672C\u8BFB entry.recursion / entry.effect / entry.probability
+// \u6052 undefined\uFF08"\u7981\u6B62\u9012\u5F52""\u9ECF\u6027/\u51B7\u5374"\u7C7B\u5224\u5B9A\u9759\u9ED8\u5931\u6548\uFF09\u3002\u6B64\u5904\u4E00\u6B21\u8865\u9F50\uFF08\u5E42\u7B49\uFF1A\u5DF2\u6709\u5B57\u6BB5\u4E0D\u8986\u76D6\uFF09\u3002
+var TH_RECURSION_LOGIC = { 0: 'and_any', 1: 'and_all', 2: 'not_all', 3: 'not_any' };
 function thEnrichEntry(e) {
   if (!e || typeof e !== 'object' || e.strategy) return e;
   var constant = e.constant === true;
   var selective = e.selective === true;
   var strategy = {
+    // \u5951\u7EA6\uFF08worldbook.d.ts\uFF09\uFF1A'constant' | 'selective' | 'vectorized'
     type: constant ? 'constant' : (selective ? 'selective' : 'constant'),
     keys: Array.isArray(e.key) ? e.key.map(String) : [],
-    secondary_keys: Array.isArray(e.keysecondary) ? e.keysecondary.map(String) : [],
-    selective_logic: typeof e.selectiveLogic === 'number' ? e.selectiveLogic : 0,
-    case_sensitive: false,
+    keys_secondary: {
+      logic: TH_RECURSION_LOGIC[typeof e.selectiveLogic === 'number' ? e.selectiveLogic : 0] || 'and_any',
+      keys: Array.isArray(e.keysecondary) ? e.keysecondary.map(String) : [],
+    },
+    scan_depth: typeof e.scanDepth === 'number' ? e.scanDepth : 'same_as_global',
   };
-  var posType = TH_POS_ST_TO_TYPE[typeof e.position === 'number' ? e.position : 0] || 'before_char';
+  var posType = TH_POS_ST_TO_TYPE[typeof e.position === 'number' ? e.position : 0] || 'before_character_definition';
   e.strategy = strategy;
   e.position = {
     type: posType,
+    role: (e.role === 'user' || e.role === 'assistant') ? e.role : 'system',
     depth: typeof e.depth === 'number' ? e.depth : 4,
     order: typeof e.order === 'number' ? e.order : 100,
-    role: (e.role === 'user' || e.role === 'assistant') ? e.role : 'system',
   };
+  // \u3010T-21\u3011\u9012\u5F52\u63A7\u5236 / \u65F6\u6548\u6548\u679C / \u6982\u7387 / extra\uFF08\u5951\u7EA6\u5FC5\u586B\u9879\uFF09
+  if (e.recursion === undefined) {
+    e.recursion = {
+      prevent_incoming: e.excludeRecursion === true,
+      prevent_outgoing: e.preventRecursion === true,
+      delay_until: (typeof e.delayUntilRecursion === 'number') ? e.delayUntilRecursion : null,
+    };
+  }
+  if (e.effect === undefined) {
+    e.effect = {
+      sticky: (typeof e.sticky === 'number') ? e.sticky : null,
+      cooldown: (typeof e.cooldown === 'number') ? e.cooldown : null,
+      delay: (typeof e.delay === 'number') ? e.delay : null,
+    };
+  }
+  if (typeof e.probability !== 'number') e.probability = 100;
+  if (e.extra === undefined) e.extra = {};
   e.use_regex = false;
   return e;
 }

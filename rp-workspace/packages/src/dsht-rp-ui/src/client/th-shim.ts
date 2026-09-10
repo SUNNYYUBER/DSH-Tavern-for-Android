@@ -692,7 +692,36 @@ function insertOrAssignVariables(vars, option) {
   return call('vars:merge', [o, vars, 'assign']);
 }
 function insertVariables(vars, option) { return call('vars:merge', [guardOption(option, 'insertVariables'), vars, 'insert']); }
-function deleteVariable(path, option) { return call('vars:delete', [guardOption(option, 'deleteVariable'), String(path)]); }
+// 【T-21 契约修复 2026-09-10】deleteVariable 真 TH 契约（variables.d.ts）返回
+// {variables, delete_occurred} 双字段——原实现只回 {variables}，脚本读
+// res.delete_occurred 恒 undefined（判定"是否真的删掉了"永远失败）。
+// host 侧 vars:delete 返回更新后的 {variables}；此处对比删除前后路径存在性得出 delete_occurred。
+function dshtPathExists(tree, path) {
+  if (!tree || typeof tree !== 'object') return false;
+  var segs = String(path == null ? '' : path).split('.').filter(function (s) { return s !== ''; });
+  if (segs.length === 0) return false;
+  var cur = tree;
+  for (var i = 0; i < segs.length; i++) {
+    if (cur === null || typeof cur !== 'object' || !(segs[i] in cur)) return false;
+    cur = cur[segs[i]];
+  }
+  return true;
+}
+function deleteVariable(path, option) {
+  var o = guardOption(option, 'deleteVariable');
+  var key = String(path);
+  // 契约（variables.d.ts）：返回 {variables: 更新后的变量表, delete_occurred: 是否真的删除}。
+  // host 桥的 vars:delete 不返回新树 → 删除后重读一次 get（准确且语义等价；删除是低频操作）。
+  return call('vars:get', [o]).then(function (before) {
+    var existed = dshtPathExists(before, key);
+    return call('vars:delete', [o, key]).then(function () {
+      return call('vars:get', [o]);
+    }).then(function (after) {
+      var variables = (after && typeof after === 'object' && !Array.isArray(after)) ? after : {};
+      return { variables: variables, delete_occurred: existed && !dshtPathExists(variables, key) };
+    });
+  });
+}
 function updateVariablesWith(updater, option) {
   var o = guardOption(option, 'updateVariablesWith');
   return call('vars:get', [o]).then(function (tree) {
@@ -910,7 +939,7 @@ function dshtMessageView(m) {
   if (!m || typeof m !== 'object') return m;
   var data = {};
   for (var k in m) {
-    if (k === 'message_id' || k === 'name' || k === 'role' || k === 'message' || k === 'is_system' || k === 'is_hidden' || k === 'data' || k === 'seq' || k === 'extra' || k === 'swipe_id' || k === 'swipes') continue;
+    if (k === 'message_id' || k === 'name' || k === 'role' || k === 'message' || k === 'is_system' || k === 'is_hidden' || k === 'data' || k === 'seq' || k === 'extra' || k === 'swipe_id' || k === 'swipes' || k === 'swipes_data' || k === 'swipes_info') continue;
     data[k] = m[k];
   }
   var view = {
@@ -924,6 +953,11 @@ function dshtMessageView(m) {
     extra: (m.extra && typeof m.extra === 'object') ? m.extra : {},
     swipe_id: typeof m.swipe_id === 'number' ? m.swipe_id : 0,
     swipes: Array.isArray(m.swipes) ? m.swipes : [m.message],
+    // 【T-21 契约修复 2026-09-10】ChatMessageSwiped（chat_message.d.ts）还要求
+    // swipes_data（每页的楼层变量）与 swipes_info（每页元信息）——缺失时按页数给等长空对象数组，
+    // 防脚本按索引取 swipes_data[swipe_id] 时直接 TypeError。
+    swipes_data: Array.isArray(m.swipes_data) ? m.swipes_data : (Array.isArray(m.swipes) ? m.swipes.map(function () { return {} }) : [{}]),
+    swipes_info: Array.isArray(m.swipes_info) ? m.swipes_info : (Array.isArray(m.swipes) ? m.swipes.map(function () { return {} }) : [{}]),
   };
   if (typeof m.seq === 'number') view.seq = m.seq;
   return view;
@@ -960,13 +994,14 @@ function dshtSyncChatList() {
 }
 // 【鲁棒轮 2026-09-09】补第二参数 option（真 TH 签名 getChatMessages(range, {role, hide_state,
 // include_swipes})）——shim 原实现整个丢弃 option，统计/拼接类脚本拿到未过滤数据静默出错。
-// role: 'all'|'user'|'assistant'|'system'；hide_state: 'all'|'hidden'|'unhidden'。
+// role: 'all'|'system'|'assistant'|'user'；hide_state: 'all'|'hidden'|'unhidden'。
+// 【T-21 2026-09-10】role 过滤改按契约 role 字段判定（chat_message.d.ts ChatMessage 无 is_system，
+// 原实现用 is_system 判 'system' → 恒不命中）；include_swipes 控制是否附 swipes 族字段。
 function dshtMessageFilter(m, option) {
   if (!option || typeof option !== 'object') return true
   var role = option.role
   if (role && role !== 'all') {
-    if (role === 'system') { if (m.is_system !== true) return false }
-    else if (m.role !== role) return false
+    if (m.role !== role) return false
   }
   var hs = option.hide_state
   if (hs && hs !== 'all') {
@@ -981,10 +1016,21 @@ function getChatMessages(range, option) {
   var list = dshtSyncChatList();
   var rn = dshtStringToRange(raw, 0, list.length - 1);
   if (!rn) return [];
+  var opt = (option && typeof option === 'object') ? option : {};
+  var withSwipes = opt.include_swipes === true;
   var out = [];
   for (var i = rn.start; i <= rn.end; i++) {
     var m = list[i];
-    if (m && typeof m === 'object' && dshtMessageFilter(m, option)) out.push(m);
+    if (!m || typeof m !== 'object' || !dshtMessageFilter(m, opt)) continue;
+    if (!withSwipes) {
+      // 契约（chat_message.d.ts）：include_swipes 缺省/false → 返回 ChatMessage（无 swipes 族字段）。
+      // 注意 extra 在 ChatMessage 里是**必需**字段，保留。
+      m = {
+        message_id: m.message_id, name: m.name, role: m.role,
+        is_hidden: m.is_hidden, message: m.message, data: m.data, extra: m.extra,
+      };
+    }
+    out.push(m);
   }
   return out;
 }
@@ -1262,26 +1308,56 @@ function wbBookOf(r) {
 // 永远落空并触发心跳反复重写世界书（实机 5000+ 次/小时 wb:entryPut 风暴根因）。
 // strategy: {type:'constant'|'selective'|'conditional', keys, secondary_keys, selective_logic}
 // position: {type:'before_char'|…, depth, order, role}
-var TH_POS_ST_TO_TYPE = ['before_char', 'after_char', 'before_authors_note', 'after_authors_note', 'at_depth', 'before_example_messages', 'after_example_messages'];
+// 【T-21 2026-09-10】position.type 映射改真 TH WorldbookEntry 枚举（worldbook.d.ts）：
+// ST 数值 position（0..6）→ 契约字符串。0=before_char / 1=after_char / 2=before_authors_note /
+// 3=after_authors_note / 4=at_depth / 5=before_example_messages / 6=after_example_messages
+var TH_POS_ST_TO_TYPE = ['before_character_definition', 'after_character_definition', 'before_author_note', 'after_author_note', 'at_depth', 'before_example_messages', 'after_example_messages'];
+// 【T-21 契约补齐 2026-09-10】真 TH WorldbookEntry（worldbook.d.ts）字段：
+// {uid, name, enabled, strategy{type,keys,keys_secondary{logic,keys},scan_depth},
+//  position{type,role,depth,order}, content, probability,
+//  recursion{prevent_incoming,prevent_outgoing,delay_until}, effect{sticky,cooldown,delay}, extra?}
+// 原实现只补 strategy/position 两对象 → 脚本读 entry.recursion / entry.effect / entry.probability
+// 恒 undefined（"禁止递归""黏性/冷却"类判定静默失效）。此处一次补齐（幂等：已有字段不覆盖）。
+var TH_RECURSION_LOGIC = { 0: 'and_any', 1: 'and_all', 2: 'not_all', 3: 'not_any' };
 function thEnrichEntry(e) {
   if (!e || typeof e !== 'object' || e.strategy) return e;
   var constant = e.constant === true;
   var selective = e.selective === true;
   var strategy = {
+    // 契约（worldbook.d.ts）：'constant' | 'selective' | 'vectorized'
     type: constant ? 'constant' : (selective ? 'selective' : 'constant'),
     keys: Array.isArray(e.key) ? e.key.map(String) : [],
-    secondary_keys: Array.isArray(e.keysecondary) ? e.keysecondary.map(String) : [],
-    selective_logic: typeof e.selectiveLogic === 'number' ? e.selectiveLogic : 0,
-    case_sensitive: false,
+    keys_secondary: {
+      logic: TH_RECURSION_LOGIC[typeof e.selectiveLogic === 'number' ? e.selectiveLogic : 0] || 'and_any',
+      keys: Array.isArray(e.keysecondary) ? e.keysecondary.map(String) : [],
+    },
+    scan_depth: typeof e.scanDepth === 'number' ? e.scanDepth : 'same_as_global',
   };
-  var posType = TH_POS_ST_TO_TYPE[typeof e.position === 'number' ? e.position : 0] || 'before_char';
+  var posType = TH_POS_ST_TO_TYPE[typeof e.position === 'number' ? e.position : 0] || 'before_character_definition';
   e.strategy = strategy;
   e.position = {
     type: posType,
+    role: (e.role === 'user' || e.role === 'assistant') ? e.role : 'system',
     depth: typeof e.depth === 'number' ? e.depth : 4,
     order: typeof e.order === 'number' ? e.order : 100,
-    role: (e.role === 'user' || e.role === 'assistant') ? e.role : 'system',
   };
+  // 【T-21】递归控制 / 时效效果 / 概率 / extra（契约必填项）
+  if (e.recursion === undefined) {
+    e.recursion = {
+      prevent_incoming: e.excludeRecursion === true,
+      prevent_outgoing: e.preventRecursion === true,
+      delay_until: (typeof e.delayUntilRecursion === 'number') ? e.delayUntilRecursion : null,
+    };
+  }
+  if (e.effect === undefined) {
+    e.effect = {
+      sticky: (typeof e.sticky === 'number') ? e.sticky : null,
+      cooldown: (typeof e.cooldown === 'number') ? e.cooldown : null,
+      delay: (typeof e.delay === 'number') ? e.delay : null,
+    };
+  }
+  if (typeof e.probability !== 'number') e.probability = 100;
+  if (e.extra === undefined) e.extra = {};
   e.use_regex = false;
   return e;
 }

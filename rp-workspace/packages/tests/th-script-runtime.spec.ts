@@ -746,10 +746,21 @@ describe('shim：P1/P2 长尾 API', () => {
     const r = vm.runInContext('window.__r', f.ctx) as Record<string, unknown>
     // 【2026-09-08 对齐】getWorldbook 条目经 thEnrichEntry 补 TH WorldbookEntry 形状
     // （strategy/position/use_regex——世界书控制卡判定逻辑依赖，缺了触发 wb:entryPut 风暴）
+    // 【T-21 2026-09-10 契约修正】原断言是"修复前的错误契约"（secondary_keys/selective_logic/
+    // position.type:'before_char'）——真 TH 契约见 JS-Slash-Runner @types/function/worldbook.d.ts：
+    // keys_secondary{logic,keys} / scan_depth / position.type 为枚举字符串。
     expect(r['wb']).toEqual([{
       uid: 0, content: '设定',
-      strategy: { type: 'constant', keys: [], secondary_keys: [], selective_logic: 0, case_sensitive: false },
-      position: { type: 'before_char', depth: 4, order: 100, role: 'system' },
+      strategy: {
+        type: 'constant', keys: [],
+        keys_secondary: { logic: 'and_any', keys: [] },
+        scan_depth: 'same_as_global',
+      },
+      position: { type: 'before_character_definition', depth: 4, order: 100, role: 'system' },
+      recursion: { prevent_incoming: false, prevent_outgoing: false, delay_until: null },
+      effect: { sticky: null, cooldown: null, delay: null },
+      probability: 100,
+      extra: {},
       use_regex: false,
     }])
     expect(r['rep']).toBe(true)
@@ -798,10 +809,19 @@ describe('shim：世界书只读（桥）', () => {
     resolveCall(f, 0, { book: { name: '主世界书', entries: [{ uid: 0, content: '设定' }] } })
     await settled(f)
     // 【2026-09-08 对齐】条目带 TH WorldbookEntry 形状（strategy/position 对象）
+    // 【T-21 2026-09-10 契约修正】原断言为修复前错误契约，按 worldbook.d.ts 更正。
     expect(vm.runInContext('window.__r', f.ctx)).toEqual([{
       uid: 0, content: '设定',
-      strategy: { type: 'constant', keys: [], secondary_keys: [], selective_logic: 0, case_sensitive: false },
-      position: { type: 'before_char', depth: 4, order: 100, role: 'system' },
+      strategy: {
+        type: 'constant', keys: [],
+        keys_secondary: { logic: 'and_any', keys: [] },
+        scan_depth: 'same_as_global',
+      },
+      position: { type: 'before_character_definition', depth: 4, order: 100, role: 'system' },
+      recursion: { prevent_incoming: false, prevent_outgoing: false, delay_until: null },
+      effect: { sticky: null, cooldown: null, delay: null },
+      probability: 100,
+      extra: {},
       use_regex: false,
     }])
     const err = await vm.runInContext(`createLorebookEntry('书', {}).catch(function (e) { return e; })`, f.ctx) as Error
