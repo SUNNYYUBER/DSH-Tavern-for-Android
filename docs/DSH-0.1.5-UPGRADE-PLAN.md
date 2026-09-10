@@ -466,3 +466,73 @@ import { assertReleasedV3Header, sessionFormatV2ToV3 } from "@deepseek-ai/dsh-se
 2. **耗时**：三段串行迁移，需实测 12MB / 50MB / 214MB 三档
 3. **自定义 source.plugin 是否过 v3 校验**：`source.plugin: 'dsht-rp'` 等值须实测
 4. **我方 3 个解析器**（rollback-mask / extractFloors / collectVariantGroups）在 v3 文件上的行为
+
+---
+
+## 附录 B：`text-chunks` 兼容性实证（2026-09-10 心跳 41）—— ✅ 风险解除
+
+### 背景
+我方会话事件类型分布（`session-7973a03e`，472 行 / 20 种类型）显示存在两个"非白名单"类型：
+| 类型 | 数量 |
+|---|---|
+| `assistant/chunk` | 104 |
+| `text-chunks` | 5（`session-test` 里 273 个） |
+
+`text-chunks` 行的字段是 `seq0` / `time0`（而正常事件是 `seq` / `time`），初看像数据损坏。
+
+### 追查结论：**不是损坏，是宿主的聚合打包格式**
+
+**证据链**：
+1. **来源**：`packages/src/dsh-plugin/index.ts:650-676`
+   > 宿主网关（dsh-session-persistence-jsonl）的加载语义：每行先 JSON.parse → decodeStorageRecord——
+   > 只认 `text-chunks`/`reasoning-chunks`/`tool-call-chunks` 三种聚合 tag 展开
+   > （子事件 `seq = seq0 + k`、type 统一 `assistant/chunk`、data 仅 `{turn, step, chunk}`）
+
+   我方 `decodeStorageLine` / `packEventRows` 是**宿主语义的复刻**（用于修复产物）。
+
+2. **0.1.2 的宿主确实有**：`dsh-session-persistence-jsonl/lib/index.js:322`
+   ```js
+   decoded = decodeStorageRecord(expandProvenanceFromStorage(JSON.parse(line)))
+   ```
+   其 API 从 `dsh-session` 导入 `packChunkRuns`（写入聚合）+ `decodeStorageRecord`（读取展开）。
+
+3. **0.1.5 已移除该机制**：
+   - `dsh-session` 0.1.5 的导出清单里**没有** `packChunkRuns` / `decodeStorageRecord`
+   - `session-persistence-jsonl` 改为 `decoded = JSON.parse(line)` + `assertV3RowAdmission(decoded)`
+
+   → 表面看 `text-chunks` 行会变成 opaque 事件、文本内容丢失。
+
+4. **✅ 但迁移器有补偿**：`dsh-session-format-v0-to-v1/lib/index.js`
+   ```js
+   const PACKED_TAGS = new Set(["text-chunks", "reasoning-chunks", "tool-call-chunks"]);   // L1611-1613
+   // L1817-1824：展开为逐事件 chunk
+   const chunk = stream["type"] === "text-chunks"
+       ? { type: "text-delta", index: stream["index"], text: member } : ...
+   ```
+
+**完整链路**：
+```
+0.1.2 写入 text-chunks 聚合行
+   ↓
+0.1.5 加载 → 迁移器 v0→v1 先展开 PACKED_TAGS → 逐事件 assistant/chunk
+   ↓
+v1→v2→v3 规范化
+   ↓
+assertV3RowAdmission 校验（此时已是合法事件）✓
+```
+
+### 附带确认：v3 准入校验的宽容度
+```js
+// dsh-session-format-v2-to-v3/lib/index.js
+function assertV3EventAdmission(event) {
+  if ((event.type === "tool/code-dispatch-start" || event.type === "tool/code-dispatch")
+      && event.ignorable !== true) throw new SessionFormatUnsupportedMigrationError(...)
+}
+function assertV3StructuralRow(value) {
+  if (row.type === "request/header") { /* 拒绝退役的 header.system */ }
+  else if (row.type === "system/message") { /* 校验结构 */ }
+}
+```
+→ **只拒绝 2 个特定类型** + `request/header` 的退役字段，其余类型走 "opaque" 路径。
+
+**结论：`text-chunks` 兼容性问题不存在，迁移链可通行。** 该类型无需我方做任何适配。
