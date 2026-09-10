@@ -3527,11 +3527,19 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
 
     const slug = rpSlugFromCwd(agent.session.header.cwd, dshHome)
     console.log(`[dsht-rp] pre-step: cwd=${agent.session.header.cwd ?? '(none)'} slug=${slug ?? '(not-rp)'} turn=${(raw as LikePreStepEvent).turn}`)
-    // ---- Golden Master 对照（DSHT 侧 dump#2，2026-09-09）：messages 全文落盘 ----
-    // agent/request 瀑布只有采样参数；真正发给 LLM 的消息序列在此（pre-step）。
-    // rp/golden/dsht-ENABLED 存在时落盘，与 TT/ST 侧 chat_completion_prompt_ready 配对 diff。
-    try {
-      if (existsSync(join(dshHome, 'rp', 'golden', 'dsht-ENABLED'))) {
+    // ---- Golden Master 对照（DSHT 侧 dump#2）：**本批真正发给 LLM 的消息序列** ----
+    // agent/request 瀑布只有采样参数；消息序列在 pre-step。rp/golden/dsht-ENABLED 存在时落盘，
+    // 与 TT/ST 侧 chat_completion_prompt_ready（GENERATE_AFTER_COMBINE_PROMPTS）配对 diff。
+    //
+    // 【T-15 口径修正 2026-09-11】原实现落的是 `raw.messages`——即 **宿主传进来的原始批**
+    // （RP 注入前的形态）。而 TT 侧 `chat_completion_prompt_ready` 抓的是**最终发给模型**的
+    // 完整组装结果 → 两侧 dump 一比就是「我方少了整个世界书/预设/记忆注入」，差异全是假的。
+    // 现改为在**每个出口**落 `decision.messages`（组装 + 第三方 `dsht-rp/assemble` 钩子后的最终态）。
+    const dumpPrestepMessages = async (
+      a: LikeAgent, msgs: LikeDecision['messages'], turn: number | null,
+    ): Promise<void> => {
+      try {
+        if (!existsSync(join(dshHome, 'rp', 'golden', 'dsht-ENABLED'))) return
         const gdir = join(dshHome, 'rp', 'golden', 'dsht')
         await mkdir(gdir, { recursive: true })
         const seqFile = join(gdir, 'msg-seq.txt')
@@ -3540,14 +3548,17 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         seq += 1
         await writeFile(join(gdir, `msg-${String(seq).padStart(3, '0')}.json`), JSON.stringify({
           tag: 'agent_prestep_messages', seq, env: 'dshtavern', ts: new Date().toISOString(),
-          cwd: agent.session.header.cwd ?? null,
-          turn: (raw as LikePreStepEvent).turn ?? null,
-          data: { messages },
+          cwd: a.session.header.cwd ?? null,
+          turn: turn ?? null,
+          data: { messages: msgs },
         }, null, 1))
         await writeFile(seqFile, String(seq))
-      }
-    } catch { /* golden dump 失败不影响主链路 */ }
-    if (slug === null) return decision
+      } catch { /* golden dump 失败不影响主链路 */ }
+    }
+    if (slug === null) {
+      await dumpPrestepMessages(agent, decision.messages, (raw as LikePreStepEvent).turn ?? null)
+      return decision
+    }
     try {
       signal.throwIfAborted()
       const rp = await loadRpJson(slug, signal)
@@ -3706,9 +3717,13 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       // 异常路径（catch 降级为普通会话）不过挂点——钩子失败不该连坐已有容错。
       const viaAssembleHook = async (dp: Promise<LikeDecision>): Promise<LikeDecision> => {
         const dd = await dp
-        return await ctx.waterfall(null, 'dsht-rp/assemble',
+        const out = await ctx.waterfall(null, 'dsht-rp/assemble',
           { agent, sessionId: traceKey, slug, turn: turnNo, decision: dd },
           (p: { decision: LikeDecision }) => Promise.resolve(p.decision)) as LikeDecision
+        // 【T-15】Golden dump 落**最终态**（组装 + assemble 钩子之后）——与 TT 侧
+        // chat_completion_prompt_ready 同口径，两侧 diff 才有意义。
+        await dumpPrestepMessages(agent, out.messages, turnNo)
+        return out
       }
 
       // ---- 组装管线（§4.1）步骤 1：正则 prompt 时机跑完整批（enter decision.messages）----

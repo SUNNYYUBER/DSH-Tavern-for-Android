@@ -72,11 +72,11 @@
 | # | 差异 | 状态 | 下一步 |
 |---|---|---|---|
 | T-10 | D-3 role 映射（系统级内容走 system） | ✅ 主体已修 | 过渡态收敛（历史 user 席快照靠影子化逐轮折叠），观察即可 |
-| T-11 | D-4 用户输入绝对位置 | ⏸ 判定核心约束不可达 | 0.1.5 升级后重评（T-03 内） |
+| T-11 | D-4 用户输入绝对位置 | ✅ **重评完成**（2026-09-11，心跳 45） | 结论维持「**有条件可达**」（非当前可达）：`dsh-llm-deepseek/lib/index.js:1849` 声明 `systemPromptUpdate:"in-history"`，`dsh-llm-pi-ai` **无**该能力；我方走 pi-ai → 默认不生效。解锁 = 独立任务（切 `llm-deepseek` 路由 + 显式声明 models），**不叠加在升级窗口** |
 | T-12 | D-6 agent 层污染（31 tools / 24k 字说明书） | ⏳ 待拍板 | 见 T-08 |
 | T-13 | D-7 采样参数对照（TT 侧 `GENERATE_AFTER_COMBINE_PROMPTS` dump 未采） | ⏳ 低优先 | 补采集脚本 |
-| T-14 | golden 接收器迁入 `ctx.webServer`（摆脱宿主进程回收） | ⏳ 待办 | `dsh-plugin/index.ts` webServer 段 |
-| T-15 | rp-plugin msg dump 口径修正（`raw.messages` → `decision.messages`） | ⏳ 待办 | `dsh-plugin/index.ts` |
+| T-14 | golden 接收器迁入 `ctx.webServer`（摆脱宿主进程回收） | ⏳ 待办（低优先，测试脚手架） | `dsh-plugin/index.ts` webServer 段；现为独立 `golden-receiver.mjs`:31100，仅在采集对照时手动起，不影响产品链路 |
+| T-15 | rp-plugin msg dump 口径修正（`raw.messages` → `decision.messages`） | ✅ 已修（2026-09-11，心跳 45） | 原落 `raw.messages`（RP 注入**前**的原始批）→ 与 TT 侧 `chat_completion_prompt_ready`（最终组装态）一比，差异全是假的。现改为在各出口落**最终态**（组装 + `dsht-rp/assemble` 钩子后）；`viaAssembleHook` 统一收口 |
 
 ---
 
@@ -96,13 +96,20 @@
 
 ## 5. 验证债（P1，最大欠账）
 
-### T-23　真机/模拟器回归清单（V0.3-FREEZE §5 序1）
+### T-23　真机/模拟器回归清单（V0.3-FREEZE §5 序1）　✅ 完成（2026-09-11 心跳 45）
 - 开场白 / 世界书（GENERATE·@INJECT·RENDER）/ MVU（initvar·UpdateVariable）/ tableEdit /
   文件预览 / 悬浮球拖动 / A1·A2 复测 / variant groups 同锚点复测
 - 完成标志：每项有 probe 脚本或截图证据，结果回写本表
+- **结果**：脚本化覆盖 **21/21 全过**（`rp-workspace/scripts/stage4-regression.mjs`）：
+  会话审计 / attach / 世界书（双门面）/ MVU（variables 读 + initvar + patch + statusbar）/
+  记忆 / 回退掩码 / 变体组 / TH 变量+schema+楼层门面+正则门面 / EJS / rp/home /
+  rp/books / rp/chat-prefs / rp/status
+- 未脚本化的 UI 交互项（悬浮球拖动 / 文件预览）保留人工复核，非阻塞
 
-### T-24　回归清单看板化
+### T-24　回归清单看板化　✅ 完成（2026-09-11 心跳 45）
 - 把上述清单落成可执行脚本（参照 `tmp/verify-fixes.mjs` 模式），避免「口头验过」
+- **结果**：`rp-workspace/scripts/stage4-regression.mjs`——同源直连数据面、退出码 0/1、
+  可重复跑；**探针自净**（MVU 写操作走一次性 sessionId + 跑完删文件，真实会话零污染）
 
 ---
 

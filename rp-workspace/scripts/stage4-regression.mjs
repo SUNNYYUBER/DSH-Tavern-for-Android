@@ -130,6 +130,66 @@ check('tavern-helper chat/messages（正则/楼层门面）', thChat.status === 
 const ejs = await call('dsht-prompt-template', 'render', { template: '1+1=<%= 1+1 %>' })
 check('prompt-template render（EJS 渲染）', ejs.status === 200 || ejs.status === 400, `HTTP ${ejs.status} ${ejs.raw}`)
 
+// ===========================================================================
+// T-23 回归清单（V0.3-FREEZE §5 序1）逐项可执行化：每项 = 一条路由断言
+// ===========================================================================
+
+// ---- 9. 开场白（open-chat 的 greeting 覆写通道；幂等分支已验过）----
+const home = await call('dsht-rp', 'rp/home', { slug })
+check('rp/home（工作区主页/开场白入口）', home.status === 200, `HTTP ${home.status} ${home.raw}`)
+
+// ---- 10. 世界书触发器（列表 + 绑定）----
+const books2 = await call('dsht-rp', 'rp/books', { slug })
+check('rp/books（世界书列表+绑定态）', books2.status === 200, `HTTP ${books2.status} ${books2.raw}`)
+
+// ---- 11. MVU initvar（schema 注册）+ UpdateVariable（patch）----
+// 【为什么用一次性 sessionId】这两条**会写 rp/state/<sid>.json**。用真实会话会在
+// variableSchema 里永久留下探针键（实测残留，且 MVU 无删除路由）。
+// MVU 这两条只认 body.sessionId、不要求会话 live → 换一次性 id，跑完删文件。
+const PROBE_SID = 'dsht-regression-probe'
+const PROBE_KEY = '__regression_probe'
+const mvuReg = await call('dsht-mvu', 'variables/register', {
+  sessionId: PROBE_SID,
+  variables: { [PROBE_KEY]: true },
+  variableSchema: { type: 'object', properties: { [PROBE_KEY]: { type: 'boolean' } } },
+})
+check('mvu variables/register（initvar/schema）', mvuReg.status === 200, `HTTP ${mvuReg.status} ${mvuReg.raw}`)
+const mvuPatch = await call('dsht-mvu', 'variables/patch', {
+  sessionId: PROBE_SID, patches: [{ op: 'replace', path: `/${PROBE_KEY}`, value: false }],
+})
+check('mvu variables/patch（UpdateVariable）', mvuPatch.status === 200, `HTTP ${mvuPatch.status} ${mvuPatch.raw}`)
+
+// 清理：MVU 无删除路由 → 用 adb 直接删一次性文件（best-effort，失败只提示不算失败）
+try {
+  const { execFileSync } = await import('node:child_process')
+  const adb = process.env.ADB_PATH ?? 'C:/Users/Administrator/.android/sdk/platform-tools/adb.exe'
+  execFileSync(adb, ['-s', 'emulator-5554', 'shell',
+    `run-as com.dshtavern.app rm -f files/.dsh/rp/state/${PROBE_SID}.json`], { stdio: 'pipe' })
+  check('mvu 探针清理（adb rm）', true, '一次性状态文件已删')
+} catch (e) {
+  check('mvu 探针清理（adb rm）', false, `adb 不可用：${String(e.message).slice(0, 80)}（一次性文件 ${PROBE_SID}.json 可手工删）`)
+}
+
+// ---- 12. 状态栏渲染（MVU tableEdit 的可见产物）----
+const sb = await get('dsht-mvu', 'statusbar-render', { sessionId: sid })
+check('mvu statusbar-render（状态栏）', sb.status === 200 || sb.status === 400, `HTTP ${sb.status} ${sb.raw}`)
+
+// ---- 13. TH 世界书门面（getWorldbook 契约）----
+const wbTH = await call('dsht-tavern-helper', 'worldbook/list', { sessionId: sid })
+check('TH worldbook/list（getWorldbook 契约）', wbTH.status === 200, `HTTP ${wbTH.status} ${wbTH.raw}`)
+
+// ---- 14. TH 正则门面（getTavernRegexes 契约，T-20 修复点）----
+const regexGet = await call('dsht-tavern-helper', 'regexes/get', { sessionId: sid })
+check('TH regexes/get（getTavernRegexes 契约）', regexGet.status === 200, `HTTP ${regexGet.status} ${regexGet.raw}`)
+
+// ---- 15. 会话偏好（/rp/chat-prefs）----
+const prefs = await call('dsht-rp', 'rp/chat-prefs', { slug })
+check('rp/chat-prefs（会话偏好）', prefs.status === 200, `HTTP ${prefs.status} ${prefs.raw}`)
+
+// ---- 16. 诊断面（rp/status 为 POST 路由）----
+const status = await call('dsht-rp', 'rp/status', {})
+check('rp/status（诊断面）', status.status === 200, `HTTP ${status.status} ${status.raw}`)
+
 // ---- 汇总 ----
 const fail = results.filter(r => !r.ok)
 console.log(`\n===== 阶段 4 回归：${results.length - fail.length}/${results.length} 通过 =====`)
