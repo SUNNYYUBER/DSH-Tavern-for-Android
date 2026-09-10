@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // golden-proxy.mjs — 透明 LLM 代理：截获 DSHT 主聊天请求体（golden dump）+ 转发真 provider
-// 监听 0.0.0.0:31102 → 转发 https://api.commandcode.ai（保留原 path/headers/key）
+// 监听 0.0.0.0:31102；上游由 x-upstream-host 头决定（默认 api.commandcode.ai）
+// 用法: node golden-proxy.mjs [upstreamHost]
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
 
 const DUMP = 'D:/DSH RolePlay/golden/dsht';
 fs.mkdirSync(DUMP, { recursive: true });
+const DEFAULT_UPSTREAM = process.argv[2] || 'api.commandcode.ai';
+
 function nextSeq() {
   const f = DUMP + '/proxy-seq.txt';
   let n = 0;
@@ -21,6 +24,8 @@ http.createServer((req, res) => {
   req.on('data', c => chunks.push(c));
   req.on('end', () => {
     const body = Buffer.concat(chunks);
+    const reqHost = String(req.headers['x-upstream-host'] || DEFAULT_UPSTREAM);
+    const upstream = reqHost.replace(/^https?:\/\//, '').split('/')[0];
     // 落盘
     try {
       const s = body.toString('utf8');
@@ -28,16 +33,18 @@ http.createServer((req, res) => {
         const seq = nextSeq();
         fs.writeFileSync(`${DUMP}/px-${String(seq).padStart(3, '0')}.json`, JSON.stringify({
           tag: 'provider_llm_request', seq, env: 'dshtavern', ts: new Date().toISOString(),
-          url: 'https://api.commandcode.ai' + req.url,
+          url: `https://${upstream}${req.url}`,
           data: { body: JSON.parse(s) },
         }, null, 1));
-        console.log(`[proxy] #${seq} 截获 ${req.method} ${req.url} (${s.length}B)`);
+        console.log(`[proxy] #${seq} 截获 ${req.method} ${req.url} -> ${upstream} (${s.length}B)`);
       }
     } catch (e) { console.log('[proxy] dump fail:', e.message); }
     // 转发真 provider
+    const headers = { ...req.headers };
+    delete headers['x-upstream-host'];
+    headers.host = upstream;
     const upReq = https.request({
-      hostname: 'api.commandcode.ai', port: 443, path: req.url, method: req.method,
-      headers: { ...req.headers, host: 'api.commandcode.ai' },
+      hostname: upstream, port: 443, path: req.url, method: req.method, headers,
     }, upRes => {
       res.writeHead(upRes.statusCode, upRes.headers);
       upRes.pipe(res);
@@ -49,4 +56,4 @@ http.createServer((req, res) => {
     });
     upReq.end(body);
   });
-}).listen(31102, '0.0.0.0', () => console.log('[proxy] http://0.0.0.0:31102 → api.commandcode.ai'));
+}).listen(31102, '0.0.0.0', () => console.log(`[proxy] http://0.0.0.0:31102 → ${DEFAULT_UPSTREAM}`));

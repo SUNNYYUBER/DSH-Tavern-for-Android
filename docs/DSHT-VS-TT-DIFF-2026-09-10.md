@@ -1,0 +1,137 @@
+# DSHT vs TT 逐条对照报告
+
+> 生成时间：2026-09-10（心跳 31）
+> 基准侧：TauriTavern-Canary（`golden/st/dump-006-1788962482643.json`，env=tauritavern）
+> 对照侧：DSHT（`tmp/llm-029.json`，provider 层 fetch patch 截获，env=dshtavern）
+> 采集方式：两侧同一张卡（ExampleGame ExampleWorld MVU Edition 0607）+ 同一预设（Kemini）+ 同一输入语义
+
+---
+
+## 0. 本报告的前提突破（心跳 31 成果）
+
+前 30 个心跳一直卡在「拿不到 DSHT 主聊天 payload」。本轮定位到**真实读取链**：
+
+```
+settings.yaml
+  └─ llm-pi-ai.providers.<route>.baseURL   ← 运行时生效位置
+       ↑
+  agent-default-model.provider = 'deepseek'  → 命中 llm-pi-ai 的 built-in catalog route 'deepseek'
+       ↑
+  ❌ 错误认知（前 30 心跳）：以为 providers 段整体是模板
+  ❌ 错误尝试：只配了 st-custom 一条 route 的 baseURL，而真实发送走的是 deepseek route
+```
+
+**证据链（文件:行号）**：
+
+| 断言 | 证据 |
+|---|---|
+| `llm-deepseek` 原生适配器注册的 route 是 `deepseek-official`，不是 `deepseek` | `packages/llm/llm-deepseek/src/index.ts:49` `const PROVIDER = 'deepseek-official'` |
+| `llm-deepseek` 的 settings 命名空间是 `llm-deepseek`，path 平铺 | 同上 `:46` `NS = settingsNamespace('llm-deepseek')`；`:283` `settingsPath: []` |
+| `deepseek` 这个名字属于 `llm-pi-ai` 的内置 catalog route | `packages/llm/llm-pi-ai/src/catalog.ts:100` `'deepseek': true`（THINKING_FORMAT_GATE） |
+| pi-ai 的 baseURL 确实流入请求 | `packages/llm/llm-pi-ai/src/config.ts:429` `...source.baseURL === undefined ? {} : { baseURL: source.baseURL }` → `buildProvider` |
+| 修改后实测生效 | 设备 `settings.yaml` 加 `llm-pi-ai.providers.deepseek.baseURL` 后，`llm-029.json` 的 `url` = `http://10.0.2.2:31102/v1/chat/completions` |
+
+→ **心跳 31 完成**。DSHT 最终 payload 到手。
+
+---
+
+## 1. 总体差异（量化）
+
+| 维度 | TT（基准） | DSHT | 比值 |
+|---|---|---|---|
+| 消息条数 | **25** | **58** | 2.32× |
+| 总字符数 | **85,437** | **361,367** | **4.23×** |
+| role 分布 | system 22 / user 2 / assistant 1 | system 1 / user 40 / assistant 10 / tool 7 | 结构性不同 |
+| 大块（>200字）重复组 | **0 组** | **4 组**（x5 / x5 / x4 / x4） | **DSHT 独有缺陷** |
+
+---
+
+## 2. 逐项差异清单
+
+### D-1　消息条数膨胀 2.32×，字符膨胀 4.23×　【严重】
+
+- **TT**：25 条。
+- **DSHT**：58 条。
+- **原因**：DSHT 把同一批上下文（世界书 24221 字、角色卡 36185 字、记忆 1678 字、MVU 变量树 2573 字）在**每一轮对话历史里重复固化**，而非在最终组装时去重合并。
+- **证据**：DSHT messages 索引 `[6][7][8]`、`[16][17][18][19]`、`[25][26][27][28]`、`[39][40][41][42]`、`[54][55][56][57]` —— **同一组内容出现 5 次**。
+- **影响**：4.23× token 消耗；极易触发上下文截断；模型在重复上下文中注意力稀释（表现为回复质量下降/自我复读）。
+
+### D-2　重复注入 4 组　【严重，DSHT 独有】
+
+自动检测结果（>200 字分块按前 120 字聚类）：
+
+| 重复次数 | 内容首行 |
+|---|---|
+| **×5** | `你正在进行角色扮演。你扮演「ExampleGame ExampleWorld MVU Edition 0607」…`（36185 字角色卡） |
+| **×5** | `【剧情记忆（第 1-33 楼摘要；更早原文已折叠进本快照）】…`（1678 字） |
+| **×4** | `Current active worldbook entries for this roleplay scene…`（24221 字世界书） |
+| **×4** | `【角色状态（MVU 变量树，最新优先）】…`（2573 字） |
+
+- **TT**：同类检测 **0 组** —— TT 的组装在最终阶段合并去重，每个上下文源只出现一次。
+- **定性**：这是**静默失败族**的新成员 —— 注入 API 每次调用都成功返回，但调用方按「楼层」而非「会话最新态」重复调用，导致历史里堆叠。
+
+### D-3　role 映射策略完全不同　【结构性】
+
+- **TT**：22/25 条都是 `system`，只有 2 条 `user` + 1 条 `assistant`。
+  - 所有世界书/角色卡/文风要求/大纲/记忆 → **全部折叠进 system 消息**。
+  - 只有 `[13]` 用户实际输入（21 字）和 `[23]` `<User_latest_request>` 包装（106 字）是 user。
+  - `[24]` 是 assistant 收尾（75 字，表单指令）。
+- **DSHT**：40 条 `user`、仅 1 条 `system`（24,773 字，是 DSH 自身的 agent 说明书）。
+  - 角色卡/世界书/记忆全部以 **user 角色** 注入。
+- **影响**：`user` 角色承载系统级指令，模型对 `user` 消息的服从度与 `system` 不同；且 DSHT 的 user 消息里混入了 `<system-reminder>` 等本应 system 的内容（见 `[5]`）。这是**语义层级错位**，会直接改变模型的指令跟随行为。
+
+### D-4　组装顺序不一致　【中】
+
+- **TT 顺序**：`[0] 空 system → [1] 系统人设 → [2] 小说格式 → [3] stage_1 → [4] All_Context 开标签 → [5] 用户人设 → [6][7] 世界书 → [8][9] User_Prefs → [10] 小说原文 → [11] 过往记忆 → [12] 剧情大纲 → [13] 用户输入 → [14] 变量状态 → [15] 字体颜色 → [16] All_Context 闭标签 → [17] fox_extra 开 → [18][19][20] 文风/情节/人物 → [21] fox_extra 闭 → [22] stage_2 输出前检查 → [23] User_latest_request → [24] assistant 收尾`
+- **DSHT 顺序**：`[0] DSH agent 说明 → [1..2] 历史 → [3] 注入标记 → [4] 运行时上下文 → [5] skill 提醒 → [6] 世界书 → [7] 角色卡 → [8] 记忆 → …（重复）… → [52] 本轮用户输入 → [53] 用户名（漂泊者）`
+- **关键**：DSHT 把**用户最新输入放在第 52 条**（倒数第 7），而 TT 把它放在 `[23]`（倒数第 2，紧贴 assistant 收尾）。**末尾位置原则**在 DSHT 侧已被破坏。
+
+### D-5　`<interactive_input>` 包装行为　【已修 vs 存量脏数据】
+
+- **TT 基准**：`[13]` 用户输入是裸的 `（金标对照测试）请用一两句话简单打个招呼。` —— **TT 侧没有 `<interactive_input>` 包装**（TT 走的是不同预设链路）。
+- **DSHT**：
+  - `[52]` 本轮输入 → `<interactive_input>\n（心跳31 代理通路验证）你好，请用一句话回应。\n</interactive_input>` —— **`$1` 修复已生效，内容正确** ✅
+  - `[13][14][20][23]` 历史楼层仍是 `<interactive_input>\n$1\n</interactive_input>` —— **存量脏数据**（这些楼层在 v196 修复前已写死进聊天记录）❌
+- **待判定**：DSHT 的 `<interactive_input>` 包装本身是否应保留。TT 无此包装 → 若要「体验一致」，需确认该包装是 DSHT 预设作者显式添加的（那应保留），还是迁移导入引入的（那应移除）。
+
+### D-6　工具/agent 层污染　【结构性】
+
+- **DSHT 独有**：`[0]` 24,773 字的 DSH agent 说明书（"You are an AI agent powered by DeepSeek Harness..."）、7 条 `tool` 消息、10 条 `assistant` 思考链、`[4]` 运行时上下文、`[5]` skill 提醒、31 个 `tools` 定义。
+- **TT**：完全没有这些 —— TT 是纯 RP 对话，无 agent 工具层。
+- **影响**：DSHT 的 RP 消息要跟 agent 工具链抢注意力；`tools: 31` 会让模型在 RP 场景下产生工具调用倾向（历史样本 `[29]-[35]` 正是模型在查 worldbook 工具而非直接 RP）。
+
+### D-7　采样参数差异　【低】
+
+| 参数 | TT | DSHT |
+|---|---|---|
+| `model` | （TT 侧为 imported，未在 chat 内） | `deepseek-v4-flash` |
+| `stream` | - | `true` |
+| `max_tokens` | - | 有 |
+| `temperature` | - | 有 |
+| `thinking` | - | 有 |
+| `tools` | 无 | 31 个 |
+
+（TT 的采样参数在 `GENERATE_AFTER_COMBINE_PROMPTS` 的另一份 dump 里，需补齐对照。）
+
+---
+
+## 3. 结论
+
+1. **心跳 31 目标达成**：DSHT 主聊天 payload 已可稳定截获（`baseURL` 写入 `llm-pi-ai.providers.deepseek`），对照链路闭环。
+2. **头号差异 = 重复注入（D-2）+ 条数膨胀（D-1）**：4.23× 字符膨胀、4 组大块重复，且 TT 侧为 0。这是**静默失败族**新成员，应作为下一轮修复的首要目标。
+3. **第二差异 = role 映射（D-3）与末尾位置（D-4）**：DSHT 把系统级指令塞进 `user` 角色、把用户输入放在倒数第 7 位 —— 属**组装语义**错误，非 API 缺失。
+4. **`$1` 修复已确认生效**（`[52]` 正确）；历史楼层 `[13][14][20][23]` 的 `$1` 是存量脏数据，需一次性清洗。
+5. **agent 层污染（D-6）** 是 DSHT 架构固有 —— 需评估 RP 会话是否应关闭 tools。
+
+---
+
+## 4. 下一步（优先级排序）
+
+| 优先级 | 项 | 落点 |
+|---|---|---|
+| P0 | 修重复注入（D-2）+ 条数膨胀（D-1） | RP 插件的 prompt 组装层：按会话最新态合并，不按楼层重复固化 |
+| P0 | 清洗存量 `$1` 脏楼层（D-5） | 一次性 migration：扫聊天记录，替换 `<interactive_input>\n$1\n</interactive_input>` |
+| P1 | role 映射对齐 TT（D-3：系统级注入走 system） | RP 插件注入层 |
+| P1 | 用户输入移到末尾（D-4） | prompt 组装顺序 |
+| P2 | 评估 RP 会话关闭 tools（D-6） | 会话/预设配置 |
+| P2 | 补 TT 的 `GENERATE_AFTER_COMBINE_PROMPTS` 采样参数对照（D-7） | 采集脚本 |
