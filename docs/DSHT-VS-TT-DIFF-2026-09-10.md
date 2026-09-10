@@ -63,7 +63,7 @@ settings.yaml
 - **证据**：DSHT messages 索引 `[6][7][8]`、`[16][17][18][19]`、`[25][26][27][28]`、`[39][40][41][42]`、`[54][55][56][57]`、`[63][64][65][66]` —— **同一组内容出现 6 次**。
 - **影响**：5× token 消耗；极易触发上下文截断；模型在重复上下文中注意力稀释（表现为回复质量下降/自我复读）。
 
-### D-2　重复注入 4 组　【严重，DSHT 独有】
+### D-2　重复注入 4 组　【严重，DSHT 独有】—— ✅ **2026-09-10 已修复**
 
 自动检测结果（>200 字分块按前 120 字聚类）：
 
@@ -76,6 +76,47 @@ settings.yaml
 
 - **TT**：同类检测 **0 组** —— TT 的组装在最终阶段合并去重，每个上下文源只出现一次。
 - **定性**：这是**静默失败族**的新成员 —— 注入 API 每次调用都成功返回，但调用方按「楼层」而非「会话最新态」重复调用，导致历史里堆叠。
+
+#### 根因（2026-09-10 实机取证闭环）
+
+**`dsht-plugin-memory` 的 `shadowSurface`（上下文瘦身）从未生效**，导致快照永不折叠。
+
+- **直接原因**：DSH `0.1.2-rc.1` 中 `Session.events` getter **已从公开面移除**
+  （设备拉取 `dsh-session` 产物：`get events` 出现 **0 次**）。
+  memory 插件三处 call site 直读 `(session as {events}).events` → 得 `undefined`
+  → `nodes` 恒空 → `estTokens = 0` → 小于 80k 阈值 → **提前 `return ''`**，
+  一个 `replace` / `compaction/prune` 都不发。
+- **取证链**：① 离线复刻 `planShadowOps` 对真实会话产出 13 个 op（389,066 → 67,935 字符），排除算法问题；
+  ② 落盘探针捕到 `TypeError ... at index.js:1899`（`session.events` 为 undefined）；
+  ③ 拉设备 `dsh-session` 产物确认 `get events` 已删、替代物为 `snapshotEvents(from,to)` + `eventAt(seq)`。
+- **修复**：新增 `sessionEventAt(session, seq)` / `sessionEventsSnapshot(session)` 适配器
+  （`packages/src/dsht-plugin-memory/index.ts` L288/L302，与 `dsh-plugin` 同语义），
+  替换全部 4 处直读点（`floorsOfSession` / `shadowSurface` / `foldedUpToOf` / `scanWindowCopies`）。
+
+#### 修复后实测（同一 wuwa 会话，实机）
+
+| 指标 | 修复前 | 修复后 | 改善 |
+|---|---|---|---|
+| messages 条数 | **71** | **12** | **5.92×** ↓ |
+| 总字符 | **463,320** | **127,794** | **3.63×** ↓ |
+| 角色卡 | ×6（217,101 字） | **×1**（36,185 字） | 6× ↓ |
+| 世界书 | ×6（145,365 字） | **×2**（48,498 字） | 3× ↓ |
+| 剧情记忆 | ×6（11,176 字） | **×1**（2,348 字） | 6× ↓ |
+| 状态树 | ×5（12,865 字） | **×1**（1,692 字） | 5× ↓ |
+| 用户输入 | ×16（11,089 字） | **×2**（135 字） | 8× ↓ |
+
+残留 ×2 项（世界书 / 运行时上下文）为**设计内行为**：`retained` 去重只抑制同 turn 的重复新增，
+历史中已固化的旧副本由影子化在下一轮收敛；且世界书本轮发生真实变更（24277 → 24221 字），
+新旧两份并存一轮属正常过渡态。
+
+> **踩坑记录（本轮自身引入并已修复）**：改用 `esbuild --format=cjs` 打包导致
+> `ReferenceError: module is not defined in ES module scope`
+> —— profile 的 `package.json` 声明 `"type":"module"`，CJS 产物被当 ESM 加载，
+> **整个 plugin tree 加载失败、Node 崩溃重启 39 次**（"No sessions yet" + "Disconnected" 的真凶）。
+> **铁律**：本仓库所有插件一律 `--format=esm`（`build-dsht.ps1` L413/L438 即此约定）。
+> 另：插件有**两份等价副本**，热推必须**同时**更新——
+> `files/dsh-runtime/node_modules/<pkg>/lib/index.js` 与
+> `files/.dsh/profiles/web/node_modules/<pkg>/lib/index.js`；后者才是运行时实际 import 的路径。
 
 ### D-3　role 映射策略完全不同　【结构性】
 
@@ -129,10 +170,11 @@ settings.yaml
    DSHT 前端成功渲染 mock 回复（楼层 #14 前后截图取证）。
 2. **发送自动化攻克**：CDP `Input.insertText` 可写入 Lexical 编辑器（旧「全灭」结论作废），
    工具化为 `rp-workspace/scripts/dsht-send.mjs`。
-3. **头号差异 = 重复注入（D-2）+ 条数膨胀（D-1）**：**5.00× 字符膨胀、4 组大块重复（最高 ×6），且 TT 侧为 0**。
-   这是**静默失败族**新成员，应作为下一轮修复的首要目标。
+3. ~~**头号差异 = 重复注入（D-2）+ 条数膨胀（D-1）**：5.00× 字符膨胀、4 组大块重复（最高 ×6），且 TT 侧为 0。~~
+   **→ 2026-09-10 已修复闭环**：根因是 `session.events` 在 DSH 0.1.2-rc.1 被移除导致 memory 插件影子化静默失效。
+   修复后实机实测 **71 → 12 条 / 463,320 → 127,794 字符（3.63× ↓）**，角色卡 ×6→×1、剧情记忆 ×6→×1、状态树 ×5→×1。
 4. **第二差异 = role 映射（D-3）与末尾位置（D-4）**：DSHT 把系统级指令塞进 `user` 角色（53 条 user vs TT 的 2 条）、
-   把用户输入放在倒数第 3 位 —— 属**组装语义**错误，非 API 缺失。
+   把用户输入放在倒数第 3 位 —— 属**组装语义**错误，非 API 缺失。**（修复后仍存在：12 条里 10 条 user / 1 条 system，列为 P1）**
 5. **`$1` 修复已确认生效**（新楼层内容正确）；历史 7 条 `$1` 为存量脏数据，需一次性清洗。
 6. **agent 层污染（D-6）** 是 DSHT 架构固有 —— 需评估 RP 会话是否应关闭 tools（31 个）。
 
@@ -142,7 +184,7 @@ settings.yaml
 
 | 优先级 | 项 | 落点 |
 |---|---|---|
-| P0 | 修重复注入（D-2）+ 条数膨胀（D-1） | RP 插件的 prompt 组装层：按会话最新态合并，不按楼层重复固化 |
+| ~~P0~~ ✅ | ~~修重复注入（D-2）+ 条数膨胀（D-1）~~ **已修复**（`sessionEventAt`/`sessionEventsSnapshot` 适配器，实机 3.63× ↓） | `dsht-plugin-memory/index.ts` |
 | P0 | 清洗 7 条存量 `$1` 脏楼层（D-5） | 一次性 migration：扫 `storages/session_projcache/sessions/*.json` |
 | P1 | role 映射对齐 TT（D-3：系统级注入走 system） | RP 插件注入层 |
 | P1 | 用户输入移到末尾（D-4） | prompt 组装顺序 |

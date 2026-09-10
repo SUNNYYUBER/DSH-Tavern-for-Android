@@ -52,6 +52,7 @@ import {
   type LikePluginContext,
 } from '../dsht-plugin-shared/http.ts'
 import { scanSessionHeaders, type SessionHeaderHit } from '../dsht-plugin-shared/session-surgery.ts'
+import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
 // E1-E8/E11：表格系统（st-memory-enhancement 机制级移植）——纯逻辑层在本目录 tables.ts，
 // 这里只做数据面接线（/tables 读取 + step-summary/rebuild 两个 llm 路由）
 import {
@@ -183,16 +184,41 @@ function eventText(data: unknown): string {
  * - assistant/message 按 data.turn（迁移格式 data.message.turn）分组：同 turn 的
  *   后续消息并入当前楼（文本 '\n\n' 拼接）；turn 缺失时每条计 1 楼（旧口径退化）。
  * 楼层从 1 起。返回全量楼层文本 + 楼层总数 cursor（turn 口径，作为总结进度游标）。
+ *
+ * 【2026-09-08 鲁棒性】逻辑回退掩码感知：扫描 dsht-rp 的回退/编辑/重新生成 marker
+ * （source.rolledBackTo / editedFrom / regeneratedFrom + 事件自身 seq），真实消息 seq
+ * 落在 (hideAfter, markerSeq) replace 区间内的**整条跳过**（不计数、不进摘要）——
+ * 旧实现从全量日志数楼层：被回退的内容会被后续 chunk 重新摘要进记忆本（用户明确
+ * 撤回的内容「复活」进上下文），且楼层号与 UI（掩码后重排）错位。marker 无 seq 或
+ * 事件无 seq（老数据）时退化为旧口径。注意与 UI 掩码失效语义**有意不同**：UI 在
+ * marker 之后出现新真用户消息时整体失效（回看全量）；记忆侧区间永久跳过（回退的
+ * 上下文永远不该经记忆回流）。
  */
 export function extractFloorsFromEvents(events: SessionEventLike[]): { floors: FloorText[]; cursor: number } {
   const floors: FloorText[] = []
   let cursor = 0
   let lastAssistantTurn: number | null = null
+  // 回退掩码预扫：marker → 跳过区间 (hideAfter, markerSeq)
+  const skipRanges: Array<{ from: number; to: number }> = []
+  for (const e of events) {
+    if (!e || typeof e.type !== 'string' || e.type !== 'user/message' || typeof e.seq !== 'number') continue
+    const s = (e.data as { source?: { plugin?: unknown; rolledBackTo?: unknown; editedFrom?: unknown; regeneratedFrom?: unknown } | null } | undefined)?.source
+    if (!s || s.plugin !== 'dsht-rp') continue
+    let hide = -1
+    if (typeof s.rolledBackTo === 'number') hide = s.rolledBackTo
+    if (typeof s.regeneratedFrom === 'number') hide = Math.max(hide, s.regeneratedFrom)
+    if (typeof s.editedFrom === 'number') hide = Math.max(hide, s.editedFrom - 1)
+    if (hide >= 0 && hide < e.seq) skipRanges.push({ from: hide + 1, to: e.seq - 1 })
+  }
+  const inSkipRange = (seq: number): boolean =>
+    skipRanges.some(r => seq >= r.from && seq <= r.to)
   for (const e of events) {
     if (!e || typeof e.type !== 'string') continue
+    const eSeq = typeof e.seq === 'number' ? e.seq : null
     if (e.type === 'user/message') {
       const source = (e.data as { source?: { kind?: string } | null } | undefined)?.source
       if (source?.kind !== 'user') continue
+      if (eSeq !== null && inSkipRange(eSeq)) continue
       cursor++
       lastAssistantTurn = null
       floors.push({ floor: cursor, role: 'user', text: eventText(e.data) })
@@ -208,6 +234,7 @@ export function extractFloorsFromEvents(events: SessionEventLike[]): { floors: F
         }
         continue
       }
+      if (eSeq !== null && inSkipRange(eSeq)) { lastAssistantTurn = typeof turn === 'number' ? turn : lastAssistantTurn; continue }
       cursor++
       lastAssistantTurn = typeof turn === 'number' ? turn : null
       floors.push({ floor: cursor, role: 'assistant', text: eventText(e.data) })
@@ -245,7 +272,48 @@ export function parseMemoryRange(comment: string): { start: number; end: number 
  * use it"，compaction 同款）：被影子化的事件**留在日志里**（聊天数据零丢失），
  * 只是模型视图不再投影它们。 */
 
-/** surface 节点信息（钩子从 session.surface.nodes + session.events[seq] 派生） */
+// ---------------------------------------------------------------------------
+// @adapt contract:session-api.eventAt / session-api.events-snapshot
+// 0.1.2 坑 #22（W32 实机取证）：Session 的 `.events` getter 已从公开面**移除**
+// （dsh-session 0.1.2-rc.1 的 lib 里 `get events` 出现 0 次），替代物是
+// `snapshotEvents(from, to)` 方法与 `eventAt(seq)`。本插件此前直读 `session.events`
+// → undefined → `events?.[seq]` 全 undefined → nodes 恒空 → estTokens 恒 0 →
+// shadowSurface 静默 early-return。**症状：上下文瘦身从未生效（零 replace op），
+// 每次请求把 6 份快照原样重发（427k 字符 / 120k est tokens）。**
+// 下面两个适配器与 dsh-plugin 的 sessionEventAt / sessionEventsSnapshot 同语义，
+// 本插件自包含（不引 @deepseek-ai 运行时依赖），故各自持有一份。
+// ---------------------------------------------------------------------------
+
+/** 读一个 seq 的事件：0.1.2 用 eventAt(seq)，旧对象回落 .events[seq]。 */
+export function sessionEventAt(
+  session: unknown,
+  seq: number,
+): { type?: unknown; data?: unknown; time?: unknown; seq?: unknown } | undefined {
+  const s = session as {
+    eventAt?: (q: number) => { type?: unknown; data?: unknown; time?: unknown; seq?: unknown } | undefined
+    events?: Record<string | number, { type?: unknown; data?: unknown; time?: unknown; seq?: unknown } | undefined>
+  }
+  if (typeof s.eventAt === 'function') return s.eventAt(seq)
+  if (Array.isArray(s.events)) return s.events[seq] as { type?: unknown; data?: unknown } | undefined
+  return s.events?.[seq]
+}
+
+/** 全量事件快照：0.1.2 用 snapshotEvents()，旧对象回落 .events（数组或字典）。 */
+export function sessionEventsSnapshot(
+  session: unknown,
+): Array<{ type?: unknown; data?: unknown; time?: unknown; seq?: unknown }> {
+  const s = session as { snapshotEvents?: () => readonly unknown[]; events?: unknown }
+  if (typeof s.snapshotEvents === 'function') {
+    return s.snapshotEvents() as Array<{ type?: unknown; data?: unknown; time?: unknown; seq?: unknown }>
+  }
+  if (Array.isArray(s.events)) return s.events as Array<{ type?: unknown; data?: unknown }>
+  if (s.events && typeof s.events === 'object') {
+    return Object.values(s.events) as Array<{ type?: unknown; data?: unknown }>
+  }
+  return []
+}
+
+/** surface 节点信息（钩子从 session.surface.nodes + sessionEventAt(session, seq) 派生） */
 export interface SurfaceNodeInfo {
   seq: number
   /** 真实楼层消息：assistant 或 source.kind==='user' 的 user（口径 = turn 楼层） */
@@ -588,7 +656,7 @@ export function apply(ctx: Ctx, _config: unknown): void {
       const floorsCache: { v: { floors: FloorText[]; cursor: number } | null } = { v: null }
       const floorsOfSession = (): FloorText[] => {
         if (floorsCache.v === null) {
-          floorsCache.v = extractFloorsFromEvents(Object.values((session as { events?: Record<string, SessionEventLike> }).events ?? {}))
+          floorsCache.v = extractFloorsFromEvents(sessionEventsSnapshot(session) as SessionEventLike[])
         }
         return floorsCache.v.floors
       }
@@ -747,15 +815,19 @@ export function apply(ctx: Ctx, _config: unknown): void {
     return tokens
   }
 
+  /** 诊断探针（W32）：把 shadowSurface 的每个 early-return 点落盘，用于实机定位
+   *  「阈值已达但零 op」的静默失败。写 rp/memory-progress/<sid>.probe.json。 */
   const shadowSurface = async (session: SessionRef, sid: string, cfg: MemoryConfig, maxFloor: number, freshSigs: ReadonlySet<string>, windowKeepSeq?: number | null): Promise<string> => {
     const surface = (session as { surface?: { nodes?: number[] } }).surface
-    const events = (session as { events?: Record<string, { type?: unknown; data?: unknown } | undefined> }).events
+    // 0.1.2 坑 #22：`session.events` 已移除——用 snapshotEvents() 快照 + eventAt(seq) 单读。
+    // 旧代码直读 `.events` 得 undefined → nodes 恒空 → estTokens=0 → 影子化静默失效
+    // （实测 120k tokens > 80k 阈值仍 0 个 replace / 0 个 compaction/prune）。
     const viewSeqs = surface?.nodes ?? []
     if (viewSeqs.length === 0) return ''
     // 只把消息事件建模为节点（tool/result 等不参与楼层/快照判定，但属于 replace 射程）
     const nodes: SurfaceNodeInfo[] = []
     for (const seq of viewSeqs) {
-      const ev = events?.[seq]
+      const ev = sessionEventAt(session, seq)
       if (!ev || (ev.type !== 'user/message' && ev.type !== 'assistant/message')) continue
       const m = (ev.data ?? {}) as {
         role?: unknown
@@ -786,7 +858,7 @@ export function apply(ctx: Ctx, _config: unknown): void {
     if (estTokens <= SHADOW_TRIGGER_TOKENS) return ''
     // 楼层总数（turn 口径：一轮用户输入/一轮 AI 回答 = 1 楼）——与记忆条目「记忆#N-M」
     // 同口径；不再消费 dsh-plugin 的消息条数游标（两套数字会错位）
-    const cursor = extractFloorsFromEvents(Object.values(events ?? {})).cursor
+    const cursor = extractFloorsFromEvents(sessionEventsSnapshot(session) as SessionEventLike[]).cursor
     const plan = planShadowOps(nodes, {
       keepNearFloors: cfg.keepNearFloors, charBudget: cfg.charBudget,
       memoryMaxFloor: maxFloor, foldFloors: cfg.foldOldFloors, cursor, freshSigs, windowKeepSeq,
@@ -799,7 +871,7 @@ export function apply(ctx: Ctx, _config: unknown): void {
       // 影子价格：核心估价器逐节点求和（shadow-price 协议——replace 必须携带紧邻 claim，
       // 否则投影/meter 保持旧总量，assembly 看到的还是旧内容：turn 47 实测 514k tokens）
       const shadowedTokens = inRange.reduce((s, seq) => {
-        const m = (events?.[seq]?.data ?? {}) as { content?: unknown }
+        const m = (sessionEventAt(session, seq)?.data ?? {}) as { content?: unknown }
         return s + estimateCoreTokens(m.content) + 4
       }, 0)
       // 1) 紧邻计量事件（武装 claim——toolResultPruner 同款形态）
@@ -864,11 +936,10 @@ export function apply(ctx: Ctx, _config: unknown): void {
     const persisted = await loadFoldState(sid)
     if (persisted > 0) return persisted
     if (session !== undefined) {
-      const events = (session as { events?: Record<string, { type?: unknown; data?: unknown } | undefined> }).events
       const surface = (session as { surface?: { nodes?: number[] } }).surface
       let max = 0
       for (const seq of surface?.nodes ?? []) {
-        const ev = events?.[seq]
+        const ev = sessionEventAt(session, seq)
         if (ev?.type !== 'user/message') continue
         const d = ev.data as { source?: { plugin?: unknown; kind?: unknown } | null; content?: Array<{ type?: unknown; text?: unknown }> } | undefined
         if (d?.source?.plugin !== name || d.source.kind !== 'plugin') continue
@@ -889,10 +960,9 @@ export function apply(ctx: Ctx, _config: unknown): void {
   /** 活会话 surface 上的窗口注回副本（[{seq, range}]，seq 升序） */
   const scanWindowCopies = (session: SessionRef): Array<{ seq: number; range: { from: number; to: number; capped?: boolean; budget?: number } }> => {
     const out: Array<{ seq: number; range: { from: number; to: number; capped?: boolean; budget?: number } }> = []
-    const events = (session as { events?: Record<string, { type?: unknown; data?: unknown } | undefined> }).events
     const surface = (session as { surface?: { nodes?: number[] } }).surface
     for (const seq of surface?.nodes ?? []) {
-      const ev = events?.[seq]
+      const ev = sessionEventAt(session, seq)
       if (ev?.type !== 'user/message') continue
       const src = (ev.data as { source?: { plugin?: unknown; form?: unknown; windowRange?: { from?: unknown; to?: unknown; capped?: unknown; budget?: unknown } } | null } | undefined)?.source
       if (src?.plugin !== name || src.form !== 'snapshot' || src.windowRange === undefined) continue
@@ -975,7 +1045,10 @@ export function apply(ctx: Ctx, _config: unknown): void {
   const saveMemoryBook = async (slug: string, book: { name: string; entries: LoreEntry[]; importWarnings: string[] }): Promise<void> => {
     const abs = join(dshHome, memoryLorePath(slug))
     await mkdir(dirname(abs), { recursive: true })
-    await writeFile(abs, JSON.stringify({ name: book.name, entries: book.entries, importWarnings: book.importWarnings }, null, 1), 'utf8')
+    // 【2026-09-08 鲁棒性】原子写：记忆本与 dsh-plugin 世界书 entry-put 写合并队列
+    // 并发写同一 lore.json 时裸写撕裂（「新文档+旧文档尾部」恒 parse 失败——项目实锤
+    // 教训同款； TH 桥 target 本书或 reset 重导并发时同样成立）。
+    await atomicWriteText(abs, JSON.stringify({ name: book.name, entries: book.entries, importWarnings: book.importWarnings }, null, 1))
   }
 
   // 记忆本**不登记**进工作区 rp.json.books：注入走上面的自有 pre-step 快照（与
@@ -1011,7 +1084,7 @@ export function apply(ctx: Ctx, _config: unknown): void {
   }
 
   /** 单会话总结：提取楼层原文 → LLM → 追加记忆条目（返回摘要字数） */
-  const summarizeSession = async (sid: string, slug: string, header: SessionHeaderHit, from: number, to: number): Promise<number> => {
+  const summarizeSession = async (sid: string, slug: string, header: SessionHeaderHit, from: number, to: number, isStale?: () => boolean): Promise<number> => {
     const sel = ctx.agentDefaultModel?.currentSelection?.()
     if (!sel?.provider || !sel?.model) throw new Error('no default model configured（先在导入中心/API 设置配置模型）')
     if (!ctx.llm) throw new Error('llm service unavailable')
@@ -1029,7 +1102,18 @@ export function apply(ctx: Ctx, _config: unknown): void {
       if (chunk.type === 'text-delta' && typeof chunk.text === 'string') text += chunk.text
     }
     if (!text.trim()) throw new Error('empty summary（模型返回空）')
+    // 【鲁棒轮 2026-09-09】reset 竞态守卫：LLM 秒级流式窗口内 /reset 清空记忆本后，
+    // 本函数的 load→push→save 会把重置前区间的条目复活（tick 再把 lastFloor 覆写为
+    // chunk.to）。stale 回调由调用方提供（捕获 reset 代数），save 前两次校验。
+    if (isStale?.() === true) {
+      console.log(`[dsht-memory] 总结完成但会话已被 reset（${sid} #${from}-${to}），丢弃结果`)
+      return -1
+    }
     const book = await loadMemoryBook(slug)
+    if (isStale?.() === true) {
+      console.log(`[dsht-memory] 总结落盘前发现 reset（${sid}），丢弃结果`)
+      return -1
+    }
     book.entries.push(buildMemoryEntry(memoryBookName, from, to, text))
     await saveMemoryBook(slug, book)
     console.log(`[dsht-memory] summarized ${sid} (#${from}-${to}) → ${text.length}ch（记忆本 ${book.entries.length} 条，工作区 ${slug}）`)
@@ -1040,8 +1124,18 @@ export function apply(ctx: Ctx, _config: unknown): void {
   // 楼层进度游标 = turn 口径楼层总数（extractFloorsFromEvents(events).cursor，与 UI
   // 楼层/记忆锚一致）。rp/state 的 cursor（dsh-plugin 消息条数游标）只作**变化信号**：
   // 未变化 → 跳过（免 20s 全量重读大楼层文件）；变化 → 读事件流重算 turn 楼层。
+  // 【鲁棒轮 2026-09-09】per-sid reset 代数——/reset 递增；tick 的总结链路捕获代数，
+  // LLM 窗口内被 reset 则丢弃结果（防止旧区间条目复活 + lastFloor 被覆写）。
+  const resetGens = new Map<string, number>()
+
   let busy = false
   const lastSeenCursor = new Map<string, number>()
+  // 【鲁棒轮 2026-09-09】per-sid 失败退避：同 chunk 连续失败无上限 = 内容过滤/断网期
+  // 每 20s 重烧一次 LLM（每次 60k 字符楼层原文）。退避阶梯 20s→2min→10min 封顶，
+  // 成功或游标变化（新 chunk）即复位。
+  const failStreak = new Map<string, number>()
+  const lastFailAt = new Map<string, number>()
+  const FAIL_BACKOFF_MS = [0, 120_000, 600_000, 600_000] as const
   const tick = async (forceSids: string[] | null): Promise<void> => {
     if (busy) return
     busy = true
@@ -1086,15 +1180,27 @@ export function apply(ctx: Ctx, _config: unknown): void {
           ? (floorCount > prog.lastFloor ? { from: prog.lastFloor + 1, to: Math.min(floorCount, prog.lastFloor + cfg.everyN) } : null)
           : nextChunk(prog.lastFloor, floorCount, cfg.everyN)
         if (!chunk) continue
+        // 退避门禁：退避窗口内跳过本 tick（不推进游标，窗口过后自动重试）
+        const streak = failStreak.get(sid) ?? 0
+        const lastFail = lastFailAt.get(sid) ?? 0
+        const backoff = FAIL_BACKOFF_MS[Math.min(streak, FAIL_BACKOFF_MS.length - 1)] ?? 0
+        if (!force && backoff > 0 && Date.now() - lastFail < backoff) continue
         try {
-          const chars = await summarizeSession(sid, slug, header, chunk.from, chunk.to)
+          // 【鲁棒轮 2026-09-09】reset 代数守卫：LLM 窗口内 /reset → 丢弃结果不 saveProgress
+          const genAtStart = resetGens.get(sid) ?? 0
+          const chars = await summarizeSession(sid, slug, header, chunk.from, chunk.to, () => (resetGens.get(sid) ?? 0) !== genAtStart)
           if (chars > 0) {
+            failStreak.delete(sid)
+            lastFailAt.delete(sid)
+            if ((resetGens.get(sid) ?? 0) !== genAtStart) continue // reset 竞态：进度不推进
             await saveProgress(sid, chunk.to)
             budget--
           }
         } catch (e) {
-          // 失败不推进游标——下一轮重试；不阻塞主 turn（总结在插件侧异步跑）
-          console.warn(`[dsht-memory] 总结失败（${sid} #${chunk.from}-${chunk.to}）：${(e as Error).message}`)
+          // 失败不推进游标——按退避阶梯延迟重试；不阻塞主 turn（总结在插件侧异步跑）
+          failStreak.set(sid, streak + 1)
+          lastFailAt.set(sid, Date.now())
+          console.warn(`[dsht-memory] 总结失败（${sid} #${chunk.from}-${chunk.to}，连续第 ${streak + 1} 次，退避 ${Math.round(backoff / 1000)}s）：${(e as Error).message}`)
         }
         if (budget <= 0) return
       }
@@ -1216,6 +1322,9 @@ export function apply(ctx: Ctx, _config: unknown): void {
       if (!sid) return sendJson(res, 400, { error: 'sessionId required' })
       const header = (await refreshHeaders()).find(h => h.sessionId === sid)
       const slug = header ? await slugFromCwd(header.cwd) : null
+      // 【鲁棒轮 2026-09-09】先递增代数再清数据——进行中的总结在 save 前会发现代数
+      // 变化而丢弃（LLM 窗口竞态守卫，见 tick / summarizeSession）
+      resetGens.set(sid, (resetGens.get(sid) ?? 0) + 1)
       let dropped = 0
       if (slug) {
         const book = await loadMemoryBook(slug)
