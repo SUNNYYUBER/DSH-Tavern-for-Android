@@ -58,6 +58,10 @@ import { repairSessionForV3 } from '../dsht-plugin-shared/session-repair.ts'
 import { mergeSalvagedThFloors, upsertThFloors, readThFloors, lookupThFloor, type ThFloorRecord } from '../dsht-plugin-shared/th-floors.ts'
 // D-3：system 槽位路由（TT 对齐投影；合法通道 = system-prompt/assemble 的 assembly.sections）
 import { planSlotSections, SLOT_ORDERS, type SlotBatch, type SlotSection } from '../dsht-plugin-shared/tt-projection.ts'
+// T-27：更新检查的版本判定内核（纯函数；服务端与前端共用同一份实现，避免两份漂移）
+import { relateVersions, parseVersion } from '../dsht-plugin-shared/version-compare.ts'
+// T-27：更新源响应归一化 + 下载资产挑选（形状适配层单独成模块，配单测钉死两种字段形态）
+import { guessUpdateKind, normalizeUpdateFeed, pickDownloadAsset } from '../dsht-plugin-shared/update-feed.ts'
 // T3.2：会话长期记忆（rp-memory 最小闭环）——核心逻辑纯函数化便于单测，这里只做接线
 import {
   appendMemory, deleteMemoryEntry, formatMemoryTime, isValidMemorySessionId, loadMemory,
@@ -4118,6 +4122,83 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   // POST /dsht-rp/variant/switch {sessionId, targetSeq} —— 切回历史变体（含重roll后的旧版本回看）
   // POST /dsht-rp/variant/groups {sessionId} —— 变体组清单（前端渲染左右切换箭头）
   // POST /dsht-rp/rp/home {} / /dsht-rp/rp/workspaces {} / /dsht-rp/rp/import-card { json } / /dsht-rp/llm/classify
+  // ---- 构建信息 / 更新检查（T-27）：GET 与 POST 双通 ----
+  // 【2026-09-11 心跳 46 · 静默失败修复】`/rp/build-info` 原先**只挂在 GET 块**，而前端
+  // `rpApi()` 恒为 POST → 实机 POST 恒 404，客户端 `.catch(() => setBuildInfo(null))` 吞掉
+  // 错误 → 前端拿到的 buildInfo 永远为 null。后果：「我装的到底是不是最新包」这个
+  // 2026-09-08 专门为用户痛点做的功能**从未生效过**（面板摘要行从不显示构建哨兵）。
+  // 实测证据（模拟器 emulator-5554，adb forward 13080→3080）：
+  //   GET  /dsht-rp/rp/build-info → 200 {"sentinel":".installed-v223","dshVersion":"0.1.5-rc.1"}
+  //   POST /dsht-rp/rp/build-info → 404   ← 客户端走的正是这条路
+  //   POST /dsht-rp/rp/status     → 200   ← 对照：POST 分发本身正常
+  // 处置：抽成**单实现** `buildInfoPayload()`，GET/POST 两侧共用 —— 杜绝两份实现漂移。
+  const buildInfoPayload = async (): Promise<Record<string, unknown>> => {
+    let sentinel: string | null = null
+    try {
+      const runtimeDir = join(dshHome, '..', 'dsh-runtime')
+      const entries = await readdir(runtimeDir)
+      // 【2026-09-08 鲁棒性】历史哨兵不清理（NodeService 每次升级写新文件不删旧，
+      // 实机曾残留 28 个）——解析 vNNN 取最大（= 最近一次成功解压的标记）。
+      let maxV = -1
+      for (const e of entries) {
+        if (!e.startsWith('.installed-v')) continue
+        const n = Number(e.slice('.installed-v'.length))
+        if (Number.isFinite(n) && n > maxV) { maxV = n; sentinel = e }
+      }
+      if (maxV < 0) sentinel = null
+    } catch { /* PC 验证环境无 runtime 目录 */ }
+    let dshVersion: string | null = null
+    try {
+      const pkg = JSON.parse(readFileSync(join(dshHome, '..', 'dsh-runtime', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8')) as { version?: string }
+      dshVersion = pkg.version ?? null
+    } catch { /* PC 无 node_modules 布局 */ }
+    // APK 版本：NodeService 以 BuildConfig.VERSION_NAME 注入（PC 验证环境为空）
+    const env = (typeof process !== 'undefined' ? process.env : {}) as Record<string, string | undefined>
+    const appVersion = typeof env.DSHT_APP_VERSION === 'string' && env.DSHT_APP_VERSION.trim() !== ''
+      ? env.DSHT_APP_VERSION.trim()
+      : null
+    const codeRaw = env.DSHT_APP_VERSION_CODE
+    const appVersionCode = typeof codeRaw === 'string' && /^\d+$/.test(codeRaw) ? Number(codeRaw) : null
+    const appAbi = typeof env.DSHT_APP_ABI === 'string' && env.DSHT_APP_ABI.trim() !== '' ? env.DSHT_APP_ABI.trim() : null
+    return { sentinel, dshVersion, appVersion, appVersionCode, appAbi, fixTag: 'wb-fix-0908' }
+  }
+
+  // ---- T-27：更新源配置 + 手动检查更新 ----
+  // 更新源**尚未决**（用户需选：GitHub Releases API / 自建静态 JSON）→ 先落**可用骨架**：
+  // 更新源可配置并可手动检查；判定与失败**全部显式回显**（绝不静默吞错）。
+  // 判定内核复用 `dsht-plugin-shared/version-compare.ts`（纯函数，与服务端/前端同一份实现）。
+  const updateCfgPath = (): string => join(dshHome, 'rp', 'update-source.json')
+  /** 写配置：先确保父目录存在（atomicWriteText 不做 mkdir——首次安装在 $DSH_HOME/rp 缺席时
+   *  会 ENOENT 抛 500，那又是一次"看起来没反应"的静默失败） */
+  const writeUpdateCfg = async (cfg: { source: string; kind: '' | 'github' | 'json' }): Promise<void> => {
+    const p = updateCfgPath()
+    await mkdir(dirname(p), { recursive: true })
+    await atomicWriteText(p, JSON.stringify(cfg, null, 2))
+  }
+  const readUpdateCfg = async (): Promise<{ source: string; kind: 'github' | 'json' | '' }> => {
+    try {
+      const raw = JSON.parse(await readFile(updateCfgPath(), 'utf8')) as { source?: unknown; kind?: unknown }
+      const source = typeof raw.source === 'string' ? raw.source.trim() : ''
+      const kind = raw.kind === 'github' || raw.kind === 'json' ? raw.kind : ''
+      return { source, kind }
+    } catch { return { source: '', kind: '' } }
+  }
+  /** 带超时的 JSON 拉取——网络失败必须抛，由调用方转成显式 reason */
+  const fetchJsonWithTimeout = async (url: string, ms = 12000): Promise<unknown> => {
+    const ac = new AbortController()
+    const timer = setTimeout(() => { ac.abort() }, ms)
+    try {
+      const resp = await fetch(url, {
+        signal: ac.signal,
+        headers: { accept: 'application/json', 'user-agent': 'DSHTavern-update-check' },
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      return await resp.json() as unknown
+    } finally { clearTimeout(timer) }
+  }
+  // 形态识别与响应归一化走 `dsht-plugin-shared/update-feed.ts`（纯函数 + 单测，
+  // 两种更新源字段形态在那里钉死）——此处不再重复实现，避免"两份实现漂移"。
+
   if (ctx.webServer) {
     /** 信任栅栏（对照 connection 包 isTrustedApiRequest 语义）：
      *  - webServer 绑 127.0.0.1（默认）：Host 必须是 loopback（防 DNS rebinding）
@@ -4283,33 +4364,13 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
             }
             // ---- /rp/build-info：构建版本可见性（2026-09-08 用户痛点「我装的到底是不是最新包」）----
             // 读 filesDir/dsh-runtime/.installed-v* 哨兵（APK 内 NodeService.RUNTIME_SENTINEL
-            // 写入的解压标记）+ node 运行时真实版本——手机上一眼对出安装包新旧。
-            // dsh-runtime 缺席（PC 纯前端验证）→ sentinel: null。
-            // 【2026-09-08 死代码修复】本分支原被并行编辑错位到 POST-only 区（GET 块 L3650
-            // 兜底 return 之后）——GET 恒 404 text/plain、POST 恒 400 bad json，实机实证。
-            // 迁回 GET 块兜底之前，恢复 GET 语义。
-            if (sub === '/rp/build-info') {
-              let sentinel: string | null = null
-              try {
-                const runtimeDir = join(dshHome, '..', 'dsh-runtime')
-                const entries = await readdir(runtimeDir)
-                // 【2026-09-08 鲁棒性】历史哨兵不清理（NodeService 每次升级写新文件不删旧，
-                // 实机 28 个残留）——find() 目录序会取到最旧的，版本显示恒滞后。改为解析
-                // vNNN 数值取最大（= 最近一次成功解压的标记）。
-                let maxV = -1
-                for (const e of entries) {
-                  if (!e.startsWith('.installed-v')) continue
-                  const n = Number(e.slice('.installed-v'.length))
-                  if (Number.isFinite(n) && n > maxV) { maxV = n; sentinel = e }
-                }
-                if (maxV < 0) sentinel = null
-              } catch { /* PC 验证环境无 runtime 目录 */ }
-              let dshVersion: string | null = null
-              try {
-                const pkg = JSON.parse(readFileSync(join(dshHome, '..', 'dsh-runtime', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8')) as { version?: string }
-                dshVersion = pkg.version ?? null
-              } catch { /* PC 无 node_modules 布局 */ }
-              return send(200, { sentinel, dshVersion, fixTag: 'wb-fix-0908' })
+            // 写入的解压标记）+ node 运行时真实版本 + APK 自身版本（env 注入）——
+            // 手机上一眼对出安装包新旧。dsh-runtime 缺席（PC 纯前端验证）→ sentinel: null。
+            // 【2026-09-11 心跳 46】改为共用 buildInfoPayload()（同一实现亦挂在 POST 块，
+            // 修掉「前端 POST、后端只认 GET」导致的恒 404 静默失败，详见该函数上方注释）。
+            // 匹配用 subPath（剥 query）——会话级 query 参数不再导致 404。
+            if (subPath === '/rp/build-info') {
+              return send(200, await buildInfoPayload())
             }
             return sendText(404, 'not found', 'text/plain')
           }
@@ -5704,9 +5765,22 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               for (const f of files) {
                 if ((batch++ % 4) === 0 && batch > 1) await new Promise<void>(r => { setImmediate(r) })
                 const rel = String(f?.path ?? '')
-                // T3.1b：二进制内容（{base64}），用于立绘 avatar.png 落盘
-                const binary = (f?.binary && f.binary !== false) || (typeof f?.content === 'object' && f.content !== null)
+                // T3.1b：二进制内容（{base64}），用于立绘 avatar.png 落盘。
+                // 【2026-09-11 心跳 46 收紧】原判据是「content 是对象就当二进制」——过于宽松：
+                // 任何**误传对象**的调用方（实测 card-export 的 worldbook.json 就漏了
+                // JSON.stringify）都会被静默 base64 解码成 `[object Object]` 的乱码字节，
+                // 文件写成功、无报错、内容全错（静默失败族）。
+                // 收紧为：显式 `binary:true`，或对象**确实带 string 型 base64 字段**。
+                // 不带 base64 的对象 → 落成明确失败（宁可报错，不可静默写垃圾）。
+                const asObj = (f?.content !== null && typeof f?.content === 'object') ? f.content as Record<string, unknown> : null
+                const hasB64Shape = asObj !== null && typeof asObj.base64 === 'string'
+                const explicitBinary = f?.binary === true
+                const binary = explicitBinary || hasB64Shape
                 const content = String(f?.content ?? '')
+                if (asObj !== null && !binary) {
+                  failed.push(`${String(f?.path ?? '')}: content 是对象但没有 base64 字段，也不是 binary:true（疑似上游漏了 JSON.stringify）`)
+                  continue
+                }
                 const segs = rel.split('/').filter(s => s.length > 0)
                 const safe = rel.length > 0 && !rel.startsWith('/')
                   && segs.every(s => s !== '.' && s !== '..')
@@ -6016,6 +6090,84 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 if (sel?.provider && sel?.model) api = { provider: sel.provider, model: sel.model }
               } catch { /* 未配置 */ }
               return send(200, { latestBatch, api })
+            }
+            // ---- /rp/build-info（POST 形态）----
+            // 前端 rpApi() 恒为 POST，故本路由必须在此**同样**可答（详见 buildInfoPayload 注释）。
+            if (subPath === '/rp/build-info') {
+              return send(200, await buildInfoPayload())
+            }
+            // ---- T-27：/rp/update-config —— 更新源配置的读（GET 语义）/写（带 source）----
+            // 更新源未决前（GitHub Releases vs 自建静态 JSON）先落骨架：可配置、可留空。
+            if (subPath === '/rp/update-config') {
+              const hasSource = typeof payload.source === 'string'
+              if (!hasSource) {
+                const cfg = await readUpdateCfg()
+                // 未配置（source 为空）时 kind 也回空 —— 否则会对空串"猜"出 json 这种无意义结论
+                const kind = cfg.source === '' ? '' : (cfg.kind === '' ? guessUpdateKind(cfg.source, '') : cfg.kind)
+                return send(200, { source: cfg.source, kind })
+              }
+              const source = String(payload.source ?? '').trim()
+              const kindHint = typeof payload.kind === 'string' ? payload.kind : ''
+              // 留空 = 清除配置（显式语义，不是"悄悄当没填"）
+              if (source === '') {
+                await writeUpdateCfg({ source: '', kind: '' })
+                logLine('update-config: 更新源已清空')
+                return send(200, { ok: true, source: '', kind: '' })
+              }
+              if (!/^https?:\/\//i.test(source)) {
+                return send(400, { error: '更新源必须是 http(s) 绝对地址' })
+              }
+              const kind = guessUpdateKind(source, kindHint)
+              await writeUpdateCfg({ source, kind })
+              logLine(`update-config: 已保存更新源（${kind}）`)
+              return send(200, { ok: true, source, kind })
+            }
+            // ---- T-27：/rp/check-update —— 手动检查更新 ----
+            // 返回结构恒带 `ok`；失败时带**显式** `reason` + `message`（绝不静默返回"已是最新"）。
+            if (subPath === '/rp/check-update') {
+              const info = await buildInfoPayload()
+              const current = typeof info.appVersion === 'string' ? info.appVersion : null
+              const cfg = await readUpdateCfg()
+              const overrideUrl = typeof payload.source === 'string' ? payload.source.trim() : ''
+              const source = overrideUrl !== '' ? overrideUrl : cfg.source
+              const kind = guessUpdateKind(source, overrideUrl !== '' ? (typeof payload.kind === 'string' ? payload.kind : '') : cfg.kind)
+              const base = { current, dshVersion: info.dshVersion, sentinel: info.sentinel, source, kind }
+              if (source === '') {
+                return send(200, { ok: false, reason: 'unconfigured', message: '还没配置更新源——需要先确定发布渠道（GitHub Releases 或自建 JSON）', ...base })
+              }
+              if (!/^https?:\/\//i.test(source)) {
+                return send(200, { ok: false, reason: 'bad-source', message: '更新源必须是 http(s) 绝对地址', ...base })
+              }
+              if (current === null || parseVersion(current) === null) {
+                // PC 验证环境 / 版本号异常：如实说，不假装"已是最新"
+                return send(200, { ok: false, reason: 'no-current-version', message: `读不到本机版本号（${current ?? 'null'}），无法比较`, ...base })
+              }
+              let feed: ReturnType<typeof normalizeUpdateFeed>
+              try {
+                feed = normalizeUpdateFeed(await fetchJsonWithTimeout(source), kind)
+              } catch (e) {
+                const msg = (e as Error)?.name === 'AbortError' ? '请求超时（12 秒）' : ((e as Error)?.message ?? '未知错误')
+                logLine(`check-update 失败：${msg}`)
+                return send(200, { ok: false, reason: 'fetch', message: `拉取更新源失败：${msg}`, ...base })
+              }
+              const relation = relateVersions(current, feed.version)
+              const hasUpdate = relation === 'newer'
+              // 资产挑选：按本机 ABI 优先，其次任意 .apk；都没有则退回 release 页面链接
+              const abi = typeof info.appAbi === 'string' ? info.appAbi : ''
+              const apks = feed.assets.filter(a => a.name.toLowerCase().endsWith('.apk'))
+              const picked = pickDownloadAsset(feed.assets, abi)
+              const downloadUrl = picked !== null ? picked.url : feed.url
+              logLine(`check-update: ${current} → ${feed.version}（${relation}）`)
+              return send(200, {
+                ok: true,
+                ...base,
+                latest: { version: feed.version, url: feed.url, notes: feed.notes },
+                relation,
+                hasUpdate,
+                downloadUrl,
+                asset: picked,
+                apkCount: apks.length,
+              })
             }
             // ---- /rp/workspaces：角色工作区清单（扫 $DSH_HOME/rp/*/rp.json）----
             if (sub === '/rp/workspaces') {

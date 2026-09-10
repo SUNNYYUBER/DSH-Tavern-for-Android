@@ -145,5 +145,7 @@ export async function kickoffImport(
   batchId: string,
   opts: { resumeFrom?: boolean } = {},
 ): Promise<KickoffResult> {
-  return await rpPost('/rp/import-kickoff', { batchId, ...(opts.resumeFrom ? { resumeFrom: true } : {}) }) as KickoffResult
+  // rpPost 返回 Record<string, unknown>（通用 JSON 信封）；此处按调用契约断言为 KickoffResult。
+  // 需要 `as unknown as`：两者无重叠属性，TS 会拒绝对其直接断言（TS2352）。
+  return await rpPost('/rp/import-kickoff', { batchId, ...(opts.resumeFrom ? { resumeFrom: true } : {}) }) as unknown as KickoffResult
 }

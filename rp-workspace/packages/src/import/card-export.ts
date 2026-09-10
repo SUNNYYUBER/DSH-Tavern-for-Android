@@ -155,7 +155,12 @@ export function exportCardBundleFiles(card: CharacterCard, avatar: Uint8Array | 
   // 卡本体：优先原样 rawJson；无则从归一结构重建 ST V2 JSON
   files.push({ path: 'card.json', content: card.rawJson ?? buildStV2Json(card) })
   if (card.embeddedBook && card.embeddedBook.entries.length > 0) {
-    files.push({ path: 'worldbook.json', content: loreBookToStWorld(card.embeddedBook) })
+    // 【2026-09-11 心跳 46 修复】此前直接塞**对象**（漏 JSON.stringify）。
+    // 下游 /write-files 有一条"content 是对象 → 当二进制"的容错分支
+    // （dsh-plugin/index.ts:5769），于是 worldbook.json 会被 base64 解码成
+    // `[object Object]` 的乱码字节 —— **文件写成功、无报错、内容是垃圾**
+    // （典型静默失败）。此处改为与相邻 regex.json 同款：JSON 字符串落盘。
+    files.push({ path: 'worldbook.json', content: JSON.stringify(loreBookToStWorld(card.embeddedBook), null, 1) })
   }
   if (card.embeddedRegex.length > 0) {
     files.push({ path: 'regex.json', content: JSON.stringify(card.embeddedRegex, null, 1) })

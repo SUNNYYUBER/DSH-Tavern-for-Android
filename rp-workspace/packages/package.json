@@ -6,7 +6,9 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -b tsconfig.json"
+    "typecheck": "npm run typecheck:core",
+    "typecheck:core": "tsc -p tsconfig.core.json",
+    "typecheck:ui": "tsc -p tsconfig.check.json"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",

@@ -212,6 +212,16 @@ export function planSlotSections(
 
 /** 投影配置 */
 export interface ProjConfig {
+  /**
+   * 总开关。**必须显式声明**（2026-09-11 心跳 46 修复）：
+   * 此前本接口漏了 `enabled`，而 `PROJ_DEFAULTS` 里设了它、函数体里又读它
+   * （`if (!cfg.enabled) return passthrough()`）—— 类型与实现不一致。
+   * 运行期暂未出错（默认值对象里恰好带了 `enabled: true`），但**任何不 spread
+   * `PROJ_DEFAULTS` 的调用方**都会拿到 `undefined` → `!undefined === true` →
+   * **静默整段跳过投影**（函数在、不报错、返回透传，只是没干该干的事）。
+   * 这正是本项目头号缺陷「静默失败族」的形态，故把类型补正、让 tsc 替人兜住。
+   */
+  enabled: boolean
   /** 是否把系统级内容并入 system 槽位（D-3） */
   systemSlot: boolean
   /** 是否把真实用户输入提前到历史之前（D-4） */
@@ -270,7 +280,10 @@ export function projectToTtShape(
     systemAppend: '',
     stats,
   })
-  if (!cfg.enabled) return passthrough()
+  // 显式 `=== false` 而非 `!cfg.enabled`：缺省/未定义时**执行**投影，而不是静默透传。
+  // 理由：本模块的职责就是做投影，"没做"是比"多做"严重得多的失败形态（静默失败族）。
+  // 类型上 `enabled` 已是必填，漏传会被 tsc 拦；此处再兜一层运行时语义。
+  if (cfg.enabled === false) return passthrough()
 
   const agentManual: string[] = []   // 保持在前
   const sysLevel: string[] = []      // → system 槽位

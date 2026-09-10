@@ -13,6 +13,7 @@ import { RegexPanel } from './RegexPanel.tsx'
 import { PresetPanel } from './PresetPanel.tsx'
 import { BooksPanel } from './BooksPanel.tsx'
 import { MigrationStatusPanel } from './MigrationStatusPanel.tsx'
+import { UpdatePanel } from './UpdatePanel.tsx'
 import { PersonaPanel } from './PersonaPanel.tsx'
 import { SessionsPanel } from './SessionsPanel.tsx'
 import { invalidateWsCache } from './RpNativeChat.tsx'
@@ -438,6 +439,7 @@ export function RpOverlay(props: RpOverlayInjected): JSX.Element | null {
                 /* 任务 C1：导入 tab = 顶部迁移验收面板（大白话状态）+ 下面导入中心 iframe */
                 <div className="dsht-rp-import-wrap">
                   <MigrationStatusPanel />
+                  <UpdatePanel />
                   <ImportFrame onClose={() => { setOpen(false) }} onImported={(ws) => { void refreshAfterImport(ws) }} onKickoff={(sid) => { void jumpToAdapter(sid) }} />
                 </div>
               )}

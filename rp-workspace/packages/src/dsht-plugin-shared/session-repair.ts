@@ -429,9 +429,12 @@ function fixTitleMessageSeqs(events: RawEvent[], mapRef: (q: number) => number, 
   for (const ev of events) {
     if (ev.type !== 'session/title' && ev.type !== 'session/title-llm-request') continue
     const d = ev.data as { messageSeqs?: unknown }
-    if (!Array.isArray(d.messageSeqs)) continue
+    // 捕获为局部常量：`Array.isArray` 的收窄**不会穿透到闭包**（下方 .some 回调里），
+    // 直接写 d.messageSeqs![i] 会退化成对 `{}` 取下标（tsc TS7053）。
+    const src = d.messageSeqs
+    if (!Array.isArray(src)) continue
     const fixed: number[] = []
-    for (const q of d.messageSeqs) {
+    for (const q of src) {
       if (typeof q !== 'number') continue
       const nq = mapRef(q)
       const target = events[nq]
@@ -441,7 +444,7 @@ function fixTitleMessageSeqs(events: RawEvent[], mapRef: (q: number) => number, 
       if (kind !== 'user') continue
       if (!fixed.includes(nq)) fixed.push(nq)
     }
-    if (fixed.length !== d.messageSeqs.length || fixed.some((q, i) => q !== d.messageSeqs![i])) {
+    if (fixed.length !== src.length || fixed.some((q, i) => q !== src[i])) {
       d.messageSeqs = fixed
       changed = true
     }

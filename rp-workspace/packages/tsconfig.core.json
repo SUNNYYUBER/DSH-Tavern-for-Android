@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "moduleResolution": "Bundler",
+    "module": "ESNext",
+    "types": [],
+    "lib": ["ES2022"],
+    "skipLibCheck": true
+  },
+  "include": [
+    "src/dsht-plugin-shared",
+    "src/state",
+    "src/regex",
+    "src/macros",
+    "src/lore",
+    "src/preset",
+    "src/assembly",
+    "src/import"
+  ]
+}

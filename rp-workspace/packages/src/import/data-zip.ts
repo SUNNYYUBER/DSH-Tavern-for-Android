@@ -290,13 +290,13 @@ export async function analyzeDataZip(
   }
 
   // ---- 阶段 0：解包 + 结构识别 ----
-  onProgress?.(0, '解包中…')
+  onProgress?.(0, '解包中…', 0)
   const zip = await JSZip.loadAsync(zipData)
   const allFiles = Object.keys(zip.files).filter(f => !zip.files[f].dir)
 
   report.rootPath = detectRoot(allFiles)
   const root = report.rootPath ? report.rootPath + '/' : ''
-  onProgress?.(0, `结构识别：${report.rootPath || '（zip 根）'}，共 ${allFiles.length} 个文件`)
+  onProgress?.(0, `结构识别：${report.rootPath || '（zip 根）'}，共 ${allFiles.length} 个文件`, 5)
 
   // 检测 TauriTavern 运行时数据（不在 ST 生态范围，明确跳过并告知）
   const ttCount = allFiles.filter(f => norm(f).startsWith('data/_tauritavern/') || norm(f).startsWith('_tauritavern/')).length

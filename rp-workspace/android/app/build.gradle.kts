@@ -51,6 +51,14 @@ android {
         noCompress += listOf("zip", "so")
     }
 
+    // T-27（2026-09-11 心跳 46）：生成 BuildConfig，让 NodeService 能把 APK 自身的
+    // versionName/versionCode 作为环境变量交给 node 运行时（「检查更新」的比较基准）。
+    // AGP 8 起 buildConfig 默认 false，不显式打开则 BuildConfig 类不存在、编译期报错。
+    // 好处是与上方 defaultConfig 的版本号**同源**——不手抄版本号，杜绝漂移。
+    buildFeatures {
+        buildConfig = true
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false

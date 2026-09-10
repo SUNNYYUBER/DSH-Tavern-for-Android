@@ -510,7 +510,10 @@ export function convertChatFile(
       }
       // active 非末位：追加一次"切换"事件（surface 换回 active；模拟 ST 里左右滑选定的动作）
       if (variants.length > 1 && activeIdx !== variants.length - 1) {
-        emitVariantMarker(activeSeq, `[变体 ${activeIdx + 1}/${variants.length}]`)
+        // activeSeq 由上方 variants 循环**必然赋值**（variants.length > 1 时循环至少跑两轮，
+        // 首轮即赋值）。此处用 `!` 而非条件跳过：若写成 if(activeSeq!==undefined)，
+        // 万一前提被破坏就会**静默不写标记**（静默失败），而断言会让问题立刻暴露。
+        emitVariantMarker(activeSeq!, `[变体 ${activeIdx + 1}/${variants.length}]`)
         activeSeq = emitAssistantStep(variants[activeIdx])
       }
     }

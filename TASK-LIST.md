@@ -15,7 +15,10 @@
 | 单测 | 796 项全绿（41 文件） |
 | 未提交改动 | 无（工作树干净） |
 
-**当前状态**：升级目标（evaluate.sh 5/5）已达成。可继续做发布前准备与对齐长尾。
+**当前状态**：升级目标（evaluate.sh 5/5）已达成。心跳 46 已推进阶段三（T-27 可先做部分实机落地 + 两处静默缺陷修复 + 类型闸门补建）。
+
+⚠️ **交付物状态提醒**：心跳 46 改了源码（`dsh-plugin` / `dsht-plugin-shared` / `import` / `NodeService.kt`），
+**必须重打双架构 APK** 才与源码一致 —— 见 §9 末尾"每轮收尾"。
 
 ---
 
@@ -74,7 +77,7 @@
 | T-10 | D-3 role 映射（系统级内容走 system） | ✅ 主体已修 | 过渡态收敛（历史 user 席快照靠影子化逐轮折叠），观察即可 |
 | T-11 | D-4 用户输入绝对位置 | ✅ **重评完成**（2026-09-11，心跳 45） | 结论维持「**有条件可达**」（非当前可达）：`dsh-llm-deepseek/lib/index.js:1849` 声明 `systemPromptUpdate:"in-history"`，`dsh-llm-pi-ai` **无**该能力；我方走 pi-ai → 默认不生效。解锁 = 独立任务（切 `llm-deepseek` 路由 + 显式声明 models），**不叠加在升级窗口** |
 | T-12 | D-6 agent 层污染（31 tools / 24k 字说明书） | ⏳ 待拍板 | 见 T-08 |
-| T-13 | D-7 采样参数对照（TT 侧 `GENERATE_AFTER_COMBINE_PROMPTS` dump 未采） | ✅ **对照已补齐**（2026-09-11，心跳 46） | 新建 `rp-workspace/scripts/golden-tt-sampling.mjs`（TT WebView CDP 里 monkey-patch `fetch`+`XHR` 抓**最终请求体**；采样参数不在 prompt 事件里，必须走网络层）。**实测抓出 3 个真差异**：① `max_tokens` TT 16000 vs DSHT **384000**（未映射 ST 预设）② `top_p` TT 0.88 vs DSHT **完全不发** ③ `tools` TT **无** vs DSHT **32 个**（D-6 实锤）。详见 [docs/DSHT-VS-TT-DIFF-2026-09-10.md](docs/DSHT-VS-TT-DIFF-2026-09-10.md) §D-7 |
+| T-13 | D-7 采样参数对照（TT 侧 `GENERATE_AFTER_COMBINE_PROMPTS` dump 未采） | ✅ **对照已补齐**（2026-09-11，心跳 46 + 修正） | 新建 `rp-workspace/scripts/golden-tt-sampling.mjs`（TT WebView CDP 里 monkey-patch `fetch`+`XHR` 抓**最终请求体**；采样参数不在 prompt 事件里，必须走网络层）。**修正后结论**（首版误判已作废）：① `max_tokens` **映射正常**（切真实 ST 预设 `maxTokens=65535` → 请求实测 65535；首版用无 `maxTokens` 的示范预设测到宿主默认 384000，属**测量口径错误**）② `top_p`/penalties 未发送 = **宿主限制 H-②**（非我方缺陷，预设值已持久化待宿主支持）③ `tools` TT **无** vs DSHT **32 个** = **唯一真差异**（D-6 实锤）。详见 [docs/DSHT-VS-TT-DIFF-2026-09-10.md](docs/DSHT-VS-TT-DIFF-2026-09-10.md) §D-7 |
 | T-14 | golden 接收器迁入 `ctx.webServer`（摆脱宿主进程回收） | ✅ 评估后**决定不改**（2026-09-11，心跳 45） | 现为独立 `golden-receiver.mjs`:31100，**仅在手动采集 Golden Master 对照时启用**，不进产品链路；迁入 `ctx.webServer` 会让生产代码多背一个纯测试设施（且需处理路由命名空间冲突），**无功能收益**。若将来需要常驻采集再迁 |
 | T-15 | rp-plugin msg dump 口径修正（`raw.messages` → `decision.messages`） | ✅ 已修（2026-09-11，心跳 45） | 原落 `raw.messages`（RP 注入**前**的原始批）→ 与 TT 侧 `chat_completion_prompt_ready`（最终组装态）一比，差异全是假的。现改为在各出口落**最终态**（组装 + `dsht-rp/assemble` 钩子后）；`viaAssembleHook` 统一收口 |
 
@@ -137,14 +140,32 @@
   ⑥ 致谢 / 快速开始 / 项目结构 / 反馈
 - 数字核实：源码 37,380 行 / 98 文件；7 个自研插件；内嵌 DSH `0.1.5-rc.1`（MIT）
 
-### T-27　GitHub Releases 渠道 + 应用内检查更新开关　🚧 阻塞（缺外部前提）
-- 现状：正式签名 / 更名 / 图标 / 版本号 / 一键出包 **已完成**；**只剩**「检查更新开关 + Releases 渠道」
-- 完成标志：app 内能检测到新版本并给出更新入口
-- **阻塞原因（需你先决定）**：
-  1. **仓库还没有远端**（`git remote -v` 为空）→ 没有 GitHub 仓库就没有 Releases 渠道可对接
-  2. 需要你提供：目标 GitHub 仓库（**公开 or 私有**？影响检查更新的鉴权方式）
-  3. 应用内「检查更新」需确定**更新源**（GitHub Releases API / 自建静态 JSON）
-- **可先做的部分**（不依赖上述决定）：本地「当前版本」展示 + 手动检查入口的 UI 骨架 + 版本比较逻辑
+### T-27　GitHub Releases 渠道 + 应用内检查更新开关　🔄 **部分完成**（2026-09-11 心跳 46）
+- 现状：正式签名 / 更名 / 图标 / 版本号 / 一键出包 **已完成**
+- ✅ **不依赖外部决定的部分已落地并实机验证**（心跳 46）：
+  - **版本可见性**：`/rp/build-info` 增返回 `appVersion` / `appVersionCode` / `appAbi`
+    （Android 侧 `NodeService` 注入 `BuildConfig.VERSION_NAME`，与 `build.gradle.kts` **同源**，不手抄）
+  - **「版本与更新」面板**（RP 界面 →「导入」页）：显示本机版本 / DSH 运行时版本 / 构建标记；
+    更新源可配置（自动识别 GitHub Releases 或静态 JSON 两种形态）；一键「检查更新」
+  - **版本比较内核**：`dsht-plugin-shared/version-compare.ts`（纯函数，零依赖，宽松 semver：
+    容忍 `v` 前缀 / 缺位补 0 / 预发布 < 正式版）；**失败一律显式**，绝不静默当"已是最新"
+  - **更新源形状适配**：`dsht-plugin-shared/update-feed.ts`（两种形态归一 + **按本机 ABI 挑下载包**）
+  - 新增路由：`/rp/update-config`（读/写）、`/rp/check-update`
+  - **实机判据 8/8**：未配置 / GitHub 形态 / 静态 JSON 形态 / 同版本 / 更旧 / 版本号看不懂 /
+    网络失败 / 非法协议；含 ABI 挑选正确性（x86_64 机器选中 x86_64 包、忽略 arm64 包与校验和文件）
+  - 单测 +28（`version-compare.spec.ts` 14 + `update-feed.spec.ts` 14）
+- 🚧 **仍阻塞（需你先决定）**：更新源**填什么**——即目标 GitHub 仓库（公开 or 私有？影响鉴权）。
+  代码已就绪，填上地址即可用；**当前留空**（面板会明说"还没配置更新源"）
+- 旁：`/rp/check-update` 只做检查，不自动下载安装（避免在未定渠道前引入自动更新风险）
+
+### T-34　🔴 类型闸门：UI 层仍无 `tsc` 覆盖（心跳 46 新发现）
+- 背景：`npm run typecheck` 原为 `tsc -b tsconfig.json`，**产出 2546 个错误 → 恒红 = 没有门**
+  （缺 `allowImportingTsExtensions` + 缺 `jsx`/`@types/react`）。L14 的"让 tsc 拦"对策当时并不生效
+- ✅ **已修一半**：`tsconfig.core.json` + `npm run typecheck:core` → **核心逻辑层 0 错误**；
+  正控（注入 `boolean === 0`）证实报 **TS2367**，闸门真的能拦
+- ⏳ **剩余**：UI 层（`dsht-rp-ui/src/client/*.tsx`）需先装 `@types/react`，
+  再用 `tsconfig.check.json`（`npm run typecheck:ui`，现报 1588 错，绝大多数是缺 react 类型导致）
+- 完成标志：`typecheck:ui` 变绿，或明确记录"UI 层不做静态类型保证"并说明理由
 
 ---
 
@@ -196,6 +217,9 @@
 | 升级目标/约束 | [.goal/upgrade-0.1.5/GOAL.md](.goal/upgrade-0.1.5/GOAL.md) |
 | 升级策略/阻塞 | [.goal/upgrade-0.1.5/STRATEGY.md](.goal/upgrade-0.1.5/STRATEGY.md) |
 | 平台补丁 | `scripts/apply-platform-patches.py`（`--check` 预检） |
+| **补丁标记静态审计** | `node scripts/audit-patch-markers.py`（AST 解析；查"marker 有没有写进替换串"这类幂等检测失效） |
+| **前后端路由契约审计** | `node scripts/audit-route-contract.mjs`（前端 POST × 服务端挂载区；`-v` 列全部；`DSHT_AUDIT_SRC=` 可做负向对照） |
+| **类型闸门（核心逻辑层）** | `npm run typecheck:core`（**已绿**）；UI 层见 T-34 |
 | 插件构建 | `scripts/build-plugins.sh` |
 | 一键升级 | `scripts/upgrade-runtime.sh` |
 | 会话迁移验证 | `tools/verify-session-migration.py` + `scripts/stage3-migration-test.sh` |

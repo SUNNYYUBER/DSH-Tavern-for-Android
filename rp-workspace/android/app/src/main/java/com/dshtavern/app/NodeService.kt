@@ -36,7 +36,7 @@ class NodeService : Service() {
         private const val RUNTIME_DIR = "dsh-runtime"
         private const val RUNTIME_ZIP = "dsh-runtime.zip"
         /** 解压哨兵：§4.16.2 前端 dsht-rp-ui client 变更随 runtime.zip 重发布 → v97（覆盖安装强制重解压） */
-        private const val RUNTIME_SENTINEL = ".installed-v224"
+        private const val RUNTIME_SENTINEL = ".installed-v228"
         private const val DSH_PORT = 3080
         private const val OUTPUT_CAP = 200
         private const val PROOT_ROOTFS_DIR = "proot-rootfs"
@@ -560,6 +560,15 @@ class NodeService : Service() {
                             put("DSHT_RUNTIME_LIB_DIR", File(runtimeDir, "lib").absolutePath)
                             put("PROOT_LOADER", File(runtimeDir, "lib/proot-loader").absolutePath)
                             put("PROOT_TMP_DIR", cacheDir.absolutePath)
+                            // T-27（2026-09-11 心跳 46）：把 APK 自身版本号交给运行时。
+                            // 动机：会话里能查"DSH 运行时版本"和"解压哨兵"，却查不到
+                            // **这个 APK 是什么版本** —— 而"检查更新"必须拿它当比较基准。
+                            // BuildConfig.VERSION_NAME/CODE 由 Gradle 注入，永远与
+                            // build.gradle.kts 一致（不手抄，避免版本号漂移）。
+                            put("DSHT_APP_VERSION", BuildConfig.VERSION_NAME)
+                            put("DSHT_APP_VERSION_CODE", BuildConfig.VERSION_CODE.toString())
+                            // 目标 ABI：更新源可能同时挂 arm64/x86_64 两个包，按本机挑对应资产
+                            put("DSHT_APP_ABI", Build.SUPPORTED_ABIS.firstOrNull() ?: "")
                         }
                         directory(runtimeDir)
                     }

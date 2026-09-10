@@ -30,6 +30,7 @@ export function MigrationStatusPanel(): JSX.Element {
   const [api, setApi] = useState<{ provider: string; model: string } | null>(null)
   const [probeResults, setProbeResults] = useState<ProbeState[] | null>(null)
   const [buildInfo, setBuildInfo] = useState<{ sentinel: string | null; dshVersion: string | null } | null>(null)
+  const [buildInfoError, setBuildInfoError] = useState('')
   const [loadError, setLoadError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -44,9 +45,12 @@ export function MigrationStatusPanel(): JSX.Element {
       setLoadError(`状态读取失败：${(e as Error).message}`)
     }
     // 构建版本（2026-09-08）：sentinel = APK 解压哨兵（.installed-v176），一眼对出新旧包
+    // 【2026-09-11 心跳 46】原为 `.catch(() => setBuildInfo(null))` —— 把失败**静默**吞成
+    // "没有构建信息"，导致「前端 POST、后端只认 GET」的恒 404 缺陷整整三天无人察觉。
+    // 现改为把错误如实记录并在面板显示（失败必须可见，这是本项目对静默失败的一贯处置）。
     void rpApi<{ sentinel: string | null; dshVersion: string | null }>('rp/build-info')
-      .then(b => setBuildInfo(b))
-      .catch(() => setBuildInfo(null))
+      .then(b => { setBuildInfo(b); setBuildInfoError('') })
+      .catch((e: Error) => { setBuildInfo(null); setBuildInfoError(`构建信息读取失败：${e.message}`) })
     // 插件自检独立结算，单个失败不影响其它（三态：ping 挂=未响应；ping 活但
     // 功能断言失败=在线但功能异常；功能断言过=功能正常）
     const results = await Promise.all(PROBES.map(async (p): Promise<ProbeState> => {
@@ -103,6 +107,7 @@ export function MigrationStatusPanel(): JSX.Element {
       {expanded && (
         <div className="dsht-rp-fold-body">
         {loadError && <p className="dsht-rp-note" style={{ marginTop: 8 }}>{loadError}</p>}
+        {buildInfoError !== '' && <p className="dsht-rp-note" style={{ marginTop: 8 }}>{buildInfoError}</p>}
 
         <div className="dsht-rp-kv" style={{ marginTop: 8 }}>
           <span className="k">数据源批次</span>
