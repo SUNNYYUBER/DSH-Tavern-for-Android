@@ -453,6 +453,34 @@ else:
     log("  ✗ composition：%s 不存在" % _base)
     STATS["failed"] += 1
 
+# ============================================================ Step 4.6
+print("\n--- Step 4.6: flock 平台适配（0.1.5 会话写锁）---")
+# 【2026-09-11 心跳 44 新增】0.1.5 的 dsh-session-persistence-jsonl 用 flock(2) 做会话写锁：
+#   lib/index.js  SessionWriteLease.acquire() → open(session.lock) → await tryLockExclusive(handle.fd)
+# 而 @deepseek-ai/node-addon-system/lib/flock.js 的 loadBinding() 在
+#   platform !== 'linux' && platform !== 'darwin' 时直接抛 ERR_FLOCK_UNSUPPORTED_PLATFORM。
+# Android 的 process.platform === 'android'，且 bionic 无 glibc（linux-x64 的 system.node 也加载不了）
+# → resume 会话必然失败 → **任何消息都发不出去**。实机报错原文：
+#   resume failed for session "...": Error: flock is not supported on android-x64 (gateway/internal)
+# 处置依据：DSH 自己对同构场景已有先例 —— dsh-session-persistence-jsonl 的 lease 文档原文：
+#   "The browser worker stubs the native flock entry to immediate success: it is
+#    single-process, so the in-process write claim already excludes every writer."
+# DSHTavern 运行时同样是单进程 node（NodeService 只起一个），故按同一处置：立即成功。
+# 合规：仅改 Android 运行时产物，不触碰 DSH 官方源与 PC runtime。
+patch(
+    os.path.join(NM, "node-addon-system", "lib", "flock.js"),
+    "DSHT-ANDROID-FLOCK",
+    r"const \{ platform, arch \} = process;",
+    "const { platform, arch } = process;\n"
+    "    /* DSHT-ANDROID-FLOCK: Android 无 flock(2)；单进程运行时按 DSH 对 browser worker 的同款处置：立即成功。 */\n"
+    "    if (platform === 'android') {\n"
+    "        binding = { tryLock: (fd, cb) => { queueMicrotask(() => cb(0)); } };\n"
+    "        return binding;\n"
+    "    }",
+    1,
+    "F2 Android flock 单进程直通",
+)
+
 # ============================================================ 汇总
 print("\n" + "=" * 72)
 if CHECK_ONLY:

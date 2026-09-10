@@ -1,0 +1,17 @@
+const PORT='9333'
+const t=await(await fetch(`http://127.0.0.1:${PORT}/json`)).json()
+const p=t.find(x=>x.type==='page')
+const ws=new WebSocket(p.webSocketDebuggerUrl)
+let s=0;const m=new Map()
+const send=(me,pa={})=>new Promise((r,j)=>{const i=++s;m.set(i,{r,j});ws.send(JSON.stringify({id:i,method:me,params:pa}))})
+ws.addEventListener('message',e=>{const d=JSON.parse(e.data);if(d.id&&m.has(d.id)){const q=m.get(d.id);m.delete(d.id);d.error?q.j(new Error(JSON.stringify(d.error))):q.r(d.result)}})
+await new Promise((r,j)=>{ws.addEventListener('open',r);ws.addEventListener('error',j)})
+await send('Runtime.enable')
+const ev=async e=>(await send('Runtime.evaluate',{expression:e,awaitPromise:true,returnByValue:true})).result?.value
+await ev(`performance.clearResourceTimings();'ok'`)
+console.error('submit:', await ev(`(()=>{const b=[...document.querySelectorAll('button')].find(x=>/^send message$/i.test(x.getAttribute('aria-label')||''));const fk=Object.keys(b).find(k=>k.startsWith('__reactFiber$'));let n=b[fk],ib=null,d=0;while(n&&d<60){const p=n.memoizedProps;if(p&&p.inputActions&&p.sessionId!==undefined&&p.useInput){ib=n;break}n=n.return;d++}window.__ib=ib;try{ib.memoizedProps.inputActions.submit();return 'ok'}catch(e){return 'throw:'+e.message}})()`))
+await new Promise(r=>setTimeout(r,7000))
+const names=await ev(`JSON.stringify([...new Set(performance.getEntriesByType('resource').map(e=>e.name.replace(/^https?:\/\/[^/]+/,'').replace(/\?.*$/,'')))] ,null,0)`)
+console.log('唯一请求路径:', names)
+console.log('promptError:', await ev(`(()=>{const ib=window.__ib;let h=ib.memoizedState,i=0,o={};while(h&&i<70){if(i===2)o.draft=h.memoizedState.draft;if(i===22)o.promptError=h.memoizedState;if(i===56)o.toast=h.memoizedState;h=h.next;i++}return JSON.stringify(o)})()`))
+ws.close()

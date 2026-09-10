@@ -10,7 +10,7 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
-> 最后更新：2026-09-11（心跳 43）
+> 最后更新：2026-09-11（心跳 44）
 
 ## 一句话现状
 
@@ -31,6 +31,7 @@
 | 悬浮窗到处乱窜 | ✅ 修好 | 心跳 35 |
 | 显示成 `<interactive_input>$1` | ✅ 修好 | 心跳 36 |
 | **发不出来消息** | ✅ 修好 | 心跳 37 |
+| **升级 0.1.5 后发不出来消息** | ✅ 修好（两条平台级根因，见下） | 心跳 44 |
 
 ## 和 TauriTavern 的差距（用请求体积量化）
 
@@ -61,7 +62,7 @@
 | 1 | 静态预检（11 个补丁点） | ✅ **完成**：8 稳定 / 2 需扩展 / 1 新 stub |
 | 2 | 升级运行时 + 重打补丁 | ✅ **完成**：0.1.5-rc.1 + 21 处补丁 + 7 插件 + 第 7 个 stub；**实机启动零错误** |
 | 3 | 会话迁移验证 | ✅ **通过**：41/80 打不开 → **80/80 全部可迁移**，设备实测 `repaired=79 errors=0` |
-| 4 | 功能回归 + D-4 重评 | 🔄 **进行中**：启动 / 端口 / 插件注册 / 打开旧会话 / TH 卡脚本桥 已过；**发消息待打通** |
+| 4 | 功能回归 + D-4 重评 | 🔄 **进行中**：启动 / 端口 / 插件注册 / 打开旧会话 / TH 卡脚本桥 / **发消息端到端** 均已过；余下 回退·编辑·变体·世界书·MVU 逐项回归 |
 
 > **进展度量**：`bash .goal/upgrade-0.1.5/evaluate.sh` → 当前 **4 / 5**（阶段 3 已通过并写入 `.stage3-pass`；阶段 4 判据未达成）
 >
@@ -131,7 +132,38 @@
 
 📄 完整证据（含 file:line）：`docs/DSH-0.1.5-UPGRADE-PLAN.md` 附录 E
 
-### 🔴 实机发现并修复的启动阻塞（本轮最大收获）
+### ✅ 阶段 4 硬门槛：发消息端到端打通（心跳 44）
+
+**结论**：0.1.5 下「发消息没反应」**不是静默失败**，是宿主**明确拒收**，
+而拒收原因有**两条平台级根因**，且都是 0.1.5 引入或收紧的。
+
+| # | 报错 | 根因 | 处置 |
+|---|---|---|---|
+| ① | `resume failed for session "…": Error: flock is not supported on android-x64` | 0.1.5 用 `flock(2)` 做会话写锁（`session.lock`），Android 无 flock 且 `process.platform === 'android'` 直接抛 | 平台补丁 **Step 4.6**（`DSHT-ANDROID-FLOCK`）：按 DSH 自己对 browser worker 的同款处置——**单进程直通** |
+| ② | `clientTimeZone must be UTC or a valid IANA Area/Location name (session/invalid-time-zone)` | 设备时区 = `GMT` 时，Android WebView 的 `Intl…timeZone` 返回 `"+00:00"`（非 IANA 名），0.1.5 宿主白名单校验拒收 | 测试环境设 `Asia/Shanghai` 解封；**产品级兜底待拍板（D-5）** |
+
+> ① 是**所有 Android 设备**都会中的（不是环境问题）；② 只在设备时区为偏移式时触发，
+> 但**模拟器默认就是 GMT** —— 这就是为什么整个测试链一直"发消息没反应"。
+
+**端到端实证**（`session.v3.jsonl` 事件序列，会话 `session-fdfc1a28…`）：
+
+```
+62 step/start(turn=5) → 63 system/message → 64 user/message("Vhello")
+→ 65 RP 指令注入 → 66 runtime context → 67 skill catalog → 68 剧情记忆快照
+→ 69 request/header → 70 assistant/message → 71 step/end → 72 turn/end(completed)
+```
+
+- ✅ 4 层注入（RP 预设 / runtime context / skill catalog / memory-plot）按序落盘
+- ✅ UI 渲染确认：聊天区出现用户消息与角色回复；页脚 `4 turns` → **`5 turns 5 steps`**
+- ✅ 会话由核心物化为 `session.v3.jsonl`（v0 原文件保留，符合官方"发布新代际"语义）
+- ✅ 顺带修好：时间显示（时区修复后不再显示 GMT 偏移）
+
+**新增取证工具**（`rp-workspace/scripts/`，均为 CDP/原生输入路径）：
+`dsht-ui-probe.mjs`（网络插桩）· `dsht-ui-type.mjs`（Lexical 真实状态）·
+`dsht-hittest.mjs`（命中测试）· `dsht-deep.mjs`（**React fiber hook 链读组件内部状态** ★最有用）·
+`dsht-netaudit.mjs`（Resource Timing 审计）· `dsht-native-send.mjs`（原生 `adb input` 真用户路径）
+
+### 🔴 实机发现并修复的启动阻塞（上轮最大收获）
 
 **症状**：新 APK 卡启动屏 → `端口 3080: 未监听`
 
