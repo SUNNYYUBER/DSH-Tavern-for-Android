@@ -15,6 +15,7 @@ import {
   thFloorsFile, readThFloors, writeThFloors, upsertThFloors, mergeSalvagedThFloors,
   lookupThFloor, thFloorKeyOf,
 } from '../src/dsht-plugin-shared/th-floors.ts'
+import type { ThFloorTable } from '../src/dsht-plugin-shared/th-floors.ts'
 
 let home = ''
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'dsht-thfloors-')) })
@@ -65,7 +66,7 @@ describe('th-floors: sidecar 读写', () => {
 })
 
 describe('th-floors: 键解析', () => {
-  const table = { 'id-A': { data: { v: 1 } }, 'seq:7': { system: true } }
+  const table: ThFloorTable = { 'id-A': { data: { v: 1 } }, 'seq:7': { system: true } }
 
   it('优先 message id', () => {
     expect(lookupThFloor(table, 'id-A', 7)?.data).toEqual({ v: 1 })

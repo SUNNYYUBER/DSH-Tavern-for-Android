@@ -17,6 +17,7 @@ import {
   regexesGet, regexesReplace, stEntryToLore, variableSchemaRegister, worldbookEntryPut, worldbookGet, worldbookList,
 } from '../src/dsht-plugin-tavern-helper/facade.ts'
 import { emptyPreset, type RPPreset } from '../src/preset/schema.ts'
+import { validateSchemaSubset } from '../src/dsht-plugin-shared/schema.ts'
 import type { LoreBook } from '../src/lore/entry.ts'
 import type { RegexScript } from '../src/regex/engine.ts'
 
@@ -471,5 +472,48 @@ describe('门面：variables/schema 注册（TH registerVariableSchema 契约）
     const badSchema = await variableSchemaRegister(home, { sessionId: SID, variableSchema: 'nope' })
     expect(badSchema.status).toBe(400)
     await expect(readJson(`rp/state/${SID}.json`)).rejects.toThrow()
+  })
+
+  /**
+   * 【基准对质 2026-09-11 / L36】注册端点语义回归。
+   *
+   * 真 TH `registerVariableSchema` 是**纯 setter**（JS-Slash-Runner `src/function/variables.ts:10-37`：
+   * 只做 `store.<scope> = schema`，**不校验既有值、不抛错、不改 HTTP 状态**）。
+   * 我方曾多加一道「校验既有值 → 422 拒收」——比基准**更严**，且实测会**阻断卡脚本初始化链**
+   * （卡 `inject.js:2308` 的 bootstrap 在此抛错后，紧随的 `ChatSquash()` / `MacroNest()` /
+   * `syncSPresetToolRegistrations()` **不再执行** → 功能面直接缺失）。
+   *
+   * 判据三条，缺一不可：① **不拒收**（200）② schema **确实落下**（不能"报错就啥也没存"）
+   * ③ 不匹配以 `issues` **可见**（不能修成静默失败）。
+   */
+  it('既有值与 schema 不匹配 → 仍 200 且落下 schema（对齐基准纯 setter；issues 仅提示）', async () => {
+    await seedJson(`rp/state/${SID}.json`, { variables: { 好感: '高' } }) // 实际是字符串
+    const r = await variableSchemaRegister(home, {
+      sessionId: SID, name: '',
+      variableSchema: { type: 'object', properties: { 好感: { type: 'number' } } }, // 要求数字
+    })
+    expect(r.status).toBe(200) // ← 不得 422（此处曾是 422，阻断卡初始化）
+    expect(((r.body as { issues?: unknown[] }).issues ?? []).length).toBeGreaterThan(0) // ← 不静默
+    const f = await readJson(`rp/state/${SID}.json`)
+    expect(f.variableSchema).toEqual({ type: 'object', properties: { 好感: { type: 'number' } } }) // ← 确实落下
+    expect(f.variables).toEqual({ 好感: '高' }) // ← 既有值不被改动
+  })
+
+  it('前提自检：上述数据确实构成不匹配（否则上一条是空转）', () => {
+    const issues = validateSchemaSubset(
+      { 好感: '高' },
+      { type: 'object', properties: { 好感: { type: 'number' } } },
+    )
+    expect(issues.length).toBeGreaterThan(0)
+  })
+
+  it('匹配时不产生噪声：issues 不出现（避免"永远报警"退化成无信息）', async () => {
+    await seedJson(`rp/state/${SID}.json`, { variables: { 好感: 12 } })
+    const r = await variableSchemaRegister(home, {
+      sessionId: SID, name: '',
+      variableSchema: { type: 'object', properties: { 好感: { type: 'number' } } },
+    })
+    expect(r.status).toBe(200)
+    expect((r.body as { issues?: unknown[] }).issues).toBeUndefined()
   })
 })

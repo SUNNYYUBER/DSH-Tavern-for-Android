@@ -198,6 +198,20 @@ async function thMessageVarsDelete(sessionId: string, path: string): Promise<voi
  * 变体切换 / 会话编辑成功处 dispatch 的 window CustomEvent 名（detail: {sessionId, eventType, messageId}） */
 export const TH_HOST_EVENT = 'dsht-rp-ui:th-host-event'
 
+/**
+ * 【T-37 2026-09-11】最近一次成功组装的上下文快照（模块级，随会话运行时刷新）。
+ * 用途：宿主页 `SillyTavern.getContext()`（host-vendor 的 installHostSillyTavern）——
+ * 卡把外链脚本注入**宿主页**（TH 同源形态），脚本首行就 `SillyTavern.getContext()`，
+ * 而宿主页原先没有任何会话上下文可取。取「最近活跃会话」而非「某指定会话」：
+ * 宿主页只有一份 window，真 ST 的 getContext() 同理只反映当前打开的 chat。
+ */
+let lastContextSnapshot: ThContextSnapshot | null = null
+
+/** 读最近一次会话上下文快照（RP 从未打开过 → null，门面退化为形状完整的空壳） */
+export function getLastRpContextSnapshot(): ThContextSnapshot | null {
+  return lastContextSnapshot
+}
+
 /** chat.nodes 迭代形状（key/kind 顶层 + data.finalNode.messageId 楼层解析 + data.blocks 流式文本源）
  *  【实机验证修复 2026-09-06】kind 在节点顶层（dsh-client-ui-chat chatNode() :3977-3988），
  *  且 surface.nodes 是 seq 数字数组（client-connection createFoldState :669-674）——
@@ -805,6 +819,9 @@ class SessionRuntime {
         messages: Array.isArray(chat?.messages) ? chat.messages : [],
       }
       this.contextSnapshot = snapshot
+      // T-37：宿主页 SillyTavern.getContext() 读同一份快照（引用不变 → 门面记忆化命中，
+      // 脚本里 `preset_settings_openai !== 上次` 的身份比较不会误判成「变了」）
+      lastContextSnapshot = snapshot
       for (const [scriptId, frame] of this.frames) {
         frame.contentWindow?.postMessage({
           '__dsht_th': true, secret: this.secret, scriptId,

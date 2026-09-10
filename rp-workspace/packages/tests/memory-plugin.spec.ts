@@ -68,7 +68,7 @@ describe('extractFloorsFromEvents（楼层口径 = turn：一轮用户输入 / �
     expect(r1.floors[0].text).toBe('a\nb')
     expect(r1.cursor).toBe(1)
     expect(extractFloorsFromEvents([])).toEqual({ floors: [], cursor: 0 })
-    expect(extractFloorsFromEvents([{ type: 'session' }, { broken: true }, null as never]).cursor).toBe(0)
+    expect(extractFloorsFromEvents([{ type: 'session' }, { broken: true } as never, null as never]).cursor).toBe(0)
   })
 
   it('回退掩码感知：marker replace 区间内的真实消息整条跳过（不计数、不进摘要）', () => {
@@ -312,7 +312,7 @@ describe('planShadowOps：陈旧快照副本去重（每签名保最新一份，
     const nodes: SurfaceNodeInfo[] = []
     let seq = 1
     for (const sig of ['["p",["a"]]', '["p",["b"]]', '["p",["c"]]']) {
-      nodes.push({ seq: seq++, isFloor: false, isSnapshot: true, sig, chars: 100 })
+      nodes.push({ seq: seq++, isFloor: false, turn: null, isSnapshot: true, sig, chars: 100 })
     }
     // 三个签名各只有一份 → 全部保留，无 op
     const plan = planShadowOps(nodes, { keepNearFloors: 30, charBudget: 10_000_000, memoryMaxFloor: 105, foldFloors: true, cursor: 0 })

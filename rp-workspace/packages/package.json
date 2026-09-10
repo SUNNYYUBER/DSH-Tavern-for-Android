@@ -6,9 +6,10 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "npm run typecheck:core && npm run typecheck:ui",
+    "typecheck": "npm run typecheck:core && npm run typecheck:ui && npm run typecheck:tests",
     "typecheck:core": "tsc -p tsconfig.core.json",
-    "typecheck:ui": "tsc -p tsconfig.check.json"
+    "typecheck:ui": "tsc -p tsconfig.check.json",
+    "typecheck:tests": "tsc -p tsconfig.tests.json"
   },
   "devDependencies": {
     "@types/react": "^18.3.0",

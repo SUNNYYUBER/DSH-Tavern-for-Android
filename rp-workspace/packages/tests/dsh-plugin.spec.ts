@@ -544,7 +544,7 @@ describe('dsht-rp-plugin: 卡设定快照注入（任务 2：无 agent preset �
     const m = buildPersonaSnapshotMessage(personaText)
     const out = { kind: decision.kind, messages: [...decision.messages, m] }
     expect(out.messages).toHaveLength(2)
-    const injected = out.messages[1] as Record<string, unknown> & { source: Record<string, unknown> }
+    const injected = out.messages[1] as unknown as Record<string, unknown> & { source: Record<string, unknown> }
     expect(injected.role).toBe('user')
     expect(injected.source).toMatchObject({ kind: 'plugin', plugin: 'dsht-rp-plugin', form: 'snapshot' })
     expect((injected.content as Array<{ text: string }>)[0].text).toBe(personaText)

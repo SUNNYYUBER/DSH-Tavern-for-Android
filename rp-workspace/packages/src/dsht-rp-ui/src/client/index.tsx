@@ -17,14 +17,14 @@
  */
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { ensureStyle } from './style.ts'
-import { installHostVendor, installHostFontAwesome, installHostToastr } from './host-vendor.ts'
+import { installHostVendor, installHostFontAwesome, installHostToastr, installHostSillyTavern } from './host-vendor.ts'
 import { RpOverlay, RP_OPEN_EVENT } from './RpOverlay.tsx'
 import { RpAssistantNodeView, RpRegenerateAction, RpUserNodeView, RpVariantActions } from './RpNativeChat.tsx'
 import { RpPresetSwitch } from './RpPresetSwitch.tsx'
 import { RpImportDockEntry } from './RpImportDock.tsx'
 import { RpGreetingDock } from './RpGreetingDock.tsx'
 import { RpStateFloat } from './RpStateFloat.tsx'
-import { RpScriptHost, RpScriptButtonsBar } from './RpScriptHost.tsx'
+import { RpScriptHost, RpScriptButtonsBar, getLastRpContextSnapshot } from './RpScriptHost.tsx'
 import { RpTokenMeter } from './RpTokenMeter.tsx'
 import { installProcessFolder } from './ProcessFolder.ts'
 import { installScriptUiGuard } from './script-ui-guard.ts'
@@ -116,6 +116,12 @@ export function apply(ctx: {
   // 宿主 toastr：真 TH predefine.js 把父页 toastr 合并进脚本全局——脚本的 toastr 弹窗
   // 必须出现在可见宿主页（iframe 内弹窗不可见）。缺 toastr 全局则脚本通知静默丢失。
   installHostToastr()
+  // 宿主 SillyTavern 门面（T-37）：真 ST 宿主页有 globalThis.SillyTavern = {libs, getContext}
+  //（SillyTavern/public/script.js:292）。卡的宿主注入脚本（TH 同源形态，外链 inject.js）
+  // 首行就 `SillyTavern.getContext()` → 缺它直接 ReferenceError 且整段脚本作废。
+  if (installHostSillyTavern({ getSnapshot: getLastRpContextSnapshot })) {
+    console.info('[dsht-rp-ui] host-vendor 补挂宿主全局: SillyTavern（getContext 快照驱动）')
+  }
   // 批次修复 17：会话列表排序默认「手动排序」（用户定案：方便给角色卡排序）。
   // DSH ui-workspace 的视图 store 以整棵 state JSON 持久化到 localStorage（key=dsh.workspace.view.v5，
   // 无 version 包裹，缺省 init 是 orderBy:'updated'）——仅在键不存在时写入默认，绝不覆盖用户已选。

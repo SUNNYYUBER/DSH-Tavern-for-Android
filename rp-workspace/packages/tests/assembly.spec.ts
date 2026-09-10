@@ -59,6 +59,9 @@ describe('assemble（组装管线端到端）', () => {
       keys: ['咖啡厅'], secondaryKeys: [], selectiveLogic: 0, constant: false, selective: false,
       position: WI_POSITION.BEFORE, depth: 4, role: 'system', scanDepth: null,
       preventRecursion: false, excludeRecursion: false, insertionOrder: 100,
+      // 【T-38 2026-09-11】tests 纳入类型闸门后暴露：LoreEntry 另有 5 个必填字段
+      //（sticky/cooldown/delay/group/groupOverride），本 fixture 此前漏写（运行时无影响）。
+      sticky: 0, cooldown: 0, delay: 0, group: '', groupOverride: false,
       enabled: true, book: 'demo',
     }]
     const wi = triggerWorldInfo(lore, ['我推门走进咖啡厅'], { matchWholeWords: false })

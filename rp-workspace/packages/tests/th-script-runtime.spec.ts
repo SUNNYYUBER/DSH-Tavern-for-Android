@@ -12,7 +12,7 @@ import {
   buildIframeDocument, buildShimSource, deepMergeAssign, deepMergeInsert, getButtonEventId,
   handleBridgeCall, parseIncomingMessage, IFRAME_EVENTS, SHIM_BRIDGE_APIS, TAVERN_EVENTS,
   UNSUPPORTED_APIS, UNSUPPORTED_REASONS,
-  type ScriptStatus, type ThBridgeDeps,
+  type ScriptStatus, type ThBridgeDeps, type ThPreset,
 } from '../src/dsht-rp-ui/src/client/th-shim.ts'
 
 // ---------------------------------------------------------------------------
@@ -925,13 +925,17 @@ describe('shim：updateWorldbookWith 幂等（wb:entryPut 风暴回归）', () =
 function makeDeps(): ThBridgeDeps & {
   store: Map<string, Record<string, unknown>>
   buttons: Map<string, Array<{ name: string; visible: boolean }>>
-  presets: Map<string, { name: string; prompts: unknown[]; prompt_order: unknown[] }>
+  presets: Map<string, ThPreset>
   regexScopes: Map<string, Record<string, unknown>[]>
   wbCalls: Array<unknown[]>
 } {
+  /** 未覆盖的 deps 桩：显式抛错（`never` 可赋给任意签名），禁止静默返回假成功 */
+  const notCovered = (name: string): never => {
+    throw new Error(`mock: deps.${name} 未被本测试覆盖（显式失败）`)
+  }
   const store = new Map<string, Record<string, unknown>>()
   const buttons = new Map<string, Array<{ name: string; visible: boolean }>>()
-  const presets = new Map<string, { name: string; prompts: unknown[]; prompt_order: unknown[] }>()
+  const presets = new Map<string, ThPreset>()
   const regexScopes = new Map<string, Record<string, unknown>[]>()
   const wbCalls: Array<unknown[]> = []
   const key = (scope: string, scriptId: string) => `${scope}::${scriptId}`
@@ -992,6 +996,24 @@ function makeDeps(): ThBridgeDeps & {
     wbRebindGlobal: async (names) => { wbCalls.push(['wb:rebindGlobal', names]) },
     wbRebindChar: async (slug, names) => { wbCalls.push(['wb:rebindChar', slug, names]) },
     wbChatGetOrCreate: async () => ({ name: 'chat-s1' }),
+    // 【T-38 2026-09-11】tests 纳入类型闸门后暴露：本函数**从未**提供这 14 个 deps
+    //（此前无闸门 → 静默缺失；运行时恰好没被测到，所以一直没炸）。
+    // 按项目铁律「禁止静默假成功」，这里显式抛错而不是返回空值——
+    // 将来若有测试真调到它们，会**响亮失败**而不是拿到伪造的成功。
+    buttonsExists: () => notCovered('buttonsExists'),
+    chatAppend: () => notCovered('chatAppend'),
+    chatUpdate: () => notCovered('chatUpdate'),
+    displayReload: () => notCovered('displayReload'),
+    macrosRegister: () => notCovered('macrosRegister'),
+    macrosUnregister: () => notCovered('macrosUnregister'),
+    varsAssignChat: () => notCovered('varsAssignChat'),
+    varsSchemaPut: () => notCovered('varsSchemaPut'),
+    injectsPut: () => notCovered('injectsPut'),
+    injectsRemove: () => notCovered('injectsRemove'),
+    generate: () => notCovered('generate'),
+    generateRawRaw: () => notCovered('generateRawRaw'),
+    mvuVariables: () => notCovered('mvuVariables'),
+    mvuReplace: () => notCovered('mvuReplace'),
     wbCalls,
   }
 }

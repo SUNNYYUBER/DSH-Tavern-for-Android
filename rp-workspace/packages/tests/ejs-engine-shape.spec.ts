@@ -43,7 +43,8 @@ describe('EJS 双引擎返回形状一致性', () => {
   it('两个引擎对同一批消息给出相同的渲染文本（形状一致之外，语义也一致）', () => {
     const subset = renderMessages('', { user: 'U', char: 'C' }, msgs as never)
     const sandbox = renderMessagesSandbox('', { user: 'U', char: 'C' }, msgs as never)
-    expect(subset.ok === undefined || subset.ok).toBeTruthy()
+    // subset 引擎的**原始**返回没有 ok 字段（这正是当初写错的根因）；这里只断言它带 messages
+    expect(Array.isArray(subset.messages)).toBe(true)
     if (!sandbox.ok) throw new Error('sandbox 渲染失败')
     expect(sandbox.messages.map(m => m.mes)).toEqual(subset.messages.map(m => m.mes))
   })
@@ -63,6 +64,7 @@ describe('EJS 双引擎返回形状一致性', () => {
       { mes: '未闭合 {{ 与 <%', role: 'assistant' },
     ]
     const rr = asSandboxMessagesResult(renderMessages('', { user: 'U', char: 'C' }, dirty as never))
+    if (!rr.ok) throw new Error('归一后必须 ok:true（否则下面的 messages 断言无意义）')
     expect(rr.messages).toHaveLength(2)
     expect(rr.messages[0].mes).toBe('正常')
   })

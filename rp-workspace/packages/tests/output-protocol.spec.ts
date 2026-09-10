@@ -33,7 +33,9 @@ describe('输出协议三组件纯逻辑（T2.5a：自 rp-chat 迁移，语义�
   })
 
   it('自定义协议配置隔离（V8.8 自定义标签名）', () => {
-    const proto = { actionTags: ['selection'], wrapTags: ['content'], statusTags: ['StatusBlock'] }
+    // 自定义标签名走 withDefaults 合并（OutputProtocol 另有 collapsible/stateUpdate/reasoning 等
+    // 必填项——直接用字面量会缺字段，这正是 tests 纳入类型闸门后暴露的写法）
+    const proto = withDefaults({ actionTags: ['selection'], wrapTags: ['content'], statusTags: ['StatusBlock'] })
     const r = applyOutputProtocol('<selection>选项A</selection><StatusBlock>状态</StatusBlock>', proto)
     expect(r.actions).toEqual(['选项A'])
     expect(r.status).toEqual(['状态'])

@@ -296,6 +296,87 @@
   要么在字符串里再抄一份（**违反单源纪律，不做**）。
 - 触发条件：出现**卡脚本在 iframe 内**用 `ctx.eventSource` 的实测报错时再升。
 
+### T-42　🔴 **当前前线**：卡的注入脚本要挂到 ST 的正则面板 DOM（`#saved_regex_scripts`），我们没有
+- **暴露方式**：T-40 / T-41 修完后**再跑同一个采集器**，错误**第四次前移**（L35 又一次生效）：
+  `TypeError: Failed to execute 'observe' on 'MutationObserver': parameter 1 is not of type 'Node'`
+  @ `RegexBinding@inject.js:3885 ← (anon)@inject.js:2311`（**宿主帧**）。
+- **源码定位**（`tmp/t37-inject.js:3885`）：
+  ```js
+  const observerTarget = $('#saved_regex_scripts');
+  observer.observe(observerTarget[0], { childList: true, subtree: true });   // [0] === undefined → 抛
+  ```
+- **基准对照（L36 三问）**：① 基准有吗？**有** —— ST
+  `SillyTavern-reference/public/scripts/extensions/regex/dropdown.html:96` 与 TT
+  `src/scripts/extensions/regex/dropdown.html:101` 都是
+  `<div id="saved_regex_scripts" no-scripts-text="No scripts found" …>`；
+  ② 报错在哪一侧？**宿主帧**，卡自己的脚本（`inject.js` 被注入到 **DSH 宿主页**，非 iframe）；
+  ③ 基准会不会同报？**不会**（元素存在）→ 判定为**真缺口**。
+- **为何不是"补个空 div 就完事"**：卡的 `inject.js` 是**ST 前端增强脚本**（`injectSPresetMenu`、
+  正则面板绑定、往 `#saved_regex_scripts` 渲染脚本行、`updateSTRegexes()` 同步到
+  `extension_settings.regex`）。它的功能**假设宿主是 ST 的前端 DOM**；DSHT 的前端是 DSH 的 UI。
+  只摆一个空容器而不把 ST 全局正则接进我方渲染/引擎 → **造出新的静默失败**
+  （卡以为挂上了、用户看不到、正则也不生效）。**故不先做半吊子修复。**
+- **影响面**：该抛错会**中断卡 bootstrap 的后续三行** ——
+  `ChatSquash()` / `MacroNest()` / `syncSPresetToolRegistrations()` 均不再执行。
+- **选项（需用户拍板，见决策点）**：
+  - **A**：提供 ST 拓展面板挂载点（`#saved_regex_scripts` 等）**并**把 ST 全局正则
+    （`extension_settings.regex`）真接进我方正则引擎 → 真修，工作量中等偏大。
+  - **B**：不补，登记为已知差异 → 卡的上述核心功能保持缺失。
+  - **C**：只补容器 → **不做**（半吊子 = 静默失败，违反项目纪律）。
+
+### T-41　🟠→✅ 注册端点不再「比基准更严」：`registerVariableSchema` 拒收既有值不匹配（已修）
+- **暴露方式**：T-40 修完后重跑采集器，卡脚本的 bootstrap **再往深处走**，在 iframe 侧抛出
+  `Error: 既有变量与 schema 不匹配`（我方面向 `about:srcdoc` 的桥回包）。
+- 🔴 **这是"我方比基准更严"，不是基准要求**（L36 的「不能多」）：
+  真 TH `registerVariableSchema` 是**纯 setter** —— `JS-Slash-Runner/src/function/variables.ts:10-37`
+  只做 `store.<scope> = schema`，**不校验既有值、不抛错、不改 HTTP 状态**；
+  schema 的消费点全在**变量管理器面板渲染**时
+  （`src/panel/toolbox/variable_manager/{Global,Preset,Character,Chat,MessageItem}.vue`）。
+  `CHANGELOG.md:710` 亦印证：注册后若实际变量不满足，是「变量管理器**提示**错误信息」，不是拒收。
+- 🔴 **实测危害（不是理论洁癖）**：卡 `inject.js:2308` 的 bootstrap 在 register 处抛错 →
+  紧随其后的 `ChatSquash()` / `MacroNest()` / `syncSPresetToolRegistrations()` **全部不再执行**
+  → 卡的核心功能直接缺失。
+- ✅ **修复**：注册端点改为**一律落下 schema**，既有值不匹配只回 `issues` 咨询信息 + `console.warn`
+  （**不拒收、不改状态码**）—— 对齐基准纯存储语义。
+  ⚠️ **没有改成静默失败**：写路径 `/variables/merge` 的 `variableSchema 校验失败` **仍保持 422**
+  （基准确实在写入时校验），且那条有 D8 通知链路；此处只把「注册」还原成基准语义。
+- ✅ **回归 3 条**：① 不匹配仍 200 且 schema 确实落下、既有值不动 ② **前提自检**
+  （`validateSchemaSubset` 对该数据确实报错，防"上一条空转"）③ 匹配时 `issues` 不出现
+  （防退化成"永远报警"的无信息通道）。
+- ✅ **负控**：临时改回 422 → 该测试**立刻失败**（1 failed / 26 passed），证明断言承重；已移除临时代码。
+- ✅ **实机取证（三条齐备，与单测判据同构）**：
+  | 判据 | 实证 |
+  |---|---|
+  | ① 不再拒收 | logcat：修前 `[dsht-th] 变量结构校验失败（422）: variables/schema`（05:55 / 06:02，旧 PID 16001/16231）→ 修后**无新增 422**（残余 3 条经时间戳+PID 比对确认均为修前旧日志） |
+  | ② **schema 确实落下** | 设备 `rp/state/session-fdfc1a28-….json`：**61,014 B → 66,868 B**，`variableSchema.type="object"` 且 **`properties.stat_data` 存在**（修前恒为 `{"type":"object","properties":{}}` 空壳） |
+  | ③ 不匹配可见 | `[dsht-th] variables/schema: sid=session-fdfc1a28-… 既有值与 schema 不匹配 **24 项**（按基准仍落下 schema，仅提示，不拒收）` |
+  - 🔴 **这条修复的真实价值比"少一个报错"大得多**：该卡**从来没能注册成功过**（每次都被 422 挡回）
+    → `variableSchema` 永远是空壳 → **D7 校验对它从未激活**。修复后 schema 才第一次真正落盘。
+  - 顺带确认：历史垃圾键 `[object Object]` 已不在 properties 中。
+
+### T-40　✅ 宿主 `getContext().eventTypes` 缺失（**第三道墙**，已修）
+- **发现方式**：补齐 (a)(b) 后重跑同一采集器，错误**再往前推**——
+  `TypeError: Cannot read properties of undefined (reading 'OAI_PRESET_IMPORT_READY')`
+  @ `installSPresetFixedPresetNameImportHook@inject.js:493 <- (anon)@inject.js:2308`（宿主帧）。
+  源行：`const importReadyEvent = ctx.eventTypes.OAI_PRESET_IMPORT_READY || 'oai_preset_import_ready';`
+- 🔴 **为什么 `||` 兜底救不了**：`ctx.eventTypes === undefined` 时**属性访问先抛 TypeError**，
+  右侧字面量永远轮不到。→ 「给了个空对象就行」也不够，必须**真给这张表**。
+  （这是静默失败族的一个变体：看似有兜底的代码，兜底路径不可达。）
+- **基准**：真 ST `st-context.js:137-138` → `eventSource, eventTypes: event_types,` 与 `eventSource` **并列**。
+- ✅ **修复**：新建**生成器** `scripts/gen-st-event-types.mjs`
+  → 机械解析 `public/scripts/events.js:3 export const event_types = {`，产出
+  `client/st-event-types.gen.ts`（**104 条**，带 `file/line/count` 来源元数据；**解析为空则拒绝产出**）。
+  `buildHostStContext()` 接 `eventTypes: ST_EVENT_TYPES`。
+  → **不用手抄**的理由：ST 升级后重跑一条命令即可再同步，且"悄悄漂移"藏不住。
+- ✅ **测试 8 条**，其中两条**故意钉真实数据而非书写约定**（详见 L37）：
+  真 ST 自身就有 **4 个非全小写值**（`chatLoaded` / `GENERATION_AFTER_COMMANDS` / `characterDeleted` /
+  `charManagementDropdown`，`events.js:21/22/68/87`）与 **1 处重复值**
+  （`SMOOTH_STREAM_TOKEN_RECEIVED` 与 `STREAM_TOKEN_RECEIVED` 共用 `stream_token_received`，
+  `events.js:72-74` 原文注释 `@deprecated … aliased to STREAM_TOKEN_RECEIVED`）。
+  首版按"值应全小写 / 应唯一"写断言 → 全红；核验基准后改为**黄金母版式**（钉住这 4 个例外 + 这 1 处重复，
+  新增/减少即报警）。教训：**用一个假前提会把真数据判成错**。
+- 判据：`st-event-types.spec.ts` 8/8 绿；三闸门 0 错。
+
 ### T-38　✅ tests 纳入类型闸门（`typecheck:tests`）
 - **已存在的洞**：`tsconfig.json` 的 `exclude` 含 `tests` → **46 个 spec 文件从未被类型检查**
   （`typecheck:core`/`:ui` 都覆盖不到）。这是「验证读侧 ≠ 运行时读侧」的又一实例。
@@ -307,7 +388,7 @@
   | **断言了不存在的字段** | 2 | `subset.ok`（subset 引擎原始返回**没有** `ok`）——断言对象是输入而非行为 |
   | mock 桩**静默缺 14 个 deps** | 14→1 | `makeDeps()` 从未提供 `chatAppend/injectsPut/generate/…`；改为**显式抛错桩**（禁止静默假成功） |
   | 窄化/形状标注缺失 | 8 | union 未按判别式窄化就取 `messages`；字面量当接口用 |
-- 判据：三闸门全 0 错（`core` / `ui` / `tests`），全量 **46 文件 / 875 测试全绿**。
+- 判据：三闸门全 0 错（`core` / `ui` / `tests`），全量 **47 文件 / 883 测试全绿**。
 
 ### T-35　清理：4 份 deep-merge 实现收敛到 `dsht-plugin-shared`（P3）
 - 现存：`tavern-helper/variables.ts:deepMergeVars`、`th-shim.ts:deepMergeAssign`、

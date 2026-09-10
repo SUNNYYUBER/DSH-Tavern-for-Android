@@ -1180,8 +1180,14 @@ export async function variablesMerge(dshHome: string, body: Record<string, unkno
  * 端点 15：POST /variables/schema {sessionId, name?, variableSchema} → C7 registerVariableSchema
  * 数据面：zod 风格 schema（shim 侧经 zod v4 toJSONSchema 转换后过桥）落 rp/state 的 variableSchema。
  * name 给出 = 逐名子 schema（合成 {type:'object', properties:{[name]:…}} 并入既有整树 schema，
- * 使 D7 对后续写入自然生效）；name 空 / 'message' = 整树 schema 直接替换。注册即校验既有值
- * （不匹配 422；该键尚未写入时不拦——允许先立 schema 后补值）。
+ * 使 D7 对后续写入自然生效）；name 空 / 'message' = 整树 schema 直接替换。
+ * **注册本身不校验既有值**（对齐基准纯 setter 语义，见下方【基准对质】）——
+ * 既有值不匹配时只回 `issues` 咨询信息，绝不拒收。
+ *
+ * 【基准对质 2026-09-11 / L36】注册端点曾实现为「校验既有值 → 422 拒收」，
+ * 但基准 TH 的 `registerVariableSchema` 是**纯存储**（`JS-Slash-Runner/src/function/variables.ts:10-37`），
+ * 且实测该 422 会**阻断卡脚本初始化链**。已改为一律落下 schema + `issues` 提示。
+ * 注意：**写路径** `/variables/merge` 的 `variableSchema 校验失败` 仍保持 422（基准确实校验写入）。
  *
  * 【阶段4 2026-09-11 契约对质】`name` 的真身是 TH `registerVariableSchema(schema, {type})`
  * 里的**作用域**，合法值只有 global/preset/character/chat/message（JS-Slash-Runner
@@ -1201,9 +1207,25 @@ export async function variableSchemaRegister(dshHome: string, body: Record<strin
   const file = await loadSessionStateFile(dshHome, sessionId)
   const vars = isTree(file.variables) ? file.variables : {}
   const target = name ? vars[name] : vars
+  // 【基准对质 2026-09-11 / L36】真 TH 的 `registerVariableSchema` 是**纯 setter**：
+  //   JS-Slash-Runner `src/function/variables.ts:10-37` 只做 `store.<scope> = schema`，
+  //   **不校验既有值、不抛错、不改 HTTP 状态**；schema 的消费点全在变量管理器**面板渲染**时
+  //   （`src/panel/toolbox/variable_manager/{Global,Preset,Character,Chat,MessageItem}.vue`）。
+  // 我方原实现「注册即校验既有值 → 422 拒收」**比基准更严**，且实测会**阻断卡脚本初始化链**：
+  //   卡 `inject.js:2308` 的 bootstrap 在 register 处抛错后，
+  //   紧随其后的 `ChatSquash()` / `MacroNest()` / `syncSPresetToolRegistrations()` **全部不再执行**。
+  // → 对齐基准：**一律落下 schema**，不匹配只作为**咨询信息**回传（`issues`）+ 留日志，不拒收。
+  // ⚠️ 这不构成静默失败：写路径的 `variableSchema 校验失败`（/variables/merge）**仍保持 422**
+  //    （基准确实在写入时校验），且那条有 D8 通知链路；此处只是把"注册"还原成基准的纯存储语义。
+  let advisory: unknown[] = []
   if (target !== undefined) {
-    const issues = validateSchemaSubset(target, body.variableSchema, name ? `$${name}` : '$')
-    if (issues.length > 0) return { status: 422, body: { error: '既有变量与 schema 不匹配', issues } }
+    advisory = validateSchemaSubset(target, body.variableSchema, name ? `$${name}` : '$')
+    if (advisory.length > 0) {
+      console.warn(
+        `[dsht-th] variables/schema: sid=${sessionId} 既有值与 schema 不匹配 ${advisory.length} 项` +
+          `（按基准仍落下 schema，仅提示，不拒收）`,
+      )
+    }
   }
   if (name) {
     const base = isTree(file.variableSchema) ? file.variableSchema : {}
@@ -1225,7 +1247,7 @@ export async function variableSchemaRegister(dshHome: string, body: Record<strin
   await mkdir(dirname(homePath(dshHome, relPath)), { recursive: true })
   await atomicWrite(homePath(dshHome, relPath), JSON.stringify(file), 'utf8')
   console.log(`[dsht-th] variables/schema: sid=${sessionId} ${name || '(整树)'}`)
-  return { status: 200, body: { ok: true } }
+  return { status: 200, body: advisory.length > 0 ? { ok: true, issues: advisory } : { ok: true } }
 }
 
 // ---------------------------------------------------------------------------

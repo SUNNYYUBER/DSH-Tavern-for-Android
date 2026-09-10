@@ -10,7 +10,7 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
-> 最后更新：2026-09-11（心跳 47）
+> 最后更新：2026-09-11（心跳 48）
 
 ## 一句话现状
 
@@ -74,6 +74,51 @@
 **交付**：双架构 APK 重打（x86_64 debug **sentinel v231** + arm64 release **sentinel v232**），**843 单测全绿**，
 新增 19 条回归测试；`npm run typecheck`（core+ui）**双 0 错**；设备侧 `stage4-regression` **20/21**（唯一失败=探针未 attach）、
 路由契约 **67 路由 0 违约**、损坏会话**已自愈且 UI 症状消失**。
+
+## 心跳 48 做了什么（**把卡脚本的「宿主全局面」一道道拆开——三道墙，全是静默失败**）
+
+> 一句话：**不是修了三个 bug，是把一个"整段脚本作废"的故障拆成了可递进的证明链。**
+> 方法上最有价值的一条：**验收不看"错误是否消失"，看"错误是否往深处移"** —— 行号前移就证明
+> 前一道墙真的被拆掉了（而不是脚本压根没跑到那儿）。这条已固化为 LEARNINGS **L35**。
+
+| # | 结论 | 证据 |
+|---|---|---|
+| 1 | 🔴→✅ **第一道墙：宿主页没有 `SillyTavern` 全局** —— 卡的 220KB 外链注入脚本首行就 `SillyTavern.getContext()`，`ReferenceError` 让**整段作废**（脚本内取用 11 处）。真 ST 宿主页有（`script.js:292`「API OBJECT FOR EXTERNAL WIRING」） | 设备宿主帧 `sillyKeys=null` → 修后 `["libs","getContext"]`，与真 ST **逐字同形** |
+| 2 | 🔴→✅ **第二道墙：`ctx.eventSource` 缺 `.on`** —— 补上第一道墙后**同一脚本推进 2190 行**，改死在 `:2245`（全篇 `eventSource` 27 处 = 它的事件挂载总入口）。这是「错误往深处移」第一次实证 | 已修；+16 测试，**负控**：去掉幂等 → 2 条立刻失败 |
+| 3 | 🔴→✅ **第三道墙：`ctx.eventTypes` 缺失** —— 再补完，错误**再往前推**到 `:493`。**最关键的一条认知**：源码写着 `ctx.eventTypes.OAI_PRESET_IMPORT_READY \|\| 'oai_preset_import_ready'`，**看似有兜底，兜底路径不可达** —— 因为 `undefined` 上的**属性访问先抛 TypeError**，右侧字面量永远轮不到。→ 所以「给个空对象」也不够，**必须真给这张表** | 见下方「做法」 |
+| 4 | ⚠️→❌ **`Vue is not defined` 判定为「与 TT 同等行为」，有意不改** —— 长相和 #1 一模一样，结论相反。三问核验：① 基准上有吗？**没有**（ST/TT 全仓 `grep "window.Vue="` **0 命中**）② 报错在哪一侧？**脚本帧**、栈顶是卡自带的 CDN `vue-router.global.prod.min.js:12` ③ 基准会不会同报？**会**。→ 补 Vue 反而**造出与基准的差异**。这是 L36 的实例：**验收基准是"三方一致"，不是"比它更强"** | 按 L36 三问执行，结论=不改 |
+| 5 | ✅ **类型闸门补上第三层：`tests` 层此前从未被检查** —— `tsconfig.json` 的 `exclude` 里有 `tests` → **46 个 spec 文件从未进过闸门**（`core`/`ui` 都覆盖不到）。这是「验证读侧 ≠ 运行时读侧」的又一实例（与 L30 同源） | 新增 `tsconfig.tests.json` + `typecheck:tests`；首开即抓 **15 处** |
+| 6 | 🔴 **闸门首开抓出的一类最隐蔽问题：一行「永远通过的假绿测试」** —— `expect(subset.ok === undefined \|\| subset.ok).toBeTruthy()`，而 `subset` 引擎的原始返回**根本没有 `ok` 字段** → 该断言恒真。**断言写的是"我以为的返回形状"，不是"实际行为"** | 同批还有 `makeDeps()` **静默少 14 个桥依赖**（改为显式抛错桩，禁止「没覆盖」伪装成「通过了」） |
+
+| 7 | 🔴→✅ **我方自己加的校验在阻断卡脚本**（T-41）：三道墙补齐后卡再往深处走，抛 `Error: 既有变量与 schema 不匹配` —— 来源是**我方 facade 的 422**，不是基准要求。**基准对质**：真 TH `registerVariableSchema` 是**纯 setter**（`JS-Slash-Runner/src/function/variables.ts:10-37` 只做 `store.<scope> = schema`），校验只发生在**变量管理器面板渲染**时（`CHANGELOG.md:710` 原话是「**提示**错误信息」）。我把校验放在**写入层**（拒收）而不是**呈现层**（提示）→ 卡 `inject.js:2308` 的 bootstrap 中断，`ChatSquash`/`MacroNest`/工具注册**全不执行** | 已修；**实机实证三条齐备**：无新增 422、**schema 首次真正落盘**（state 文件 61,014 → 66,868 B，`properties.stat_data` 从空壳变为实际存在）、不匹配以 **24 项** `issues` 可见 |
+| 8 | 🔴 **当前前线（T-42）**：卡的注入脚本要挂到 **ST 的正则面板 DOM**。第四次前移后的错误是 `TypeError: … 'observe' on 'MutationObserver': parameter 1 is not of type 'Node'` @ `RegexBinding@inject.js:3885`（宿主帧），源码 `observer.observe($('#saved_regex_scripts')[0], …)` —— `[0]` 是 `undefined`。基准 **ST/TT 都有**该元素（`extensions/regex/dropdown.html:96/101`）→ 真缺口 | **不做半吊子修复**：只摆空容器而不把 ST 全局正则接进我方正则引擎 = 新的静默失败。**列为待你拍板** |
+
+### 做法（第三道墙：不手抄，走生成器）
+
+真 ST 的 `getContext()` 返回体里有 `eventSource, eventTypes: event_types,` **并列**
+（`SillyTavern-reference/public/scripts/st-context.js:137-138`），事件名表本体在
+`public/scripts/events.js:3 export const event_types = {`（**104 条**）。
+
+- 新建 `scripts/gen-st-event-types.mjs`：**机械解析**基准源 → 产出 `client/st-event-types.gen.ts`
+  （带 `file/line/count` 来源元数据；**解析结果为空则拒绝产出**，防止"悄悄生成一张空表"）。
+- 为什么**不手抄**：将来 ST 升级，一条命令即可再同步；且「悄悄漂移」藏不住。
+- **测试里踩到的坑（已固化为 L37）**：首版按「值应全小写 / 值应唯一」写断言 → **全红**。
+  核验基准后确认是 **ST 自己的实情**：有 **4 个非全小写值**
+  （`chatLoaded` / `GENERATION_AFTER_COMMANDS` / `characterDeleted` / `charManagementDropdown`）
+  与 **1 处重复值**（`SMOOTH_STREAM_TOKEN_RECEIVED` 与 `STREAM_TOKEN_RECEIVED` 共用 `stream_token_received`，
+  `events.js:72-74` 原文注释就是 `@deprecated … aliased to STREAM_TOKEN_RECEIVED`）。
+  → 改为**黄金母版式**断言：钉住这 4 个例外 + 这 1 处重复，**新增/减少即报警**。
+  **教训：用一个假前提写断言，会把真数据判成错。**
+
+**交付**：双架构 APK 重打（x86_64 debug **sentinel v239** + arm64 release **sentinel v240**），**886 测试全绿**（47 文件）；
+`npm run typecheck` = **三段式（core + ui + tests）全 0 错**；新增 3 个 spec / 43 条测试。
+**产物新鲜度已按第 ⑪ 条铁律核到"解码后的内容"**（本轮踩过坑：esbuild 把中文输出成 `\uXXXX` 转义，
+用原中文 `includes()` 查产物**恒为 false**，差点误判"产物没更新"——见 LEARNINGS **L38**）。
+解码后确认：APK 内 `dsht-rp-plugin/lib/client.js` 含三道墙全部标记
+（`installHostSillyTavern`×2 / `createThEventSource`×2 / `eventTypes`×3 / `OAI_PRESET_IMPORT_READY`×3），
+`dsht-plugin-tavern-helper/lib/index.js` 含新提示语且**旧 422 串已消失**
+—— 排除「插件存在即跳过 → 源码改动静默不进包」（构建链第 ⑦ 类断链）。
+**设备实证**：卡脚本从"死在第 55 行"推进到 `RegexBinding@inject.js:3885`，**每秒重注册循环消失**（55s 窗口仅 1 条异常）。
 
 ## 升级已完成：DSH 0.1.2 → 0.1.5 ✅（度量 5/5）
 
@@ -265,23 +310,26 @@
 
 | # | 问题 | 我的建议 |
 |---|---|---|
-| ~~A~~ | ~~升级时机~~ | ✅ 已执行（阶段 0–2 完成） |
+| ~~A~~ | ~~升级时机~~ | ✅ 已执行（阶段 0–4 全部完成，度量 5/5） |
 | ~~B~~ | ~~能否接受"打开旧聊天要等一会儿"~~ | ✅ **已实测：151MB / 1.7 秒，毫秒级，用户无感** |
-| **D1** 🔴 | **是否继续 0.1.5 升级**（代价：51% 老会话需修复 + 元数据持久化改造） | **建议暂停，留在 0.1.2** —— 升级唯一动机是"可能解开 D-4"，收益不确定；而 E-1/E-3/E-4 在 0.1.2 下**本身就是缺陷**，值得独立修完再评估升级 |
-| D2 | 若继续：`thData/thSystem/ejsProcessed` 迁到哪 | ① 我方 `.dsh/rp/state/*.json`（推荐）② 塞 content 自定义 block ③ 丢弃 |
-| D3 | 是否允许一次性 normalizer 改写既有会话文件 | **允许**（回滚保险已四层，且先在副本验证） |
-| C | 「动态替换提示词」要不要启用？ | 升级完再单独评估，别一次动两个变量 |
-| D | 那 31 个工具要不要一并处理？ | **分开**，升级已经够大了 |
+| ~~D1~~ | ~~是否继续 0.1.5 升级~~ | ✅ **已升级完成**（两条 Android 平台级阻塞均已修复并实机验证） |
+| ~~D2~~ | ~~`thData/thSystem/ejsProcessed` 迁到哪~~ | ✅ **已执行方案①**：迁入 `$DSH_HOME/rp/th-floors/<sid>.json` 旁路存储 |
+| ~~D3~~ | ~~是否允许一次性 normalizer 改写既有会话~~ | ✅ **已执行**（四层回滚保险 + 副本先行验证，80/80 通过） |
+| **T-42** 🔴 | **卡脚本要挂到 ST 的正则面板 DOM（`#saved_regex_scripts`），我们前端是 DSH 的 UI，没有这个元素。**<br>（A）补挂载点**并**把 ST 全局正则 `extension_settings.regex` 真接进我方正则引擎<br>（B）不补，登记为已知差异<br>（C）只补空容器 | **建议 A**。<br>理由：基准（ST/TT）**有**这个元素，不补是与基准的功能差异；但**只补空容器（C）会造成新的静默失败**（卡以为挂上了、正则却不生效），**故坚决不做 C**。<br>代价：A 的工作量中等偏大（需要搬 ST 正则面板语义 + 打通全局正则到引擎）；B 的代价是卡的核心功能（`ChatSquash`/`MacroNest`/工具注册）保持缺失。 |
+| **D-6** | 多出的 32 个工具定义要不要处理（TT 请求体**完全没有** `tools` 字段） | **分开处理**，升级已完成，可单独评估开关 |
+| **D-5** | 设备时区为 `GMT` 时 WebView 给出 `+00:00`（非 IANA 名）被宿主拒收，产品级兜底要不要做 | 测试环境已用 `persist.sys.timezone` 解封；产品级兜底（`±HH:MM` → `Etc/GMT∓N` 注入层映射）**待你定** |
+| **P-1** | 更新开关要用哪个 GitHub 仓库（公开 / 私有） | 待定；阶段三发布前必须定 |
+| ~~C~~ | ~~「动态替换提示词」要不要启用~~ | 升级已完成，结论：需切 `llm-deepseek` 路由才生效（独立任务 = D-4） |
 
 ## 关键数字
 
 ```
-自研代码   95 个文件 / 37,635 行
-自动化测试  36 个文件 / 710 项全绿
-提交次数   43 次
-工作轮次   39 个心跳
-文档       29 份（唯一活文档 = 本文件）
-最新 APK   x86_64-debug 187.7MB / arm64-release 122.4MB
+自研代码   41,089 行（src 下 .ts/.tsx，不含构建产物）
+自动化测试  47 个文件 / 886 项全绿
+类型闸门   3 段式全 0 错（typecheck:core / :ui / :tests）
+提交次数   83 次
+最新 APK   x86_64-debug 196.8MB（sentinel v237）/ arm64-release 128.3MB（sentinel v238）
+内嵌 DSH   0.1.5-rc.1
 ```
 
 ---

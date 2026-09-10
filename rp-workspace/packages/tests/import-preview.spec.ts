@@ -312,7 +312,7 @@ describe('import-preview: checkpoint 读写', () => {
     const cp = parseCheckpointFile(valid)!
     expect(cp.batchId).toBe('b1')
     expect(cp.stages.books?.done).toEqual(['书A', '书B'])
-    expect(cp.stages.nonsense).toBeUndefined()
+    expect((cp.stages as Record<string, unknown>).nonsense).toBeUndefined()
     expect(parseCheckpointFile('{bad json')).toBeNull()
     expect(parseCheckpointFile('{"stages":{}}')).toBeNull() // 缺 batchId
     expect(parseCheckpointFile('{"batchId":"b1"}')).toBeNull() // 缺 stages
