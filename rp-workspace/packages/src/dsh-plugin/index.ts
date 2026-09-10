@@ -46,6 +46,8 @@ import { expandTavernMacros, readVarPath, writeVarPath, registerMacro, unregiste
 import { appendUndoEntries, makeUndoEntry, replayUndoLog } from '../dsht-plugin-shared/undo.ts'
 import { restoreSnapshotsAfter, snapshotBeforeWrite, snapshotRestoreBoundary } from '../dsht-plugin-shared/file-snapshots.ts'
 import { scanSessionHeaders as scanSessionHeadersShared, normalizeSnapshotMessageRoles, repairDuplicateTurnStarts } from '../dsht-plugin-shared/session-surgery.ts'
+// D-3：system 槽位路由（TT 对齐投影；合法通道 = system-prompt/assemble 的 assembly.sections）
+import { planSlotSections, SLOT_ORDERS, type SlotBatch, type SlotSection } from '../dsht-plugin-shared/tt-projection.ts'
 // T3.2：会话长期记忆（rp-memory 最小闭环）——核心逻辑纯函数化便于单测，这里只做接线
 import {
   appendMemory, deleteMemoryEntry, formatMemoryTime, isValidMemorySessionId, loadMemory,
@@ -2241,6 +2243,32 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   /** E3：表格快照去重（同 retainedMemory 样例） */
   const retainedTables = new WeakMap<LikeAgent, string>()
 
+  // ---- D-3：system 槽位发布器（pre-step 写、assemble 读）----
+  // 为什么需要跨 hook 传递：`agent.ts:230` assemble 先于 `agent.ts:233` pre-step 执行，
+  // 而角色卡/世界书/记忆/状态树的内容都在 pre-step 里算（那里能拿到会话态与快照去重）。
+  // 因此 pre-step 把"本轮该进 system 的正文"发布到本表，assemble 下一 step 读走。
+  // 时序无害：内容在 turn 内是常量快照（同 retainedState 系列的去重语义），
+  // 首个 step 用上一轮的同内容副本，等价；turn 内任何 step 的 system 都一致。
+  const slotPublished = new WeakMap<LikeAgent, SlotBatch>()
+
+  /**
+   * D-3 开关：把系统级 RP 内容从 `user` 席位迁到 `system` 槽位。
+   * 默认开（对齐 TT）；`$DSH_HOME/rp/slot-routing-OFF` 存在时关闭（回滚通道，
+   * 用于 A/B 对照与线上排障——不依赖改代码即可回到旧行为）。
+   */
+  const SLOT_ROUTING = !existsSync(join(dshHome, 'rp', 'slot-routing-OFF'))
+
+  /** 发布本轮 system 槽位内容（pre-step 调用）。按 name 合并——pre-step 的
+   *  世界书分支与 withPresetLayer 分支分头发布，覆盖式会让后发布者吃掉前者
+   *  （实机踩过：世界书 24,221ch 被丢，slot=2 只剩角色卡+状态树）。 */
+  const publishSlots = (agent: LikeAgent, sections: SlotSection[]): void => {
+    if (!SLOT_ROUTING) return
+    const prev = slotPublished.get(agent)?.sections ?? []
+    const byName = new Map(prev.map(s => [s.name, s]))
+    for (const s of sections) byName.set(s.name, s)
+    slotPublished.set(agent, { sections: [...byName.values()] })
+  }
+
   // ---- 任务 1：快照宏展开（真运行期语义，替代"全角化了事"）----
   // 与 preset/compiler.ts neutralizePromptVariables 的职责分工见 dsht-plugin-shared/macros.ts 头注：
   // 中性化只管"写进 DSH persona 插件的文本"（防爆 turn）；这里的 {{…}} 由宏引擎真求值。
@@ -2358,6 +2386,75 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       if (!preset) return null
       return { slug, rp, preset, sessionId }
     } catch { return null }
+  }
+
+  /**
+   * D-3：在 assemble 时**现算**系统级 RP 内容（角色卡 / 状态树 / 长期记忆 / 表格）。
+   *
+   * 世界书不在此处（它需要 pre-step 的关键词扫描管线：对 history 做 triggerWorldInfo +
+   * 预算裁剪 + EJS generate-loader），由 pre-step 发布后经 `publishSlots` 汇入。
+   *
+   * 不复用 pre-step 里那套 `retained*` 去重（那是为"避免向耐久日志重复 append"设计的）；
+   * assemble 每 step 现算、不落日志，故无需去重，反而必须每轮给全量——否则某个 step
+   * 会拿到残缺的 system（例如工具轮跳过表格时把角色卡也吞掉）。
+   *
+   * 任何一步失败都只跳过该项，不阻塞 assemble（否则整个 system 渲染抛错 → 会话不可用）。
+   */
+  const gatherSlotSections = async (agent: LikeAgent): Promise<SlotSection[]> => {
+    if (!SLOT_ROUTING) return []
+    const out: SlotSection[] = []
+    try {
+      const slug = rpSlugFromCwd(agent.session.header.cwd, dshHome)
+      if (!slug) return out
+      const rp = await loadRpJson(slug, new AbortController().signal)
+      if (!rp) return out
+      const sid = String((agent.session as unknown as { id?: string }).id ?? '')
+      if (!sid) return out
+
+      // 角色卡（TT dump-008 [3] stage_1_base_requirements 同位置语义）
+      const personaRaw = (rp.promptPersona ?? '').trim()
+      if (personaRaw) {
+        try {
+          const personaText = await expandSnapshotMacros(personaRaw, rp, slug, sid)
+          if (personaText) {
+            out.push({ name: 'dsht-rp:slot:character', order: SLOT_ORDERS.characterCard, text: personaText })
+          }
+        } catch (e) { console.log(`[dsht-rp] D-3 角色卡渲染失败（跳过）：${(e as Error).message}`) }
+      }
+
+      // MVU 状态树（TT [14] status_current_variables 同语义，但 TT 侧在 user 席——
+      // DSHT 统一走 system：状态是"系统对模型的当前事实"，放 system 无歧义）
+      try {
+        const st = await loadSessionState(sid)
+        const summary = renderStateSummary(st.state ?? st.variables ?? {})
+        if (summary) out.push({ name: 'dsht-rp:slot:state', order: SLOT_ORDERS.stateTree, text: summary })
+      } catch (e) { console.log(`[dsht-rp] D-3 状态树渲染失败（跳过）：${(e as Error).message}`) }
+
+      // 长期记忆（TT [11] 过往记忆 同语义）
+      try {
+        const memoryText = renderMemorySnapshot((await loadMemory(dshHome, sid)).entries)
+        if (memoryText) {
+          out.push({
+            name: 'dsht-rp:slot:memory',
+            order: SLOT_ORDERS.memory,
+            text: `【长期记忆】（此前固化的用户偏好/设定变动/承诺；生成回复前可先 memory_query 检索更多）\n${memoryText}`,
+          })
+        }
+      } catch (e) { console.log(`[dsht-rp] D-3 记忆渲染失败（跳过）：${(e as Error).message}`) }
+
+      // st-memory-enhancement 表格
+      try {
+        const { sheets } = await loadSheets(dshHome, sid)
+        const active = sheets.filter(s => s.enabled)
+        if (active.length > 0) {
+          const tablesText = renderTablePrompt(active)
+          if (tablesText) out.push({ name: 'dsht-memory:slot:tables', order: SLOT_ORDERS.tables, text: tablesText })
+        }
+      } catch { /* 无表格系统或加载失败：静默跳过 */ }
+    } catch (e) {
+      console.log(`[dsht-rp] D-3 slot 内容收集失败（不阻塞）：${(e as Error).message}`)
+    }
+    return out
   }
 
   /** 读世界书 lore.json（$DSH_HOME 相对路径）。此前两处调用但函数缺失（ReferenceError 被吞），补齐。 */
@@ -2890,11 +2987,40 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   // restore 校验 role 必须 user）。每 step assemble 时现算——会话内切预设下一 step 即生效；
   // 预设不变则 system 文本不变，不触发 request/header 重写。
   ctx.on('system-prompt/assemble', async (_assembly: unknown, context: unknown, next: () => Promise<unknown>) => {
-    const assembly = (await next()) as { sections: Array<{ name: string; text: string }> }
+    let assembly = (await next()) as { sections: Array<{ name: string; text: string }> }
     try {
       const agent = (context as { agent?: LikeAgent; scope?: LikeAgent }).agent
         ?? (context as { scope?: LikeAgent }).scope
       if (!agent || !assembly || !Array.isArray(assembly.sections)) return assembly
+
+      // ---- D-3：把系统级 RP 内容并入 system 槽位 ----
+      // 唯一合法通道取证：`agent.ts:337` `const system = renderPrompt(assembly)` →
+      // `agent.ts:339` `buildRequest(..., system, session.deriveMessages(), ...)`。
+      // `assembleContextFor`（`agent/src/dispatch.ts:173`）把 live Agent 放进 context.agent。
+      // 内容保序由 SLOT_ORDERS 统一裁定（同 TT dump-008 的语义拼接序）。
+      //
+      // 【为什么在本处现算，而不是只读 pre-step 的发布】
+      // 实机时序取证（v197 探针）：turn 内顺序恒为
+      //   assemble(agent.ts:230) → pre-step(agent.ts:233) → step/渲染(agent.ts:337)
+      // 且 mock/无工具调用时 **一 turn 仅一步**。故 pre-step 的发布对**本 turn 不可见**，
+      // 只对下一 turn 可见 —— 首个 turn 的 system 槽位会是空的，语义错误。
+      // 因此这里以"本处现算"为主，pre-step 的发布仅作为**额外**来源（两者按 name 合并）。
+      const selfSections = await gatherSlotSections(agent)
+
+      const published = slotPublished.get(agent)?.sections ?? []
+      const merged = new Map<string, SlotSection>()
+      for (const s of [...selfSections, ...published]) merged.set(s.name, s)
+      if (merged.size > 0) {
+        const extra = planSlotSections({ sections: [...merged.values()] }, neutralizeResidualMacros)
+        if (extra.length > 0) {
+          assembly = {
+            ...assembly,
+            sections: [...assembly.sections, ...extra],
+          }
+          console.log(`[dsht-rp] D-3 system 槽位注入：${extra.length} 段 / ${extra.reduce((n, s) => n + s.text.length, 0)}ch（${extra.map(s => s.name).join(', ')}）[self=${selfSections.length} published=${published.length}]`)
+        }
+      }
+
       const resolved = await resolveAgentPreset(agent)
       if (!resolved) return assembly
       const { slug, rp, preset, sessionId } = resolved
@@ -3125,13 +3251,18 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           const sid = String((agent.session as unknown as { id?: string }).id ?? '')
           if (!sid) return finalize(d)
           const st = await loadSessionState(sid)
+          // ---- D-3 启用时：本区四类内容（状态/角色卡/记忆/表格）全部改由
+          // `gatherSlotSections`（assemble 内现算）承担，此处**不再向 user 席位注入**。
+          // 原因：assemble 先于 pre-step，靠 pre-step 发布会对首个 turn 失效（实机取证：
+          // 一 turn 一步时发布只对下一 turn 可见）；且两处各算一遍必然分叉。
+          // 关闭 D-3（slot-routing-OFF）时走原路径，行为与修复前完全一致。
           // ---- T2.3 状态摘要注入（先于预设；文本不变跳过）。§2.2 修正：影子化豁免每个
           // 签名的最新副本（planShadowOps），所以 retained 跳过安全——请求恒为一份副本，
           // 不会像 turn 43 那样双份（always-inject 会让请求多扛一份上轮副本 ~17 万 token）----
           const summary = renderStateSummary(st.state ?? st.variables ?? {})
           if (summary && retainedState.get(agent) !== summary) {
             retainedState.set(agent, summary)
-            d = withStateSnapshot(d, summary)
+            if (!SLOT_ROUTING) d = withStateSnapshot(d, summary)
           }
           // ---- 任务 2：promptPersona 卡设定快照（retained 跳过——影子化豁免最新副本）----
           const personaRaw = (rp.promptPersona ?? '').trim()
@@ -3140,7 +3271,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
             const personaText = await expandSnapshotMacros(personaRaw, rp, slug, sid)
             if (personaText && retainedPersona.get(agent) !== personaText) {
               retainedPersona.set(agent, personaText)
-              d = withPersonaSnapshot(d, personaText)
+              if (!SLOT_ROUTING) d = withPersonaSnapshot(d, personaText)
             }
           }
           // ---- T3.2：长期记忆注入（世界书快照同一带区）：最近 20 条 `- [时间] 文本`；
@@ -3150,7 +3281,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
             const memorySnapshot = `【长期记忆】（此前固化的用户偏好/设定变动/承诺；生成回复前可先 memory_query 检索更多）\n${memoryText}`
             if (retainedMemory.get(agent) !== memorySnapshot) {
               retainedMemory.set(agent, memorySnapshot)
-              d = withMemorySnapshot(d, memorySnapshot)
+              if (!SLOT_ROUTING) d = withMemorySnapshot(d, memorySnapshot)
             }
           }
           // ---- E3：表格快照注入（st-memory-enhancement 表格系统）：会话有启用表且本 step
@@ -3163,7 +3294,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 const tablesText = renderTablePrompt(active)
                 if (tablesText && retainedTables.get(agent) !== tablesText) {
                   retainedTables.set(agent, tablesText)
-                  d = withTablesSnapshot(d, tablesText)
+                  if (!SLOT_ROUTING) d = withTablesSnapshot(d, tablesText)
                 }
               }
             } catch { /* 表格加载失败不阻塞主流程 */ }
@@ -3580,6 +3711,16 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       // retained 跳过（影子化豁免最新副本—— WI 快照恒一份）
       if (retained.get(agent) === snapshotText) return await viaAssembleHook(withPresetLayer(baseDecision))
       retained.set(agent, snapshotText)
+      // ---- D-3：世界书 → system 槽位（TT dump-008 的 [6]/[7] World_Lore_Database 同位置语义）----
+      // 与 withPresetLayer 内部的 slot 发布共用同一张表：世界书在 pre-step 的两个分支里
+      // 计算（有激活/无激活），本处覆盖"有激活"的主路径。合并而非覆盖，避免把
+      // withPresetLayer 已发布的状态树/记忆丢掉。
+      if (SLOT_ROUTING) {
+        publishSlots(agent, [
+          { name: 'dsht-rp:slot:worldbook', order: SLOT_ORDERS.worldbook, text: snapshotText },
+        ])
+        return await viaAssembleHook(withPresetLayer(baseDecision))
+      }
       return await viaAssembleHook(withPresetLayer(withSnapshot(baseDecision, snapshotText)))
     } catch (error) {
       if ((error as Error)?.name === 'AbortError') throw error

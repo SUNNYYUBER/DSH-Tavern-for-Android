@@ -562,6 +562,53 @@ AI 回复前要"读"的内容有上限（就像人一次只能捧着一摞纸说
   provider 真实 usage（快照最后一条 assistant 的 inputTokens+cacheRead+cacheWrite，
   实测 499k 与会话日志逐位一致，标签"真实值"），首轮回复前回落字符估算（"估算值"）。
 
+
+### 2.2b D-3 system 槽位路由（TT 对照）
+
+> **2026-09-10 心跳 34 新增并实机验证 ✅**。对应 `docs/DSHT-VS-TT-DIFF-2026-09-10.md` 的 D-3。
+
+**问题（大白话）**：TT 把角色卡/世界书/记忆/状态树全塞进 `system` 槽位（25 条里 22 条是 system），
+而 DSHT 把它们全塞进 `user` 槽位（40 条 user、只有 1 条 system）。同一份内容挂在 `user` 名下，
+模型对它的服从度就和系统指令不一样——这是**语义层级错位**，直接影响 AI 演得像不像。
+
+**为什么以前没修**：DSH 核心把两扇门都焊死了 ——
+① `agent.ts:505` 把 loop 请求 `deepFreeze`（mutation throws），官方明文
+"listeners read it, never rewrite it" → **`llm/stream` 改写请求的路走不通**；
+② `session/index.ts:315` 把 `user/message` 的 role 钉死为 `user` → 注入层造不出 system 消息。
+
+**合法通道（四条证据链定位）**：`system-prompt/assemble` 瀑布返回的 `assembly.sections` ——
+`agent.ts:230` assemble → `:337` `renderPrompt(assembly)` 拼成 `system` 字符串 → `:339` 进请求；
+且 `dispatch.ts:173` `assembleContextFor` 把 **live Agent 放进 `context.agent`**，
+所以监听器能现场读会话态、返回动态 sections。
+
+**实现**：
+- `dsht-plugin-shared/tt-projection.ts`：`SlotSection` / `SLOT_ORDERS`（角色卡 20 → 世界书 25 →
+  记忆 30 → 剧情记忆 35 → 状态树 40 → 表格 45 → 预设 50，对齐 TT dump-008 的语义拼接序）/
+  `planSlotSections`（排序 + 残余宏中性化 + 丢空段）；新增 8 项单测。
+- `dsh-plugin/index.ts`：`gatherSlotSections(agent)` 在 assemble 内**现算**角色卡/状态树/记忆/表格；
+  世界书（需 pre-step 的关键词扫描管线）由 pre-step `publishSlots` 发布，assemble 按 `name` 合并。
+- **回滚开关**：`$DSH_HOME/rp/slot-routing-OFF` 存在即回退旧行为（pre-step 的 `with*Snapshot`
+  路径一字未动），不改代码即可 A/B。
+
+**实机实测（同 wuwa 会话）**：`system` **24,773 → 86,877 字符**；
+首轮 `[self=2 published=0]`（角色卡+状态树，**首轮即生效**），
+次轮 `3 段 / 62,098ch (character, worldbook, state) [self=2 published=1]`；
+`pre-step decision.messages` 从「用户输入 + 4 组快照」降为 **1 条纯用户输入（13 字）**。
+全量单测 **700/700 绿**。
+
+**两条新铁律（实机探针抓到的自身缺陷）**：
+1. **时序**：turn 内恒为 `assemble(:230) → pre-step(:233) → 渲染(:337)`，且无工具调用时
+   **一 turn 仅一步** → pre-step 的发布对本 turn 不可见（只对下一 turn 可见）。
+   首版只靠发布 → 首 turn system 恒空（探针 `slotPublished=none` 抓到）。内容必须 assemble 内现算。
+2. **合并**：多来源发布必须按 `name` 合并而非覆盖。首版覆盖式 → 世界书 24,221ch 被
+   withPresetLayer 的发布吃掉（`slot=2` 实机抓到）。
+
+**D-4（用户输入绝对位置）判定为不可达**：用户输入顺序由 `session.deriveMessages()`（耐久日志）决定，
+而 `assembly.sections` 只能拼进单一 `system` 字符串、无法插进 messages 中间。
+TT 的「用户输入夹在 system 块中 + system 收尾」结构在当前 DSH 核心约束下无法复现，
+除非核心开放 messages 投影点。**已停止对其继续投入**（避免无底洞）。
+
+
 ### 2.3 已拍板的五件事（②收益最大先做，其余互相独立可穿插）
 
 **① 角色卡人设迁回工作区【✅ 已完成并验证（2026-09-03，选 B）】**

@@ -9768,11 +9768,38 @@ var require_lib3 = __commonJS({
 
 // src/dsh-plugin/index.ts
 import { spawn } from "node:child_process";
-import { access, mkdir as mkdir5, open as open4, readdir as readdir5, readFile as readFile7, realpath as realpath2, rename as rename2, rm as rm4, stat, writeFile as writeFile5 } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { access, mkdir as mkdir5, open as open5, readdir as readdir5, readFile as readFile7, realpath as realpath2, rename as rename3, rm as rm4, stat, writeFile as writeFile4 } from "node:fs/promises";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname as dirname5, join as join8, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
+import { dirname as dirname6, join as join8, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
+import { createInterface } from "node:readline";
 import { randomUUID as randomUUID2 } from "node:crypto";
+
+// src/dsht-plugin-shared/atomic-fs.ts
+import { open, rename } from "node:fs/promises";
+import { dirname } from "node:path";
+var atomicWriteSeq = 0;
+async function atomicWriteText(path, content) {
+  const tmp = `${path}.${Date.now()}.${atomicWriteSeq++}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  const handle = await open(tmp, "wx");
+  try {
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(tmp, path);
+  try {
+    const dirHandle = await open(dirname(path), "r");
+    try {
+      await dirHandle.sync();
+    } finally {
+      await dirHandle.close();
+    }
+  } catch {
+  }
+}
 
 // node_modules/.pnpm/@deepseek-ai+cosmokit@1.8.3/node_modules/@deepseek-ai/cosmokit/lib/index.js
 function isNullable(value) {
@@ -10874,8 +10901,20 @@ function runRegexScripts(scripts, text, timing, placement, ctx = { depth: null }
     if (matches === null || matches.length === 0) continue;
     let replaced = current.replace(regex, (...args) => {
       const match = args[0];
+      const captures = args.slice(1, Math.max(1, args.length - 2)).map((a) => typeof a === "string" ? a : "");
       let replacement = script.replaceString;
       replacement = replacement.replace(/\{\{match\}\}/g, match);
+      replacement = replacement.replace(/\$(\d{1,2})/gu, (token, digits) => {
+        const index = Number(digits);
+        if (index >= 1 && index <= captures.length) return captures[index - 1];
+        if (index === 0) return match;
+        if (digits.length === 2) {
+          const fallback = Number(digits[0]);
+          if (fallback >= 1 && fallback <= captures.length) return captures[fallback - 1] + digits[1];
+        }
+        if (captures.length === 0) return match;
+        return token;
+      });
       for (const t of script.trimStrings) replacement = replacement.split(t).join("");
       return replacement;
     });
@@ -12608,8 +12647,8 @@ function demoLightAgentPreset() {
 
 // src/preset/managed.ts
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { mkdir, readdir, readFile, rename as rename2, rm, writeFile } from "node:fs/promises";
+import { basename, dirname as dirname2, join } from "node:path";
 var PRESET_OWNER_MANIFEST = ".dsht-rp-owner.json";
 function digestPresetFiles(files) {
   const hash = createHash("sha256");
@@ -12670,7 +12709,7 @@ async function installManagedPreset(dir, files, owner, options = {}) {
     if (status.manifest.digest === sourceDigest) return { outcome: "unchanged" };
   }
   const manifest = { owner, format: 0, digest: sourceDigest };
-  const parent = dirname(dir);
+  const parent = dirname2(dir);
   const base = basename(dir);
   await mkdir(parent, { recursive: true });
   const staging = join(parent, `.${base}.install-${process.pid}-${randomUUID()}`);
@@ -12687,7 +12726,7 @@ async function installManagedPreset(dir, files, owner, options = {}) {
   }
   if (status.kind === "absent") {
     try {
-      await rename(staging, dir);
+      await rename2(staging, dir);
       return { outcome: "created" };
     } catch (error) {
       await rm(staging, { recursive: true, force: true });
@@ -12695,11 +12734,11 @@ async function installManagedPreset(dir, files, owner, options = {}) {
     }
   }
   const backup = join(parent, `.${base}.backup-${process.pid}-${randomUUID()}`);
-  await rename(dir, backup);
+  await rename2(dir, backup);
   try {
-    await rename(staging, dir);
+    await rename2(staging, dir);
   } catch (error) {
-    await rename(backup, dir);
+    await rename2(backup, dir);
     await rm(staging, { recursive: true, force: true });
     throw error;
   }
@@ -12714,28 +12753,45 @@ async function markPresetUserOwned(dir) {
 }
 
 // src/state/mvu.ts
+var STATE_PATCH_OPS = /* @__PURE__ */ new Set([
+  "add",
+  "replace",
+  "remove",
+  "delta",
+  "move",
+  "copy",
+  "insert"
+]);
 function parseJsonPatches(text) {
-  const m = text.match(/<JSONPatch>\s*([\s\S]*?)\s*<\/JSONPatch>/i);
-  if (!m) return [];
-  try {
-    const arr = JSON.parse(m[1]);
-    if (!Array.isArray(arr)) return [];
-    return arr.filter((p) => p && typeof p === "object").map((p) => {
-      const op = String(p.op ?? "add").toLowerCase();
-      let path = String(p.path ?? "");
-      if (op === "insert" && typeof p.index === "number" && Number.isInteger(p.index) && !/\/\d+$/.test(path)) {
-        path = `${path.replace(/\/+$/, "")}/${p.index}`;
+  const blocks = [];
+  for (const m of text.matchAll(/<JSONPatch>\s*([\s\S]*?)\s*<\/JSONPatch>/gi)) blocks.push(m[1]);
+  if (blocks.length === 0) return [];
+  const out = [];
+  for (const body of blocks) {
+    try {
+      const arr = JSON.parse(body);
+      if (!Array.isArray(arr)) continue;
+      for (const raw of arr) {
+        if (!raw || typeof raw !== "object") continue;
+        const p = raw;
+        const opRaw = p.op === void 0 ? "add" : String(p.op).toLowerCase();
+        if (!STATE_PATCH_OPS.has(opRaw)) continue;
+        const op = opRaw;
+        let path = String(p.path ?? "");
+        if (op === "insert" && typeof p.index === "number" && Number.isInteger(p.index) && !/\/\d+$/.test(path)) {
+          path = `${path.replace(/\/+$/, "")}/${p.index}`;
+        }
+        out.push({
+          op,
+          path,
+          ...p.from !== void 0 ? { from: String(p.from) } : {},
+          ...p.value !== void 0 ? { value: p.value } : {}
+        });
       }
-      return {
-        op,
-        path,
-        ...p.from !== void 0 ? { from: String(p.from) } : {},
-        ...p.value !== void 0 ? { value: p.value } : {}
-      };
-    }).filter((p) => p.path.length > 0);
-  } catch {
-    return [];
+    } catch {
+    }
   }
+  return out.filter((p) => p.path.length > 0);
 }
 function parseUpdateVariable(text, state) {
   const out = [];
@@ -13017,8 +13073,17 @@ function applyStatePatches(state, patches) {
         parent[last] = p.value;
       }
     } else {
-      ;
-      parent[last] = p.value;
+      if (Array.isArray(parent) && /^\d+$/.test(last)) {
+        const i = Number(last);
+        if (i >= parent.length) {
+          if (p.op === "add") parent.push(p.value);
+          continue;
+        }
+        parent[i] = p.value;
+      } else {
+        ;
+        parent[last] = p.value;
+      }
     }
   }
   return next;
@@ -13525,7 +13590,17 @@ function renderMessages(template, context, messages, options = {}) {
       mes = p.text;
       preBlocks = p.blocks;
     }
-    const next = restorePreBlocks(renderEjsSubset(template || mes, { ...context, message: msg }), preBlocks);
+    let next;
+    try {
+      next = restorePreBlocks(renderEjsSubset(template || mes, { ...context, message: msg }), preBlocks);
+    } catch (e) {
+      try {
+        console.warn("[dsht-ejs] renderMessages \u5355\u6761\u6E32\u67D3\u5931\u8D25\uFF08\u4FDD\u7559\u539F\u6587\uFF09:", e?.message);
+      } catch {
+      }
+      skipped++;
+      return { ...msg, ejsError: true };
+    }
     rendered++;
     return { ...msg, mes: next, is_ejs_processed: true };
   });
@@ -13822,8 +13897,8 @@ function renderMessagesSandbox(template, context, messages, options = {}) {
 }
 
 // src/dsht-plugin-shared/undo.ts
-import { appendFile, mkdir as mkdir2, readFile as readFile2, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname2, join as join2 } from "node:path";
+import { appendFile, mkdir as mkdir2, readFile as readFile2, rm as rm2 } from "node:fs/promises";
+import { dirname as dirname3, join as join2 } from "node:path";
 function undoLogPath(dshHome, sessionId) {
   return join2(dshHome, "rp", "state", `${sessionId}.undo.jsonl`);
 }
@@ -13835,7 +13910,7 @@ function makeUndoEntry(scope, slug, path, tree, ts = Date.now()) {
 async function appendUndoEntries(dshHome, sessionId, entries) {
   if (!sessionId || entries.length === 0) return;
   const file = undoLogPath(dshHome, sessionId);
-  await mkdir2(dirname2(file), { recursive: true });
+  await mkdir2(dirname3(file), { recursive: true });
   await appendFile(file, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
 }
 async function readUndoLog(dshHome, sessionId) {
@@ -13878,12 +13953,12 @@ async function saveScopeTree(dshHome, scope, slug, sessionId, tree) {
     } catch {
     }
     whole.variables = tree;
-    await mkdir2(dirname2(file), { recursive: true });
-    await writeFile2(file, JSON.stringify(whole), "utf8");
+    await mkdir2(dirname3(file), { recursive: true });
+    await atomicWriteText(file, JSON.stringify(whole));
     return;
   }
-  await mkdir2(dirname2(file), { recursive: true });
-  await writeFile2(file, JSON.stringify(tree), "utf8");
+  await mkdir2(dirname3(file), { recursive: true });
+  await atomicWriteText(file, JSON.stringify(tree));
 }
 async function replayUndoLog(dshHome, sessionId, cutoffTs = Number.NEGATIVE_INFINITY) {
   const entries = await readUndoLog(dshHome, sessionId);
@@ -13909,16 +13984,16 @@ async function replayUndoLog(dshHome, sessionId, cutoffTs = Number.NEGATIVE_INFI
   const kept = entries.filter((e) => e.ts <= cutoffTs);
   const file = undoLogPath(dshHome, sessionId);
   if (kept.length === 0) await rm2(file, { force: true });
-  else await writeFile2(file, kept.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
+  else await atomicWriteText(file, kept.map((e) => JSON.stringify(e)).join("\n") + "\n");
   return { restored: toReplay.length };
 }
 
 // src/dsht-plugin-shared/file-snapshots.ts
-import { mkdir as mkdir3, open as open2, readFile as readFile3, readdir as readdir3, rm as rm3, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname3, join as join4 } from "node:path";
+import { mkdir as mkdir3, open as open3, readFile as readFile3, readdir as readdir3, rm as rm3, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname4, join as join4 } from "node:path";
 
 // src/dsht-plugin-shared/session-surgery.ts
-import { open, readdir as readdir2 } from "node:fs/promises";
+import { open as open2, readdir as readdir2 } from "node:fs/promises";
 import { join as join3 } from "node:path";
 function truncateSessionJsonl(content, keepThroughSeq) {
   const lines = content.split("\n");
@@ -13992,6 +14067,7 @@ function findLastUserMessage(events) {
     const ev = events[i];
     if (ev?.type !== "user/message") continue;
     const d = ev.data;
+    if (d?.source?.kind === "plugin") continue;
     const text = (d?.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n");
     return { seq: ev.seq, text };
   }
@@ -14049,7 +14125,7 @@ function repairDuplicateTurnStarts(content) {
 async function readFirstLine(path) {
   let handle = null;
   try {
-    handle = await open(path, "r");
+    handle = await open2(path, "r");
     const buf = Buffer.alloc(8192);
     const { bytesRead } = await handle.read(buf, 0, 8192, 0);
     if (bytesRead === 0) return null;
@@ -14114,7 +14190,7 @@ function isSnapshotEligible(relPath) {
 async function readLatestTurn(sessionJsonlPath) {
   let handle = null;
   try {
-    handle = await open2(sessionJsonlPath, "r");
+    handle = await open3(sessionJsonlPath, "r");
     const { size } = await handle.stat();
     if (size === 0) return null;
     const tail = Math.min(size, 256 * 1024);
@@ -14175,8 +14251,8 @@ async function snapshotBeforeWrite(dshHome, sessionId, relPaths, turnAnchor) {
     result.snapshotted++;
   }
   if (result.snapshotted > 0) {
-    await mkdir3(dirname3(file), { recursive: true });
-    await writeFile3(file, JSON.stringify(snapshot), "utf8");
+    await mkdir3(dirname4(file), { recursive: true });
+    await writeFile2(file, JSON.stringify(snapshot), "utf8");
   }
   return result;
 }
@@ -14221,8 +14297,8 @@ async function restoreSnapshotsAfter(dshHome, sessionId, boundary) {
       const abs = join4(dshHome, ...f.path.split("/"));
       try {
         if (f.existed) {
-          await mkdir3(dirname3(abs), { recursive: true });
-          await writeFile3(abs, Buffer.from(f.content, "base64"));
+          await mkdir3(dirname4(abs), { recursive: true });
+          await writeFile2(abs, Buffer.from(f.content, "base64"));
           result.filesRestored++;
         } else {
           await rm3(abs, { force: true });
@@ -14238,9 +14314,33 @@ async function restoreSnapshotsAfter(dshHome, sessionId, boundary) {
   return result;
 }
 
+// src/dsht-plugin-shared/tt-projection.ts
+var SLOT_ORDERS = {
+  /** 角色卡（谁在演、演谁）——最先 */
+  characterCard: 20,
+  /** 世界书（世界观事实）紧随角色卡 */
+  worldbook: 25,
+  /** 长期记忆（跨轮事实） */
+  memory: 30,
+  /** 剧情记忆/大纲（故事推进脉络） */
+  storyMemory: 35,
+  /** MVU 状态树（当前数值状态） */
+  stateTree: 40,
+  /** 表格（st-memory-enhancement） */
+  tables: 45,
+  /** 预设 relative 条目（指令层，靠后） */
+  preset: 50
+};
+function planSlotSections(batch, neutralize) {
+  return batch.sections.map((s, i) => ({ ...s, seq: i })).filter((s) => typeof s.text === "string" && s.text.trim().length > 0).sort((a, b) => a.order - b.order || a.seq - b.seq).map((s) => {
+    const text = neutralize(s.text).trim();
+    return text.length === 0 ? null : { name: s.name, text };
+  }).filter((s) => s !== null);
+}
+
 // src/dsh-plugin/memory.ts
-import { mkdir as mkdir4, readFile as readFile4, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname4, join as join5 } from "node:path";
+import { mkdir as mkdir4, readFile as readFile4, writeFile as writeFile3 } from "node:fs/promises";
+import { dirname as dirname5, join as join5 } from "node:path";
 var MEMORY_MAX_ENTRIES = 200;
 var MEMORY_TEXT_MAX = 2e3;
 var MEMORY_SNAPSHOT_COUNT = 20;
@@ -14298,8 +14398,8 @@ async function loadMemory(dshHome, sessionId) {
 async function saveMemory(dshHome, sessionId, file) {
   if (!isValidMemorySessionId(sessionId)) throw new Error("invalid sessionId");
   const path = memoryFilePath(dshHome, sessionId);
-  await mkdir4(dirname4(path), { recursive: true });
-  await writeFile4(path, JSON.stringify(file), "utf8");
+  await mkdir4(dirname5(path), { recursive: true });
+  await writeFile3(path, JSON.stringify(file), "utf8");
 }
 function queryMemory(entries, query, limit = 10) {
   const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -14329,7 +14429,7 @@ function renderMemorySnapshot(entries, opts = {}) {
 }
 
 // src/dsh-plugin/import-preview.ts
-import { readdir as readdir4, readFile as readFile5, open as open3, realpath } from "node:fs/promises";
+import { readdir as readdir4, readFile as readFile5, open as open4, realpath } from "node:fs/promises";
 import { join as join6, relative, sep } from "node:path";
 async function findStDataRoot(unpackedDir) {
   const hits = [];
@@ -14473,7 +14573,7 @@ var CHAT_READ_CAP = 8 * 1024 * 1024;
 async function countChatMessages(path) {
   let handle = null;
   try {
-    handle = await open3(path, "r");
+    handle = await open4(path, "r");
     const { size } = await handle.stat();
     const cap = Math.min(size, CHAT_READ_CAP);
     const buf = Buffer.alloc(cap);
@@ -15304,20 +15404,28 @@ function filterTemplateStatements(messages) {
   });
   return { messages: filtered > 0 ? messagesOut : messages, filtered };
 }
-var atomicWriteSeq = 0;
+var atomicWriteSeq2 = 0;
 var macroWriteChain = Promise.resolve({ status: 200, body: {} });
+var liveSurgeryChains = /* @__PURE__ */ new Map();
+function withLiveSurgery(sessionId, fn) {
+  const prev = liveSurgeryChains.get(sessionId) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  liveSurgeryChains.set(sessionId, next.then(() => void 0, () => void 0));
+  void liveSurgeryChains.get(sessionId);
+  return next;
+}
 async function atomicWriteFile(path, content) {
-  const tmp = `${path}.${Date.now()}.${atomicWriteSeq++}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-  const handle = await open4(tmp, "wx");
+  const tmp = `${path}.${Date.now()}.${atomicWriteSeq2++}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  const handle = await open5(tmp, "wx");
   try {
     await handle.writeFile(content, "utf8");
     await handle.sync();
   } finally {
     await handle.close();
   }
-  await rename2(tmp, path);
+  await rename3(tmp, path);
   try {
-    const dirHandle = await open4(dirname5(path), "r");
+    const dirHandle = await open5(dirname6(path), "r");
     try {
       await dirHandle.sync();
     } finally {
@@ -15330,7 +15438,7 @@ async function withSessionLock(file, fn) {
   const lockPath = `${file}.lock`;
   let handle;
   try {
-    handle = await open4(lockPath, "wx");
+    handle = await open5(lockPath, "wx");
   } catch {
     throw new Error("\u4F1A\u8BDD\u88AB\u5176\u4ED6\u5199\u8005\u6301\u6709\uFF08.lock \u5DF2\u5B58\u5728\uFF09\u2014\u2014\u786E\u8BA4\u6CA1\u6709\u7B2C\u4E8C\u4E2A DSH \u5B9E\u4F8B/\u6B8B\u7559\u8FDB\u7A0B\u540E\u5220\u9664 .lock \u91CD\u8BD5");
   }
@@ -15981,8 +16089,8 @@ async function unpackZipTo(sourceZip, destDir) {
     if (segs.length === 0 || segs.some((s) => s === "." || s === "..")) continue;
     const abs = join8(destDir, ...segs);
     if (!resolve2(abs).startsWith(destRoot + sep2)) continue;
-    await mkdir5(dirname5(abs), { recursive: true });
-    await writeFile5(abs, await entry.async("nodebuffer"));
+    await mkdir5(dirname6(abs), { recursive: true });
+    await writeFile4(abs, await entry.async("nodebuffer"));
     count++;
   }
   return count;
@@ -16389,12 +16497,14 @@ function apply(ctx, _config) {
             continue;
           }
           await mkdir5(join8(root, targetProject), { recursive: true });
-          await rename2(join8(root, h.project, h.sdir), targetDir);
+          await rename3(join8(root, h.project, h.sdir), targetDir);
           moved = true;
         }
-        const full = await readFile7(join8(root, targetProject, h.sdir, "session.jsonl"), "utf8");
+        const sessionPath = join8(root, targetProject, h.sdir, "session.jsonl");
+        const full = await readFile7(sessionPath, "utf8");
         const nl = full.indexOf("\n");
-        await writeFile5(join8(root, targetProject, h.sdir, "session.jsonl"), newLine + (nl === -1 ? "" : full.slice(nl)), "utf8");
+        await atomicWriteFile(`${sessionPath}.bak`, full);
+        await atomicWriteFile(sessionPath, newLine + (nl === -1 ? "" : full.slice(nl)));
         repaired.push({ sessionId: h.sessionId, from: h.cwd, to: canonical, moved });
       } catch (e) {
         errors.push(`${h.sessionId}: ${e.message}`);
@@ -16482,7 +16592,7 @@ function apply(ctx, _config) {
           }
           if (persona) {
             rp.promptPersona = persona;
-            await writeFile5(rpPath, JSON.stringify(rp, null, 1), "utf8");
+            await writeFile4(rpPath, JSON.stringify(rp, null, 1), "utf8");
             migrated.push(d);
           }
         }
@@ -16629,7 +16739,16 @@ function apply(ctx, _config) {
   };
   const saveSessionState = async (sessionId, state) => {
     await mkdir5(join8(dshHome, "rp", "state"), { recursive: true });
-    await writeFile5(join8(dshHome, "rp", "state", `${sessionId}.json`), JSON.stringify(state), "utf8");
+    const path = join8(dshHome, "rp", "state", `${sessionId}.json`);
+    let merged = state;
+    try {
+      const latest = JSON.parse(await readFile7(path, "utf8"));
+      if (latest && typeof latest === "object" && !Array.isArray(latest)) {
+        merged = { ...latest, ...state };
+      }
+    } catch {
+    }
+    await atomicWriteText(path, JSON.stringify(merged));
   };
   const capabilityAxisSeen = /* @__PURE__ */ new WeakMap();
   const probeCapabilityAxis = async (agent, preset) => {
@@ -16683,6 +16802,15 @@ function apply(ctx, _config) {
     return { kind: decision.kind, messages: [...decision.messages, m] };
   };
   const retainedTables = /* @__PURE__ */ new WeakMap();
+  const slotPublished = /* @__PURE__ */ new WeakMap();
+  const SLOT_ROUTING = !existsSync(join8(dshHome, "rp", "slot-routing-OFF"));
+  const publishSlots = (agent, sections) => {
+    if (!SLOT_ROUTING) return;
+    const prev = slotPublished.get(agent)?.sections ?? [];
+    const byName = new Map(prev.map((s) => [s.name, s]));
+    for (const s of sections) byName.set(s.name, s);
+    slotPublished.set(agent, { sections: [...byName.values()] });
+  };
   const loadVarScopeTree = async (scope, slug, sid) => {
     try {
       if (scope === "global") {
@@ -16730,8 +16858,8 @@ function apply(ctx, _config) {
         }
         await appendUndoEntries(dshHome, sid, undoSeq);
         whole.variables = vars;
-        await mkdir5(dirname5(stateFile), { recursive: true });
-        await writeFile5(stateFile, JSON.stringify(whole), "utf8");
+        await mkdir5(dirname6(stateFile), { recursive: true });
+        await writeFile4(stateFile, JSON.stringify(whole), "utf8");
       }
       let out = r.text;
       if (/\{\{\s*(?:tableData|tablePrompt|GET::)/i.test(out)) {
@@ -16787,6 +16915,61 @@ function apply(ctx, _config) {
       return null;
     }
   };
+  const gatherSlotSections = async (agent) => {
+    if (!SLOT_ROUTING) return [];
+    const out = [];
+    try {
+      const slug = rpSlugFromCwd(agent.session.header.cwd, dshHome);
+      if (!slug) return out;
+      const rp = await loadRpJson(slug, new AbortController().signal);
+      if (!rp) return out;
+      const sid = String(agent.session.id ?? "");
+      if (!sid) return out;
+      const personaRaw = (rp.promptPersona ?? "").trim();
+      if (personaRaw) {
+        try {
+          const personaText = await expandSnapshotMacros(personaRaw, rp, slug, sid);
+          if (personaText) {
+            out.push({ name: "dsht-rp:slot:character", order: SLOT_ORDERS.characterCard, text: personaText });
+          }
+        } catch (e) {
+          console.log(`[dsht-rp] D-3 \u89D2\u8272\u5361\u6E32\u67D3\u5931\u8D25\uFF08\u8DF3\u8FC7\uFF09\uFF1A${e.message}`);
+        }
+      }
+      try {
+        const st = await loadSessionState(sid);
+        const summary = renderStateSummary(st.state ?? st.variables ?? {});
+        if (summary) out.push({ name: "dsht-rp:slot:state", order: SLOT_ORDERS.stateTree, text: summary });
+      } catch (e) {
+        console.log(`[dsht-rp] D-3 \u72B6\u6001\u6811\u6E32\u67D3\u5931\u8D25\uFF08\u8DF3\u8FC7\uFF09\uFF1A${e.message}`);
+      }
+      try {
+        const memoryText = renderMemorySnapshot((await loadMemory(dshHome, sid)).entries);
+        if (memoryText) {
+          out.push({
+            name: "dsht-rp:slot:memory",
+            order: SLOT_ORDERS.memory,
+            text: `\u3010\u957F\u671F\u8BB0\u5FC6\u3011\uFF08\u6B64\u524D\u56FA\u5316\u7684\u7528\u6237\u504F\u597D/\u8BBE\u5B9A\u53D8\u52A8/\u627F\u8BFA\uFF1B\u751F\u6210\u56DE\u590D\u524D\u53EF\u5148 memory_query \u68C0\u7D22\u66F4\u591A\uFF09
+${memoryText}`
+          });
+        }
+      } catch (e) {
+        console.log(`[dsht-rp] D-3 \u8BB0\u5FC6\u6E32\u67D3\u5931\u8D25\uFF08\u8DF3\u8FC7\uFF09\uFF1A${e.message}`);
+      }
+      try {
+        const { sheets } = await loadSheets(dshHome, sid);
+        const active = sheets.filter((s) => s.enabled);
+        if (active.length > 0) {
+          const tablesText = renderTablePrompt(active);
+          if (tablesText) out.push({ name: "dsht-memory:slot:tables", order: SLOT_ORDERS.tables, text: tablesText });
+        }
+      } catch {
+      }
+    } catch (e) {
+      console.log(`[dsht-rp] D-3 slot \u5185\u5BB9\u6536\u96C6\u5931\u8D25\uFF08\u4E0D\u963B\u585E\uFF09\uFF1A${e.message}`);
+    }
+    return out;
+  };
   const loadBook = async (lorePath, signal) => {
     try {
       signal.throwIfAborted();
@@ -16817,7 +17000,7 @@ function apply(ctx, _config) {
       } catch {
       }
       await mkdir5(startDir, { recursive: true });
-      await writeFile5(rpJsonPath, JSON.stringify({
+      await writeFile4(rpJsonPath, JSON.stringify({
         schemaVersion: 1,
         characterName: "DSHTavern \u5411\u5BFC",
         books: [],
@@ -16825,7 +17008,7 @@ function apply(ctx, _config) {
         macros: { char: "\u5411\u5BFC", user: "" },
         firstMes: ""
       }, null, 1), "utf8");
-      await writeFile5(
+      await writeFile4(
         join8(startDir, "README.md"),
         "# DSHTavern \u5411\u5BFC\n\n\u65B0\u624B\u5F15\u5BFC\u5DE5\u4F5C\u533A\uFF1A\u672C\u4F1A\u8BDD\u9996\u6761\u6D88\u606F\u662F\u4E0A\u624B\u6307\u5F15\uFF1B\u5BFC\u5165\u6458\u8981\u4E5F\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002\n",
         "utf8"
@@ -16869,7 +17052,7 @@ function apply(ctx, _config) {
       ];
       const sessionDir = join8(dshHome, "sessions", projectKey(`rp/${WELCOME_SLUG}`), sessionId);
       await mkdir5(sessionDir, { recursive: true });
-      await writeFile5(join8(sessionDir, "session.jsonl"), lines.join("\n") + "\n", "utf8");
+      await atomicWriteFile(join8(sessionDir, "session.jsonl"), lines.join("\n") + "\n");
       console.log("[dsht-rp] welcome workspace created (rp/_start + guide session)");
     } catch (e) {
       console.log(`[dsht-rp] welcome workspace skipped: ${e.message}`);
@@ -16901,8 +17084,8 @@ function apply(ctx, _config) {
           } catch {
           }
           if (same) continue;
-          await mkdir5(dirname5(abs), { recursive: true });
-          await writeFile5(abs, content, "utf8");
+          await mkdir5(dirname6(abs), { recursive: true });
+          await writeFile4(abs, content, "utf8");
           written++;
         } catch {
         }
@@ -16934,8 +17117,8 @@ function apply(ctx, _config) {
         ``
       ].join("\n") : f.content;
       const abs = join8(dshHome, f.path.replace(`.agent-presets/${preset.id}/`, `.agent-presets/${dirId}/`));
-      await mkdir5(dirname5(abs), { recursive: true });
-      await writeFile5(abs, content, "utf8");
+      await mkdir5(dirname6(abs), { recursive: true });
+      await writeFile4(abs, content, "utf8");
     }
     if (dirId !== preset.id) {
       await rm4(join8(dshHome, ".agent-presets", preset.id), { recursive: true, force: true });
@@ -17129,7 +17312,7 @@ function apply(ctx, _config) {
           const g = JSON.parse(await readFile7(join8(dshHome, "rp", "state", "global.json"), "utf8").catch(() => "{}"));
           const next2 = applyStatePatches(g, [{ op: "replace", path, value }]);
           await mkdir5(join8(dshHome, "rp", "state"), { recursive: true });
-          await writeFile5(join8(dshHome, "rp", "state", "global.json"), JSON.stringify(next2), "utf8");
+          await writeFile4(join8(dshHome, "rp", "state", "global.json"), JSON.stringify(next2), "utf8");
           console.log(`[dsht-rp] state_update(global): ${path}`);
           return `global state updated: ${path}`;
         }
@@ -17262,10 +17445,24 @@ ${text}`;
     });
   }
   ctx.on("system-prompt/assemble", async (_assembly, context, next) => {
-    const assembly = await next();
+    let assembly = await next();
     try {
       const agent = context.agent ?? context.scope;
       if (!agent || !assembly || !Array.isArray(assembly.sections)) return assembly;
+      const selfSections = await gatherSlotSections(agent);
+      const published = slotPublished.get(agent)?.sections ?? [];
+      const merged = /* @__PURE__ */ new Map();
+      for (const s of [...selfSections, ...published]) merged.set(s.name, s);
+      if (merged.size > 0) {
+        const extra2 = planSlotSections({ sections: [...merged.values()] }, neutralizeResidualMacros);
+        if (extra2.length > 0) {
+          assembly = {
+            ...assembly,
+            sections: [...assembly.sections, ...extra2]
+          };
+          console.log(`[dsht-rp] D-3 system \u69FD\u4F4D\u6CE8\u5165\uFF1A${extra2.length} \u6BB5 / ${extra2.reduce((n, s) => n + s.text.length, 0)}ch\uFF08${extra2.map((s) => s.name).join(", ")}\uFF09[self=${selfSections.length} published=${published.length}]`);
+        }
+      }
       const resolved = await resolveAgentPreset(agent);
       if (!resolved) return assembly;
       const { slug, rp, preset, sessionId } = resolved;
@@ -17297,6 +17494,43 @@ ${text}`
       return assembly;
     }
   });
+  try {
+    if (existsSync(join8(dshHome, "rp", "golden", "dsht-ENABLED")) && !globalThis.__dshtGoldenFetchPatched) {
+      ;
+      globalThis.__dshtGoldenFetchPatched = true;
+      const gdir0 = join8(dshHome, "rp", "golden", "dsht");
+      mkdirSync(gdir0, { recursive: true });
+      const seqFile0 = join8(gdir0, "llm-seq.txt");
+      const gFetch = globalThis.fetch.bind(globalThis);
+      globalThis.fetch = (async (input, init) => {
+        try {
+          const url = typeof input === "string" ? input : input?.url ?? String(input);
+          const body = typeof init === "object" && init !== null ? init.body : void 0;
+          if (typeof body === "string" && body.length > 200 && /chat\/completions|\/v1\/messages|provider\/v1/i.test(url)) {
+            let seq = 0;
+            try {
+              seq = parseInt(readFileSync(seqFile0, "utf8").trim() || "0", 10) || 0;
+            } catch {
+            }
+            seq += 1;
+            writeFileSync(join8(gdir0, `llm-${String(seq).padStart(3, "0")}.json`), JSON.stringify({
+              tag: "provider_llm_request",
+              seq,
+              env: "dshtavern",
+              ts: (/* @__PURE__ */ new Date()).toISOString(),
+              url: url.slice(0, 200),
+              data: { body: JSON.parse(body) }
+            }, null, 1));
+            writeFileSync(seqFile0, String(seq));
+          }
+        } catch {
+        }
+        return gFetch(input, init);
+      });
+      console.log("[dsht-rp] golden: provider fetch \u62E6\u622A\u5DF2\u542F\u7528\uFF08llm dump \u2192 rp/golden/dsht/\uFF09");
+    }
+  } catch {
+  }
   ctx.on("agent/request", async (payload, next) => {
     const config = await next();
     try {
@@ -17309,11 +17543,54 @@ ${text}`
       if (typeof s.temperature === "number") out.temperature = s.temperature;
       if (typeof s.maxTokens === "number") out.maxTokens = s.maxTokens;
       if (Array.isArray(s.stopSequences) && s.stopSequences.length > 0) out.stop = s.stopSequences;
-      if (typeof s.reasoningEffort === "string" && s.reasoningEffort) out.reasoningEffort = s.reasoningEffort;
+      const REASONING_EFFORT_SUPPORTED = /* @__PURE__ */ new Set(["minimal", "low", "medium", "high"]);
+      if (typeof s.reasoningEffort === "string" && REASONING_EFFORT_SUPPORTED.has(s.reasoningEffort)) {
+        out.reasoningEffort = s.reasoningEffort;
+      } else {
+        delete out.reasoningEffort;
+      }
+      try {
+        if (existsSync(join8(dshHome, "rp", "golden", "dsht-ENABLED"))) {
+          const gdir = join8(dshHome, "rp", "golden", "dsht");
+          await mkdir5(gdir, { recursive: true });
+          const seqFile = join8(gdir, "seq.txt");
+          let seq = 0;
+          try {
+            seq = parseInt((await readFile7(seqFile, "utf8")).trim() || "0", 10) || 0;
+          } catch {
+          }
+          seq += 1;
+          await writeFile4(join8(gdir, `dump-${String(seq).padStart(3, "0")}.json`), JSON.stringify({
+            tag: "agent_request_config",
+            seq,
+            env: "dshtavern",
+            ts: (/* @__PURE__ */ new Date()).toISOString(),
+            cwd: agent.session?.header?.cwd ?? null,
+            data: { config: out }
+          }, null, 1));
+          await writeFile4(seqFile, String(seq));
+        }
+      } catch {
+      }
       return out;
     } catch {
       return config;
     }
+  });
+  ctx.on("llm/stream", (options, next) => {
+    try {
+      const o = options;
+      const msgs = Array.isArray(o.messages) ? o.messages : [];
+      const head = msgs.slice(0, 3).map((m) => {
+        const mm = m;
+        const c = typeof mm.content === "string" ? mm.content : JSON.stringify(mm.content ?? "");
+        return `${String(mm.role ?? "?")}:${c.length}ch`;
+      });
+      console.log(`[dsht-rp] llm/stream \u89C2\u6D4B: provider=${String(o.provider ?? "")} model=${String(o.model ?? "")} messages=${msgs.length} system=${typeof o.system === "string" ? o.system.length + "ch" : "(none)"} tools=${Array.isArray(o.tools) ? o.tools.length : 0} maxTokens=${String(o.maxTokens ?? "")} temp=${String(o.temperature ?? "")} purpose=${String(o.purpose ?? "")} sessionId=${String(o.sessionId ?? "")} | \u99963\u6761: ${head.join(" ")}`);
+    } catch (e) {
+      console.log(`[dsht-rp] llm/stream \u89C2\u6D4B\u5931\u8D25: ${e.message}`);
+    }
+    return next();
   });
   ctx.on("agent/pre-step", async (raw, next) => {
     const decision = await next();
@@ -17321,6 +17598,30 @@ ${text}`
     const { agent, messages, signal } = raw;
     const slug = rpSlugFromCwd(agent.session.header.cwd, dshHome);
     console.log(`[dsht-rp] pre-step: cwd=${agent.session.header.cwd ?? "(none)"} slug=${slug ?? "(not-rp)"} turn=${raw.turn}`);
+    try {
+      if (existsSync(join8(dshHome, "rp", "golden", "dsht-ENABLED"))) {
+        const gdir = join8(dshHome, "rp", "golden", "dsht");
+        await mkdir5(gdir, { recursive: true });
+        const seqFile = join8(gdir, "msg-seq.txt");
+        let seq = 0;
+        try {
+          seq = parseInt((await readFile7(seqFile, "utf8")).trim() || "0", 10) || 0;
+        } catch {
+        }
+        seq += 1;
+        await writeFile4(join8(gdir, `msg-${String(seq).padStart(3, "0")}.json`), JSON.stringify({
+          tag: "agent_prestep_messages",
+          seq,
+          env: "dshtavern",
+          ts: (/* @__PURE__ */ new Date()).toISOString(),
+          cwd: agent.session.header.cwd ?? null,
+          turn: raw.turn ?? null,
+          data: { messages }
+        }, null, 1));
+        await writeFile4(seqFile, String(seq));
+      }
+    } catch {
+    }
     if (slug === null) return decision;
     try {
       signal.throwIfAborted();
@@ -17371,14 +17672,14 @@ ${text}`
           const summary = renderStateSummary(st.state ?? st.variables ?? {});
           if (summary && retainedState.get(agent) !== summary) {
             retainedState.set(agent, summary);
-            d = withStateSnapshot(d, summary);
+            if (!SLOT_ROUTING) d = withStateSnapshot(d, summary);
           }
           const personaRaw = (rp.promptPersona ?? "").trim();
           if (personaRaw) {
             const personaText = await expandSnapshotMacros(personaRaw, rp, slug, sid);
             if (personaText && retainedPersona.get(agent) !== personaText) {
               retainedPersona.set(agent, personaText);
-              d = withPersonaSnapshot(d, personaText);
+              if (!SLOT_ROUTING) d = withPersonaSnapshot(d, personaText);
             }
           }
           const memoryText = renderMemorySnapshot((await loadMemory(dshHome, sid)).entries);
@@ -17387,7 +17688,7 @@ ${text}`
 ${memoryText}`;
             if (retainedMemory.get(agent) !== memorySnapshot) {
               retainedMemory.set(agent, memorySnapshot);
-              d = withMemorySnapshot(d, memorySnapshot);
+              if (!SLOT_ROUTING) d = withMemorySnapshot(d, memorySnapshot);
             }
           }
           if (hasDirectUserInput(messages)) {
@@ -17398,7 +17699,7 @@ ${memoryText}`;
                 const tablesText = renderTablePrompt(active);
                 if (tablesText && retainedTables.get(agent) !== tablesText) {
                   retainedTables.set(agent, tablesText);
-                  d = withTablesSnapshot(d, tablesText);
+                  if (!SLOT_ROUTING) d = withTablesSnapshot(d, tablesText);
                 }
               }
             } catch {
@@ -17704,7 +18005,7 @@ ${rp.firstMes}
             }
             if (onceKeys.length > 0) {
               const rest = injList.filter((e) => !(e.once === true && typeof e.key === "string" && onceKeys.includes(e.key)));
-              await mkdir5(dirname5(injFile), { recursive: true });
+              await mkdir5(dirname6(injFile), { recursive: true });
               await atomicWriteFile(injFile, JSON.stringify(rest));
             }
             console.log(`[dsht-rp] th injects: ${sorted.length} \u6761\u9152\u9986\u52A9\u624B\u6CE8\u5165\uFF08once \u6D88\u8D39 ${onceKeys.length}\uFF09`);
@@ -17753,6 +18054,12 @@ ${rp.firstMes}
       console.log(`[dsht-rp] scan: entries=${entries.length} activated=${result.activated.length} dropped=${result.budgetDropped.length} snapshot=${snapshotText.length}ch depthInj=${buckets.atDepth.length} regexHits=${regexHits.length}${opening ? " (+opening)" : ""}`);
       if (retained.get(agent) === snapshotText) return await viaAssembleHook(withPresetLayer(baseDecision));
       retained.set(agent, snapshotText);
+      if (SLOT_ROUTING) {
+        publishSlots(agent, [
+          { name: "dsht-rp:slot:worldbook", order: SLOT_ORDERS.worldbook, text: snapshotText }
+        ]);
+        return await viaAssembleHook(withPresetLayer(baseDecision));
+      }
       return await viaAssembleHook(withPresetLayer(withSnapshot(baseDecision, snapshotText)));
     } catch (error) {
       if (error?.name === "AbortError") throw error;
@@ -17932,6 +18239,31 @@ ${rp.firstMes}
               res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "max-age=3600" });
               return res.end(JSON.stringify({ name: name2 }));
             }
+            if (sub === "/rp/build-info") {
+              let sentinel = null;
+              try {
+                const runtimeDir = join8(dshHome, "..", "dsh-runtime");
+                const entries = await readdir5(runtimeDir);
+                let maxV = -1;
+                for (const e of entries) {
+                  if (!e.startsWith(".installed-v")) continue;
+                  const n = Number(e.slice(".installed-v".length));
+                  if (Number.isFinite(n) && n > maxV) {
+                    maxV = n;
+                    sentinel = e;
+                  }
+                }
+                if (maxV < 0) sentinel = null;
+              } catch {
+              }
+              let dshVersion = null;
+              try {
+                const pkg = JSON.parse(readFileSync(join8(dshHome, "..", "dsh-runtime", "node_modules", "@deepseek-ai", "dsh", "package.json"), "utf8"));
+                dshVersion = pkg.version ?? null;
+              } catch {
+              }
+              return send(200, { sentinel, dshVersion, fixTag: "wb-fix-0908" });
+            }
             return sendText(404, "not found", "text/plain");
           }
           if (req.method === "DELETE" && subPath === "/rp/import-checkpoint") {
@@ -17950,6 +18282,7 @@ ${rp.firstMes}
           } catch {
             return send(400, { error: "bad json" });
           }
+          if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return send(400, { error: "bad json: body must be an object" });
           try {
             if (sub === "/diag") {
               return send(200, await diagSnapshot());
@@ -17965,7 +18298,7 @@ ${rp.firstMes}
                   fileCount = await unpackZipTo(join8(dir2, "source.zip"), unpacked);
                 }
                 const manifest = await scanImportManifest(unpacked);
-                await writeFile5(join8(dir2, "meta.json"), JSON.stringify({
+                await writeFile4(join8(dir2, "meta.json"), JSON.stringify({
                   batchId: batchId2,
                   name: name2,
                   format: rawFile ? "file" : "zip",
@@ -17982,10 +18315,10 @@ ${rp.firstMes}
                 const dir2 = join8(dshHome, "rp-import", batchId2);
                 if (rawFile) {
                   await mkdir5(join8(dir2, "unpacked", "inbox"), { recursive: true });
-                  await writeFile5(join8(dir2, "unpacked", "inbox", name2), Buffer.from(payload.dataBase64, "base64"));
+                  await writeFile4(join8(dir2, "unpacked", "inbox", name2), Buffer.from(payload.dataBase64, "base64"));
                 } else {
                   await mkdir5(dir2, { recursive: true });
-                  await writeFile5(join8(dir2, "source.zip"), Buffer.from(payload.dataBase64, "base64"));
+                  await writeFile4(join8(dir2, "source.zip"), Buffer.from(payload.dataBase64, "base64"));
                 }
                 return send(200, await stageBatch(batchId2, dir2));
               }
@@ -17997,8 +18330,8 @@ ${rp.firstMes}
               if (!isValidBatchId(batchId)) return send(400, { error: "batchId \u975E\u6CD5\uFF08index 0 \u65F6\u4E0D\u4F20\u5219\u7531\u670D\u52A1\u7AEF\u5206\u914D\uFF09" });
               const dir = join8(dshHome, "rp-import", batchId);
               const target = rawFile ? join8(dir, "unpacked", "inbox", name2) : join8(dir, "source.zip");
-              await mkdir5(dirname5(target), { recursive: true });
-              await writeFile5(target, Buffer.from(chunk, "base64"), { flag: index === 0 ? "w" : "a" });
+              await mkdir5(dirname6(target), { recursive: true });
+              await writeFile4(target, Buffer.from(chunk, "base64"), { flag: index === 0 ? "w" : "a" });
               if (payload.done !== true) return send(200, { batchId, index, staged: false });
               return send(200, await stageBatch(batchId, dir));
             }
@@ -18040,8 +18373,8 @@ ${rp.firstMes}
                 String(payload.sessionId ?? "") || await latestAdapterSessionId(),
                 [`rp-import/${batchId}/checkpoint.json`]
               );
-              await mkdir5(dirname5(cpPath), { recursive: true });
-              await writeFile5(cpPath, JSON.stringify(merged, null, 1), "utf8");
+              await mkdir5(dirname6(cpPath), { recursive: true });
+              await writeFile4(cpPath, JSON.stringify(merged, null, 1), "utf8");
               const summary = summarizeCheckpoint(merged);
               logLine(`import-checkpoint: ${batchId} stage=${stage} done=${merged.stages[stage]?.done.length ?? 0}`);
               console.log(`[dsht-rp] import-checkpoint: ${batchId} stage=${stage} doneCount=${summary.doneCount}`);
@@ -18062,7 +18395,7 @@ ${rp.firstMes}
               const clean = list.filter((p) => typeof p?.name === "string" && p.name.trim()).map((p) => ({ name: String(p.name).trim(), description: typeof p.description === "string" ? p.description : "" }));
               const active = typeof payload.active === "string" && clean.some((p) => p.name === payload.active) ? payload.active : null;
               const file = { schemaVersion: 1, active, list: clean };
-              await mkdir5(dirname5(personaPath), { recursive: true });
+              await mkdir5(dirname6(personaPath), { recursive: true });
               {
                 const snapPaths = ["rp/persona.json"];
                 for (const dir of await readdir5(join8(dshHome, "rp")).catch(() => [])) {
@@ -18074,7 +18407,7 @@ ${rp.firstMes}
                 }
                 await snapshotRpFiles(String(payload.sessionId ?? "") || await latestRpSessionId(), snapPaths);
               }
-              await writeFile5(personaPath, JSON.stringify(file, null, 1), "utf8");
+              await writeFile4(personaPath, JSON.stringify(file, null, 1), "utf8");
               let touched = 0;
               if (active !== null) {
                 for (const dir of await readdir5(join8(dshHome, "rp")).catch(() => [])) {
@@ -18082,7 +18415,7 @@ ${rp.firstMes}
                   try {
                     const rp = JSON.parse(await readFile7(rpPath, "utf8"));
                     rp.macros = { ...rp.macros ?? {}, user: active };
-                    await writeFile5(rpPath, JSON.stringify(rp, null, 1), "utf8");
+                    await writeFile4(rpPath, JSON.stringify(rp, null, 1), "utf8");
                     touched++;
                   } catch {
                   }
@@ -18202,12 +18535,12 @@ ${rp.firstMes}
               const adapterDir = join8(dshHome, "rp-import", "_adapter");
               await mkdir5(adapterDir, { recursive: true });
               const wsDir = await realpath2(adapterDir).catch(() => adapterDir);
-              const ws = await rpc("workspace.create", { path: wsDir });
+              const ws = await rpc("workspace.create", { request: { path: wsDir } });
               const workspace = ws.workspace;
               const workspaceId = workspace?.workspaceId;
               if (workspaceId) {
                 try {
-                  await rpc("workspace.rename", { workspaceId, title: "ST \u6570\u636E\u9002\u914D" });
+                  await rpc("workspace.rename", { request: { workspaceId, title: "ST \u6570\u636E\u9002\u914D" } });
                 } catch (e) {
                   console.log(`[dsht-rp] kickoff rename failed: ${e.message}`);
                 }
@@ -18216,15 +18549,17 @@ ${rp.firstMes}
               let presetUsed = "dsht-adapter";
               try {
                 const created = await rpc("session.create", {
-                  ...workspaceId ? { workspaceId } : { cwd: wsDir },
-                  agentPreset: "dsht-adapter"
+                  request: {
+                    ...workspaceId ? { workspaceId } : { cwd: wsDir },
+                    agentPreset: "dsht-adapter"
+                  }
                 });
                 sessionId = String(created.sessionId ?? "");
               } catch (e) {
                 const code = e.code ?? "";
                 if (!code.startsWith("agent-preset")) throw e;
                 presetUsed = null;
-                const created = await rpc("session.create", workspaceId ? { workspaceId } : { cwd: wsDir });
+                const created = await rpc("session.create", { request: workspaceId ? { workspaceId } : { cwd: wsDir } });
                 sessionId = String(created.sessionId ?? "");
                 console.log(`[dsht-rp] kickoff: dsht-adapter preset \u4E0D\u53EF\u7528\uFF08${e.message}\uFF09\uFF0C\u9000\u9ED8\u8BA4 preset`);
               }
@@ -18245,9 +18580,9 @@ ${rp.firstMes}
                 // §4.16.1 断点续跑：resumeFrom=true 且 checkpoint 非空时追加续跑指示（否则空串）
                 await resumeNote()
               ].join("\n");
-              await rpc("session.prompt", { sessionId, mode: "queue", content: [{ type: "text", text: kickoffText }] });
+              await rpc("session.prompt", { request: { requestId: randomUUID2(), sessionId, mode: "queue", content: [{ type: "text", text: kickoffText }] } });
               meta.kickoff = { sessionId, workspaceId: workspaceId ?? null, preset: presetUsed, at: (/* @__PURE__ */ new Date()).toISOString() };
-              await writeFile5(metaPath, JSON.stringify(meta, null, 1), "utf8");
+              await writeFile4(metaPath, JSON.stringify(meta, null, 1), "utf8");
               logLine(`import-kickoff: ${batchId} \u2192 session ${sessionId}\uFF08preset=${presetUsed ?? "\u9ED8\u8BA4"}\uFF09`);
               console.log(`[dsht-rp] import-kickoff: ${batchId} \u2192 session=${sessionId} preset=${presetUsed ?? "default"}`);
               return send(200, { batchId, dir, sessionId, workspaceId: workspaceId ?? null, preset: presetUsed, reused: false });
@@ -18278,14 +18613,21 @@ ${rp.firstMes}
                   let lines = 0;
                   let lastTime = null;
                   try {
-                    const text = await readFile7(f, "utf8");
-                    const rows = text.split("\n").filter((r) => r.trim() !== "");
-                    lines = Math.max(0, rows.length - 1);
+                    let count = 0;
+                    let firstRow = "";
+                    let lastRow = "";
+                    const rl = createInterface({ input: createReadStream(f, { encoding: "utf8" }), crlfDelay: Infinity });
+                    for await (const row of rl) {
+                      if (row.trim() === "") continue;
+                      if (count === 0) firstRow = row;
+                      lastRow = row;
+                      count++;
+                    }
+                    lines = Math.max(0, count - 1);
                     try {
-                      header = JSON.parse(rows[0] ?? "{}");
+                      header = JSON.parse(firstRow);
                     } catch {
                     }
-                    const lastRow = rows[rows.length - 1];
                     try {
                       lastTime = Number(JSON.parse(lastRow).time ?? 0) || null;
                     } catch {
@@ -18382,9 +18724,9 @@ ${rp.firstMes}
                 const wsAbs = await realpath2(cwd).catch(() => cwd);
                 const target = join8(dshHome, "sessions", projectKey(wsAbs), encodeSegment(sessionId), "session.jsonl");
                 const existed = await readFile7(target, "utf8").then(() => true, () => false);
-                if (existed) await writeFile5(`${target}.bak2`, await readFile7(target, "utf8"), "utf8");
+                if (existed) await atomicWriteFile(`${target}.bak2`, await readFile7(target, "utf8"));
                 await mkdir5(join8(target, ".."), { recursive: true });
-                await writeFile5(target, conv2.content, "utf8");
+                await atomicWriteFile(target, conv2.content);
                 console.log(`[dsht-rp] convert-chat(file): ${sessionId} \u2190 ${filePath} \u2192 ${conv2.turns} turns, ${conv2.variantGroups} variant groups, ${conv2.skipped} skipped`);
                 return send(200, {
                   written: true,
@@ -18475,16 +18817,16 @@ ${rp.firstMes}
                     const conv = convertChatFile(text, { sessionId, createdAt, cwd: wsAbs });
                     const target = join8(dshHome, "sessions", projectKey(wsAbs), encodeSegment(sessionId), "session.jsonl");
                     const existed = await readFile7(target, "utf8").then(() => true, () => false);
-                    if (existed) await writeFile5(`${target}.bak2`, await readFile7(target, "utf8"), "utf8");
+                    if (existed) await atomicWriteFile(`${target}.bak2`, await readFile7(target, "utf8"));
                     await mkdir5(join8(target, ".."), { recursive: true });
-                    await writeFile5(target, conv.content, "utf8");
+                    await atomicWriteFile(target, conv.content);
                     try {
                       const meta = JSON.parse(text.split("\n")[0]);
                       const vars = meta?.chat_metadata?.variables;
                       if (vars && typeof vars === "object" && Object.keys(vars).length > 0) {
                         const statePath = join8(dshHome, "rp", "state", `${sessionId}.json`);
-                        await mkdir5(dirname5(statePath), { recursive: true });
-                        await writeFile5(statePath, JSON.stringify(vars), "utf8");
+                        await mkdir5(dirname6(statePath), { recursive: true });
+                        await atomicWriteText(statePath, JSON.stringify(vars));
                       }
                     } catch {
                     }
@@ -18513,40 +18855,48 @@ ${rp.firstMes}
                 if (!Number.isInteger(keepThroughSeq) || keepThroughSeq < 0) return send(400, { error: "keepThroughSeq \u987B\u4E3A >= 0 \u7684\u6574\u6570" });
               }
               const live = ctx.sessions?.get(sessionId);
+              const includeAnchor = payload.includeAnchor === true;
               if (live !== void 0 && typeof live.append === "function" && Array.isArray(live.surface?.nodes)) {
-                const view = live.surface.nodes;
-                const anchor = isEdit ? editSeq : keepThroughSeq;
-                const idx = view.indexOf(anchor);
-                if (idx === -1) return send(400, { error: `\u76EE\u6807\u6D88\u606F seq=${anchor} \u4E0D\u5728\u5F53\u524D\u89C6\u56FE\uFF08\u53EF\u80FD\u5DF2\u88AB\u56DE\u9000/\u6298\u53E0\uFF09` });
-                const start = isEdit ? anchor : idx + 1 < view.length ? view[idx + 1] : -1;
-                if (start === -1 || start > view[view.length - 1]) return send(200, { logical: true, replaced: 0, note: "no-op\uFF08\u76EE\u6807\u4E4B\u540E\u6CA1\u6709\u53EF\u56DE\u9000\u7684\u89C6\u56FE\u5185\u5BB9\uFF09" });
-                const end = view[view.length - 1];
-                const seqs = view.filter((q) => q >= start);
-                let shadowed = 0;
-                for (const q of seqs) {
-                  const d = sessionEventAt(live, q)?.data ?? {};
-                  const blocks = Array.isArray(d.content) ? d.content : [];
-                  shadowed += blocks.reduce((t, b) => t + (b && (b.type === "text" || b.type === "reasoning") && typeof b.text === "string" ? Math.ceil(b.text.length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
-                }
-                live.append("compaction/prune", { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
-                const anchorTime = typeof sessionEventAt(live, anchor)?.time === "number" ? sessionEventAt(live, anchor)?.time : Date.now();
-                const undo = await replayUndoLog(dshHome, sessionId, anchorTime);
-                const markerText = isEdit ? `[\u6D88\u606F\u5DF2\u7F16\u8F91] \u8BE5\u6D88\u606F\u539F\u6587\u53CA\u5176\u540E\u7684\u56DE\u590D\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF0C\u7F16\u8F91\u540E\u7684\u65B0\u6D88\u606F\u968F\u540E\u53D1\u51FA\u3002` : `[\u5DF2\u56DE\u9000] \u8BE5\u6D88\u606F\u4E4B\u540E\u7684\u5BF9\u8BDD\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF08\u4E8B\u4EF6\u4ECD\u4FDD\u7559\u5728\u65E5\u5FD7\uFF0C\u53EF\u7ECF /expand \u67E5\u770B\uFF09\u3002`;
-                live.append("user/message", {
-                  id: `dsht-rp-${isEdit ? "edit" : "rollback"}-${randomUUID2()}`,
-                  role: "user",
-                  content: [{ type: "text", text: markerText }],
-                  source: isEdit ? { kind: "plugin", plugin: "dsht-rp", editedFrom: anchor } : { kind: "plugin", plugin: "dsht-rp", rolledBackTo: keepThroughSeq }
-                }, { surfaceOp: { op: "replace", start, end }, sourceEventSeqs: seqs });
-                logLine(`${isEdit ? "session-edit" : "session-rollback"}(live): ${sessionId} \u951A seq ${anchor} \u2192 replace [${start},${end}] ${seqs.length} \u4E8B\u4EF6\uFF1B\u53D8\u91CF\u56DE\u6EDA ${undo.restored} \u6761`);
-                console.log(`[dsht-rp] ${isEdit ? "session-edit" : "session-rollback"}: ${sessionId} (live) replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`);
-                try {
-                  await flushLiveSession(ctx.sessions, live);
-                } catch (e) {
-                  return send(500, { error: `${isEdit ? "\u7F16\u8F91" : "\u56DE\u9000"}\u5DF2\u5E94\u7528\u4F46\u843D\u76D8\u5931\u8D25\uFF1A${e.message}` });
-                }
-                rollbackMaskCache.clear();
-                return send(200, { logical: true, replaced: seqs.length, variablesRestored: undo.restored, ...isEdit ? { editedSeq: anchor } : { truncatedTo: keepThroughSeq } });
+                return await withLiveSurgery(sessionId, async () => {
+                  const view = live.surface.nodes;
+                  const anchor = isEdit ? editSeq : keepThroughSeq;
+                  let start;
+                  const idx = view.indexOf(anchor);
+                  if (idx !== -1) {
+                    start = includeAnchor ? anchor : idx + 1 < view.length ? view[idx + 1] : -1;
+                  } else {
+                    start = view.find((q) => q > anchor) ?? -1;
+                  }
+                  if (start === -1 || start > view[view.length - 1]) return send(200, { logical: true, replaced: 0, note: "no-op\uFF08\u76EE\u6807\u4E4B\u540E\u6CA1\u6709\u53EF\u56DE\u9000\u7684\u89C6\u56FE\u5185\u5BB9\uFF09" });
+                  const end = view[view.length - 1];
+                  const seqs = view.filter((q) => q >= start);
+                  let shadowed = 0;
+                  for (const q of seqs) {
+                    const raw = sessionEventAt(live, q)?.data ?? {};
+                    const d = raw.message && typeof raw.message === "object" ? raw.message : raw;
+                    const blocks = Array.isArray(d.content) ? d.content : [];
+                    shadowed += blocks.reduce((t, b) => t + (b && (b.type === "text" || b.type === "reasoning") && typeof b.text === "string" ? Math.ceil(b.text.length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
+                  }
+                  const anchorTime = typeof sessionEventAt(live, anchor)?.time === "number" ? sessionEventAt(live, anchor)?.time : Date.now();
+                  const undo = await replayUndoLog(dshHome, sessionId, anchorTime);
+                  live.append("compaction/prune", { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
+                  const markerText = isEdit ? `[\u6D88\u606F\u5DF2\u7F16\u8F91] \u8BE5\u6D88\u606F\u539F\u6587\u53CA\u5176\u540E\u7684\u56DE\u590D\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF0C\u7F16\u8F91\u540E\u7684\u65B0\u6D88\u606F\u968F\u540E\u53D1\u51FA\u3002` : includeAnchor ? `[\u5DF2\u56DE\u9000] \u8BE5\u6D88\u606F\u53CA\u5176\u540E\u7684\u5BF9\u8BDD\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF08\u539F\u6587\u5DF2\u653E\u56DE\u8F93\u5165\u6846\uFF1B\u4E8B\u4EF6\u4ECD\u4FDD\u7559\u5728\u65E5\u5FD7\uFF0C\u53EF\u7ECF /expand \u67E5\u770B\uFF09\u3002` : `[\u5DF2\u56DE\u9000] \u8BE5\u6D88\u606F\u4E4B\u540E\u7684\u5BF9\u8BDD\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF08\u4E8B\u4EF6\u4ECD\u4FDD\u7559\u5728\u65E5\u5FD7\uFF0C\u53EF\u7ECF /expand \u67E5\u770B\uFF09\u3002`;
+                  live.append("user/message", {
+                    id: `dsht-rp-${isEdit ? "edit" : "rollback"}-${randomUUID2()}`,
+                    role: "user",
+                    content: [{ type: "text", text: markerText }],
+                    source: isEdit ? { kind: "plugin", plugin: "dsht-rp", editedFrom: anchor } : { kind: "plugin", plugin: "dsht-rp", rolledBackTo: includeAnchor ? anchor - 1 : keepThroughSeq }
+                  }, { surfaceOp: { op: "replace", start, end }, sourceEventSeqs: seqs });
+                  logLine(`${isEdit ? "session-edit" : "session-rollback"}(live): ${sessionId} \u951A seq ${anchor} \u2192 replace [${start},${end}] ${seqs.length} \u4E8B\u4EF6\uFF1B\u53D8\u91CF\u56DE\u6EDA ${undo.restored} \u6761`);
+                  console.log(`[dsht-rp] ${isEdit ? "session-edit" : "session-rollback"}: ${sessionId} (live) replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`);
+                  try {
+                    await flushLiveSession(ctx.sessions, live);
+                  } catch (e) {
+                    return send(500, { error: `${isEdit ? "\u7F16\u8F91" : "\u56DE\u9000"}\u5DF2\u5E94\u7528\u4F46\u843D\u76D8\u5931\u8D25\uFF1A${e.message}` });
+                  }
+                  rollbackMaskCache.clear();
+                  return send(200, { logical: true, replaced: seqs.length, variablesRestored: undo.restored, ...isEdit ? { editedSeq: anchor } : { truncatedTo: keepThroughSeq } });
+                });
               }
               if (!isEdit) {
                 if (ctx.sessions?.get(sessionId) !== void 0) {
@@ -18572,11 +18922,15 @@ ${rp.firstMes}
                 const fsnap = await restoreSnapshotsAfter(dshHome, sessionId, snapshotRestoreBoundary(content, keepThroughSeq));
                 const cutoff = sessionContentMaxTime(r.content);
                 const undo = await replayUndoLog(dshHome, sessionId, cutoff);
+                rollbackMaskCache.clear();
                 logLine(`session-rollback: ${sessionId} \u622A\u5230 seq ${keepThroughSeq}\uFF08\u7559 ${r.kept} \u4E8B\u4EF6\uFF0C\u622A ${r.dropped}\uFF1B\u53D8\u91CF\u56DE\u6EDA ${undo.restored} \u6761\uFF1B\u6587\u4EF6\u5FEB\u7167\u56DE\u6EDA ${fsnap.restoredTurns.length} turn/${fsnap.filesRestored + fsnap.filesDeleted} \u6587\u4EF6\uFF09`);
                 console.log(`[dsht-rp] session-rollback: ${sessionId} \u2192 kept=${r.kept} dropped=${r.dropped} undoRestored=${undo.restored} snapshotTurns=${fsnap.restoredTurns.join(",")}`);
                 return send(200, { kept: r.kept, dropped: r.dropped, variablesRestored: undo.restored, fileSnapshots: { turns: fsnap.restoredTurns, restored: fsnap.filesRestored, deleted: fsnap.filesDeleted, errors: fsnap.errors } });
               }
               {
+                if (ctx.sessions?.get(sessionId) !== void 0) {
+                  return send(409, { error: "session live\uFF08\u5185\u5B58\u6001\u6743\u5A01\uFF09\uFF1A\u5148\u5728 DSH \u91CC\u5173\u95ED\u8BE5\u4F1A\u8BDD\u518D\u7F16\u8F91" });
+                }
                 const hit = (await scanSessionHeaders2()).find((h) => h.sessionId === sessionId);
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` });
                 const file = join8(dshHome, "sessions", hit.project, hit.sdir, "session.jsonl");
@@ -18629,51 +18983,53 @@ ${rp.firstMes}
               if (!sessionId) return send(400, { error: "sessionId required" });
               const live = ctx.sessions?.get(sessionId);
               if (live !== void 0 && typeof live.append === "function" && Array.isArray(live.surface?.nodes)) {
-                const evList = [];
-                let n = 0;
-                for (const ev of sessionEventsSnapshot(live)) {
-                  const seq = typeof ev.seq === "number" ? ev.seq : n++;
-                  if (!ev || ev.type !== "user/message") continue;
-                  if (ev.data?.source?.kind !== "user") continue;
-                  const blocks = Array.isArray(ev.data?.content) ? ev.data.content : [];
-                  const text = blocks.filter((b) => b && b.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n");
-                  evList.push({ seq, time: typeof ev.time === "number" ? ev.time : void 0, text });
-                }
-                evList.sort((a, b) => a.seq - b.seq);
-                const anchorEv = evList[evList.length - 1];
-                if (anchorEv === void 0) return send(400, { error: "\u4F1A\u8BDD\u91CC\u6CA1\u6709\u7528\u6237\u6D88\u606F\uFF08\u65E0\u53EF\u91CD\u65B0\u751F\u6210\u7684\u951A\u70B9\uFF09" });
-                const view = live.surface.nodes;
-                const idx = view.indexOf(anchorEv.seq);
-                if (idx === -1) return send(400, { error: `\u951A\u6D88\u606F seq=${anchorEv.seq} \u4E0D\u5728\u5F53\u524D\u89C6\u56FE` });
-                if (idx + 1 >= view.length) return send(200, { logical: true, replaced: 0, lastUserText: anchorEv.text, note: "no-op\uFF08\u951A\u6D88\u606F\u4E4B\u540E\u6CA1\u6709\u53EF\u91CD\u751F\u6210\u7684\u89C6\u56FE\u5185\u5BB9\uFF09" });
-                const start = view[idx + 1];
-                const end = view[view.length - 1];
-                const seqs = view.filter((q) => q >= start);
-                let shadowed = 0;
-                for (const q of seqs) {
-                  const d = sessionEventAt(live, q)?.data ?? {};
-                  const blocks = Array.isArray(d.content) ? d.content : [];
-                  shadowed += blocks.reduce((t, b) => t + (b && (b.type === "text" || b.type === "reasoning") && typeof b.text === "string" ? Math.ceil(b.text.length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
-                }
-                live.append("compaction/prune", { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
-                const anchorTime = typeof anchorEv.time === "number" ? anchorEv.time : Date.now();
-                const undo = await replayUndoLog(dshHome, sessionId, anchorTime);
-                const markerText = `[\u91CD\u65B0\u751F\u6210\u4E2D] \u8BE5\u6D88\u606F\u6B64\u524D\u7684\u56DE\u590D\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF0C\u6B63\u5728\u4EE5\u539F\u6D88\u606F\u91CD\u65B0\u751F\u6210\u3002`;
-                live.append("user/message", {
-                  id: `dsht-rp-regenerate-${randomUUID2()}`,
-                  role: "user",
-                  content: [{ type: "text", text: markerText }],
-                  source: { kind: "plugin", plugin: "dsht-rp", regeneratedFrom: anchorEv.seq }
-                }, { surfaceOp: { op: "replace", start, end }, sourceEventSeqs: seqs });
-                logLine(`session-regenerate(live): ${sessionId} \u951A seq ${anchorEv.seq} \u2192 replace [${start},${end}] ${seqs.length} \u4E8B\u4EF6\uFF1B\u53D8\u91CF\u56DE\u6EDA ${undo.restored} \u6761`);
-                console.log(`[dsht-rp] session-regenerate: ${sessionId} (live) anchor=${anchorEv.seq} replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`);
-                try {
-                  await flushLiveSession(ctx.sessions, live);
-                } catch (e) {
-                  return send(500, { error: `\u91CD\u751F\u6210\u6807\u8BB0\u5DF2\u5E94\u7528\u4F46\u843D\u76D8\u5931\u8D25\uFF1A${e.message}` });
-                }
-                rollbackMaskCache.clear();
-                return send(200, { logical: true, replaced: seqs.length, lastUserText: anchorEv.text, variablesRestored: undo.restored });
+                return await withLiveSurgery(sessionId, async () => {
+                  const evList = [];
+                  let n = 0;
+                  for (const ev of sessionEventsSnapshot(live)) {
+                    const seq = typeof ev.seq === "number" ? ev.seq : n++;
+                    if (!ev || ev.type !== "user/message") continue;
+                    if (ev.data?.source?.kind !== "user") continue;
+                    const blocks = Array.isArray(ev.data?.content) ? ev.data.content : [];
+                    const text = blocks.filter((b) => b && b.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n");
+                    evList.push({ seq, time: typeof ev.time === "number" ? ev.time : void 0, text });
+                  }
+                  evList.sort((a, b) => a.seq - b.seq);
+                  const anchorEv = evList[evList.length - 1];
+                  if (anchorEv === void 0) return send(400, { error: "\u4F1A\u8BDD\u91CC\u6CA1\u6709\u7528\u6237\u6D88\u606F\uFF08\u65E0\u53EF\u91CD\u65B0\u751F\u6210\u7684\u951A\u70B9\uFF09" });
+                  const view = live.surface.nodes;
+                  const idx = view.indexOf(anchorEv.seq);
+                  const start = idx !== -1 ? idx + 1 < view.length ? view[idx + 1] : -1 : view.find((q) => q > anchorEv.seq) ?? -1;
+                  if (start === -1 || start > view[view.length - 1]) return send(200, { logical: true, replaced: 0, lastUserText: anchorEv.text, note: "no-op\uFF08\u951A\u6D88\u606F\u4E4B\u540E\u6CA1\u6709\u53EF\u91CD\u751F\u6210\u7684\u89C6\u56FE\u5185\u5BB9\uFF09" });
+                  const end = view[view.length - 1];
+                  const seqs = view.filter((q) => q >= start);
+                  let shadowed = 0;
+                  for (const q of seqs) {
+                    const raw = sessionEventAt(live, q)?.data ?? {};
+                    const d = raw.message && typeof raw.message === "object" ? raw.message : raw;
+                    const blocks = Array.isArray(d.content) ? d.content : [];
+                    shadowed += blocks.reduce((t, b) => t + (b && (b.type === "text" || b.type === "reasoning") && typeof b.text === "string" ? Math.ceil(b.text.length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
+                  }
+                  const anchorTime = typeof anchorEv.time === "number" ? anchorEv.time : Date.now();
+                  const undo = await replayUndoLog(dshHome, sessionId, anchorTime);
+                  live.append("compaction/prune", { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
+                  const markerText = `[\u91CD\u65B0\u751F\u6210\u4E2D] \u8BE5\u6D88\u606F\u6B64\u524D\u7684\u56DE\u590D\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF0C\u6B63\u5728\u4EE5\u539F\u6D88\u606F\u91CD\u65B0\u751F\u6210\u3002`;
+                  live.append("user/message", {
+                    id: `dsht-rp-regenerate-${randomUUID2()}`,
+                    role: "user",
+                    content: [{ type: "text", text: markerText }],
+                    source: { kind: "plugin", plugin: "dsht-rp", regeneratedFrom: anchorEv.seq }
+                  }, { surfaceOp: { op: "replace", start, end }, sourceEventSeqs: seqs });
+                  logLine(`session-regenerate(live): ${sessionId} \u951A seq ${anchorEv.seq} \u2192 replace [${start},${end}] ${seqs.length} \u4E8B\u4EF6\uFF1B\u53D8\u91CF\u56DE\u6EDA ${undo.restored} \u6761`);
+                  console.log(`[dsht-rp] session-regenerate: ${sessionId} (live) anchor=${anchorEv.seq} replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`);
+                  try {
+                    await flushLiveSession(ctx.sessions, live);
+                  } catch (e) {
+                    return send(500, { error: `\u91CD\u751F\u6210\u6807\u8BB0\u5DF2\u5E94\u7528\u4F46\u843D\u76D8\u5931\u8D25\uFF1A${e.message}` });
+                  }
+                  rollbackMaskCache.clear();
+                  return send(200, { logical: true, replaced: seqs.length, lastUserText: anchorEv.text, variablesRestored: undo.restored });
+                });
               }
               {
                 if (ctx.sessions?.get(sessionId) !== void 0) {
@@ -18992,7 +19348,7 @@ ${rp.firstMes}
                   if (card && card.embeddedRegex.length > 0 && (!Array.isArray(rp.regex) || rp.regex.length === 0)) {
                     await snapshotRpFiles(await sessionIdForSlug(slug), [`rp/${slug}/rp.json`]);
                     rp.regex = card.embeddedRegex;
-                    await writeFile5(rpPath, JSON.stringify(rp, null, 1), "utf8");
+                    await writeFile4(rpPath, JSON.stringify(rp, null, 1), "utf8");
                     filled = true;
                   }
                   const rawJ = JSON.parse(rawCard);
@@ -19001,7 +19357,7 @@ ${rp.firstMes}
                   const th = cext.tavern_helper && typeof cext.tavern_helper === "object" ? cext.tavern_helper.scripts : void 0;
                   let thCount = 0;
                   if (Array.isArray(th) && th.length > 0) {
-                    await writeFile5(join8(dir, "tavern-helper-scripts.json"), JSON.stringify({ scripts: th }, null, 1), "utf8");
+                    await writeFile4(join8(dir, "tavern-helper-scripts.json"), JSON.stringify({ scripts: th }, null, 1), "utf8");
                     thCount = th.length;
                   }
                   cards.push({ slug, embeddedRegex: card?.embeddedRegex.length ?? 0, filled, tavernHelperScripts: thCount });
@@ -19042,7 +19398,7 @@ ${rp.firstMes}
                       const st = JSON.parse(await readFile7(join8(oaiDir, file), "utf8"));
                       const scripts = st.extensions?.tavern_helper?.scripts;
                       if (!Array.isArray(scripts) || scripts.length === 0) continue;
-                      await writeFile5(
+                      await writeFile4(
                         join8(dshHome, "rp-presets", pid, "tavern-helper-scripts.json"),
                         JSON.stringify({ scripts }, null, 1),
                         "utf8"
@@ -19067,7 +19423,7 @@ ${rp.firstMes}
                     if (Object.keys(parsed).some((k) => STATE_RESERVED_KEYS.has(k))) continue;
                     const sid = f.replace(/\.json$/, "");
                     await snapshotRpFiles(sid, [`rp/state/${f}`]);
-                    await writeFile5(fp, JSON.stringify({ variables: parsed }), "utf8");
+                    await writeFile4(fp, JSON.stringify({ variables: parsed }), "utf8");
                     stateFixed++;
                   } catch (e) {
                     errors.push(`state ${f}: ${e.message}`);
@@ -19146,7 +19502,7 @@ ${rp.firstMes}
                 const line = `${parsed.keyRef}: ${yamlStr(parsed.keyValue)}`;
                 const re = new RegExp(`^${parsed.keyRef}:.*$`, "m");
                 cred = re.test(cred) ? cred.replace(re, line) : cred.trimEnd() + (cred.trim() ? "\n" : "") + line + "\n";
-                await writeFile5(credPath, cred, { encoding: "utf8", mode: 384 });
+                await writeFile4(credPath, cred, { encoding: "utf8", mode: 384 });
               }
               const settingsPath = join8(dshHome, "settings.yaml");
               let doc = "";
@@ -19171,7 +19527,7 @@ agent-default-model:
   model: ${yamlStr(parsed.model)}
 `;
               void profileYaml;
-              await writeFile5(settingsPath, doc.trimEnd() + (doc.trim() ? "\n" : "") + block, "utf8");
+              await writeFile4(settingsPath, doc.trimEnd() + (doc.trim() ? "\n" : "") + block, "utf8");
               logLine(`import-api-config: ${parsed.provider} \u5199\u5165 settings.yaml\uFF08\u91CD\u542F\u751F\u6548\uFF09`);
               return send(200, {
                 provider: parsed.provider,
@@ -19209,12 +19565,12 @@ agent-default-model:
                     failed.push(`${rel}: \u8D8A\u754C`);
                     continue;
                   }
-                  await mkdir5(dirname5(abs), { recursive: true });
+                  await mkdir5(dirname6(abs), { recursive: true });
                   if (binary) {
                     const b64 = String(f?.content?.base64 ?? f?.content ?? "");
-                    await writeFile5(abs, Buffer.from(b64, "base64"));
+                    await writeFile4(abs, Buffer.from(b64, "base64"));
                   } else {
-                    await writeFile5(abs, content, "utf8");
+                    await writeFile4(abs, content, "utf8");
                   }
                   written++;
                 } catch (e) {
@@ -19533,7 +19889,7 @@ ${replyText.slice(0, 8e3)}
               const books = Array.isArray(payload.books) ? payload.books.filter((b) => typeof b?.lorePath === "string").map((b) => ({ name: String(b.name ?? b.lorePath), lorePath: String(b.lorePath) })) : [];
               rp.books = books;
               await snapshotRpFiles(String(payload.sessionId ?? "") || await sessionIdForSlug(slug), [`rp/${slug}/rp.json`]);
-              await writeFile5(rpPath, JSON.stringify(rp, null, 1), "utf8");
+              await writeFile4(rpPath, JSON.stringify(rp, null, 1), "utf8");
               console.log(`[dsht-rp] bind-books: ${slug} \u2192 ${books.length} books`);
               return send(200, { ok: true, count: books.length });
             }
@@ -19546,8 +19902,8 @@ ${replyText.slice(0, 8e3)}
               let written = 0;
               for (const f of files) {
                 const abs = join8(dshHome, f.path);
-                await mkdir5(dirname5(abs), { recursive: true });
-                await writeFile5(abs, f.content, "utf8");
+                await mkdir5(dirname6(abs), { recursive: true });
+                await writeFile4(abs, f.content, "utf8");
                 written++;
               }
               try {
@@ -19845,7 +20201,8 @@ ${replyText.slice(0, 8e3)}
                 const oldSource = oldMsg.source && typeof oldMsg.source === "object" ? oldMsg.source : {};
                 const oldThData = oldSource["thData"] !== void 0 ? oldSource["thData"] : null;
                 const data = t.data !== void 0 ? t.data : oldThData;
-                const shadowedTokens = Math.ceil(text.length / 4) + 4;
+                const oldBlocks = Array.isArray(oldMsg.content) ? oldMsg.content : [];
+                let shadowedTokens = oldBlocks.reduce((t2, b) => t2 + (b && (b["type"] === "text" || b["type"] === "reasoning") && typeof b["text"] === "string" ? Math.ceil(b["text"].length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
                 live.append("compaction/prune", { shadowedRange: { start: seq, end: seq }, shadowedSeqs: [seq], shadowedTokenCount: shadowedTokens });
                 const turn = typeof oldData.turn === "number" ? oldData.turn : 1;
                 const step = typeof oldData.step === "number" ? oldData.step : 1;
@@ -19924,12 +20281,12 @@ ${replyText.slice(0, 8e3)}
               if (install.outcome !== "unchanged") {
                 for (const block of skills) {
                   await mkdir5(join8(dshHome, block.dir), { recursive: true });
-                  await writeFile5(join8(dshHome, block.dir, "SKILL.md"), renderPresetSkillMd(preset.displayName, block), "utf8");
+                  await writeFile4(join8(dshHome, block.dir, "SKILL.md"), renderPresetSkillMd(preset.displayName, block), "utf8");
                 }
                 for (const ps of preset.pendingSkills ?? []) {
                   const dir = pendingSkillDir(ps.name);
                   await mkdir5(join8(dshHome, dir), { recursive: true });
-                  await writeFile5(join8(dshHome, dir, "SKILL.md"), renderPendingSkillMd(preset.displayName, ps), "utf8");
+                  await writeFile4(join8(dshHome, dir, "SKILL.md"), renderPendingSkillMd(preset.displayName, ps), "utf8");
                 }
                 presetCache.delete(preset.id);
                 presetRegexCache.delete(preset.id);
@@ -19964,7 +20321,7 @@ ${replyText.slice(0, 8e3)}
                 return send(400, { error: "\u5185\u7F6E\u9884\u8BBE\u4E0D\u53EF\u8986\u76D6\uFF08\u5148\u5728\u7BA1\u7406\u9762\u677F\u590D\u5236\u4E3A\u81EA\u5B9A\u4E49\uFF09" });
               }
               await mkdir5(join8(dshHome, "rp-presets", preset.id), { recursive: true });
-              await writeFile5(join8(dshHome, "rp-presets", preset.id, "preset.json"), JSON.stringify(preset, null, 1), "utf8");
+              await writeFile4(join8(dshHome, "rp-presets", preset.id, "preset.json"), JSON.stringify(preset, null, 1), "utf8");
               await markPresetUserOwned(join8(dshHome, "rp-presets", preset.id));
               presetCache.delete(preset.id);
               await syncRpPresetToAgent(preset);
@@ -20064,7 +20421,7 @@ ${replyText.slice(0, 8e3)}
               const scripts = Array.isArray(payload.scripts) ? payload.scripts : [];
               await mkdir5(join8(dshHome, "rp", "regex"), { recursive: true });
               await snapshotRpFiles(String(payload.sessionId ?? "") || await latestRpSessionId(), ["rp/regex/global.json"]);
-              await writeFile5(join8(dshHome, "rp", "regex", "global.json"), JSON.stringify({ scripts }, null, 1), "utf8");
+              await writeFile4(join8(dshHome, "rp", "regex", "global.json"), JSON.stringify({ scripts }, null, 1), "utf8");
               globalRegexCache = null;
               console.log(`[dsht-rp] regex/save-global: ${scripts.length} scripts`);
               return send(200, { ok: true, count: scripts.length });
@@ -20082,7 +20439,7 @@ ${replyText.slice(0, 8e3)}
               }
               rp.regex = scripts;
               await snapshotRpFiles(String(payload.sessionId ?? "") || await sessionIdForSlug(slug), [`rp/${slug}/rp.json`]);
-              await writeFile5(rpPath, JSON.stringify(rp, null, 1), "utf8");
+              await writeFile4(rpPath, JSON.stringify(rp, null, 1), "utf8");
               console.log(`[dsht-rp] regex/save-scoped: ${slug} \u2192 ${scripts.length} scripts`);
               return send(200, { ok: true, count: scripts.length });
             }
@@ -20108,7 +20465,7 @@ ${replyText.slice(0, 8e3)}
                 return send(404, { error: `\u9884\u8BBE\u4E0D\u5B58\u5728\uFF1A${presetId}` });
               }
               await snapshotRpFiles(String(payload.sessionId ?? "") || await latestRpSessionId(), [`rp-presets/${presetId}/regex.json`]);
-              await writeFile5(join8(dir, "regex.json"), JSON.stringify({ scripts }, null, 1), "utf8");
+              await writeFile4(join8(dir, "regex.json"), JSON.stringify({ scripts }, null, 1), "utf8");
               console.log(`[dsht-rp] regex/save-preset: ${presetId} \u2192 ${scripts.length} scripts`);
               return send(200, { ok: true, count: scripts.length });
             }
@@ -20187,8 +20544,8 @@ ${replyText.slice(0, 8e3)}
           const tokenFile = join8(dshHome, "dsht-token");
           const existing = await readFile7(tokenFile, "utf8").catch(() => "");
           if (existing.trim() !== launchToken) {
-            await mkdir5(dirname5(tokenFile), { recursive: true });
-            await writeFile5(tokenFile, launchToken, "utf8");
+            await mkdir5(dirname6(tokenFile), { recursive: true });
+            await writeFile4(tokenFile, launchToken, "utf8");
             console.log("[dsht-rp] launch token written to dsht-token (stdout-independent channel)");
           }
         } catch {

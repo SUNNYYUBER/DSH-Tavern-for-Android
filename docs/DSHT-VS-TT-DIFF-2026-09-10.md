@@ -118,21 +118,82 @@ settings.yaml
 > `files/dsh-runtime/node_modules/<pkg>/lib/index.js` 与
 > `files/.dsh/profiles/web/node_modules/<pkg>/lib/index.js`；后者才是运行时实际 import 的路径。
 
-### D-3　role 映射策略完全不同　【结构性】
+### D-3　role 映射策略完全不同　【结构性】—— ✅ **2026-09-10 主体已修复（system 槽位路由）**
 
 - **TT**：22/25 条都是 `system`，只有 2 条 `user` + 1 条 `assistant`。
   - 所有世界书/角色卡/文风要求/大纲/记忆 → **全部折叠进 system 消息**。
   - 只有 `[13]` 用户实际输入（21 字）和 `[23]` `<User_latest_request>` 包装（106 字）是 user。
   - `[24]` 是 assistant 收尾（75 字，表单指令）。
-- **DSHT**：40 条 `user`、仅 1 条 `system`（24,773 字，是 DSH 自身的 agent 说明书）。
+- **DSHT（修复前）**：40 条 `user`、仅 1 条 `system`（24,773 字，是 DSH 自身的 agent 说明书）。
   - 角色卡/世界书/记忆全部以 **user 角色** 注入。
-- **影响**：`user` 角色承载系统级指令，模型对 `user` 消息的服从度与 `system` 不同；且 DSHT 的 user 消息里混入了 `<system-reminder>` 等本应 system 的内容（见 `[5]`）。这是**语义层级错位**，会直接改变模型的指令跟随行为。
+- **影响**：`user` 角色承载系统级指令，模型对 `user` 消息的服从度与 `system` 不同。这是**语义层级错位**，会直接改变模型的指令跟随行为。
 
-### D-4　组装顺序不一致　【中】
+#### 修复：`system-prompt/assemble` 的 `assembly.sections`（唯一合法通道）
+
+四条证据链定死了「在哪里能改」：
+
+1. `agent-loop/src/agent.ts:505` `markAgentLoopRequest(deepFreeze({...messages, system, tools}))`
+   → loop 请求**深度冻结**，mutation throws。
+2. 核心 API catalog 明文：`... so listeners read it, never rewrite it.`
+   → **`llm/stream` 改写请求的方案被证伪**（原设计假设，已废弃）。
+3. `session/src/index.ts:315` `expectedRole = type === "assistant/message" ? "assistant" : "user"`
+   → **`user/message` 的 role 被核心钉死**，注入层无法产出 `system` 角色消息。
+4. ✅ `agent-loop/src/agent.ts:230` `assemble(assembleContextFor(this, signal))`
+   → `:337` `const system = renderPrompt(assembly)`（sections 按 order 升序，以 \n\n 拼接）
+   → `:339` `buildRequest(..., system, session.deriveMessages(), ...)`
+   → `agent/src/dispatch.ts:173` `assembleContextFor` 把 **live Agent 放进 `context.agent`**。
+
+**故唯一合法通道 = `system-prompt/assemble` 瀑布返回的 `assembly.sections`。**
+
+实现（`packages/src/dsh-plugin/index.ts` + `dsht-plugin-shared/tt-projection.ts`）：
+
+- `gatherSlotSections(agent)`：assemble 内**现算**角色卡/状态树/记忆/表格 → `SlotSection[]`。
+- 世界书（需 pre-step 的关键词扫描管线）由 pre-step `publishSlots` 发布，assemble 按 `name` 合并。
+- `planSlotSections`：按 `SLOT_ORDERS` 排序 + 残余宏中性化 + 丢空段。
+- `SLOT_ROUTING` 开关：`$DSH_HOME/rp/slot-routing-OFF` 存在即回滚旧行为（不改代码可 A/B）。
+- 关闭时 pre-step 的 `with*Snapshot` 路径一字未动（行为与修复前完全一致）。
+
+#### 实测（同 wuwa 会话，实机 logcat）
+
+| 时点 | `system` | 说明 |
+|---|---|---|
+| 修复前 | **24,773 ch** | 仅 DSH agent 说明书；角色卡/世界书/状态树全在 user 席 |
+| D-3 首轮 | **62,654 ch** | `[self=2 published=0]` — 角色卡 + 状态树，**首轮即生效** |
+| D-3 次轮 | **86,877 ch** | `3 段 / 62,098ch (character, worldbook, state) [self=2 published=1]` |
+
+`pre-step decision.messages` 从「用户输入 + 4 组快照」降为 **1 条 = 纯用户输入（13 字）**（turn 10 实测）。
+→ user 席位污染消失，系统级内容全部归位 system。
+
+#### 两个关键踩坑（已固化为铁律）
+
+- **时序铁律**：turn 内顺序恒为 `assemble(:230) → pre-step(:233) → 渲染(:337)`，
+  且无工具调用时**一 turn 仅一步**。故 pre-step 的发布对本 turn **不可见**（只对下一 turn 可见）。
+  → 内容必须在 assemble 内现算，pre-step 发布只能作为**补充**来源。
+  （首版只靠发布 → 首 turn system 恒空，实机探针 `slotPublished=none` 抓到。）
+- **合并铁律**：多来源发布必须按 `name` **合并**而非覆盖。
+  （首版覆盖式 → 世界书 24,221ch 被 withPresetLayer 的发布吃掉，`slot=2` 实机抓到。）
+
+#### 残留（下一步）
+
+历史楼层里 D-3 **之前**注入的 user 席快照（llm dump idx 14/15/16/30）仍会被 `deriveMessages`
+带进请求，直到影子化把它们折叠掉。属过渡态，随轮次收敛。
+
+### D-4　组装顺序不一致　【中】—— ⏳ 部分解决（绝对位置受核心约束不可达）
+
+### D-4　组装顺序不一致　【中】—— ⏳ 部分解决（绝对位置受核心约束不可达）
 
 - **TT 顺序**：`[0] 空 system → [1] 系统人设 → [2] 小说格式 → [3] stage_1 → [4] All_Context 开标签 → [5] 用户人设 → [6][7] 世界书 → [8][9] User_Prefs → [10] 小说原文 → [11] 过往记忆 → [12] 剧情大纲 → [13] 用户输入 → [14] 变量状态 → [15] 字体颜色 → [16] All_Context 闭标签 → [17] fox_extra 开 → [18][19][20] 文风/情节/人物 → [21] fox_extra 闭 → [22] stage_2 输出前检查 → [23] User_latest_request → [24] assistant 收尾`
 - **DSHT 顺序**：`[0] DSH agent 说明 → [1..2] 历史 → [3] 注入标记 → [4] 运行时上下文 → [5] skill 提醒 → [6] 世界书 → [7] 角色卡 → [8] 记忆 → …（重复）… → [52] 本轮用户输入 → [53] 用户名（漂泊者）`
 - **关键**：DSHT 把**用户最新输入放在第 52 条**（倒数第 7），而 TT 把它放在 `[23]`（倒数第 2，紧贴 assistant 收尾）。**末尾位置原则**在 DSHT 侧已被破坏。
+
+
+- **D-3 已解决的部分**：系统级内容的**相对语义序**现在由 `SLOT_ORDERS` 统一裁定并与 TT 对齐
+  （角色卡 20 → 世界书 25 → 记忆 30 → 剧情记忆 35 → 状态树 40 → 表格 45 → 预设 50）。
+- **未解决**：用户输入的**绝对位置**仍由 `session.deriveMessages()`（耐久日志顺序）决定，即恒定在历史之后。
+  TT 的「[13] 用户输入夹在 system 块中间 + [23] system 收尾 + [24] assistant 收尾」结构无法用合法通道复现 ——
+  因为 `deriveMessages` 的顺序是核心对耐久日志的纯函数，而 `assembly.sections` 只能拼进 `system` 字符串
+  （单一槽位，无法插进 messages 中间）。
+  → **结论：D-4 的绝对位置对齐在当前 DSH 核心约束下不可达**，除非 DSH 核心开放 messages 投影点。
 
 ### D-5　`<interactive_input>` 包装行为　【已修 + 存量脏数据】
 
