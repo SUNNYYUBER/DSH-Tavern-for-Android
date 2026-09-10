@@ -39,22 +39,29 @@ settings.yaml
 
 | 维度 | TT（基准） | DSHT | 比值 |
 |---|---|---|---|
-| 消息条数 | **25** | **58** | 2.32× |
-| 总字符数 | **85,437** | **361,367** | **4.23×** |
-| role 分布 | system 22 / user 2 / assistant 1 | system 1 / user 40 / assistant 10 / tool 7 | 结构性不同 |
-| 大块（>200字）重复组 | **0 组** | **4 组**（x5 / x5 / x4 / x4） | **DSHT 独有缺陷** |
+| 消息条数 | **25** | **71** | **2.84×** |
+| 总字符数 | **85,437** | **426,950** | **5.00×** |
+| role 分布 | system 22 / user 2 / assistant 1 | system 1 / user 53 / assistant 10 / tool 7 | 结构性不同 |
+| 大块（>200字）重复组 | **0 组** | **4 组**（×6 / ×6 / ×5 / ×5） | **DSHT 独有缺陷** |
+| `$1` 字面残留 | **0 条** | **7 条** | **存量脏数据** |
+
+> 数据来源：DSHT 侧 = `llm-055.json`（mock 实际收到的 493KB 请求体，`messages=71`）；
+> TT 侧 = `golden/st/dump-006-1788962482643.json`。
+
+**DSHT 采样参数**：`model=deepseek-v4-flash`、`stream=true`、`max_tokens=22144`、
+`temperature=1`、`thinking={"type":"disabled"}`、`tools=31`。
 
 ---
 
 ## 2. 逐项差异清单
 
-### D-1　消息条数膨胀 2.32×，字符膨胀 4.23×　【严重】
+### D-1　消息条数膨胀 2.84×，字符膨胀 5.00×　【严重】
 
-- **TT**：25 条。
-- **DSHT**：58 条。
-- **原因**：DSHT 把同一批上下文（世界书 24221 字、角色卡 36185 字、记忆 1678 字、MVU 变量树 2573 字）在**每一轮对话历史里重复固化**，而非在最终组装时去重合并。
-- **证据**：DSHT messages 索引 `[6][7][8]`、`[16][17][18][19]`、`[25][26][27][28]`、`[39][40][41][42]`、`[54][55][56][57]` —— **同一组内容出现 5 次**。
-- **影响**：4.23× token 消耗；极易触发上下文截断；模型在重复上下文中注意力稀释（表现为回复质量下降/自我复读）。
+- **TT**：25 条 / 85,437 字符。
+- **DSHT**：71 条 / 426,950 字符。
+- **原因**：DSHT 把同一批上下文（世界书 24221 字、角色卡 36185 字、记忆 2232 字、MVU 变量树 2573 字）在**每一轮对话历史里重复固化**，而非在最终组装时去重合并。
+- **证据**：DSHT messages 索引 `[6][7][8]`、`[16][17][18][19]`、`[25][26][27][28]`、`[39][40][41][42]`、`[54][55][56][57]`、`[63][64][65][66]` —— **同一组内容出现 6 次**。
+- **影响**：5× token 消耗；极易触发上下文截断；模型在重复上下文中注意力稀释（表现为回复质量下降/自我复读）。
 
 ### D-2　重复注入 4 组　【严重，DSHT 独有】
 
@@ -62,10 +69,10 @@ settings.yaml
 
 | 重复次数 | 内容首行 |
 |---|---|
-| **×5** | `你正在进行角色扮演。你扮演「ExampleGame ExampleWorld MVU Edition 0607」…`（36185 字角色卡） |
-| **×5** | `【剧情记忆（第 1-33 楼摘要；更早原文已折叠进本快照）】…`（1678 字） |
-| **×4** | `Current active worldbook entries for this roleplay scene…`（24221 字世界书） |
-| **×4** | `【角色状态（MVU 变量树，最新优先）】…`（2573 字） |
+| **×6** | `你正在进行角色扮演。你扮演「ExampleGame ExampleWorld MVU Edition 0607」…`（36185 字角色卡） |
+| **×6** | `【剧情记忆（第 1-33 楼摘要；更早原文已折叠进本快照）】…`（2232 字） |
+| **×5** | `Current active worldbook entries for this roleplay scene…`（24221 字世界书） |
+| **×5** | `【角色状态（MVU 变量树，最新优先）】…`（2573 字） |
 
 - **TT**：同类检测 **0 组** —— TT 的组装在最终阶段合并去重，每个上下文源只出现一次。
 - **定性**：这是**静默失败族**的新成员 —— 注入 API 每次调用都成功返回，但调用方按「楼层」而非「会话最新态」重复调用，导致历史里堆叠。
@@ -86,17 +93,17 @@ settings.yaml
 - **DSHT 顺序**：`[0] DSH agent 说明 → [1..2] 历史 → [3] 注入标记 → [4] 运行时上下文 → [5] skill 提醒 → [6] 世界书 → [7] 角色卡 → [8] 记忆 → …（重复）… → [52] 本轮用户输入 → [53] 用户名（漂泊者）`
 - **关键**：DSHT 把**用户最新输入放在第 52 条**（倒数第 7），而 TT 把它放在 `[23]`（倒数第 2，紧贴 assistant 收尾）。**末尾位置原则**在 DSHT 侧已被破坏。
 
-### D-5　`<interactive_input>` 包装行为　【已修 vs 存量脏数据】
+### D-5　`<interactive_input>` 包装行为　【已修 + 存量脏数据】
 
 - **TT 基准**：`[13]` 用户输入是裸的 `（金标对照测试）请用一两句话简单打个招呼。` —— **TT 侧没有 `<interactive_input>` 包装**（TT 走的是不同预设链路）。
 - **DSHT**：
-  - `[52]` 本轮输入 → `<interactive_input>\n（心跳31 代理通路验证）你好，请用一句话回应。\n</interactive_input>` —— **`$1` 修复已生效，内容正确** ✅
-  - `[13][14][20][23]` 历史楼层仍是 `<interactive_input>\n$1\n</interactive_input>` —— **存量脏数据**（这些楼层在 v196 修复前已写死进聊天记录）❌
+  - 本轮新消息 `[68]` → `<interactive_input>\n（流式 mock 验证）请回一个字。\n</interactive_input>`、`[70]` → `<interactive_input>\n（单命令端到端验证）回一个字。\n</interactive_input>` —— **`$1` 修复已生效，内容正确** ✅
+  - 自动检测：**7 条 `$1` 字面残留**（`[13][14][20][23][37]` 等）—— **存量脏数据**（这些楼层在 v196 修复前已写死进聊天记录）❌
 - **待判定**：DSHT 的 `<interactive_input>` 包装本身是否应保留。TT 无此包装 → 若要「体验一致」，需确认该包装是 DSHT 预设作者显式添加的（那应保留），还是迁移导入引入的（那应移除）。
 
 ### D-6　工具/agent 层污染　【结构性】
 
-- **DSHT 独有**：`[0]` 24,773 字的 DSH agent 说明书（"You are an AI agent powered by DeepSeek Harness..."）、7 条 `tool` 消息、10 条 `assistant` 思考链、`[4]` 运行时上下文、`[5]` skill 提醒、31 个 `tools` 定义。
+- **DSHT 独有**：`[0]` 24,773 字的 DSH agent 说明书、7 条 `tool` 消息、10 条 `assistant` 思考链、`[4]` 运行时上下文、`[5]` skill 提醒、**31 个 `tools` 定义**。
 - **TT**：完全没有这些 —— TT 是纯 RP 对话，无 agent 工具层。
 - **影响**：DSHT 的 RP 消息要跟 agent 工具链抢注意力；`tools: 31` 会让模型在 RP 场景下产生工具调用倾向（历史样本 `[29]-[35]` 正是模型在查 worldbook 工具而非直接 RP）。
 
@@ -106,10 +113,10 @@ settings.yaml
 |---|---|---|
 | `model` | （TT 侧为 imported，未在 chat 内） | `deepseek-v4-flash` |
 | `stream` | - | `true` |
-| `max_tokens` | - | 有 |
-| `temperature` | - | 有 |
-| `thinking` | - | 有 |
-| `tools` | 无 | 31 个 |
+| `max_tokens` | - | `22144` |
+| `temperature` | - | `1` |
+| `thinking` | - | `{"type":"disabled"}` |
+| `tools` | 无 | **31 个** |
 
 （TT 的采样参数在 `GENERATE_AFTER_COMBINE_PROMPTS` 的另一份 dump 里，需补齐对照。）
 
@@ -117,11 +124,17 @@ settings.yaml
 
 ## 3. 结论
 
-1. **心跳 31 目标达成**：DSHT 主聊天 payload 已可稳定截获（`baseURL` 写入 `llm-pi-ai.providers.deepseek`），对照链路闭环。
-2. **头号差异 = 重复注入（D-2）+ 条数膨胀（D-1）**：4.23× 字符膨胀、4 组大块重复，且 TT 侧为 0。这是**静默失败族**新成员，应作为下一轮修复的首要目标。
-3. **第二差异 = role 映射（D-3）与末尾位置（D-4）**：DSHT 把系统级指令塞进 `user` 角色、把用户输入放在倒数第 7 位 —— 属**组装语义**错误，非 API 缺失。
-4. **`$1` 修复已确认生效**（`[52]` 正确）；历史楼层 `[13][14][20][23]` 的 `$1` 是存量脏数据，需一次性清洗。
-5. **agent 层污染（D-6）** 是 DSHT 架构固有 —— 需评估 RP 会话是否应关闭 tools。
+1. **心跳 31 目标达成**：DSHT 主聊天 payload 已可稳定截获（`baseURL` 写入 `llm-pi-ai.providers.deepseek`），
+   且**端到端链路已实测打通** —— mock LLM 收到 DSHT 的完整 RP 请求（493,791B / `messages=71` / `stream=true`），
+   DSHT 前端成功渲染 mock 回复（楼层 #14 前后截图取证）。
+2. **发送自动化攻克**：CDP `Input.insertText` 可写入 Lexical 编辑器（旧「全灭」结论作废），
+   工具化为 `rp-workspace/scripts/dsht-send.mjs`。
+3. **头号差异 = 重复注入（D-2）+ 条数膨胀（D-1）**：**5.00× 字符膨胀、4 组大块重复（最高 ×6），且 TT 侧为 0**。
+   这是**静默失败族**新成员，应作为下一轮修复的首要目标。
+4. **第二差异 = role 映射（D-3）与末尾位置（D-4）**：DSHT 把系统级指令塞进 `user` 角色（53 条 user vs TT 的 2 条）、
+   把用户输入放在倒数第 3 位 —— 属**组装语义**错误，非 API 缺失。
+5. **`$1` 修复已确认生效**（新楼层内容正确）；历史 7 条 `$1` 为存量脏数据，需一次性清洗。
+6. **agent 层污染（D-6）** 是 DSHT 架构固有 —— 需评估 RP 会话是否应关闭 tools（31 个）。
 
 ---
 
@@ -130,8 +143,25 @@ settings.yaml
 | 优先级 | 项 | 落点 |
 |---|---|---|
 | P0 | 修重复注入（D-2）+ 条数膨胀（D-1） | RP 插件的 prompt 组装层：按会话最新态合并，不按楼层重复固化 |
-| P0 | 清洗存量 `$1` 脏楼层（D-5） | 一次性 migration：扫聊天记录，替换 `<interactive_input>\n$1\n</interactive_input>` |
+| P0 | 清洗 7 条存量 `$1` 脏楼层（D-5） | 一次性 migration：扫 `storages/session_projcache/sessions/*.json` |
 | P1 | role 映射对齐 TT（D-3：系统级注入走 system） | RP 插件注入层 |
 | P1 | 用户输入移到末尾（D-4） | prompt 组装顺序 |
 | P2 | 评估 RP 会话关闭 tools（D-6） | 会话/预设配置 |
 | P2 | 补 TT 的 `GENERATE_AFTER_COMBINE_PROMPTS` 采样参数对照（D-7） | 采集脚本 |
+| P2 | golden 接收器迁入 `ctx.webServer` 前缀路由（摆脱宿主进程回收） | `dsh-plugin/index.ts` webServer 段 |
+
+---
+
+## 附录：验证链路取证
+
+| 环节 | 证据 |
+|---|---|
+| baseURL 生效 | `llm-029.json.url = http://10.0.2.2:31102/v1/chat/completions` |
+| 请求真实到达 mock | `mock.log: POST /v1/chat/completions (493791B) messages=71 stream=true` |
+| DSHT 渲染回复 | 截图 `tmp/dsht-n6.png` 楼层 #14 显示 mock 固定回复 |
+| `$1` 修复生效 | 截图楼层 #14 `<interactive_input>（单命令端到端验证）回一个字。</interactive_input>` |
+| 自动化发送 | `dsht-send.mjs` 输出「✓ 文本注入成功 / ✓ 已发送（编辑器已清空）」 |
+
+**环境约束记录**：WorkBuddy 沙箱会在每个 tool call 边界回收后台 node 进程
+（nohup / spawn(detached) / cmd start 均失效）。因此「起服务 → 发送 → 采集」必须压在
+**同一个 tool call** 内完成，或把服务迁进 app 进程（`ctx.webServer`）。
