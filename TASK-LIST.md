@@ -186,11 +186,56 @@
      `RpNativeChat` 恒假分支、`TimedCache` 泛型双重 Promise
 - **顺带修掉构建不可复现**：vendor 5 包（jquery/jquery-ui/lodash/yaml/zod）此前靠
   `npm install --no-save` 装、**未在任何清单声明** → 一次 `pnpm install` 全部消失、构建挂
-  11 条 `Could not resolve`。现由 `scripts/vendor-deps.json`（权威版本表 + 逐包理由）+
-  `scripts/vendor-deps.mjs`（构建前自愈复核）钉死，`package.json` 同步声明（避免两源振荡）
+  11 条 `Could not resolve`（且报错行指向仓库里根本不存在的虚拟文件名 `th-vendor-entry.mjs`，
+  极易误判成源码写错）。现三处对齐：
+  · `scripts/vendor-deps.json` = **版本权威表**（版本 + 逐包理由，唯一事实来源）
+  · `scripts/vendor-deps.mjs` = 构建前**自愈 + 复核**（`build-rp-ui.mjs` 顶部调用）；
+    `--check` 只报告。缺包/漂移即按锚定表整批重装并复核，复核不过直接抛错
+  · `package.json` devDependencies = 同版本**显式声明**（+ 锁文件同步）
+  ▸ **为什么两处都要**：只放锚定表 → `pnpm install --frozen-lockfile` 装不到、干净克隆仍崩
+  （这正是原缺陷的复现路径）；只放 package.json → 版本理由无处安放、且与自愈脚本可能漂移。
+  故声明版本**必须与 `vendor-deps.json` 逐字一致**（当前 3.7.1 / 1.13.3 / 4.18.1 / 2.9.0 / 4.5.4），
+  否则会出现「pnpm 装 A 版 → 自愈改回 B 版」的振荡。
+  这 5 包只服务构建、**不进 APK 依赖图**（esbuild 按 import 打包，不按 package.json）
 - **验收**：`npm run typecheck`（core+ui）**全绿**；单测 **838/838**；`build-plugins.sh`
-  **构建通过**（vendor 锚定命中）
-- 详见 [.goal/upgrade-0.1.5/LEARNINGS.md](.goal/upgrade-0.1.5/LEARNINGS.md)
+  **构建通过**（vendor 锚定命中）；`pnpm install` 退出码 **0**（此前恒 1，见下）
+- **另修**：`pnpm install` 此前恒以 `ERR_PNPM_IGNORED_BUILDS` 退出 1（esbuild postinstall 被
+  供应链策略拦下，依赖其实装好了但非零退出会打断任何把 install 串在前的脚本/CI）→
+  新增 `packages/pnpm-workspace.yaml` 显式放行 esbuild
+- 详见 [.goal/upgrade-0.1.5/LEARNINGS.md](.goal/upgrade-0.1.5/LEARNINGS.md) L26–L29
+
+### T-36　🔴 **修复器把可读会话改成不可读**（自己的迁移补丁污染 v3 文件）　✅ **已修**（2026-09-11 心跳 47）
+- **实机现象**：会话打不开。UI 红字
+  `Failed to load history: stored session "session-fdfc1a28-…" is corrupt: invalid committed event
+   at line 22: format v3 system/message at seq 21 requires exact replace fields op/startSeq/endSeq`
+- **根因**：`dsht-plugin-shared/session-repair.ts` 在 :198 / :248 **无条件**写 v2 形状
+  `{op,start,end}`，而调用点（`dsh-plugin` 的 `scanSessionHeaders()` 循环）**不看 `header.version`**，
+  把修复器施加到**全部存量会话**（含已是 v3 的）→ v3 严格校验器
+  （`dsh-session-format-v2-to-v3/lib/index.js:323`）拒收。
+  **修复器每次启动都跑 → 会自我扩散**：修一次、坏一次。
+- **为什么此前没抓到**：阶段 3 的判据用 `foldSurface`，它读 surfaceOp 走**兼容读取器**
+  （两代字段名都认），比**真正加载会话日志的严格校验器**宽松 → **验证读侧 ≠ 运行时读侧**
+- ✅ **修复**：`repairSessionForV3` 按被修文件的 `header.version` 分叉（v3→`startSeq/endSeq`，
+  v0–v2→`start/end`）；并补**自愈判据**（v3 文件里出现 v2 形状 replace 本身即记 `changed`，
+  否则"除字段名外全合法"的污染文件会早退、永远修不好）
+- ✅ **回归**：+5 测试（v3 出 startSeq / v0 保 start / assistant-replace 拆出的标记也用 startSeq /
+  幂等 / 自愈不早退），**负控实证**：退回旧行为 → 3 条立刻失败
+- **待办（需你拍板）**：存量那 1 个 v3 文件的**实际修复**（修复器已能自愈，但落盘 = 改用户数据；
+  且有 `.bak`）。见「待决策 D-9」。详见 LEARNINGS **L30**
+
+### T-37　🟠 TH 宿主全局面缺 `Vue` / `SillyTavern`（卡脚本 ReferenceError + 每秒重跑注册循环）
+- **实测**：设备 WebView 控制台每次启动抛 `Uncaught ReferenceError: Vue is not defined` 与
+  `SillyTavern is not defined`；伴随 `[🦊][狐裁] 独立拦截器已注册`（每 2s）+
+  `[StoryCtrl] 状态变更，更新注入…`（每 1s）的**注册循环**，把 logcat 刷成主噪音
+- **判据**：脚本"反复重注册才算成功"= 上一次没真正生效 → **静默失败的一种形态**
+- **方向**：把「TH 宿主全局面」当**逐项补齐的清单**，来源 = 卡脚本实际 ReferenceError 的符号名
+  （已知需 `EjsTemplate`/`TavernHelper`/`YAML`/`showdown`/`toastr`/`z` + 实测的 `Vue`/`SillyTavern`），
+  沿用现有 vendor iife 机制（`build-rp-ui.mjs`）。详见 LEARNINGS **L31**
+
+### T-35　清理：4 份 deep-merge 实现收敛到 `dsht-plugin-shared`（P3）
+- 现存：`tavern-helper/variables.ts:deepMergeVars`、`th-shim.ts:deepMergeAssign`、
+  `dsht-plugin-mvu/index.ts:deepMerge`、`state/mvu.ts:deepMergeInitVars`（心跳 47 新增）
+- 语义差异尚未逐对核对（前 3 份是否都满足「存量优先、只补不改」）。先补对照表再收敛，勿盲目合并。
 
 ---
 
@@ -198,10 +243,10 @@
 
 | # | 项 | 说明 |
 |---|---|---|
-| T-28 | Tier 2 TH 长尾 API（约 50 项记名 stub 之外） | rebind 家族 / createOrReplacePreset / QuickReply 系 |
-| T-29 | EJS 完整语法（当前子集：无函数调用/箭头函数/模板字符串/正则字面量） | 显式报错，非静默失败 |
-| T-30 | 采样参数长尾（topP/topK/minP/penalties/seed…） | 等宿主 LLM 适配器白名单 |
-| T-31 | 表格记忆长尾（E7 自定义渲染占位符 / E9 编辑器 / E12 设置导入导出） | 每项时间盒 |
+| T-28 | Tier 2 TH 长尾 API（约 50 项记名 stub 之外） | ⏳ **未做**（设计如此）：不支持的 API 挂 stub → `console.warn` 记名 + `Promise.reject`（`th-shim.ts:392/1847`），**诚实失败而非假成功**。真 TH 长尾面（rebind 家族 / createOrReplacePreset / QuickReply 系）待「第三次冒同类问题」再升时间盒 |
+| T-29 | EJS 完整语法（当前子集：无函数调用/箭头函数/模板字符串/正则字面量） | ✅ **已核验达标**（2026-09-11）：判据是「显式报错，非静默失败」而非「支持全部语法」。**实证**：subset 对 4 类不支持语法**全部显式抛错**（函数调用 `trailing tokens`、箭头 `unexpected char: =`、模板串 `unexpected char: \``、正则 `unexpected token: /`）；批次入口 `renderMessages` 单条失败**保留原文 + 打 `ejsError` 标记**（不静默清空）。**完整语法另有引擎**：`engine:'sandbox'`（node `vm`）实测支持箭头函数（`2,4,6`）、模板字符串（`v=1`）、正则字面量（`true`）、模板内定义函数（`12`）、内建 `Math`。唯一边界：**上下文经 vm 传入的函数不可克隆**（`cb(2)` → `runtime-error`）——属 vm 机制固有，非语法缺口，且**失败分类显式**（`ok:false, kind:'runtime-error'`） |
+| T-30 | 采样参数长尾（topP/topK/minP/penalties/seed…） | 🚧 **宿主阻塞**：`dsh-llm-*` 适配器只透传 `temperature/max_tokens/stop` + `reasoningEffort`（H-②，`AUDIT_TASKLIST.md:257`）。**预设值已正确持久化**（`sampling.topP: 0.88` 实证），等宿主开放白名单即可生效 |
+| T-31 | 表格记忆长尾（E7 自定义渲染占位符 / E9 编辑器 / E12 设置导入导出） | ⏳ **未做**（V0.3-FREEZE §5 明列的冻结长尾） |
 | T-32 | `st-migration` skill 契约漂移复核 + 配探测脚本 | ✅ **契约漂移已复核并修正**（2026-09-11，心跳 45）：`references/session-jsonl-contract.md` 仍在教**已被 0.1.5 禁止**的 `assistant/message` replace 链（21/80 会话因此打不开的根源），已改为 user 标记 + append；补 `startSeq/endSeq` 字段名、source 白名单、user/message 必须包 step、官方不变量、**会话世代读法**、存量修复三重链。探针脚本暂缺（改由 `verify-session-pipeline.mjs` + 契约测试覆盖） |
 | T-33 | 复杂卡脚本逐卡适配（飞讯 / 示例游戏类） | 第三次冒同类问题即升 Tier 2 时间盒 |
 
