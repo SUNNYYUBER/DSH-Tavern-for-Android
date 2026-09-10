@@ -27,6 +27,8 @@
 
 // @adapt contract:session.v0-legacy-repair
 
+import { thFloorKeyOf } from './th-floors.ts'
+
 /** 信封允许的键（官方白名单，信封**没有** `source`） */
 const ENVELOPE_KEYS = new Set(['type', 'seq', 'time', 'data', 'surfaceOp', 'sourceEventSeqs', 'ignorable'])
 /** 聚合行 tag（宿主 text-chunks 打包形态；本修复器不展开，原样透传） */
@@ -41,6 +43,12 @@ const USER_SOURCE_KEYS = new Set(['kind', 'rpcId', 'clientTimeZone'])
 /** tool source 的合法键 */
 const TOOL_SOURCE_KEYS = new Set(['kind', 'callId'])
 
+/** 一条待落 sidecar 的楼层数据（key 在重编号后才最终确定） */
+interface PendingSalvage {
+  ev: RawEvent
+  payload: Record<string, unknown>
+}
+
 export interface SessionRepairResult {
   /** 重写后的会话文本（含尾换行）；未改动时与入参等值 */
   content: string
@@ -52,6 +60,15 @@ export interface SessionRepairResult {
   events: number
   /** 无法修复的硬错误（非空时 content 为原样） */
   error?: string
+  /**
+   * 从 `source` 上摘下的非法自定义键（0.1.5 白名单不允许），按楼层归集。
+   * 键 = message id（无 id 时 `seq:<最终 seq>`）；值 = 原始键值对。
+   *
+   * **调用方必须把它落进 sidecar**（`th-floors.ts` 的 `mergeSalvagedThFloors`）——
+   * 本模块是纯函数不碰磁盘；不落盘就等于静默丢数据（阶段 3 曾踩）。
+   * model source 没有 sections 位，sidecar 是唯一的合法归宿。
+   */
+  salvaged: Array<{ key: string; payload: Record<string, unknown> }>
 }
 
 interface RawEvent {
@@ -80,16 +97,18 @@ interface RawEvent {
 export function repairSessionForV3(content: string): SessionRepairResult {
   const lines = content.split('\n')
   while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop()
-  if (lines.length === 0) return { content, changed: false, notes: [], events: 0, error: '空文件' }
+  if (lines.length === 0) return { content, changed: false, notes: [], events: 0, salvaged: [], error: '空文件' }
 
   let header: Record<string, unknown>
   try { header = JSON.parse(lines[0]) as Record<string, unknown> } catch {
-    return { content, changed: false, notes: [], events: 0, error: 'header 不是合法 JSON' }
+    return { content, changed: false, notes: [], events: 0, salvaged: [], error: 'header 不是合法 JSON' }
   }
-  if (header?.type !== 'session') return { content, changed: false, notes: [], events: 0, error: '首行不是 session header' }
+  if (header?.type !== 'session') return { content, changed: false, notes: [], events: 0, salvaged: [], error: '首行不是 session header' }
 
   const notes: string[] = []
   let changed = false
+  /** source 上摘下来的非法自定义键，重编号后解析成最终 sidecar 键 */
+  const pendingSalvage: PendingSalvage[] = []
 
   // ---- 1) header ----
   const headerOut: Record<string, unknown> = { ...header }
@@ -147,9 +166,11 @@ export function repairSessionForV3(content: string): SessionRepairResult {
     if (ev.type === 'user/message') {
       const r = fixUserMessage(ev.data, notes)
       if (r.changed) { changed = true; ev.data = r.data }
+      if (r.dropped !== undefined) pendingSalvage.push({ ev, payload: r.dropped })
     } else if (ev.type === 'assistant/message') {
       const r = fixAssistantMessageSource(ev.data, notes)
       if (r.changed) { changed = true; ev.data = r.data }
+      if (r.dropped !== undefined) pendingSalvage.push({ ev, payload: r.dropped })
     } else if (ev.type === 'compaction/prune') {
       const r = fixPrune(ev.data, notes)
       if (r.changed) { changed = true; ev.data = r.data }
@@ -204,7 +225,7 @@ export function repairSessionForV3(content: string): SessionRepairResult {
   // 注意：此步可能**只**需要结构修复（无其他改动），故必须在下面的 changed 早退之前执行。
   if (normalizeStructure(out, notes)) changed = true
 
-  if (!changed) return { content, changed: false, notes: [], events: out.length }
+  if (!changed) return { content, changed: false, notes: [], events: out.length, salvaged: [] }
 
   // ---- 4) 重编号 ----
   // 按输出顺序给事件编号（引用稍后统一重映射）
@@ -245,9 +266,19 @@ export function repairSessionForV3(content: string): SessionRepairResult {
     else ev.time = lastTime
   }
 
+  // ---- 5.5) 解析待落 sidecar 的楼层键（seq 此时已最终确定） ----
+  // 只保留仍在输出流里的事件（结构归一时可能删掉个别事件）——避免写出悬空键。
+  const alive = new Set(out)
+  const salvaged: Array<{ key: string; payload: Record<string, unknown> }> = []
+  for (const { ev, payload } of pendingSalvage) {
+    if (!alive.has(ev)) continue
+    const key = thFloorKeyOf(ev.data, ev.seq)
+    if (key !== null) salvaged.push({ key, payload })
+  }
+
   // ---- 6) 序列化（信封只输出白名单键） ----
   const text = [JSON.stringify(headerOut), ...out.map(ev => JSON.stringify(serialize(ev)))].join('\n') + '\n'
-  return { content: text, changed: true, notes: [...new Set(notes)], events: out.length }
+  return { content: text, changed: true, notes: [...new Set(notes)], events: out.length, salvaged }
 }
 
 // ---------------------------------------------------------------- 结构归一
@@ -446,9 +477,15 @@ function normalizePluginForm(s: Record<string, unknown>, notes: string[]): boole
   return changed
 }
 
-/** user/message：补 id；把 source 上的自定义键搬进合法的 sections 标记 */
-function fixUserMessage(data: Record<string, unknown>, notes: string[]): { data: Record<string, unknown>; changed: boolean } {
+/**
+ * user/message：补 id；把 source 上的自定义键搬进合法的 sections 标记。
+ *
+ * plugin source 有 `form:'snapshot' + sections` 合法位，优先用它；其余 kind
+ * （model/user/tool）没有合法位 → 交给调用方落 sidecar，**不在这里丢弃**。
+ */
+function fixUserMessage(data: Record<string, unknown>, notes: string[]): { data: Record<string, unknown>; changed: boolean; dropped?: Record<string, unknown> } {
   let changed = false
+  let dropped: Record<string, unknown> | undefined
   const d: Record<string, unknown> = { ...data }
   if (typeof d.id !== 'string' || d.id === '') {
     d.id = `dsht-repair-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -467,7 +504,7 @@ function fixUserMessage(data: Record<string, unknown>, notes: string[]): { data:
     if (allowed !== null) {
       const illegal = Object.keys(s).filter(k => !allowed.has(k))
       if (illegal.length > 0) {
-        // thData 等结构化载荷 → 搬进 sections（plugin source 的合法携带位）
+        // thData 等结构化载荷 → plugin source 搬进 sections（合法携带位）
         const payload: Record<string, unknown> = {}
         for (const k of illegal) { payload[k] = s[k]; delete s[k] }
         if (s.kind === 'plugin') {
@@ -475,21 +512,27 @@ function fixUserMessage(data: Record<string, unknown>, notes: string[]): { data:
           sections.push({ name: 'dsht:legacy', text: JSON.stringify(payload) })
           s.form = s.form ?? 'snapshot'
           s.sections = sections
+          notes.push('user/message source 自定义键 → 搬进 sections 标记')
         } else {
-          notes.push(`user/message source(${kind}) 的自定义键已丢弃：${illegal.join(',')}`)
+          // 非 plugin source 无合法携带位 → 交调用方落 sidecar（阶段 3：不再静默丢弃）
+          dropped = payload
+          notes.push(`user/message source(${kind}) 的自定义键 → 移交 sidecar：${illegal.join(',')}`)
         }
-        if (!notes.some(n => n.startsWith('user/message source'))) notes.push('user/message source 自定义键 → 搬进 sections 标记')
         changed = true
       }
     }
     if (s.kind === 'plugin' && normalizePluginForm(s, notes)) changed = true
     d.source = s
   }
-  return { data: d, changed }
+  return { data: d, changed, ...(dropped !== undefined ? { dropped } : {}) }
 }
 
-/** assistant/message：剔除 model source 上的非法键（model source 无 sections 位，只能丢） */
-function fixAssistantMessageSource(data: Record<string, unknown>, notes: string[]): { data: Record<string, unknown>; changed: boolean } {
+/**
+ * assistant/message：剔除 model source 上的非法键。
+ * model source 是闭集 `{kind,provider,model,replayState}`，**没有 sections 位** →
+ * 摘下来的键返回给调用方落 sidecar（阶段 3：从「丢弃」改为「移交」）。
+ */
+function fixAssistantMessageSource(data: Record<string, unknown>, notes: string[]): { data: Record<string, unknown>; changed: boolean; dropped?: Record<string, unknown> } {
   const msg = data.message
   if (msg === null || typeof msg !== 'object') return { data, changed: false }
   const m = { ...(msg as Record<string, unknown>) }
@@ -498,10 +541,11 @@ function fixAssistantMessageSource(data: Record<string, unknown>, notes: string[
   const s = { ...(src as Record<string, unknown>) }
   const illegal = Object.keys(s).filter(k => !MODEL_SOURCE_KEYS.has(k))
   if (illegal.length === 0) return { data, changed: false }
-  for (const k of illegal) delete s[k]
+  const dropped: Record<string, unknown> = {}
+  for (const k of illegal) { dropped[k] = s[k]; delete s[k] }
   m.source = s
-  notes.push(`assistant/message source 的自定义键已丢弃（model source 无合法携带位）：${illegal.join(',')}`)
-  return { data: { ...data, message: m }, changed: true }
+  notes.push(`assistant/message source 的自定义键 → 移交 sidecar（model source 无合法携带位）：${illegal.join(',')}`)
+  return { data: { ...data, message: m }, changed: true, dropped }
 }
 
 /** compaction/prune：shadowedSeqs 去重升序 + 端点对齐 shadowedRange */

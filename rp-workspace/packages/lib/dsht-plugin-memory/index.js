@@ -72,6 +72,9 @@ const entry_ts_1 = require("../lore/entry.ts");
 const http_ts_1 = require("../dsht-plugin-shared/http.ts");
 const session_surgery_ts_1 = require("../dsht-plugin-shared/session-surgery.ts");
 const atomic_fs_ts_1 = require("../dsht-plugin-shared/atomic-fs.ts");
+// 【阶段3 2026-09-10】会话写入合法形态：surfaceOp 字段名自适应 + 合法标记载体
+// （0.1.5 起 start/end → startSeq/endSeq；source 顶层自定义键会被迁移器拒）
+const session_write_ts_1 = require("../dsht-plugin-shared/session-write.ts");
 // E1-E8/E11：表格系统（st-memory-enhancement 机制级移植）——纯逻辑层在本目录 tables.ts，
 // 这里只做数据面接线（/tables 读取 + step-summary/rebuild 两个 llm 路由）
 const tables_ts_1 = require("./tables.ts");
@@ -829,14 +832,17 @@ function apply(ctx, _config) {
             const markerText = op.kind === 'history'
                 ? `[上下文瘦身] 第 1-${plan.flooredUpTo} 楼原文已折叠，剧情要点见「剧情记忆」快照；以下为最近原文。`
                 : '[旧快照副本已折叠]';
-            session.append('user/message', {
+            // 【阶段3 2026-09-10】surfaceOp 字段名走 appendReplace 自适应（0.1.5 = startSeq/endSeq，
+            // 旧 start/end 直接抛 invalid replace surfaceOp → 影子化全数失败）；
+            // source.folded 顶层自定义键也搬进官方白名单位 sections（否则整会话迁移打不开）。
+            (0, session_write_ts_1.appendReplace)(session, 'user/message', {
                 id: `dsht-memory-shadow-${(0, node_crypto_1.randomUUID)()}`,
                 role: 'user',
                 content: [{ type: 'text', text: markerText }],
                 source: op.kind === 'history'
-                    ? { kind: 'plugin', plugin: exports.name, folded: { from: 1, to: plan.flooredUpTo }, sections: [{ name: 'dsht-memory:foldmarker', text: markerText }] }
+                    ? (0, session_write_ts_1.markerSource)(exports.name, 'memory', { folded: { from: 1, to: plan.flooredUpTo } })
                     : { kind: 'plugin', plugin: exports.name },
-            }, { surfaceOp: { op: 'replace', start: op.start, end: op.end }, sourceEventSeqs: inRange });
+            }, { start: op.start, end: op.end }, inRange);
         }
         console.log(`[dsht-memory] surface shadow: est=${(estTokens / 1000).toFixed(0)}k tokens, ops=${plan.ops.length}（history=${plan.ops.filter(o => o.kind === 'history').length} snapshot=${plan.ops.filter(o => o.kind === 'snapshot').length}），视图 ${(plan.charsBefore / 10000).toFixed(1)}万→${(plan.charsAfter / 10000).toFixed(1)}万字符，折叠至第 ${plan.flooredUpTo} 楼`);
         // 折叠边界持久化（独立 fold 文件——与 lastFloor 分文件写，避免进度读改写竞态）；

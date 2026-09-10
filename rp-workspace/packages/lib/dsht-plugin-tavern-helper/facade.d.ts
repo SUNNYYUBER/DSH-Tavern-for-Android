@@ -128,10 +128,16 @@ export declare function presetLoad(dshHome: string, body: Record<string, unknown
  * scanSessionHeaders 定位 session.jsonl → readline 流式逐行（大日志不整读），
  * 解析 user/message / assistant/message 事件（data 形状见 session-surgery findLastUserMessage：
  * user = Message 本体，assistant = {turn, step, message}）；快照注入不进导出。
- * 【P3a 2026-09-07】TH 写桥消息：source.thSystem → role:'system'/is_system:true/name:'System'
- * （ST createChatMessages 系统楼层同形）；source.thData → data 字段（卡脚本回读楼层附加数据，
- * 飞讯统合记录靠它定位 is_feixun_record）。thSystem 空文本保留（isHide 隐藏楼层数据仍需回读）；
- * 非 thSystem 空文本跳过。编号与 dsh-plugin /rp/chat/update 的 message_id→seq 映射同构（两处
+ * 【P3a 2026-09-07 / 阶段3 2026-09-10】TH 写桥消息：TH 系统楼层 → role:'system'/is_system:true/
+ * name:'System'（ST createChatMessages 系统楼层同形）；楼层附加数据 → `data` 字段（卡脚本回读
+ * 楼层附加数据，飞讯统合记录靠它定位 is_feixun_record）。thSystem 空文本保留（isHide 隐藏楼层
+ * 数据仍需回读）；非 thSystem 空文本跳过。编号与 dsh-plugin /rp/chat/update 的 message_id→seq
+ * 映射同构（两处
+ *
+ * ⚠️ 契约变更：0.1.5 的事件 source 是**闭集白名单**（model source 只允许
+ * kind/provider/model/replayState），`thData`/`thSystem` 这类自定义键会让**整会话迁移被拒**。
+ * 故标记改为：`model:'th-system'` 表达系统楼层 + `$DSH_HOME/rp/th-floors/<sid>.json` sidecar
+ * 承载附加数据。本函数同时兼容读旧 source 键（未修复的老会话）。
  * 过滤规则必须一致，改动需同步）。
  */
 export declare function chatMessages(dshHome: string, body: Record<string, unknown>): Promise<FacadeResult>;

@@ -418,8 +418,17 @@ export declare function collectVariantGroups(events: Array<{
     sourceEventSeqs?: number[];
 }>): Map<number, VariantGroup>;
 /**
- * 切换变体的写入载荷：append 一条 assistant/message（replace 当前 active，内容=目标变体文本）。
- * 返回 null 表示无需切换（目标即 active）。
+ * 助手楼层改写的落点规划——实现在 dsht-plugin-shared/session-write.ts
+ * （三处消费：回退/编辑、TH 编辑、EJS 写回；在此 re-export 保持本模块公开面）。
+ */
+export { planAssistantRewrite } from '../dsht-plugin-shared/session-write.ts';
+/**
+ * 变体切换的 assistant 消息载荷（纯函数）。
+ *
+ * 【阶段3 2026-09-10 重写】原实现让 assistant/message 自己做 replace 节点 + 带
+ * sourceEventSeqs 血缘——0.1.2 合法，**0.1.5 被官方双重禁止**（assistant/message
+ * 不能带 sourceEventSeqs，且 replace 必须列全被遮蔽节点 → 带也错、不带也错）。
+ * 新形态：变体切换 = user/message 标记（把旧变体移出上下文）+ 本 assistant 消息追加。
  */
 export declare function buildVariantSwitchEvent(sessionId: string, nextSeq: number, activeSeq: number, targetText: string): {
     type: 'assistant/message';
@@ -442,12 +451,10 @@ export declare function buildVariantSwitchEvent(sessionId: string, nextSeq: numb
             };
         };
     };
-    surfaceOp: {
-        op: 'replace';
-        start: number;
-        end: number;
-    };
-    sourceEventSeqs: number[];
+    /** 追加到 surface 尾部（不再是 replace） */
+    surfaceOp: 'append';
+    /** 被移出上下文的旧变体 seq（写入标记用，不再进本事件信封） */
+    shadowedActiveSeq: number;
 } | null;
 /**
  * lore_query 搜索（T1.8 轻 agent 世界书深查）：条目名/关键词/内容全文匹配，

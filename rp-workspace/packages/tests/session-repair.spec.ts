@@ -217,3 +217,77 @@ describe('session-repair: 存量 v0 会话 → 合法形态', () => {
     expect(JSON.parse(sec.text)).toEqual({ rolledBackTo: 1 })
   })
 })
+
+/**
+ * 【阶段3 2026-09-10 修正】此前 `model source` 上的自定义键（thData/thSystem）是
+ * **直接丢弃**——那是静默数据丢失（TH 楼层附加数据 / 飞讯记录映射读不回来）。
+ * 现在改为「移交 sidecar」：`result.salvaged` 把键值对带出来，调用方落
+ * `$DSH_HOME/rp/th-floors/<sid>.json`（见 dsht-plugin-shared/th-floors.ts）。
+ */
+describe('session-repair: source 扩展键 → salvage 移交（不再静默丢弃）', () => {
+  const MODEL_ASSISTANT = (turn: number, step: number, id: string, text: string, source: Record<string, unknown>) =>
+    ['assistant/message', { turn, step, message: { id, role: 'assistant', content: [{ type: 'text', text }], source } },
+      { surfaceOp: 'append' }] as [string, Record<string, unknown>, Record<string, unknown>]
+
+  it('assistant model source 的 thData/thSystem → 进 salvaged（键 = message id），会话内已清除', () => {
+    const thData = { fx_records_map: { 秧秧: [{ msgId: 'No.063', globalMsgId: 'fx_mtr87iju' }] } }
+    const src = session([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MODEL_ASSISTANT(1, 1, 'th-floor-1', '系统楼层正文', {
+        kind: 'model', provider: 'dsht-tavern-helper', model: 'th-system', thSystem: true, thData,
+      }),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+    ])
+    const r = repairSessionForV3(src)
+    expect(r.changed).toBe(true)
+    // 会话里必须已经干净（否则 0.1.5 白名单仍会拒整会话）
+    const ev = parse(r.content).find(e => e.type === 'assistant/message')!
+    const src2 = ((ev.data as { message: { source: Record<string, unknown> } }).message).source
+    expect(src2.thData).toBeUndefined()
+    expect(src2.thSystem).toBeUndefined()
+    expect(Object.keys(src2).sort()).toEqual(['kind', 'model', 'provider'])
+    // 载荷必须被带出来，一条不能少
+    expect(r.salvaged).toHaveLength(1)
+    expect(r.salvaged[0].key).toBe('th-floor-1')
+    expect(r.salvaged[0].payload.thData).toEqual(thData)
+    expect(r.salvaged[0].payload.thSystem).toBe(true)
+    expect(r.notes.join('|')).toContain('移交 sidecar')
+  })
+
+  it('salvage 键在 seq 重编号后仍指向正确楼层（用最终 seq，不是旧值）', () => {
+    const src = session([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MODEL_ASSISTANT(1, 1, 'floor-a', 'A', { kind: 'model', provider: 'p', model: 'm', thData: { k: 'A' } }),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+      // 故意制造 seq 断号：直接给个越界 seq，修复器会重编号
+      ['turn/start', { turn: 2 }, undefined],
+    ])
+    const r = repairSessionForV3(src)
+    const evs = parse(r.content)
+    for (const s of r.salvaged) {
+      // key 必须是 id 或 `seq:<finalSeq>` 且能对上输出里的某条消息
+      if (s.key.startsWith('seq:')) {
+        const want = Number(s.key.slice(4))
+        expect(evs.some(e => e.seq === want)).toBe(true)
+      } else {
+        expect(evs.some(e => JSON.stringify(e).includes(s.key))).toBe(true)
+      }
+    }
+  })
+
+  it('无遗留键的会话 → salvaged 为空数组（不误报）', () => {
+    const src = session([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MODEL_ASSISTANT(1, 1, 'a1', '干净楼层', { kind: 'model', provider: 'p', model: 'm' }),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+    ])
+    const r = repairSessionForV3(src)
+    expect(r.salvaged).toEqual([])
+  })
+})

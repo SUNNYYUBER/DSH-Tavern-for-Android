@@ -25,6 +25,10 @@ const ejs_ts_1 = require("./ejs.ts");
 const sandbox_ts_1 = require("./sandbox.ts");
 const http_ts_1 = require("../dsht-plugin-shared/http.ts");
 const settings_ns_ts_1 = require("../dsht-plugin-shared/settings-ns.ts");
+// 【阶段3 2026-09-10】B8 永久写回改用官方合法形态（surfaceOp 字段名自适应 +
+// user 标记 replace + assistant append；0.1.5 禁止 assistant 做 replace 节点）
+const session_write_ts_1 = require("../dsht-plugin-shared/session-write.ts");
+const node_crypto_1 = require("node:crypto");
 exports.name = 'dsht-plugin-prompt-template';
 // services 声明：webServer = /dsht-prompt-template/* 同源数据面；settings = 命名空间锚点；
 // sessions = B8 永久写回（live 会话 replace append + flush，缺省时 409 如实报告）
@@ -320,22 +324,43 @@ function apply(ctx, _config) {
             const append = session.append;
             if (typeof append !== 'function')
                 return (0, http_ts_1.sendJson)(res, 500, { error: 'session.append 不可用' });
-            append.call(session, 'assistant/message', {
+            // 【阶段3 2026-09-10 重写】0.1.5 禁止 assistant/message 做 replace 节点
+            // （带 sourceEventSeqs 抛「embeds its source stream」，不带抛「missing shadowed node」
+            // ——官方设计死锁）。改走官方 compaction 同款形态：
+            //   ① user/message 标记把原楼层移出模型上下文（合法 replace）
+            //   ② 渲染结果作为新 assistant/message 追加（落进打开的 step）
+            const live = session;
+            const view = live.surface?.nodes ?? [];
+            if (!view.includes(seq))
+                return (0, http_ts_1.sendJson)(res, 400, { error: `seq=${seq} 不在当前模型视图（可能已被回退/折叠）` });
+            const snap = typeof session.snapshotEvents === 'function'
+                ? session.snapshotEvents()
+                : [];
+            const plan = (0, session_write_ts_1.planAssistantRewrite)(snap, true);
+            (0, session_write_ts_1.appendReplace)(session, 'user/message', {
+                id: `dsht-ejs-mark-${(0, node_crypto_1.randomUUID)()}`,
+                role: 'user',
+                content: [{ type: 'text', text: '[EJS 渲染写回] 该楼层原文已从上下文移除，渲染结果随后追加。' }],
+                source: (0, session_write_ts_1.markerSource)('dsht-ejs', 'surgical', { renderedFrom: seq, shadowedSeqs: [seq] }),
+            }, { start: seq, end: seq }, [seq]);
+            live.append('turn/start', { turn: plan.turn });
+            live.append('step/start', { turn: plan.turn, step: plan.step });
+            live.append('assistant/message', {
                 ...ev.data,
+                turn: plan.turn,
+                step: plan.step,
                 message: {
                     ...msg,
                     content: [{ type: 'text', text }],
                     // 【2026-09-07 损坏根修】必须保留原 source.kind（加载器强校验 assistant
-                    // 消息 source.kind ∈ {gateway, internal}——写 'plugin' 会让整个会话
-                    // "failed validation: message must have model source" 拒载（真机实证，
-                    // 用户迁移会话差点报废）。只在原 source 上追加插件标记。
-                    source: { ...(msg.source ?? {}), plugin: 'dsht-ejs', ejsProcessed: true },
+                    // 消息 source.kind 必须是 model——写 'plugin' 会让整个会话拒载）。
+                    // 【阶段3 2026-09-10】ejsProcessed 顶层键同样会被迁移器拒 →
+                    // 标记改放 marker 事件（本事件的 sections 属非法，model source 无 sections 位）。
+                    source: { ...(msg.source ?? {}) },
                 },
-                // 【2026-09-07 500 根修】surfaceOp replace 的血缘 seqs 必须覆盖全部被 shadow
-                // 的 surface 节点——session.append 的 surface 元数据键名是 sourceEventSeqs
-                // （dsh-session append: opts[0].sourceEventSeqs → 事件字段）。缺失会被
-                // assertProvenance 拒绝（"missing <seq>" 500，真机 B8 写回全数失败）。
-            }, { surfaceOp: { op: 'replace', start: seq, end: seq }, sourceEventSeqs: [seq] });
+            }, { surfaceOp: 'append' });
+            live.append('step/end', { turn: plan.turn, step: plan.step });
+            live.append('turn/end', { turn: plan.turn, reason: { kind: 'completed' } });
             try {
                 if (typeof sessions?.flush === 'function')
                     await sessions.flush.call(sessions, session);
@@ -343,7 +368,7 @@ function apply(ctx, _config) {
             catch (e) {
                 return (0, http_ts_1.sendJson)(res, 500, { error: `写回成功但 flush 失败：${e.message}` });
             }
-            console.log(`[dsht-ejs] permanent: session=${sessionId} seq=${seq} → ${text.length}ch 已写回`);
+            console.log(`[dsht-ejs] permanent: session=${sessionId} seq=${seq} → ${text.length}ch 已写回（marker replace + append turn=${plan.turn}）`);
             return (0, http_ts_1.sendJson)(res, 200, { ok: true });
         }
         // ---- B6：GET /render-entries?slug=&sessionId= → [RENDER:BEFORE/AFTER] 条目求值结果

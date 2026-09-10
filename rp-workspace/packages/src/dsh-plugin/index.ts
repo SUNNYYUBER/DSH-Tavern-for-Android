@@ -54,6 +54,8 @@ import {
 } from '../dsht-plugin-shared/session-write.ts'
 // 【阶段3 2026-09-10】存量 v0 会话 → 0.1.5 可迁移形态（8 类不合规的纯函数重写器）
 import { repairSessionForV3 } from '../dsht-plugin-shared/session-repair.ts'
+// 【阶段3 2026-09-10】TH 楼层元数据 sidecar：0.1.5 白名单不许挂 source，迁到 rp/th-floors/
+import { mergeSalvagedThFloors, upsertThFloors, readThFloors, lookupThFloor, type ThFloorRecord } from '../dsht-plugin-shared/th-floors.ts'
 // D-3：system 槽位路由（TT 对齐投影；合法通道 = system-prompt/assemble 的 assembly.sections）
 import { planSlotSections, SLOT_ORDERS, type SlotBatch, type SlotSection } from '../dsht-plugin-shared/tt-projection.ts'
 // T3.2：会话长期记忆（rp-memory 最小闭环）——核心逻辑纯函数化便于单测，这里只做接线
@@ -1974,10 +1976,18 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
    */
   // 实测：rp-import 工作区的 agent 迁移会话能长到 254MB——整读+split+逐行 parse+重建
   // 需要 3-4 倍内存，Android node 堆直接 OOM（启动即修循环崩）。超大文件跳过自动修复
-  //（聊天会话远达不到此量级；import 工作区会话 seq 断号不影响聊天打开）。
-  const REPAIR_MAX_FILE_BYTES = 8 * 1024 * 1024
+  //（import 工作区会话 seq 断号不影响聊天打开）。
+  //
+  // 【阶段 3 2026-09-10 修正】原上限 8MiB 定得太低，**误伤了真实聊天会话**：设备实测
+  // `st-asm3yf`（8.66MiB，ST 导入的 RP 会话）被跳过 → 其 assistant/message 的 replace 链
+  // 未拆分，0.1.5 下仍打不开（`chunk provenance is not one complete ordered attempt`）。
+  // 现值 32MiB 的依据（本机实测，/tmp/mem-probe.mjs）：
+  //   · 修复器峰值堆 ≈ **7.2 × 文件体积**（9.64MiB → 77MiB；62.3MiB → 448MiB）
+  //   · Android node `--max-old-space-size=2048`（NodeService.kt:553）
+  //   → 32MiB 文件峰值 ≈ 230MiB，占堆上限 11%，安全；254MB 的 import 怪物仍被挡在外面。
+  const REPAIR_MAX_FILE_BYTES = 32 * 1024 * 1024
   const repairAllSessionSeqs = async (): Promise<Record<string, unknown>> => {
-    const repaired: Array<{ sessionId: string; events: number }> = []
+    const repaired: Array<{ sessionId: string; events: number; salvaged?: number }> = []
     const skipped: Array<{ sessionId: string; reason: string }> = []
     const errors: string[] = []
     const headers = await scanSessionHeaders()
@@ -2010,7 +2020,23 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         // I8-2：原子写 + I8-3：.bak 先耐久再发布正文件
         await atomicWriteFile(`${file}.bak`, content)
         await atomicWriteFile(file, r.content)
-        repaired.push({ sessionId: h.sessionId, events: r.events + norm.changed + v3.changed })
+        // 【阶段3 2026-09-10】source 上摘下来的自定义键（thData/thSystem 等）落 sidecar。
+        // 不落盘 = 静默丢数据（TH 楼层附加数据 / 飞讯记录映射就读不回来了）。
+        if (v3.salvaged.length > 0) {
+          const table: Record<string, ThFloorRecord> = {}
+          for (const s of v3.salvaged) {
+            const rec = table[s.key] ?? {}
+            for (const [k, val] of Object.entries(s.payload)) {
+              if (k === 'thData') rec.data = val
+              else if (k === 'thSystem' && val === true) rec.system = true
+              else rec.legacy = { ...(rec.legacy ?? {}), [k]: val }
+            }
+            table[s.key] = rec
+          }
+          const n = mergeSalvagedThFloors(dshHome, h.sessionId, table)
+          console.log(`[dsht-rp] repair-sessions(salvage): ${h.sessionId} ${n} 个楼层的 source 扩展键已迁入 sidecar`)
+        }
+        repaired.push({ sessionId: h.sessionId, events: r.events + norm.changed + v3.changed, salvaged: v3.salvaged.length })
         if (v3.changed) console.log(`[dsht-rp] repair-sessions(v3): ${h.sessionId} ${v3.notes.join('；')}`)
         if (r.note) console.log(`[dsht-rp] repair-sessions: ${h.sessionId} ${r.note}${r.truncated ? `（truncated=${r.truncated}）` : ''}`)
       } catch (e) {
@@ -6153,11 +6179,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
             // - append：insert_before:'end' 语义。idle 时完整 turn 物化（oneTurnLog 契约 +
             //   phase.lastTurn 同步，复刻 open-chat 防 R49 重复 turn/start）；busy 时消息并入
             //   当前 open turn（step 续接，kernel 工具步同构——不越界开新 turn）。
-            //   system 角色 → source.thSystem 标记（facade 导出 role:'system'/is_system；前端
-            //   ST 同款系统楼层）；data 附加字段 → source.thData（getChatMessages 回读）。
+            //   system 角色 → model:'th-system'（facade 导出 role:'system'/is_system；
+            //   前端 ST 同款系统楼层）；data 附加字段 → rp/th-floors sidecar（getChatMessages 回读）。
             // - update：message_id → seq 映射与 facade chatMessages 导出同构（user/assistant/
-            //   thSystem；snapshot 注入与非 thSystem 空文本跳过），单节点 compaction/prune +
-            //   replace 官方原语（模型视图与前端投影立即生效，事件留日志零丢失）。
+            //   thSystem；snapshot 注入与非 thSystem 空文本跳过），单节点 compaction/prune +            //   replace 官方原语（模型视图与前端投影立即生效，事件留日志零丢失）。
             if (sub === '/rp/chat/append') {
               const sessionId = String(payload.sessionId ?? '')
               if (!sessionId) return send(400, { error: 'sessionId required' })
@@ -6189,31 +6214,38 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               const appendMessage = (turn: number, step: number, role: string, text: string, data: Record<string, unknown> | null) => {
                 // 【内核校验对齐】assistant/message 强制 model source（kind:'model'+provider+model，
                 // 实证：plugin source 落盘后整会话 refused to load「message must have model source」）；
-                // thSystem/thData 作为 model source 的扩展键随行（校验只查 kind/provider/model，
-                // merge-extensible sum 允许扩展键）。user 角色走 user/message（plugin source 合法）。
+                // user 角色走 user/message（plugin source 合法）。
+                //
+                // 【阶段3 2026-09-10 契约收紧修正】旧写法把 thSystem/thData 当 model source 的
+                // 扩展键随行，注释自陈「校验只查 kind/provider/model」——该假设 0.1.2 成立，
+                // 0.1.5 的 assertReleasedV0Keys 是**白名单**（多一键即拒）→ 整会话打不开。
+                // 现在：thSystem 用 `model:'th-system'` 表达（合法枚举值），
+                //        thData 落 $DSH_HOME/rp/th-floors/<sessionId>.json（见 th-floors.ts）。
+                const mid = `dsht-th-${randomUUID()}`
+                if (data !== null || role === 'system') {
+                  upsertThFloors(dshHome, sessionId, {
+                    [mid]: { ...(data !== null ? { data } : {}), ...(role === 'system' ? { system: true as const } : {}) },
+                  })
+                }
                 if (role === 'user') {
-                  const source: Record<string, unknown> = { kind: 'plugin', plugin: 'dsht-tavern-helper' }
-                  if (data !== null) source['thData'] = data
                   live.append('user/message', {
-                    id: `dsht-th-${randomUUID()}`,
+                    id: mid,
                     role: 'user',
                     content: [{ type: 'text', text }],
-                    source,
+                    source: { kind: 'plugin', plugin: 'dsht-tavern-helper' },
                   }, { surfaceOp: 'append' })
                   return
-                }
-                const source: Record<string, unknown> = {
-                  kind: 'model', provider: 'dsht-tavern-helper', model: 'th-system',
-                  ...(role === 'system' ? { thSystem: true } : {}),
-                  ...(data !== null ? { thData: data } : {}),
                 }
                 live.append('assistant/message', {
                   turn, step,
                   message: {
-                    id: `dsht-th-${randomUUID()}`,
+                    id: mid,
                     role: 'assistant',
                     content: [{ type: 'text', text }],
-                    source,
+                    source: {
+                      kind: 'model', provider: 'dsht-tavern-helper',
+                      model: role === 'system' ? 'th-system' : 'th-append',
+                    },
                   },
                 }, { surfaceOp: 'append' })
               }
@@ -6262,6 +6294,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               if (!live) return send(404, { error: 'session not live' })
               const view = (live as { surface?: { nodes?: number[] } }).surface?.nodes
               if (!Array.isArray(view)) return send(409, { error: 'session surface unavailable' })
+              // 【阶段3 2026-09-10】TH 楼层元数据 sidecar（thData/thSystem 已迁出 source）
+              const thFloors = readThFloors(dshHome, sessionId)
               // message_id → {seq, event} 映射：与 facade chatMessages 导出同构
               //（user/assistant/thSystem 计入；snapshot 注入与非 thSystem 空文本跳过；
               // compaction/prune 遮蔽集同步剔除——replace 后旧事件不占编号，与 facade 双遍扫描同语义）
@@ -6286,7 +6320,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                   ? content.filter((b) => b !== null && typeof b === 'object' && (b as { type?: string }).type === 'text')
                     .map((b) => String((b as { text?: unknown }).text ?? '')).join('\n')
                   : typeof content === 'string' ? content : ''
-                const isTh = !!(source && typeof source === 'object' && source['thSystem'] === true)
+                const isTh = !!(source && typeof source === 'object'
+                  && (source['thSystem'] === true || source['model'] === 'th-system'))
                 if (!text && !isTh) continue
                 if (typeof ev.seq === 'number') exportSeqs.push(ev.seq)
               }
@@ -6316,7 +6351,11 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                   : ''
                 const text = t.message !== undefined ? String(t.message ?? '') : oldText
                 const oldSource = (oldMsg.source && typeof oldMsg.source === 'object' ? oldMsg.source : {}) as Record<string, unknown>
-                const oldThData = oldSource['thData'] !== undefined ? oldSource['thData'] : null
+                // 【阶段3 2026-09-10】thData 已迁出 source（0.1.5 白名单拒扩展键）：
+                // 先读 sidecar，再退回旧 source 键（老会话尚未修复时仍能读到）。
+                const oldSidecar = lookupThFloor(thFloors, (oldMsg as { id?: unknown }).id, seq)
+                const oldThData = oldSource['thData'] !== undefined ? oldSource['thData']
+                  : (oldSidecar?.data !== undefined ? oldSidecar.data : null)
                 const data = t.data !== undefined ? t.data : oldThData
                 // 计量（core 估价器同款——replace 必须带紧邻 claim）。
                 // 【2026-09-08 鲁棒性】shadowedTokenCount 按**被影子化的旧事件**内容计
@@ -6334,13 +6373,14 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                   // user 楼层替换：user/message 自己做 replace 合法（0.1.5 允许）。
                   // 【阶段3 2026-09-10】surfaceOp 字段名走 appendReplace 自适应
                   // （0.1.5 起是 startSeq/endSeq，旧 start/end 直接抛 invalid replace surfaceOp）。
-                  const source: Record<string, unknown> = { kind: 'plugin', plugin: 'dsht-tavern-helper' }
-                  if (data !== null && typeof data === 'object') source['thData'] = data
+                  // thData 走 sidecar（plugin source 也不许挂自定义键）。
+                  const newId = `dsht-th-${randomUUID()}`
+                  if (data !== null && typeof data === 'object') upsertThFloors(dshHome, sessionId, { [newId]: { data } })
                   appendReplace(live, 'user/message', {
-                    id: `dsht-th-${randomUUID()}`,
+                    id: newId,
                     role: 'user',
                     content: [{ type: 'text', text }],
-                    source,
+                    source: { kind: 'plugin', plugin: 'dsht-tavern-helper' },
                   }, { start: seq, end: seq }, [seq])
                 } else {
                   // assistant 楼层改写：0.1.5 **禁止 assistant/message 做 replace 节点**
@@ -6358,7 +6398,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                   // 重写的助手楼层延后统一追加（同一 turn 内、顺序稳定，避免 turn 膨胀）
                   pendingAssistantEdits.push({
                     text,
-                    thSystem: oldSource['thSystem'] === true,
+                    thSystem: oldSource['thSystem'] === true || oldSource['model'] === 'th-system'
+                      || oldSidecar?.system === true,
                     thData: data,
                   })
                 }
@@ -6374,18 +6415,26 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                   const pe = pendingAssistantEdits[i]
                   const step = plan.step + i
                   live.append('step/start', { turn: plan.turn, step })
-                  const source: Record<string, unknown> = {
-                    kind: 'model', provider: 'dsht-tavern-helper', model: 'th-edit',
-                    ...(pe.thSystem ? { thSystem: true } : {}),
-                    ...(pe.thData !== null && typeof pe.thData === 'object' ? { thData: pe.thData } : {}),
+                  // 【阶段3 2026-09-10】thSystem → model:'th-system'；thData → sidecar
+                  const newId = `dsht-th-${randomUUID()}`
+                  if ((pe.thData !== null && typeof pe.thData === 'object') || pe.thSystem) {
+                    upsertThFloors(dshHome, sessionId, {
+                      [newId]: {
+                        ...(pe.thData !== null && typeof pe.thData === 'object' ? { data: pe.thData } : {}),
+                        ...(pe.thSystem ? { system: true as const } : {}),
+                      },
+                    })
                   }
                   live.append('assistant/message', {
                     turn: plan.turn, step,
                     message: {
-                      id: `dsht-th-${randomUUID()}`,
+                      id: newId,
                       role: 'assistant',
                       content: [{ type: 'text', text: pe.text }],
-                      source,
+                      source: {
+                        kind: 'model', provider: 'dsht-tavern-helper',
+                        model: pe.thSystem ? 'th-system' : 'th-edit',
+                      },
                     },
                   }, { surfaceOp: 'append' })
                   live.append('step/end', { turn: plan.turn, step })

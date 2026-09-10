@@ -350,8 +350,19 @@ function convertChatFile(jsonlText, opts) {
         turns++;
         step = 0;
     };
-    /** 一条 assistant 消息（一个变体）：step 包裹；返回本条在 surface 上的 seq */
-    const emitAssistantStep = (text, op, sourceEventSeqs) => {
+    /**
+     * 一条 assistant 消息（一个变体或一次改写）：step 包裹；返回本条在 surface 上的 seq。
+     *
+     * 【阶段3 2026-09-10 契约修正】原实现把「同 anchor 的兄弟变体」用
+     * assistant/message + surfaceOp replace + sourceEventSeqs 链互替——0.1.2 合法，
+     * **0.1.5 被官方双重禁止**（assistant/message 不能带 sourceEventSeqs：
+     * 「embeds its source stream and cannot carry sourceEventSeqs」；且 replace 必须列全
+     * 被遮蔽节点 → 带也错、不带也错，官方设计死锁）。
+     * 实测：21/80 个真实会话因此在 0.1.5 下整会话打不开。
+     * 新形态走官方 compaction 同款：user/message 标记（合法 replace）把旧变体移出，
+     * 新变体作为 assistant/message **append**。
+     */
+    const emitAssistantStep = (text) => {
         step++;
         emit('step/start', { turn, step });
         emit('assistant/message', {
@@ -363,9 +374,26 @@ function convertChatFile(jsonlText, opts) {
                 content: [{ type: 'text', text }],
                 source: { kind: 'model', provider: 'sillytavern-import', model: 'imported' },
             },
-        }, op, sourceEventSeqs);
+        }, 'append');
         emit('step/end', { turn, step });
         return surfaceNodes[surfaceNodes.length - 1];
+    };
+    /** 把当前视图里的 assistant 楼层移出上下文（变体互替/切换用；user 标记 replace 合法） */
+    const emitVariantMarker = (shadowedSeq, note) => {
+        emit('compaction/prune', {
+            shadowedRange: { start: shadowedSeq, end: shadowedSeq },
+            shadowedSeqs: [shadowedSeq],
+            shadowedTokenCount: 0,
+        });
+        emit('user/message', {
+            id: `st-${opts.sessionId}-mark-${seq}`,
+            role: 'user',
+            content: [{ type: 'text', text: note }],
+            source: {
+                kind: 'plugin', plugin: 'sillytavern-import', form: 'snapshot',
+                sections: [{ name: 'dsht:surgical', text: JSON.stringify({ variantOf: shadowedSeq, shadowedSeqs: [shadowedSeq] }) }],
+            },
+        }, { op: 'replace', start: shadowedSeq, end: shadowedSeq }, [shadowedSeq]);
     };
     for (const raw of jsonlText.split('\n')) {
         const trimmed = raw.trim();
@@ -398,12 +426,21 @@ function convertChatFile(jsonlText, opts) {
                 closeTurn();
             turn++;
             emit('turn/start', { turn });
+            // 【阶段3 2026-09-10 契约修正】user/message 也必须落在打开的 step 内——
+            // 0.1.5 的 v2→v3 迁移器（dsh-session-format-v2-to-v3/lib/index.js:733）要求
+            // 「首个 step 之前的 surface 事件无法在不改变时序的前提下取得 system head」，
+            // 直接抛 `format v2 surface before first step cannot acquire a system head`。
+            // 实测：普通（无 swipes）导入会话在 0.1.5 下 100% 打不开。
+            // 复刻真实 DSH 会话形态（每个 user 楼层独立 step）。
+            step++;
+            emit('step/start', { turn, step });
             emit('user/message', {
                 id: `st-${opts.sessionId}-${seq}`,
                 role: 'user',
                 content: [{ type: 'text', text: mes }],
                 source: { kind: 'user' },
             }, 'append');
+            emit('step/end', { turn, step });
             if (firstUserText === null)
                 firstUserText = mes.slice(0, 120);
         }
@@ -426,15 +463,18 @@ function convertChatFile(jsonlText, opts) {
             for (let i = 0; i < variants.length; i++) {
                 const text = variants[i];
                 if (activeSeq === undefined) {
-                    activeSeq = emitAssistantStep(text, 'append');
+                    activeSeq = emitAssistantStep(text);
                 }
                 else {
-                    activeSeq = emitAssistantStep(text, { op: 'replace', start: activeSeq, end: activeSeq }, [activeSeq]);
+                    // 变体互替：先 user 标记移出旧变体，再 append 新变体（0.1.5 合法形态）
+                    emitVariantMarker(activeSeq, `[变体 ${i + 1}/${variants.length}]`);
+                    activeSeq = emitAssistantStep(text);
                 }
             }
             // active 非末位：追加一次"切换"事件（surface 换回 active；模拟 ST 里左右滑选定的动作）
             if (variants.length > 1 && activeIdx !== variants.length - 1) {
-                activeSeq = emitAssistantStep(variants[activeIdx], { op: 'replace', start: activeSeq, end: activeSeq }, [activeSeq]);
+                emitVariantMarker(activeSeq, `[变体 ${activeIdx + 1}/${variants.length}]`);
+                activeSeq = emitAssistantStep(variants[activeIdx]);
             }
         }
     }
@@ -542,7 +582,7 @@ function buildFirstMesSession(card, opts = {}) {
         seq++;
     };
     /** 一条开场白变体（step 包裹）；返回本条 assistant/message 的 seq */
-    const emitGreeting = (text, step, op, sources) => {
+    const emitGreeting = (text, step) => {
         event('step/start', { turn: 1, step });
         const msgSeq = seq;
         event('assistant/message', {
@@ -554,18 +594,40 @@ function buildFirstMesSession(card, opts = {}) {
                 content: [{ type: 'text', text }],
                 source: { kind: 'model', provider: 'sillytavern-import', model: 'first-mes' },
             },
-        }, op, sources);
+        }, 'append');
         event('step/end', { turn: 1, step });
         return msgSeq;
     };
+    /** 开场白变体互替：user 标记移出旧变体（0.1.5 合法形态，见 convertChatFile 注释） */
+    const emitGreetingMarker = (shadowedSeq, step, n, total) => {
+        event('step/start', { turn: 1, step });
+        event('compaction/prune', {
+            shadowedRange: { start: shadowedSeq, end: shadowedSeq },
+            shadowedSeqs: [shadowedSeq],
+            shadowedTokenCount: 0,
+        });
+        event('user/message', {
+            id: `st-${sessionId}-mark-${seq}`,
+            role: 'user',
+            content: [{ type: 'text', text: `[开场白变体 ${n}/${total}]` }],
+            source: {
+                kind: 'plugin', plugin: 'sillytavern-import', form: 'snapshot',
+                sections: [{ name: 'dsht:surgical', text: JSON.stringify({ variantOf: shadowedSeq, shadowedSeqs: [shadowedSeq] }) }],
+            },
+        }, { op: 'replace', start: shadowedSeq, end: shadowedSeq }, [shadowedSeq]);
+        event('step/end', { turn: 1, step });
+    };
     event('turn/start', { turn: 1 });
-    let activeSeq = emitGreeting(greetings[0], 1, 'append');
+    let activeSeq = emitGreeting(greetings[0], 1);
+    let curStep = 1;
     for (let i = 1; i < greetings.length; i++) {
-        activeSeq = emitGreeting(greetings[i], i + 1, { op: 'replace', start: activeSeq, end: activeSeq }, [activeSeq]);
+        emitGreetingMarker(activeSeq, ++curStep, i + 1, greetings.length);
+        activeSeq = emitGreeting(greetings[i], ++curStep);
     }
     if (greetings.length > 1) {
         // active = firstMes（ST 默认 swipe_id 0）：追加切换事件换回首条（同 convertChatFile）
-        emitGreeting(greetings[0], greetings.length + 1, { op: 'replace', start: activeSeq, end: activeSeq }, [activeSeq]);
+        emitGreetingMarker(activeSeq, ++curStep, 1, greetings.length);
+        emitGreeting(greetings[0], ++curStep);
     }
     event('turn/end', { turn: 1, reason: { kind: 'completed' } });
     return { path: `sessions/${projectKey(cwd)}/${encodeSegment(sessionId)}/session.jsonl`, content: lines.join('\n') + '\n' };

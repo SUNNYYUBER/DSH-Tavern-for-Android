@@ -59,6 +59,7 @@ const schema_ts_1 = require("../preset/schema.ts");
 const demo_ts_1 = require("../preset/demo.ts");
 const entry_ts_1 = require("../lore/entry.ts");
 const session_surgery_ts_1 = require("../dsht-plugin-shared/session-surgery.ts");
+const th_floors_ts_1 = require("../dsht-plugin-shared/th-floors.ts");
 const file_snapshots_ts_1 = require("../dsht-plugin-shared/file-snapshots.ts");
 const schema_ts_2 = require("../dsht-plugin-shared/schema.ts");
 const undo_ts_1 = require("../dsht-plugin-shared/undo.ts");
@@ -226,6 +227,32 @@ async function atomicWrite(path, data) {
         await (0, promises_1.rm)(tmp, { force: true }).catch(() => { });
         throw e;
     }
+}
+/**
+ * 【2026-09-10 泄漏清理】atomicWrite 的临时文件在异常路径（进程被杀 / rename 与 rm 双失败）
+ * 下会残留。实机实证：示例游戏内嵌书 references/ 目录累积 218 个 .tmp-*（3.4MB）。
+ * 策略：flush 成功后同目录顺手清扫——只删「前缀匹配同一目标文件 且 mtime 早于 60s」的残留，
+ * 避免误删正在进行中的并发写。
+ */
+async function sweepOrphanTemps(targetAbs) {
+    try {
+        const dir = (0, node_path_1.dirname)(targetAbs);
+        const base = targetAbs.slice(dir.length + 1);
+        const names = await (0, promises_1.readdir)(dir);
+        const cutoff = Date.now() - 60_000;
+        for (const n of names) {
+            if (n === base || !n.startsWith(`${base}.tmp-`))
+                continue;
+            const p = (0, node_path_1.join)(dir, n);
+            try {
+                const st = await (0, promises_1.stat)(p);
+                if (st.mtimeMs < cutoff)
+                    await (0, promises_1.rm)(p, { force: true });
+            }
+            catch { /* 单文件失败不影响其余 */ }
+        }
+    }
+    catch { /* 目录不可读则跳过 */ }
 }
 // ---------------------------------------------------------------------------
 // 端点 1：POST /context {sessionId, slug} → 会话有效预设的 ST 上下文视图
@@ -569,10 +596,16 @@ async function scanSessionHeadersCached(dshHome) {
  * scanSessionHeaders 定位 session.jsonl → readline 流式逐行（大日志不整读），
  * 解析 user/message / assistant/message 事件（data 形状见 session-surgery findLastUserMessage：
  * user = Message 本体，assistant = {turn, step, message}）；快照注入不进导出。
- * 【P3a 2026-09-07】TH 写桥消息：source.thSystem → role:'system'/is_system:true/name:'System'
- * （ST createChatMessages 系统楼层同形）；source.thData → data 字段（卡脚本回读楼层附加数据，
- * 飞讯统合记录靠它定位 is_feixun_record）。thSystem 空文本保留（isHide 隐藏楼层数据仍需回读）；
- * 非 thSystem 空文本跳过。编号与 dsh-plugin /rp/chat/update 的 message_id→seq 映射同构（两处
+ * 【P3a 2026-09-07 / 阶段3 2026-09-10】TH 写桥消息：TH 系统楼层 → role:'system'/is_system:true/
+ * name:'System'（ST createChatMessages 系统楼层同形）；楼层附加数据 → `data` 字段（卡脚本回读
+ * 楼层附加数据，飞讯统合记录靠它定位 is_feixun_record）。thSystem 空文本保留（isHide 隐藏楼层
+ * 数据仍需回读）；非 thSystem 空文本跳过。编号与 dsh-plugin /rp/chat/update 的 message_id→seq
+ * 映射同构（两处
+ *
+ * ⚠️ 契约变更：0.1.5 的事件 source 是**闭集白名单**（model source 只允许
+ * kind/provider/model/replayState），`thData`/`thSystem` 这类自定义键会让**整会话迁移被拒**。
+ * 故标记改为：`model:'th-system'` 表达系统楼层 + `$DSH_HOME/rp/th-floors/<sid>.json` sidecar
+ * 承载附加数据。本函数同时兼容读旧 source 键（未修复的老会话）。
  * 过滤规则必须一致，改动需同步）。
  */
 async function chatMessages(dshHome, body) {
@@ -613,6 +646,10 @@ async function chatMessages(dshHome, body) {
         catch { /* 无 rp.json 用缺省 */ }
     }
     const messages = [];
+    // 【阶段3 2026-09-10】TH 楼层元数据 sidecar：0.1.5 契约不许把 thData/thSystem 挂在
+    // 事件 source 上（model source 是闭集），新写入已改存 $DSH_HOME/rp/th-floors/<sid>.json。
+    // 读侧先查 sidecar，再退回旧 source 键 → 老会话未修复与新会话都能读回来。
+    const thFloors = (0, th_floors_ts_1.readThFloors)(dshHome, sessionId);
     // 第一遍：收集 compaction/prune 遮蔽集（replace 原语——旧事件留日志但不进视图/导出；
     // prune 先于 replacement 落盘但被遮事件更早，单遍会漏遮 → 先全量扫描再导出）
     const shadowed = new Set();
@@ -668,7 +705,12 @@ async function chatMessages(dshHome, body) {
         const source = isTree(msg.source) ? msg.source : null;
         if (source?.form === 'snapshot')
             continue; // 快照注入（内部工作过程）不进聊天导出
-        const isThSystem = source?.thSystem === true;
+        // TH 系统楼层：旧数据用 source.thSystem 标记，新数据用 model:'th-system'（合法枚举），
+        // sidecar 标注优先（修复过的会话 source 上已无该键）。
+        const floor = (0, th_floors_ts_1.lookupThFloor)(thFloors, msg.id, ev.seq);
+        const isThSystem = floor?.system === true
+            || source?.thSystem === true
+            || source?.model === 'th-system';
         if (isThSystem)
             role = 'system';
         const content = msg.content;
@@ -677,6 +719,8 @@ async function chatMessages(dshHome, body) {
             : typeof content === 'string' ? content : '';
         if (!text && !isThSystem)
             continue; // 非 TH 系统楼层的空文本不进导出
+        // 楼层附加数据：sidecar 优先 → 旧 source.thData 兜底
+        const floorData = floor?.data !== undefined ? floor.data : source?.thData;
         messages.push({
             message_id: messages.length,
             // L1a：携带事件 seq（TH 事件桥的楼层解析锚——客户端节点视图以 seq 定位楼层；
@@ -686,7 +730,7 @@ async function chatMessages(dshHome, body) {
             role,
             message: text,
             is_system: isThSystem,
-            ...(isThSystem && isTree(source?.thData) ? { data: source.thData } : {}),
+            ...(isThSystem && isTree(floorData) ? { data: floorData } : {}),
         });
     }
     // 【轮询风暴根修】写缓存（以导出完成时刻的 stat 为准——写路径落盘后 mtime 变化即失效）
@@ -975,7 +1019,13 @@ function stEntryToLore(st, bookName, id) {
         delay: num(st.delay, 0),
         group: typeof st.group === 'string' ? st.group : '',
         groupOverride: st.groupOverride === true,
-        enabled: st.disabled !== true && st.enabled !== false,
+        // 【2026-09-10 极性修复】原实现 `enabled: st.disabled !== true && st.enabled !== false`
+        // 让 disabled 无条件压过 enabled。但 TH/ST 的 WorldbookEntry 权威字段是 enabled，
+        // disabled 只是我们读面同时给出的镜像（loreEntryToSt:902）。卡脚本惯例是只改一个：
+        //   Object.assign({}, e, { enabled: true })  —— disabled 仍是上一次写下的 true
+        // 旧实现下这个 true 被吞 → 条目永远停在禁用态（实机复现：翻转 → 还原后仍是 false）。
+        // 修复：enabled 显式给出时以它为准；仅当 enabled 缺席时才回落到 disabled。
+        enabled: typeof st.enabled === 'boolean' ? st.enabled : st.disabled !== true,
         book: bookName,
     };
 }
@@ -991,6 +1041,9 @@ async function worldbookGet(dshHome, body) {
     if (entryPutQueues.has(lorePath))
         await flushEntryPuts(dshHome, lorePath);
     const abs = homePath(dshHome, lorePath);
+    // 【2026-09-10】读路径顺手清扫残留临时文件。挂 flush 会漏扫（修复写入风暴后 flush 可能
+    // 长期不触发 → 历史残留永不清）；get 是必走的读路径，天然覆盖冷启动。
+    void sweepOrphanTemps(abs);
     let book;
     try {
         const st = await (0, promises_1.stat)(abs);
@@ -1029,6 +1082,8 @@ const ENTRY_PUT_COALESCE_MS = 250;
  *  若期间又有新 put → 重新定 timer 二次落盘，没有才出队；③ per-book flush 串行链（并发
  *  flush 等前序完成，幂等写不再双写）。 */
 const entryPutFlushChains = new Map();
+/** flush 日志节流：每本书每 60s 最多一条（避免 logcat 同步写淹没事件循环） */
+const flushLogAt = new Map();
 async function flushEntryPuts(dshHome, lorePath) {
     const prev = entryPutFlushChains.get(lorePath) ?? Promise.resolve();
     const run = prev.catch(() => { }).then(async () => {
@@ -1049,6 +1104,7 @@ async function flushEntryPuts(dshHome, lorePath) {
             loreBookCache.set(homePath(dshHome, lorePath), { mtimeMs: st.mtimeMs, size: st.size, book: q.book });
         }
         catch { /* stat 失败跳过预热 */ }
+        void sweepOrphanTemps(homePath(dshHome, lorePath));
         // flush 窗口内又有新 put → 保留队列 + 重新定 timer（二次落盘携带新增）；否则出队
         if (q.puts.length > 0) {
             if (q.timer === null)
@@ -1057,7 +1113,15 @@ async function flushEntryPuts(dshHome, lorePath) {
         else {
             entryPutQueues.delete(lorePath);
         }
-        console.log(`[dsht-th] worldbook/entry-put flush: ${lorePath}（共 ${q.book.entries.length} 条）`);
+        // 【2026-09-10 日志降噪】原实现每次 flush 都 console.log —— 实机 774 条/6.5min，
+        // logcat 同步写成为事件循环负担且淹没真实信号。改为仅状态跃迁时可观测：
+        // 每本书每 60s 最多一条，且首条必打（便于冷启动确认路径生效）。
+        const now = Date.now();
+        const last = flushLogAt.get(lorePath) ?? 0;
+        if (now - last > 60_000) {
+            flushLogAt.set(lorePath, now);
+            console.log(`[dsht-th] worldbook flush: ${lorePath}（${q.book.entries.length} 条，本批 ${sessionId ? 'has-sid' : 'no-sid'}）`);
+        }
     });
     entryPutFlushChains.set(lorePath, run);
     return run;
@@ -1468,7 +1532,7 @@ async function assembleGenerateRawPrompt(dshHome, body) {
                 excludeRecursion: e.excludeRecursion === true,
                 insertionOrder: typeof e.order === 'number' ? e.order : 100,
                 sticky: 0, cooldown: 0, delay: 0, group: '', groupOverride: false,
-                enabled: e.disabled !== true && e.enabled !== false,
+                enabled: typeof e.enabled === 'boolean' ? e.enabled : e.disabled !== true,
                 book: name,
             }));
             const act = activateWorldInfo(loreEntries, historyText, userInput);

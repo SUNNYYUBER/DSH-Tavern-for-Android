@@ -28,6 +28,7 @@ import { emptyPreset, type PresetSlot, type RPPreset } from '../preset/schema.ts
 import { demoDirectPreset, demoLightAgentPreset } from '../preset/demo.ts'
 import { WI_POSITION, type LoreBook, type LoreEntry } from '../lore/entry.ts'
 import { scanSessionHeaders } from '../dsht-plugin-shared/session-surgery.ts'
+import { readThFloors, lookupThFloor } from '../dsht-plugin-shared/th-floors.ts'
 import { snapshotBeforeWrite } from '../dsht-plugin-shared/file-snapshots.ts'
 import { validateSchemaSubset } from '../dsht-plugin-shared/schema.ts'
 import { appendUndoEntries, diffUndoEntries } from '../dsht-plugin-shared/undo.ts'
@@ -606,10 +607,16 @@ async function scanSessionHeadersCached(dshHome: string): Promise<Awaited<Return
  * scanSessionHeaders 定位 session.jsonl → readline 流式逐行（大日志不整读），
  * 解析 user/message / assistant/message 事件（data 形状见 session-surgery findLastUserMessage：
  * user = Message 本体，assistant = {turn, step, message}）；快照注入不进导出。
- * 【P3a 2026-09-07】TH 写桥消息：source.thSystem → role:'system'/is_system:true/name:'System'
- * （ST createChatMessages 系统楼层同形）；source.thData → data 字段（卡脚本回读楼层附加数据，
- * 飞讯统合记录靠它定位 is_feixun_record）。thSystem 空文本保留（isHide 隐藏楼层数据仍需回读）；
- * 非 thSystem 空文本跳过。编号与 dsh-plugin /rp/chat/update 的 message_id→seq 映射同构（两处
+ * 【P3a 2026-09-07 / 阶段3 2026-09-10】TH 写桥消息：TH 系统楼层 → role:'system'/is_system:true/
+ * name:'System'（ST createChatMessages 系统楼层同形）；楼层附加数据 → `data` 字段（卡脚本回读
+ * 楼层附加数据，飞讯统合记录靠它定位 is_feixun_record）。thSystem 空文本保留（isHide 隐藏楼层
+ * 数据仍需回读）；非 thSystem 空文本跳过。编号与 dsh-plugin /rp/chat/update 的 message_id→seq
+ * 映射同构（两处
+ *
+ * ⚠️ 契约变更：0.1.5 的事件 source 是**闭集白名单**（model source 只允许
+ * kind/provider/model/replayState），`thData`/`thSystem` 这类自定义键会让**整会话迁移被拒**。
+ * 故标记改为：`model:'th-system'` 表达系统楼层 + `$DSH_HOME/rp/th-floors/<sid>.json` sidecar
+ * 承载附加数据。本函数同时兼容读旧 source 键（未修复的老会话）。
  * 过滤规则必须一致，改动需同步）。
  */
 export async function chatMessages(dshHome: string, body: Record<string, unknown>): Promise<FacadeResult> {
@@ -645,6 +652,10 @@ export async function chatMessages(dshHome: string, body: Record<string, unknown
     } catch { /* 无 rp.json 用缺省 */ }
   }
   const messages: StMessage[] = []
+  // 【阶段3 2026-09-10】TH 楼层元数据 sidecar：0.1.5 契约不许把 thData/thSystem 挂在
+  // 事件 source 上（model source 是闭集），新写入已改存 $DSH_HOME/rp/th-floors/<sid>.json。
+  // 读侧先查 sidecar，再退回旧 source 键 → 老会话未修复与新会话都能读回来。
+  const thFloors = readThFloors(dshHome, sessionId)
   // 第一遍：收集 compaction/prune 遮蔽集（replace 原语——旧事件留日志但不进视图/导出；
   // prune 先于 replacement 落盘但被遮事件更早，单遍会漏遮 → 先全量扫描再导出）
   const shadowed = new Set<number>()
@@ -674,13 +685,20 @@ export async function chatMessages(dshHome: string, body: Record<string, unknown
     if (!isTree(msg)) continue
     const source = isTree(msg.source) ? msg.source : null
     if (source?.form === 'snapshot') continue // 快照注入（内部工作过程）不进聊天导出
-    const isThSystem = source?.thSystem === true
+    // TH 系统楼层：旧数据用 source.thSystem 标记，新数据用 model:'th-system'（合法枚举），
+    // sidecar 标注优先（修复过的会话 source 上已无该键）。
+    const floor = lookupThFloor(thFloors, (msg as { id?: unknown }).id, ev.seq)
+    const isThSystem = floor?.system === true
+      || source?.thSystem === true
+      || source?.model === 'th-system'
     if (isThSystem) role = 'system'
     const content = msg.content
     const text = Array.isArray(content)
       ? content.filter(isTree).filter(b => b.type === 'text').map(b => String(b.text ?? '')).join('\n')
       : typeof content === 'string' ? content : ''
     if (!text && !isThSystem) continue // 非 TH 系统楼层的空文本不进导出
+    // 楼层附加数据：sidecar 优先 → 旧 source.thData 兜底
+    const floorData = floor?.data !== undefined ? floor.data : source?.thData
     messages.push({
       message_id: messages.length,
       // L1a：携带事件 seq（TH 事件桥的楼层解析锚——客户端节点视图以 seq 定位楼层；
@@ -690,7 +708,7 @@ export async function chatMessages(dshHome: string, body: Record<string, unknown
       role,
       message: text,
       is_system: isThSystem,
-      ...(isThSystem && isTree(source?.thData) ? { data: source.thData } : {}),
+      ...(isThSystem && isTree(floorData) ? { data: floorData } : {}),
     })
   }
   // 【轮询风暴根修】写缓存（以导出完成时刻的 stat 为准——写路径落盘后 mtime 变化即失效）
