@@ -6297,9 +6297,20 @@ function unregisterMacro(name) {
 }
 
 // ---- C7 registerVariableSchema\uFF08\u6865\u5230 host /variables/schema \u2192 rp/state variableSchema\uFF09----
+// \u6743\u5A01\u5951\u7EA6\uFF08JS-Slash-Runner @types/function/variables.d.ts:203-206\uFF09\uFF1A
+//   registerVariableSchema(schema: z.ZodType<any>, option: {type:'global'|'preset'|'character'|'chat'|'message'}): void
 // \u771F TH \u6536 zod schema\uFF1Aiframe vendor \u6709 zod v4\uFF0C\u7ECF toJSONSchema \u8F6C\u7EAF\u5BF9\u8C61\u8FC7\u6865\uFF1B
-// \u5DF2\u662F\u666E\u901A\u5BF9\u8C61\uFF08JSON-Schema \u5F62\u6001\uFF09\u5219\u539F\u6837\u4F20\u3002name \u7A7A = \u6574\u6811 schema\u3002
-function registerVariableSchema(name, schema) {
+// \u5DF2\u662F\u666E\u901A\u5BF9\u8C61\uFF08JSON-Schema \u5F62\u6001\uFF09\u5219\u539F\u6837\u4F20\u3002
+//
+// \u3010\u9636\u6BB54 2026-09-11 \u4FEE\u590D \xB7 \u53C2\u6570\u4E0E\u8BED\u4E49\u53CC\u9519\u3011\u65E7\u5B9E\u73B0\u7B7E\u540D\u662F (name, schema)\uFF1A\u5361\u6309\u6587\u6863
+// \u8C03\u7528 registerVariableSchema(z.object({...}), {type:'message'}) \u65F6\u2014\u2014
+//   \xB7 arg0\uFF08zod \u5BF9\u8C61\uFF09\u88AB\u5F53 name \u2192 String() \u5F97 "[object Object]"\uFF1B
+//   \xB7 arg1\uFF08scope \u9009\u9879\uFF09\u88AB\u5F53 schema \u2192 \u5B58\u6210 variableSchema \u7684\u503C\u3002
+// \u5B9E\u673A\u4EA7\u7269\u5373\u4E3A variableSchema.properties["[object Object]"] = {type:'message'}
+// \uFF08rp/state/<sid>.json \u5B9E\u8BC1\uFF09\uFF0C\u5E76\u88AB\u5361\u811A\u672C\u8BFB\u6210 "Data Error"\u3002
+// \u73B0\u5728\u6309\u5951\u7EA6\u53D6 (schema, option)\uFF1Ascope \u4EC5 message/\u7A7A \u8D70\u6574\u6811\uFF08\u672C store \u7684 variables \u6839
+// \u5C31\u662F\u6D88\u606F\u697C\u5C42\u53D8\u91CF\uFF09\uFF0C\u5176\u4F59\u4F5C\u7528\u57DF\u6309\u4F5C\u7528\u57DF\u540D\u5206\u952E\u4FDD\u5B58\u3002
+function registerVariableSchema(schema, option) {
   var json = schema || null;
   try {
     if (json && typeof json === 'object' && typeof json.safeParse === 'function'
@@ -6307,7 +6318,11 @@ function registerVariableSchema(name, schema) {
       json = window.Zod.toJSONSchema(json);
     }
   } catch (e) { /* \u8F6C\u6362\u5931\u8D25\u6309\u539F\u6837\u4F20\uFF08host \u6309 JSON-Schema \u6700\u5C0F\u5B50\u96C6\u6821\u9A8C\uFF09 */ }
-  return call('vars:schema', [String(name == null ? '' : name), json]).then(function () { return true; });
+  var scope = option && typeof option === 'object' && typeof option.type === 'string' ? option.type : 'message';
+  if (['global', 'preset', 'character', 'chat', 'message'].indexOf(scope) === -1) scope = 'message';
+  // message \u4F5C\u7528\u57DF = \u672C\u5B9E\u73B0\u7684\u552F\u4E00\u53D8\u91CF\u5B58\u50A8\uFF08rp/state/<sid>.json \u7684 variables \u6839\uFF09\u2192 \u4F20 ''
+  // \u8868\u793A\u300C\u6574\u6811 schema\u300D\uFF1B\u5176\u5B83\u4F5C\u7528\u57DF\u4F20\u4F5C\u7528\u57DF\u540D\uFF08host \u4FA7\u6309\u540D\u5206\u952E\uFF0C\u4E0D\u518D\u4EA7\u51FA [object Object]\uFF09\u3002
+  return call('vars:schema', [scope === 'message' ? '' : scope, json]).then(function () { return true; });
 }
 
 // ---- toastr\uFF08\u6865\u5230 host\uFF1Aconsole + \u811A\u672C\u9762\u677F\u65E5\u5FD7\uFF09----
@@ -7714,9 +7729,10 @@ var SessionRuntime = class {
       await thApi2("variables/merge", { sessionId: this.sessionId, variables: vars });
     },
     // C7 registerVariableSchema 数据面（成功提醒走 D8 开关）
+    // 注意 `name` 实为 TH 契约里的**作用域**（''/message = 本实现的整树存储）。
     varsSchemaPut: async (name, schema) => {
       await thApi2("variables/schema", { sessionId: this.sessionId, name, variableSchema: schema });
-      this.notifyUser("success", `\u53D8\u91CF\u7ED3\u6784\u5DF2\u6CE8\u518C${name ? `\uFF1A${name}` : "\uFF08\u6574\u6811\uFF09"}`);
+      this.notifyUser("success", `\u53D8\u91CF\u7ED3\u6784\u5DF2\u6CE8\u518C${name ? `\uFF08\u4F5C\u7528\u57DF\uFF1A${name}\uFF09` : "\uFF08\u6574\u6811\uFF09"}`);
     },
     // C8 prompt 注入存储（消费接线归 dsh-plugin 主线程排程，宿主只落盘）
     injectsPut: async (injections) => {
