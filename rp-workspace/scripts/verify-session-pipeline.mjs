@@ -4,13 +4,19 @@
  * ================================================================================
  * 与 tmp/repair-all.mjs 的区别（为什么需要这个脚本）：
  *   · repair-all.mjs 只调用 `repairSessionForV3` 单个函数 —— 它证明不了**设备上真正跑的
- *     三步链**也能把会话救回来。设备 `dsh-plugin/index.ts:2013-2015` 实际执行的是：
- *         normalizeSnapshotMessageRoles(content)   // 快照角色归一
- *       → repairSessionForV3(norm.content)         // v0→v3 迁移合法性修复
- *       → repairSessionSeqs(v3.content)            // committed 区 seq 连续性修复
- *     第三步在我方 v3 产物上**可能**不是幂等短路（它会重新展开聚合行、重编号 seq），
+ *     四步链**也能把会话救回来。设备实际执行的是：
+ *         repairSessionCwds()                     // ④ cwd 规范化（相对→绝对 + 目录改名）:2036
+ *         normalizeSnapshotMessageRoles(content)  // ① 快照角色归一                      :2013
+ *       → repairSessionForV3(norm.content)         // ② v0→v3 迁移合法性修复
+ *       → repairSessionSeqs(v3.content)            // ③ committed 区 seq 连续性修复
+ *     【2026-09-11 补第④步】原脚本只复刻 ①②③，漏了 ④ —— 后果是 `dsht-welcome`（历史引导会话，
+ *     header.cwd 是**相对**路径 `rp/_start`）在离线判据里恒判「不可迁移」，报 79/80，
+ *     而设备上它是好的（运行时 ④ 会解析成绝对路径并把目录改名为 projectKey(新cwd)）。
+ *     **离线链少了哪一步，就会在那一维度上给出与设备相反的结论** —— 这正是本脚本存在的意义。
+ *   · 第三步在我方 v3 产物上**可能**不是幂等短路（它会重新展开聚合行、重编号 seq），
  *     若它改动了 repairSessionForV3 刚重映射好的引用，离线结论就与设备行为不符。
- *   · 所以本脚本**逐字复刻**设备三步链，再用官方 0.1.5 迁移链 + foldSurface 判定。
+ *   · 所以本脚本**逐字复刻**设备四步链，再用官方 0.1.5 迁移链 + foldSurface 判定。
+ *     ④ 无法离线执行 `realpath`/`rename`，故按语义等价推演（见 `cwdRepairStep`）。
  *
  * 判据（全部通过才算阶段 3 通过）：
  *   1. 修复后可迁移率 100%
@@ -69,7 +75,7 @@ execFileSync(NODE, [ESB, `${PKG}/src/dsht-plugin-shared/session-surgery.ts`, '--
 execFileSync(NODE, [ESB, `${PKG}/src/dsht-plugin-shared/session-repair.ts`, '--bundle', '--format=esm',
   '--platform=node', `--outfile=${BUNDLE_REPAIR}`, '--external:@deepseek-ai/*', '--log-level=warning'],
 { cwd: PKG, stdio: 'inherit' })
-const { repairSessionSeqs, sessionHeaderCwd, sessionRepairNeedsWrite } = await import(pathToFileURL(BUNDLE).href)
+const { repairSessionSeqs, sessionHeaderCwd, sessionRepairNeedsWrite, sessionCwdNeedsRepair, rewriteSessionHeaderCwd } = await import(pathToFileURL(BUNDLE).href)
 const { normalizeSnapshotMessageRoles } = await import(pathToFileURL(BUNDLE_SURGERY).href)
 const { repairSessionForV3 } = await import(pathToFileURL(BUNDLE_REPAIR).href)
 // projectKey 必须取**实现本身**（不重写）——目录身份判据的基准
@@ -83,8 +89,55 @@ if (typeof repairSessionSeqs !== 'function' || typeof normalizeSnapshotMessageRo
   process.exit(2)
 }
 emit(`[build] ✓ 四函数就位 repairSessionSeqs / normalizeSnapshotMessageRoles / repairSessionForV3 / projectKey`)
+emit(`[build] ✓ cwd 规范化步骤就位 sessionCwdNeedsRepair / rewriteSessionHeaderCwd`)
 
-/** 设备三步链（dsh-plugin/index.ts:2013-2015 逐字复刻） */
+/**
+ * 设备端 dshHome 前缀（**必须硬编码**，无法从离线树推导）。
+ *
+ * 为什么需要它：运行时的修复链有 **四步**，本脚本原先只复刻了三步，漏掉的第四步
+ * `repairSessionCwds`（`dsh-plugin/index.ts:2036`）负责把**相对 cwd 解析成绝对**
+ * （历史引导会话写的是 `rp/_start`）**并把会话目录重命名到 projectKey(新cwd)**。
+ * 离线链不跑它 → `dsht-welcome` 永远停在「format v0 header cwd must be absolute」→
+ * 报 79/80，而设备上它是好的（实测该会话目录已是
+ * `--data-data-com.dshtavern.app-files-.dsh-rp-_start--/dsht-welcome`，cwd 为绝对）。
+ *
+ * 解析基准只能是**设备上的绝对前缀**（离线树的 Windows 路径与设备路径不同源），
+ * 故取设备真值。若换设备/换包名，用 `--dsh-home` 覆盖。
+ */
+const dshHomeIdx = process.argv.indexOf('--dsh-home')
+const DSH_HOME = dshHomeIdx > 0 ? process.argv[dshHomeIdx + 1] : '/data/data/com.dshtavern.app/files/.dsh'
+
+/**
+ * 第四步：cwd 规范化（纯函数复刻 `repairSessionCwds` 的判定与改写，不碰磁盘）。
+ *
+ * 设备上它会 `realpath()` + `rename()` 搬目录；离线树无法执行这两件事，
+ * 故此处只做**语义等价**的推演：
+ *   · 相对 cwd 以 dshHome 为基准解析成绝对
+ *   · 返回改写后的首行 + 搬迁后的目录键（= projectKey(新cwd)）
+ * 这样判据 1（可迁移）与判据 5（目录身份）才覆盖运行时真正做的事。
+ *
+ * @param {string} content 会话全文
+ * @param {string} dirKey  会话当前所在目录名
+ * @returns {{ content: string, dirKey: string, changed: boolean }}
+ */
+function cwdRepairStep(content, dirKey) {
+  const cwd = sessionHeaderCwd(content)
+  // 非字符串 / 已是绝对路径 → 运行时直接 continue，不改动
+  if (cwd === null || !sessionCwdNeedsRepair(cwd)) return { content, dirKey, changed: false }
+  const resolved = path.isAbsolute(cwd) ? cwd : path.resolve(DSH_HOME, cwd)
+  const canonical = resolved
+  const nl = content.indexOf('\n')
+  const firstLine = nl === -1 ? content : content.slice(0, nl)
+  const newLine = rewriteSessionHeaderCwd(firstLine, canonical)
+  if (newLine === null) return { content, dirKey, changed: false }
+  return {
+    content: newLine + (nl === -1 ? '' : content.slice(nl)),
+    dirKey: projectKey(canonical),
+    changed: true,
+  }
+}
+
+/** 设备四步链（dsh-plugin/index.ts:2036 cwd 规范化 → :2013-2015 三步） */
 function runtimePipeline(content) {
   const norm = normalizeSnapshotMessageRoles(content)
   const v3 = repairSessionForV3(norm.content)
@@ -197,6 +250,7 @@ emit(`\n[pipeline] 会话树 ${treeRoot} → ${files.length} 个会话\n`)
 
 let beforeFail = 0, afterFail = 0, fixed = 0, regress = 0
 let nonIdempotent = 0, lossy = 0, keyDrift = 0, rewriteEveryBoot = 0, totalBytes = 0, salvagedTotal = 0, movedTotal = 0
+let cwdFixed = 0
 const failures = [], problems = [], noteCounts = new Map()
 const t0 = Date.now()
 
@@ -207,9 +261,16 @@ for (const f of files) {
   const origErr = officialFold(orig)
   if (origErr !== null) beforeFail++
 
+  // 第四步（cwd 规范化）**先跑**，与设备启动顺序一致（repairSessionCwds 早于 repairAllSessionSeqs）。
+  // 它可能改 header.cwd 并把目录改名 → 判据 5 的 dirKey 基准随之更新。
+  const dirKey0 = rel.replaceAll(path.sep, '/').split('/')[0]
+  const cwdStep = cwdRepairStep(orig, dirKey0)
+  const dirKey = cwdStep.dirKey
+  if (cwdStep.changed) cwdFixed++
+
   let r
-  try { r = runtimePipeline(orig) } catch (e) {
-    afterFail++; failures.push({ rel, err: `三步链抛错: ${e.message}` }); continue
+  try { r = runtimePipeline(cwdStep.content) } catch (e) {
+    afterFail++; failures.push({ rel, err: `四步链抛错: ${e.message}` }); continue
   }
   if (r.error) { afterFail++; failures.push({ rel, err: `seq 修复失败: ${r.error}` }); continue }
   const afterErr = officialFold(r.content)
@@ -224,9 +285,10 @@ for (const f of files) {
   }
   for (const n of r.notes) noteCounts.set(n, (noteCounts.get(n) ?? 0) + 1)
 
-  // 幂等：二次跑必须零改动
-  const r2 = runtimePipeline(r.content)
-  if (r2.content !== r.content) {
+  // 幂等：二次跑必须零改动（含第四步 cwd 规范化 —— 它跑第二遍必须无事可做）
+  const cwd2 = cwdRepairStep(r.content, dirKey)
+  const r2 = runtimePipeline(cwd2.content)
+  if (r2.content !== r.content || cwd2.changed) {
     nonIdempotent++
     problems.push({ rel, kind: '非幂等', detail: (r2.notes.join('；') || '(无说明)').slice(0, 120) })
   }
@@ -269,7 +331,8 @@ for (const f of files) {
   // 判据 5：目录身份不变 —— projectKey(修复后 header.cwd) 必须 == 会话所在目录名。
   // 违反 = 交给 DSH 一个「目录名与 cwd 不符」的会话：官方 assertStoredIdentity 判不合规，
   // 实机后果是 plugin tree 加载失败（crash-loop）+ 会话文件在核心搬迁中丢失。
-  const dirKey = rel.replaceAll(path.sep, '/').split('/')[0]
+  // 【注意】dirKey 取自第四步（cwd 规范化）之后 —— 运行时那步会 `rename()` 搬目录，
+  // 搬完目录名就该等于 projectKey(新 cwd)；此处正是校验这个不变量。
   const outCwd = typeof sessionHeaderCwd === 'function' ? sessionHeaderCwd(r.content) : null
   if (outCwd !== null && projectKey(outCwd) !== dirKey) {
     keyDrift++
@@ -294,6 +357,7 @@ emit(`内容丢失            ${lossy}`)
 emit(`非幂等              ${nonIdempotent}`)
 emit(`目录身份漂移        ${keyDrift}`)
 emit(`每次启动会重写      ${rewriteEveryBoot}`)
+emit(`cwd 规范化          ${cwdFixed} 个会话（相对 cwd → 绝对 + 目录改名）`)
 emit(`source 扩展键迁移   ${salvagedTotal} 个楼层 / ${movedTotal} 段文本改载 sidecar（未丢失）`)
 emit(`总数据量            ${(totalBytes / 1048576).toFixed(1)}MB / 耗时 ${secs}s`)
 if (failures.length) {

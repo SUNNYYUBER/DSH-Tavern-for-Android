@@ -29,11 +29,20 @@
 - 完成标志：`git status` 干净或只剩明确忽略项
 - 备注：`stage3-device/backup/dsh-before-migration.tar.gz`（859MB 设备备份）**建议不入库**，加 .gitignore
 
-### T-02　走完升级阶段 3：会话迁移验证　✅ 完成（2026-09-11 心跳 43）
+### T-02　走完升级阶段 3：会话迁移验证　✅ 完成（2026-09-11 心跳 43；证据口径心跳 47 复核修正）
 - 目标：确认 v0 → v1 → v2 → v3 三段迁移在**真实体量**（12MB ~ 214MB 会话）下可用
 - 判据：`.goal/upgrade-0.1.5/.stage3-pass` 文件存在（evaluate.sh 的 +1）　→ ✅ 已写入
-- 结果：六项判据对设备真实会话树 **80/80 全过**（可迁移 / 零内容丢失 / 幂等 / 无回归 /
-  目录身份不漂移 / 修复链收敛）；修复器实机 `repaired=79 skipped=1 errors=0`
+- 结果：六项判据对**真·迁移前树**（`stage3-device/pre-migration`，151MB）**80/80 全过**
+  （可迁移 / 零内容丢失 / 幂等 / 无回归 / 目录身份不漂移 / 修复链收敛）；
+  **39 → 80（救回 41）**；修复器实机 `repaired=79 skipped=1 errors=0`
+- ⚠️ **证据口径修正（心跳 47）**：
+  ① 原判据日志是**在已修好的树上跑的**（"修复前"就已 80/80，198MB）→ **循环论证**，证明力为零；
+  现改为对真·迁移前树（151MB）重跑，得到真实前后对比，日志已按新口径重写
+  ② 验证脚本原只复刻运行时**3 步**，漏了第 4 步 `repairSessionCwds`（相对 cwd → 绝对 +
+  **目录改名**）→ `dsht-welcome`（cwd = 相对 `rp/_start`）恒判「不可迁移」，脚本报 79/80
+  而设备上它是好的。**离线链少了哪一步，就会在那一维度上给出与设备相反的结论**。
+  已补第 4 步（`cwdRepairStep`，语义等价推演）→ 复跑 80/80；
+  **负控**：关掉第 4 步立刻重现 79/80 → 证明该步是承重的，闸门非空转
 - 事故与修复：cwd 改写致 `dsht-welcome` 会话丢失 → 已修复+恢复+加闸+加判据（`c49646b`）
 - 详见 [.goal/upgrade-0.1.5/.stage3-pass](.goal/upgrade-0.1.5/.stage3-pass)
 
@@ -90,7 +99,7 @@
 | T-16 | substituteRegex 枚举 1↔2 颠倒 | ✅ 已修 | `regex/engine.ts` |
 | T-17 | 正则 `$1/$<name>` 捕获组失效 | ✅ 已修（TT 对照修复 2026-09-09） | `regex/engine.ts:165+` |
 | T-18 | `{{match}}` 大小写不敏感 | ✅ 已修（v181，改 `/gi`） | `th-shim.ts:1086` |
-| T-19 | shim `Mvu.parseMessage` 与 `state/mvu.ts` 不对称 | ✅ 已修 | `th-shim.ts:1594` |
+| T-19 | shim `Mvu.parseMessage` 与 `state/mvu.ts` 不对称 | ✅ 已修（已复核，2026-09-11） | `th-shim.ts` `Mvu.parseMessage` 直调 `state/mvu.ts` 的 `parseUpdateVariable`（同源，非各写一份） |
 | T-20 | `getTavernRegexes` 未对齐真 TH **snake_case** 形状 | ✅ 已修（2026-09-10，e78e433） | 出口/入口双向映射 + 契约测试 `th-regex-contract.spec.ts` |
 | T-21 | `getChatMessages` / `getWorldbook` / `deleteVariable` 字段透传 | ✅ 已修（2026-09-10，ae59380） | 逐项对真 TH 类型定义补齐 |
 | T-22 | `setglobalvar` 宏族 | ✅ 已修 | `th-shim.ts:1339+` |
