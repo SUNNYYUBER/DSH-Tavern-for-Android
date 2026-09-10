@@ -268,6 +268,39 @@ v0.1.5:  format.ts  index.ts  win32.ts  zstd*.ts
 
 **处理**：补丁必须**同时覆盖两处**，并在构建脚本中把断言数从 1 改为 2。
 
+#### ✅ F1 实证补全（2026-09-10 心跳 40，基于真实 npm 产物）
+
+安装 `0.1.5-rc.1` 后对**编译产物** `dsh-session-persistence-jsonl/lib/index.js` 逐行核对：
+
+| 行 | 真实产物 | 我方旧补丁覆盖 |
+|---|---|---|
+| **4** | `import { link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from "node:fs/promises";` | 目标字符串**仍在** ✓（但**不含 `rename`**） |
+| **1602-1610** | `const defaultFileSystem = { ... lstat: ..., link, rm: ... };` ← **`link` 简写** | ❌ 未覆盖 |
+| **2032** | `await internals.fs.link(staged, currentPath);` ← `publishCurrentExclusive()` 内 | ❌ **未覆盖（F1 真凶）** |
+| **2973** | `await link(tmp, finalPath);` | ✅ 旧补丁命中（1 次） |
+
+**`publishCurrentExclusive()` 的分支逻辑**（L2021-2040）：
+```js
+if (internals.platform === "win32") { await internals.publishNewWin32(...); }   // Windows 专用
+try { await internals.fs.link(staged, currentPath); }                            // ← Android 走这里
+catch (error) { if (isEEXIST(error)) return false; throw error; }
+```
+→ **Android（非 win32）必然走 `internals.fs.link`** → SELinux EACCES → 抛错。
+
+**精确补丁方案（4 处，必须全改）**：
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | L4 import | 加入 `rename`：`..., realpath, rename, rm, ...` |
+| 2 | L1608 `defaultFileSystem` | `link,` → `link, rename,`（暴露给 `internals.fs`） |
+| 3 | L2973 | `await link(tmp, finalPath);` → `await rename(tmp, finalPath);` |
+| 4 | **L2032（新增）** | `await internals.fs.link(...)` → `await internals.fs.rename(...)` |
+
+**构建脚本断言数**：`1 → 4`（原断言只查 `await link(tmp, finalPath);`，现需覆盖 4 个标记点）。
+
+> **v0.1.2 对照**：旧版只有 L2973 一处 link 调用，故单点补丁够用；
+> v0.1.5 引入 generation 机制后 link 出现 **3 个位置**（import / defaultFileSystem / 两处调用）。
+
 #### F2 🆕 新增 `lease` 锁机制 —— 但设计上对我方友好
 
 `lease.ts` 定义跨进程写所有权锁：

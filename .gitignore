@@ -41,3 +41,6 @@ tmp/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# 升级回滚备份（大文件，不进版本控制）
+backup/
