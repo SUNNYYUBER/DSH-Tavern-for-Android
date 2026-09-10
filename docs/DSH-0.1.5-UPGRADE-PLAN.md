@@ -536,3 +536,61 @@ function assertV3StructuralRow(value) {
 → **只拒绝 2 个特定类型** + `request/header` 的退役字段，其余类型走 "opaque" 路径。
 
 **结论：`text-chunks` 兼容性问题不存在，迁移链可通行。** 该类型无需我方做任何适配。
+
+---
+
+## 附录 C：`in-history` 机制实证与 D-4 重评（2026-09-10 心跳 41）
+
+### 机制（源码级）
+```js
+// dsh-agent-loop/lib/index.js
+var SystemPromptProjection = class {
+  systemNodes() {                      // 扫描 surface 上存活的 system/message 节点
+    for (const seq of this.session.surface.nodes) {
+      const event = this.session.eventAt(seq);
+      if (event?.type !== "system/message") continue;
+      ...
+    }
+  }
+  project(rendered, input) {
+    const nodes = this.systemNodes();
+    const head = nodes[0];
+    if (head === void 0) return [{ message: createSystemMessage(rendered, SOURCE),
+                                   intent: { surfaceOp: "append" } }];
+    const latest = nodes.findLast((node) => node.text !== "") ?? head;
+    if (!input.inHistory || input.startsSeries || rendered.length === 0) {
+      // 替换模式：清空后续节点 + 重写头节点
+    }
+    // 否则（inHistory && 延续序列）：追加新节点
+  }
+};
+
+// L1020：能力来源
+inHistory: preparedCall?.systemPromptUpdate === "in-history"
+```
+
+| 模式 | 条件 | 行为 | 前缀缓存 |
+|---|---|---|---|
+| **替换** | `!inHistory` 或 `startsSeries` 或 渲染为空 | 清空后续 system 节点 + 重写头节点 | 从首 token 失效 |
+| **追加** | `inHistory && 序列延续` | 在该步骤 user/message 之前追加新 `system/message` 节点 | **保持热态** |
+
+### 对我方 D-4 的重新评估
+
+**D-4 原判**：「用户输入绝对位置由 `deriveMessages()` 决定，TT 结构无法复现 → **核心约束不可达**」
+
+**0.1.5 改变了什么**：
+1. system prompt 从「header 里的隐式文本」→「surface 上的 `system/message` 节点」
+2. 节点可被**追加在历史的任意位置**（in-history 模式）
+3. → 理论上可以让「系统内容 cluster + 末尾用户输入」这种 TT 结构**成为可表达的形式**
+
+**但两点限制必须先说清**：
+| 限制 | 说明 |
+|---|---|
+| **仅在 `llm-deepseek` 路由生效** | `llm-pi-ai` 路由全部保持替换行为（`llm-deepseek/README.zh.md:163`）；我方当前走 pi-ai |
+| **`deepseek-v4-flash` 需显式声明** | 只有默认 `deepseek-flash` 条目声明了 `in-history`（`llm-deepseek/src/index.ts:100`），其他模型须显式配置 |
+
+**结论**：D-4 **从「不可达」升级为「有条件可达」**。解锁路径是**两步独立决策**：
+1. 升级到 0.1.5（本方案）
+2. 切换到 `llm-deepseek` 路由 + 显式声明 `models: [{ id: "deepseek-v4-flash", systemPromptUpdate: "in-history" }]`
+
+**建议**：不在升级窗口内做第 2 步（变量叠加会导致无法归因）。升级稳定后单独评估。

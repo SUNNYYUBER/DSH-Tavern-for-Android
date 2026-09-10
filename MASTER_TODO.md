@@ -55,28 +55,58 @@
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| 0 | 备份设备数据 + 冻结 | ✅ **完成**：runtime staging 已备份（259MB，含 0.1.2-rc.1 实证） |
-| 1 | 静态预检（复核 11 个补丁点） | ✅ **完成**：8 稳定 / 2 需扩展 / 1 新 stub |
-| 2 | 升级运行时 + 重打补丁 | 🔄 **接近完成**：0.1.5-rc.1 已装 + **21 处补丁全部应用成功**；正在同步到 staging |
-| 3 | 会话迁移验证（最高风险） | ⏳ 待设备上线 |
-| 4 | 功能回归 + D-4 重评 | ⏳ |
+| 0 | 备份设备数据 + 冻结 | ✅ **完成** |
+| 1 | 静态预检（11 个补丁点） | ✅ **完成**：8 稳定 / 2 需扩展 / 1 新 stub |
+| 2 | 升级运行时 + 重打补丁 | ✅ **完成**：0.1.5-rc.1 装入 + **21 处补丁应用成功** + 7 插件部署 + staging 同步完毕 |
+| 3 | 会话迁移验证 | 🔄 **进行中**：设备已备份（901MB）；待安装新 APK 触发迁移 |
+| 4 | 功能回归 + D-4 重评 | 🔄 **APK 已出**：x86_64 debug 187.6MB（内含 0.1.5-rc.1 + F1 补丁 4 处） |
 
-> **进展度量**：`bash .goal/upgrade-0.1.5/evaluate.sh` → 当前 **2 / 5**（阶段 2 同步完成后转 3）
-> 工作区：`.goal/upgrade-0.1.5/`（GOAL / STRATEGY / LEARNINGS / HEARTBEAT）
-> **回滚保险**：`backup/dsh-runtime-android-0.1.2-staging`（已 gitignore）
-> 　　　　　　`rp-workspace/dsh-runtime-android/node_modules-0.1.2-old`（本地就地回滚）
+> **进展度量**：`bash .goal/upgrade-0.1.5/evaluate.sh` → 当前 **3 / 5**
+>
+> **回滚保险**（四层）：`backup/dsh-runtime-android-0.1.2-staging`（runtime 完整副本）
+> 　　`rp-workspace/dsh-runtime-android/node_modules-0.1.2-old`（就地回滚）
+> 　　`stage3-device/backup/dsh-before-migration.tar.gz`（**设备数据 901MB，迁移前**）
+> 　　`rp-workspace/dsh-runtime-src/package.json.bak`（版本回退）
 
-### 本轮新增的两项基础设施
+### ✅ 关键里程碑：0.1.5 首次成功打进 APK
 
-1. **`rp-workspace/scripts/apply-platform-patches.py`** —— 平台补丁脚本（此前是断链）
-   发现 `build-wb.sh` **不含任何平台补丁**，而含补丁的 `build-dsht.ps1` 在当前沙箱**跑不了**。
-   新脚本把全部补丁（Step 3 / 3.5 / P2 / P3 / 4.8 / 4.5）复刻为可执行的 Python，
-   支持 `--check` 预检、幂等、命中数断言。**实测 21 处全部成功**。
+```
+[build-wb] [0/7] 确保我方插件就位 ✓ 跳过（集成生效）
+[build-wb] [1/6] esbuild dsh-plugin        795.1kb
+[build-wb] [2/6] esbuild app.js            248.9kb
+[build-wb] [3/6] lib 换架构 (x86_64)
+[build-wb] [4/6] sentinel v203 → v204
+[build-wb] [5/6] zip 内 fixTag = 16
+[build-wb] [6/6] gradle assembleDebug
+[build-wb] 交付: DSH-Tavern-0.2.0-x86_64-debug.apk (187.6 MB)
+```
 
-2. **`tools-cu/cu.py` + `computer-use` skill** —— Windows 桌面级 computer use
-   （用户 2026-09-10 要求）。截图/鼠标/键盘/图像定位，13 个子命令，带 FAILSAFE 与 `--dry-run`。
-   → 补齐「全自动实机测试」的最后一块拼图：
-   DSHT（adb+CDP）+ TT（playwright）+ 任意 GUI（pyautogui）+ 视觉验证（截图读图）
+**APK 内抽验**（从 `dsh-runtime.zip` 直接读）：
+| 项 | 值 |
+|---|---|
+| DSH 版本 | **0.1.5-rc.1** ✅ |
+| F1 补丁标记 | **4 处** ✅ |
+| 我方插件 | `dsht-rp-plugin` 含 `.` / `./client` 双面 ✅ |
+| md5 | `8f2fee9cc884051c97429c17b6f62a6c` |
+
+### 轮次内新增的基础设施（此前缺失）
+
+| 工具 | 作用 | 状态 |
+|---|---|---|
+| `scripts/apply-platform-patches.py` | 平台补丁（21 处，`--check` 预检 + 幂等 + 断言） | ✅ 实测通过 |
+| `scripts/build-plugins.sh` | 构建部署我方 7 个插件 | ✅ 实测通过 |
+| `scripts/upgrade-runtime.sh` | 一键升级编排（install/patch/plugins/sync/check/all） | ✅ 建成 |
+| `scripts/stage3-migration-test.sh` | 阶段 3 设备端迁移验证流程 | ✅ 建成 |
+| `tools/verify-session-migration.py` | 会话迁移验证（baseline/compare/scan） | ✅ 实测通过 |
+| `tools-cu/cu.py` + `computer-use` skill | Windows 桌面级 computer use | ✅ 实测通过 |
+
+### 关键实证结论（3 条）
+
+1. **迁移链确认**：我方 v0 → 目标 v3（`SESSION_FORMAT_VERSION = 3`），三段迁移
+2. **✅ `text-chunks` 兼容性风险已排除**：它是**宿主的聚合打包格式**（非数据损坏），
+   0.1.5 虽移除了 `decodeStorageRecord`，但 **v0→v1 迁移器有 `PACKED_TAGS` 展开逻辑**补偿
+3. **D-4 从「不可达」升级为「有条件可达」**：`in-history` 让 system 提示词可追加到历史任意位置；
+   解锁需**两步独立决策**（升级 + 切 `llm-deepseek` 路由），**建议不在升级窗口内叠加**
 
 📄 方案全文：`docs/DSH-0.1.5-UPGRADE-PLAN.md`
 
