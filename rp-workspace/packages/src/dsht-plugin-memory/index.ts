@@ -358,9 +358,13 @@ export interface ShadowPlan {
  */
 export function planShadowOps(
   nodes: SurfaceNodeInfo[],
-  opts: { keepNearFloors: number; charBudget: number; memoryMaxFloor: number; foldFloors: boolean; cursor: number; freshSigs?: ReadonlySet<string>; windowKeepSeq?: number | null },
+  opts: { keepNearFloors: number; charBudget: number; memoryMaxFloor: number; foldFloors: boolean; cursor: number; freshSigs?: ReadonlySet<string>; windowKeepSeq?: number | null; foldHistory?: boolean },
 ): ShadowPlan {
   const { keepNearFloors, charBudget, memoryMaxFloor, foldFloors, cursor, freshSigs, windowKeepSeq } = opts
+  // 历史前缀折叠开关（2026-09-10 心跳 33）：有信息损失（原文被摘要顶替），
+  // 故仍受体积阈值门控（调用方按 est > 80k 传入）。默认 true 保持既有语义/单测兼容；
+  // 快照去重不受此开关影响——那是零信息损失的纯去重，任何体积下都该做。
+  const foldHistory = opts.foldHistory !== false
   const charsBefore = nodes.reduce((s, n) => s + n.chars, 0)
   const ops: ShadowOp[] = []
   if (nodes.length === 0) return { ops, charsBefore, charsAfter: charsBefore, flooredUpTo: 0 }
@@ -416,7 +420,7 @@ export function planShadowOps(
     if (absOf(j) <= memoryMaxFloor) boundaryJ = j
     else break
   }
-  const prefixEndJ = foldFloors ? Math.min(boundaryJ, keptFromJ - 1) : -1
+  const prefixEndJ = (foldFloors && foldHistory) ? Math.min(boundaryJ, keptFromJ - 1) : -1
   let prefixEndIdx = -1
   if (prefixEndJ >= 0) {
     prefixEndIdx = floorGroups[prefixEndJ].endIdx
@@ -797,8 +801,18 @@ export function apply(ctx: Ctx, _config: unknown): void {
   // ---- surface 影子化执行（§2.2 上下文瘦身；planShadowOps 为纯函数可单测）----
   /** est tokens ≈ 字符 × 0.31（DeepSeek 中文口径粗估；触发判断用，宁早勿晚） */
   const TOKENS_PER_CHAR = 0.31
-  /** 触发阈值：模型视图 est > 80k tokens 才影子化（上游 ~79k 实测稳、873k 必炸） */
+  /** 触发阈值：模型视图 est > 80k tokens 才做**历史前缀**折叠（上游 ~79k 实测稳、873k 必炸）。
+   *  ⚠️ 该阈值**只管前缀折叠**（有信息损失，需摘要兜底，故从严）——
+   *  快照去重（零信息损失的纯去重）另走 SHADOW_MIN_SNAPSHOT_DUP 判据，不受此阈值门控。 */
   const SHADOW_TRIGGER_TOKENS = 80_000
+  /** 快照去重触发判据（2026-09-10 心跳 33 新增）：不设 tokens 门槛，改为
+   *  「视图内存在同签名多副本」即折叠。
+   *  理由（实测教训）：80k 阈值原按 500k 上下文模型标定；contextWindow 修正为 1M 后，
+   *  中等会话（实测 57.5k est / 185k 字符）远低于阈值 → 影子化整体被短路 →
+   *  13 条快照（160k 字符，占 payload 87%）持续堆叠重复副本。
+   *  快照去重是纯增量收益（日志保留全部数据、模型视图仅去掉冗余副本），
+   *  无需等体积压力，故与此阈值解耦。 */
+  const SHADOW_MIN_SNAPSHOT_DUP = 2
 
   /** 核心估价器精确复刻（dsh-token-meter/estimate：4 字符/token + 块开销 4 + role 开销 4）——
    *  shadowedTokenCount 必须与核心同口径，否则 meter 总量漂移（shadow-price 协议契约）。 */
@@ -855,15 +869,30 @@ export function apply(ctx: Ctx, _config: unknown): void {
       })
     }
     const estTokens = Math.round(nodes.reduce((s, n) => s + n.chars, 0) * TOKENS_PER_CHAR)
-    if (estTokens <= SHADOW_TRIGGER_TOKENS) return ''
+    // 双判据（2026-09-10 心跳 33）：前缀折叠（有损）按体积阈值门控；
+    // 快照去重（无损）只要存在同签名多副本即触发——不再被体积阈值整体短路。
+    const overThreshold = estTokens > SHADOW_TRIGGER_TOKENS
+    const dupSigs = (() => {
+      const seen = new Map<string, number>()
+      for (const n of nodes) if (n.isSnapshot) seen.set(n.sig, (seen.get(n.sig) ?? 0) + 1)
+      let d = 0
+      for (const v of seen.values()) if (v >= SHADOW_MIN_SNAPSHOT_DUP) d += 1
+      return d
+    })()
+    const foldHistory = overThreshold
+    if (!overThreshold && dupSigs === 0) return ''
     // 楼层总数（turn 口径：一轮用户输入/一轮 AI 回答 = 1 楼）——与记忆条目「记忆#N-M」
     // 同口径；不再消费 dsh-plugin 的消息条数游标（两套数字会错位）
     const cursor = extractFloorsFromEvents(sessionEventsSnapshot(session) as SessionEventLike[]).cursor
     const plan = planShadowOps(nodes, {
       keepNearFloors: cfg.keepNearFloors, charBudget: cfg.charBudget,
       memoryMaxFloor: maxFloor, foldFloors: cfg.foldOldFloors, cursor, freshSigs, windowKeepSeq,
+      foldHistory,
     })
     if (plan.ops.length === 0) return ''
+    console.log(`[dsht-memory] surface 影子化判定: est=${(estTokens / 1000).toFixed(1)}k tokens `
+      + `(阈值 ${(SHADOW_TRIGGER_TOKENS / 1000).toFixed(0)}k, ${overThreshold ? '超' : '未超'}→前缀${foldHistory ? '折叠' : '保留'})，`
+      + `重复快照签名 ${dupSigs} 组 → 去重${dupSigs > 0 ? '启用' : '无需'}`)
     for (const op of plan.ops) {
       // 射程内的**真实 surface seqs**（含 tool/result 等非消息节点——replace 覆盖整个区间）
       const inRange = viewSeqs.filter(seq => seq >= op.start && seq <= op.end)

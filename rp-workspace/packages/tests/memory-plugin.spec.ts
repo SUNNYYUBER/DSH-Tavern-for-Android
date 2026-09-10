@@ -70,6 +70,52 @@ describe('extractFloorsFromEvents（楼层口径 = turn：一轮用户输入 / �
     expect(extractFloorsFromEvents([])).toEqual({ floors: [], cursor: 0 })
     expect(extractFloorsFromEvents([{ type: 'session' }, { broken: true }, null as never]).cursor).toBe(0)
   })
+
+  it('回退掩码感知：marker replace 区间内的真实消息整条跳过（不计数、不进摘要）', () => {
+    // seq 1..8 的日志；seq4 的 marker = 回退到 seq2（rolledBackTo=2）→ 区间 (2,4) 即
+    // seq3(assistant#2)、seq4 之前的……注意 marker 本身 seq4：区间 = [3,3]。
+    const events = [
+      { type: 'user/message', seq: 1, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '保留楼' }] } },   // #1
+      { type: 'assistant/message', seq: 2, data: { turn: 1, role: 'assistant', content: [{ type: 'text', text: '保留回复' }] } },        // #2
+      { type: 'assistant/message', seq: 3, data: { turn: 2, role: 'assistant', content: [{ type: 'text', text: '被回退的回复' }] } },    // 区间内 → 跳过
+      { type: 'user/message', seq: 4, data: { role: 'user', content: [{ type: 'text', text: 'marker' }], source: { kind: 'plugin', plugin: 'dsht-rp', rolledBackTo: 2 } } },
+      { type: 'user/message', seq: 5, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '回退后新输入' }] } }, // #3
+      { type: 'assistant/message', seq: 6, data: { turn: 3, role: 'assistant', content: [{ type: 'text', text: '回退后新回复' }] } },        // #4
+    ]
+    const { floors, cursor } = extractFloorsFromEvents(events)
+    expect(cursor).toBe(4) // 被回退的 seq3 不计楼（旧口径会数出 5）
+    expect(floors.map(f => f.text)).toEqual(['保留楼', '保留回复', '回退后新输入', '回退后新回复'])
+  })
+
+  it('回退掩码感知：includeAnchor（rolledBackTo = 锚-1）连锚消息一起跳过；editedFrom 区间同语义', () => {
+    const events = [
+      { type: 'user/message', seq: 1, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '更早的楼' }] } }, // #1
+      { type: 'user/message', seq: 2, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '被回退的锚' }] } }, // 区间 [2,3] → 跳过
+      { type: 'assistant/message', seq: 3, data: { turn: 2, role: 'assistant', content: [{ type: 'text', text: '锚的回复' }] } },          // 跳过
+      { type: 'user/message', seq: 4, data: { role: 'user', content: [{ type: 'text', text: 'marker' }], source: { kind: 'plugin', plugin: 'dsht-rp', rolledBackTo: 1 } } },
+      { type: 'user/message', seq: 5, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '重发的输入' }] } }, // #2
+    ]
+    const { floors, cursor } = extractFloorsFromEvents(events)
+    expect(cursor).toBe(2)
+    expect(floors.map(f => f.text)).toEqual(['更早的楼', '重发的输入'])
+    // editedFrom = seq5 的编辑（hideAfter = 4）：区间 [5,6) → 锚消息自身跳过
+    const eventsEdit = [
+      ...events.slice(0, 4),
+      { type: 'user/message', seq: 5, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '被编辑的原句' }] } },
+      { type: 'user/message', seq: 6, data: { role: 'user', content: [{ type: 'text', text: 'edit marker' }], source: { kind: 'plugin', plugin: 'dsht-rp', editedFrom: 5 } } },
+      { type: 'user/message', seq: 7, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '编辑后的新句' }] } },
+    ]
+    const r2 = extractFloorsFromEvents(eventsEdit)
+    expect(r2.cursor).toBe(2)
+    expect(r2.floors.map(f => f.text)).toEqual(['更早的楼', '编辑后的新句'])
+  })
+
+  it('无 seq 的老数据事件 → 退化为旧口径（掩码逻辑不生效、不误伤）', () => {
+    const events = [userMsg('a'), assistantMsg('b'), userMsg('c')]
+    const { floors, cursor } = extractFloorsFromEvents(events)
+    expect(cursor).toBe(3)
+    expect(floors).toHaveLength(3)
+  })
 })
 
 describe('nextChunk（每 N 楼一块，长跨度分轮消化）', () => {
@@ -393,3 +439,65 @@ describe('planShadowOps：oneshot / windowCopy 副本管控（§2.3 ⑤/④）',
   })
 })
 
+
+// ---------------------------------------------------------------------------
+// foldHistory 开关（2026-09-10 心跳 33）：前缀折叠与快照去重解耦
+// 背景：80k 触发阈值原按 500k 上下文标定；contextWindow 修为 1M 后，中等会话
+// （实测 57.5k est / 185k 字符）整体被短路，13 条快照（占 payload 87%）持续堆叠。
+// 现在：前缀折叠（有损）仍受阈值门控；快照去重（无损）任何体积都做。
+// ---------------------------------------------------------------------------
+describe('planShadowOps：foldHistory 开关（前缀折叠与快照去重解耦）', () => {
+  /** 同一 surface 形态：[snapshot][user 楼][assistant 楼] × turns */
+  const mixed = (turns: number, snapChars: number): SurfaceNodeInfo[] => {
+    const out: SurfaceNodeInfo[] = []
+    let seq = 10
+    for (let t = 0; t < turns; t++) {
+      out.push(nd(seq++, 'snapshot', 'x'.repeat(snapChars)))
+      out.push(nd(seq++, 'floor', 'u'.repeat(100)))
+      out.push(nd(seq++, 'floor', 'a'.repeat(100), 'dsht-rp-plugin', 'preset', t + 1))
+    }
+    return out
+  }
+
+  it('foldHistory=false → 不产出 history op（前缀原文保留）', () => {
+    const nodes = mixed(20, 1_000)
+    const plan = planShadowOps(nodes, {
+      keepNearFloors: 2, charBudget: 10_000_000, memoryMaxFloor: 40, foldFloors: true, cursor: 40, foldHistory: false,
+    })
+    expect(plan.ops.some(o => o.kind === 'history')).toBe(false)
+    expect(plan.flooredUpTo).toBe(0)
+  })
+
+  it('foldHistory=false → 同签名多副本仍被去重（无损收益不受阈值门控）', () => {
+    const nodes = mixed(20, 1_000) // 20 组同签名 snapshot
+    const plan = planShadowOps(nodes, {
+      keepNearFloors: 2, charBudget: 10_000_000, memoryMaxFloor: 40, foldFloors: true, cursor: 40, foldHistory: false,
+    })
+    expect(plan.ops.some(o => o.kind === 'snapshot')).toBe(true)
+    expect(plan.charsAfter).toBeLessThan(plan.charsBefore)
+  })
+
+  it('foldHistory=true（缺省）→ 行为与既有语义一致（前缀折叠生效）', () => {
+    const nodes = mixed(20, 1_000)
+    const withFlag = planShadowOps(nodes, {
+      keepNearFloors: 2, charBudget: 10_000_000, memoryMaxFloor: 40, foldFloors: true, cursor: 40, foldHistory: true,
+    })
+    const defaulted = planShadowOps(nodes, {
+      keepNearFloors: 2, charBudget: 10_000_000, memoryMaxFloor: 40, foldFloors: true, cursor: 40,
+    })
+    expect(withFlag).toEqual(defaulted)
+    expect(defaulted.flooredUpTo).toBeGreaterThan(0)
+  })
+
+  it('单副本快照 + foldHistory=false → 无任何 op（不白白发 replace）', () => {
+    const nodes: SurfaceNodeInfo[] = [
+      nd(1, 'snapshot', 'x'.repeat(500), 'dsht-rp-plugin', 'only'),
+      nd(2, 'floor', 'u'.repeat(100)),
+      nd(3, 'floor', 'a'.repeat(100), 'dsht-rp-plugin', 'preset', 1),
+    ]
+    const plan = planShadowOps(nodes, {
+      keepNearFloors: 30, charBudget: 10_000_000, memoryMaxFloor: 0, foldFloors: true, cursor: 1, foldHistory: false,
+    })
+    expect(plan.ops).toHaveLength(0)
+  })
+})

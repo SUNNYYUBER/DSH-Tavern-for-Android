@@ -3010,6 +3010,36 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
     } catch { return config }
   })
 
+  // ---- D-3/D-4 投影层探针（2026-09-10 心跳 33）：llm/stream 是官方唯一的"最终请求"
+  //      投影点（TT 侧的 GENERATE_AFTER_COMBINE_PROMPTS 等价物）。此处只观测不改写，
+  //      用于确认 ① 钩子可达 ② messages/system 的最终形状 ③ 与 deriveMessages 的关系。
+  //      排序依据：agent-loop 的不变式用 { prepend: true } 注册（invariant.ts:56），
+  //      本监听器不带 prepend → 在其 next() 之后执行，安全。
+  ctx.on('llm/stream', (options: unknown, next: () => unknown) => {
+    try {
+      const o = options as {
+        provider?: unknown; model?: unknown; sessionId?: unknown
+        messages?: unknown[]; system?: unknown; tools?: unknown[]
+        maxTokens?: unknown; temperature?: unknown; thinking?: unknown
+        purpose?: unknown
+      }
+      const msgs = Array.isArray(o.messages) ? o.messages : []
+      const head = msgs.slice(0, 3).map((m) => {
+        const mm = m as { role?: unknown; content?: unknown }
+        const c = typeof mm.content === 'string' ? mm.content : JSON.stringify(mm.content ?? '')
+        return `${String(mm.role ?? '?')}:${c.length}ch`
+      })
+      console.log(`[dsht-rp] llm/stream 观测: provider=${String(o.provider ?? '')} model=${String(o.model ?? '')} `
+        + `messages=${msgs.length} system=${typeof o.system === 'string' ? o.system.length + 'ch' : '(none)'} `
+        + `tools=${Array.isArray(o.tools) ? o.tools.length : 0} maxTokens=${String(o.maxTokens ?? '')} `
+        + `temp=${String(o.temperature ?? '')} purpose=${String(o.purpose ?? '')} sessionId=${String(o.sessionId ?? '')} `
+        + `| 首3条: ${head.join(' ')}`)
+    } catch (e) {
+      console.log(`[dsht-rp] llm/stream 观测失败: ${(e as Error).message}`)
+    }
+    return next()
+  })
+
   ctx.on('agent/pre-step', async (raw, next) => {
     const decision = (await next()) as LikeDecision
     if (decision.kind !== 'enter') return decision
