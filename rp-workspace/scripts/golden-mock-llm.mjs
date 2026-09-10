@@ -37,6 +37,24 @@ http.createServer(async (req, res) => {
   const model = payload.model ?? 'golden-mock';
   console.log(`[mock-llm] messages=${payload.messages?.length ?? '?'} model=${model} stream=${!!payload.stream}`);
 
+  // 【2026-09-11 心跳 47 新增】可选落盘最终出站 payload（排障/取证用，默认关闭）。
+  // 用途：验证 prompt 装配产物（槽位是否注入、楼层正文是否为空、MVU 初始变量是否下发）
+  // 时，光看"请求成功"不够 —— 必须看真实字节。设 MOCK_DUMP=<路径前缀> 即落盘
+  //   <前缀>.<n>.json（整包 payload）
+  const dumpPrefix = process.env.MOCK_DUMP;
+  if (dumpPrefix) {
+    try {
+      // 注意：MOCK_DUMP_SEQ 非数字时 Number() 会得到 NaN → 产出 `outbound.NaN.json`（自己踩过）。
+      const rawSeq = Number(process.env.MOCK_DUMP_SEQ);
+      const n = Number.isFinite(rawSeq) ? rawSeq : Date.now();
+      const { writeFileSync } = await import('node:fs');
+      writeFileSync(`${dumpPrefix}.${n}.json`, JSON.stringify(payload, null, 2), 'utf8');
+      console.log(`[mock-llm] payload 已落盘: ${dumpPrefix}.${n}.json (${body.length}B)`);
+    } catch (e) {
+      console.warn(`[mock-llm] payload 落盘失败: ${e?.message}`);
+    }
+  }
+
   const id = 'chatcmpl-mock-' + Date.now();
   const created = Math.floor(Date.now() / 1000);
 

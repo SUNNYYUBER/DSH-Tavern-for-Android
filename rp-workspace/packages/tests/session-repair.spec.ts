@@ -293,3 +293,151 @@ describe('session-repair: source 扩展键 → salvage 移交（不再静默丢�
     expect(r.salvaged).toEqual([])
   })
 })
+
+/**
+ * 心跳 47 回归：**修复器必须按"被修文件自己声明的代次"写 surfaceOp 字段名**。
+ * ============================================================================
+ * 事故（2026-09-11 实机）：
+ *   `repairSessionForV3` 无条件写 v2 形状 `{op,start,end}`，而调用点
+ *   （dsh-plugin `scanSessionHeaders()`）**不看 header.version**，把它施加到全部存量会话。
+ *   对一个已经是 v3 的文件再写 v2 形状 → v3 严格校验器
+ *   （`dsh-session-format-v2-to-v3/lib/index.js:323`
+ *    `requires exact replace fields op/startSeq/endSeq`）拒绝 → **会话打不开**：
+ *   UI 红字 `Failed to load history: stored session "…" is corrupt:
+ *   invalid committed event at line 22: format v3 system/message at seq 21
+ *   requires exact replace fields op/startSeq/endSeq`。
+ *
+ * 判据（本组测试钉死的是什么）：
+ *   · 输出代次由 **输入 header.version** 决定 —— v3 出 `startSeq/endSeq`，v0–v2 出 `start/end`。
+ *   · v3 的输出里**一个裸 `start`/`end` 键都不能有**（这正是 v3 校验器拒收的形态）。
+ *   · 该形态对**幂等**同样成立（跑第二遍不会把 startSeq 又变回 start）。
+ */
+const HDR_V3 = JSON.stringify({ type: 'session', version: 3, id: 's1', createdAt: 1, cwd: '/data/x', delegationDepth: 0 })
+
+function sessionV3(events: Array<[string, Record<string, unknown>, Record<string, unknown>?]>): string {
+  const lines = [HDR_V3]
+  events.forEach(([type, data, extra], i) => {
+    lines.push(JSON.stringify({ type, seq: i, time: 1000 + i, data, ...(extra ?? {}) }))
+  })
+  return lines.join('\n') + '\n'
+}
+
+/** 从任意事件里取 surfaceOp 的键集合 */
+const opKeys = (ev: Record<string, unknown>): string[] =>
+  Object.keys((ev.surfaceOp ?? {}) as Record<string, unknown>).sort()
+
+/** 本地 assistant/message 构造（父作用域的 MODEL_ASSISTANT 定义在别的 describe 里，此处取不到） */
+const MA = (turn: number, step: number, id: string, text: string) =>
+  ['assistant/message', { turn, step, message: { id, role: 'assistant', content: [{ type: 'text', text }], source: { kind: 'model', provider: 'p', model: 'm' } } }, { surfaceOp: 'append' }] as [string, Record<string, unknown>, Record<string, unknown>]
+
+describe('session-repair: surfaceOp 字段名按代次自适应（心跳 47 事故回归）', () => {
+  it('v3 文件里的 replace → 输出必须是 startSeq/endSeq（不是 start/end）', () => {
+    const src = sessionV3([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MA(1, 1, 'a1', '第一版'),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+      // 一个带 replace 的 user/message（v3 里必须写成 startSeq/endSeq）
+      ['user/message', { id: 'u2', role: 'user', content: [{ type: 'text', text: '重生成' }], source: { kind: 'user' } },
+        { surfaceOp: { op: 'replace', startSeq: 3, endSeq: 3 }, sourceEventSeqs: [3] }],
+      // ⚠️ 必须有「另一处真缺陷」把 changed 顶成 true：修复器在 changed=false 时**原样早退**，
+      // 不重写任何 surfaceOp —— 只放一条已合法的 replace，本测试会因「没走重写」而假通过（负控实证）。
+      ['user/message', { role: 'user', content: [{ type: 'text', text: '缺 id，强制触发重写' }], source: { kind: 'user' } },
+        { surfaceOp: 'append' }],
+    ])
+    const r = repairSessionForV3(src)
+    expect(r.changed).toBe(true)
+    const evs = parse(r.content)
+    const replaced = evs.filter(e => e.surfaceOp !== undefined && e.surfaceOp !== 'append')
+    expect(replaced.length).toBeGreaterThan(0)
+    for (const ev of replaced) {
+      expect(opKeys(ev)).toEqual(['endSeq', 'op', 'startSeq'])
+      // 负面断言：v3 输出里绝不能出现裸 start/end（这正是校验器拒收的形态）
+      const op = ev.surfaceOp as Record<string, unknown>
+      expect(Object.hasOwn(op, 'start')).toBe(false)
+      expect(Object.hasOwn(op, 'end')).toBe(false)
+    }
+  })
+
+  it('v0 文件里的 replace → 保持 start/end（官方 v2→v3 迁移器负责改名）', () => {
+    const src = session([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MA(1, 1, 'a1', '第一版'),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+      ['user/message', { id: 'u2', role: 'user', content: [{ type: 'text', text: '重生成' }], source: { kind: 'user' } },
+        { surfaceOp: { op: 'replace', start: 3, end: 3 }, sourceEventSeqs: [3] }],
+    ])
+    const r = repairSessionForV3(src)
+    const replaced = parse(r.content).filter(e => e.surfaceOp !== undefined && e.surfaceOp !== 'append')
+    expect(replaced.length).toBeGreaterThan(0)
+    for (const ev of replaced) expect(opKeys(ev)).toEqual(['end', 'op', 'start'])
+  })
+
+  it('v3 + assistant 做 replace 节点 → 拆出的 user 标记也用 startSeq/endSeq', () => {
+    const src = sessionV3([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MA(1, 1, 'a1', '第一版'),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+      ['turn/start', { turn: 2 }],
+      ['step/start', { turn: 2, step: 1 }],
+      MA(2, 1, 'a2', '第二版'),
+      ['step/end', { turn: 2, step: 1 }],
+      ['turn/end', { turn: 2, reason: { kind: 'completed' } }],
+      // 0.1.5 禁止 assistant/message 做 replace 节点 → 修复器要拆成「user 标记 replace + 本消息 append」
+      ['assistant/message', { turn: 2, step: 1, message: { id: 'a3', role: 'assistant', content: [{ type: 'text', text: '第三版' }], source: { kind: 'model', provider: 'p', model: 'm' } } },
+        { surfaceOp: { op: 'replace', startSeq: 8, endSeq: 8 }, sourceEventSeqs: [8] }],
+    ])
+    const r = repairSessionForV3(src)
+    expect(r.notes.join('|')).toContain('assistant/message 的 replace 链')
+    const evs = parse(r.content)
+    const mark = evs.find(e => e.type === 'user/message' && String((e.data as { id?: string }).id).startsWith('dsht-repair-mark-'))!
+    expect(mark).toBeTruthy()
+    expect(opKeys(mark)).toEqual(['endSeq', 'op', 'startSeq'])
+  })
+
+  it('v3 文件里只有「v2 形状 replace」这一处问题 → 也必须被判为需修（自愈，不早退）', () => {
+    // 事故现场的真实形态：文件是 v3，其余事件都合法，只有 surfaceOp 还是 v2 字段名。
+    // 若这条不判 changed，修复器会原样早退 → 已污染会话永远修不好。
+    const src = sessionV3([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MA(1, 1, 'a1', '正文'),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+      ['user/message', { id: 'u2', role: 'user', content: [{ type: 'text', text: '重生成' }], source: { kind: 'user' } },
+        { surfaceOp: { op: 'replace', start: 3, end: 3 }, sourceEventSeqs: [3] }],
+    ])
+    const r = repairSessionForV3(src)
+    expect(r.changed).toBe(true)
+    const replaced = parse(r.content).filter(e => e.surfaceOp !== undefined && e.surfaceOp !== 'append')
+    expect(replaced.length).toBe(1)
+    expect(opKeys(replaced[0])).toEqual(['endSeq', 'op', 'startSeq'])
+    expect(r.notes.join('|')).toContain('v2 形状')
+  })
+
+  it('v3 修复幂等：第二遍不得把 startSeq/endSeq 退回成 start/end', () => {
+    const src = sessionV3([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MA(1, 1, 'a1', '正文'),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+      ['user/message', { id: 'u2', role: 'user', content: [{ type: 'text', text: '重生成' }], source: { kind: 'user' } },
+        { surfaceOp: { op: 'replace', startSeq: 3, endSeq: 3 }, sourceEventSeqs: [3] }],
+      ['user/message', { role: 'user', content: [{ type: 'text', text: '缺 id，强制触发重写' }], source: { kind: 'user' } },
+        { surfaceOp: 'append' }],
+    ])
+    const r1 = repairSessionForV3(src)
+    expect(r1.changed).toBe(true)
+    const r2 = repairSessionForV3(r1.content)
+    for (const ev of parse(r2.content)) {
+      if (ev.surfaceOp === undefined || ev.surfaceOp === 'append') continue
+      expect(opKeys(ev)).toEqual(['endSeq', 'op', 'startSeq'])
+    }
+  })
+})

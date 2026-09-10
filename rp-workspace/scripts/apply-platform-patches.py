@@ -125,15 +125,52 @@ print("=" * 72)
 print("\n--- Step 3: 平台适配（删 win32/darwin 包 + stubs 六件套 + sim 补丁）---")
 
 # --- 3a. 删 win32/darwin 平台专属包（Android 用不到，且部分含原生二进制）
+# 【2026-09-11 心跳 47 修复】3a 原本无条件删所有名字含 win32/darwin 的目录，
+# 但 3b **会把自己的 stub 落到 `@deepseek-ai/dsh-win32-process/`** —— 于是每次跑补丁都
+# 「删掉自己的 stub → 再原样复制回来」，形成无意义的高频删除churn：
+#   · 撞宿主安全删除守卫（`node-safe-delete-shim.cjs`，阈值 50 / scope=turn）→ 构建 FATAL；
+#   · 更糟：若删成功而复制失败（或中途被杀），stub 就没了 → `dsh-subprocess-local` 静态导入
+#     解析失败 → **整个 plugin tree 崩溃、DSH 起不来**（这正是当初加该 stub 要修的那个故障，
+#     补丁自己把它造回来）。
+# 处置：删之前先认领「这是不是我们自己落的 stub」——是则跳过（幂等），并断言删完真的不在了。
+DSHT_STUB_MARKERS = ("DSHT-ANDROID-", "DSHT-")
+
+
+def _is_dsht_stub(dirpath):
+    """目录内容是否为我们自己落的平台 stub（读候选入口文件找 marker）。"""
+    for rel in ("lib/index.js", "index.js", "lib/index.cjs", "index.cjs",
+                "dist/index.cjs", "dist/index.mjs", "index.mjs", "lib/runner.js"):
+        p = os.path.join(dirpath, rel)
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, "r", encoding="utf-8", errors="replace") as f:
+                head = f.read(4096)
+        except OSError:
+            continue
+        if any(m in head for m in DSHT_STUB_MARKERS):
+            return True
+    return False
+
+
 if not CHECK_ONLY:
     _removed = 0
+    _kept_stub = 0
     for _root, _dirs, _files in os.walk(os.path.join(DST, "node_modules")):
         for _d in list(_dirs):
             if re.search(r"win32|darwin", _d):
-                shutil.rmtree(os.path.join(_root, _d), ignore_errors=True)
+                _p = os.path.join(_root, _d)
+                if _is_dsht_stub(_p):
+                    _kept_stub += 1
+                    continue
+                shutil.rmtree(_p)
+                if os.path.exists(_p):
+                    # 【不用 ignore_errors】静默失败正是本项目头号缺陷类：
+                    # rmtree 被守卫拦下时会抛异常，被 ignore_errors 吞掉后日志照报"删了 1 个"。
+                    die("3a 删除失败（仍存在，疑似被宿主安全删除守卫拦截）：%s" % _p)
                 _dirs.remove(_d)
                 _removed += 1
-    log("  3a 删 win32/darwin 平台包：%d 个" % _removed)
+    log("  3a 删 win32/darwin 平台包：%d 个；保留自有 stub：%d 个" % (_removed, _kept_stub))
 else:
     log("  3a 删 win32/darwin 平台包（检查模式跳过）")
 

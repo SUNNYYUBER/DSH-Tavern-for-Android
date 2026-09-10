@@ -93,6 +93,10 @@ interface RawEvent {
  *     · compaction/prune：shadowedSeqs 对齐 shadowedRange 端点、去重、保持 surface 序
  *  3. seq 重编号 + 所有引用（surfaceOp / sourceEventSeqs / shadowedSeqs / shadowedRange）重映射
  *  4. turn 编号续接修复（重复 turn/start 重编号）
+ *
+ * ⚠️ **输出代次自适应（心跳 47）**：`surfaceOp` 字段名按**被修文件自己声明的 `header.version`**
+ *   决定 —— v3 写 `{op,startSeq,endSeq}`，v0–v2 写 `{op,start,end}`。此前无条件写 v2 形状，
+ *   遇到已经是 v3 的文件就会**把可读会话改成不可读**（实机实证，详见函数内 §0 注释）。
  */
 export function repairSessionForV3(content: string): SessionRepairResult {
   const lines = content.split('\n')
@@ -109,6 +113,25 @@ export function repairSessionForV3(content: string): SessionRepairResult {
   let changed = false
   /** source 上摘下来的非法自定义键，重编号后解析成最终 sidecar 键 */
   const pendingSalvage: PendingSalvage[] = []
+
+  // ---- 0) 目标代次的 surfaceOp 字段名（**心跳 47 修复**）----
+  // 根因（实机实证，2026-09-11）：本模块此前**无条件**写出 v2 字段名 `{op,start,end}`。
+  // 而官方 v2→v3 迁移器 `canonicalizeTransformedEvent`
+  // （`dsh-session-format-v2-to-v3/lib/index.js:353-367`）**会把 start/end 改名为 startSeq/endSeq**，
+  // 也就是说：正常迁移过的 v3 文件里**不该出现** start/end。
+  // 但本修复器被**无代次判断地**施加到全部存量会话上（调用点：dsh-plugin `scanSessionHeaders()`
+  // 不看 header.version）→ 对一个**已经是 v3 的文件**再写 v2 形状的 surfaceOp
+  // → v3 严格校验器拒绝（同文件:323 `requires exact replace fields op/startSeq/endSeq`）
+  // → 会话**打不开**（实测现象：UI 红字 `Failed to load history: stored session
+  //   "session-fdfc1a28-…" is corrupt: invalid committed event at line 22: format v3
+  //   system/message at seq 21 requires exact replace fields op/startSeq/endSeq`）。
+  // 而修复器每次启动都会跑 → 这是个**会自己扩散**的数据损坏：修一次，坏一次。
+  // 判据必须看**被修文件自己声明的代次**（header.version），不是"我们打算迁到哪一代"。
+  const srcVersion = typeof header.version === 'number' ? header.version : 0
+  const currentOpStyle = srcVersion >= 3
+  /** 按目标代次生成 replace surfaceOp（v3 用 startSeq/endSeq；v0–v2 用 start/end） */
+  const makeReplaceOp = (start: number, end: number): Record<string, unknown> =>
+    currentOpStyle ? { op: 'replace', startSeq: start, endSeq: end } : { op: 'replace', start, end }
 
   // ---- 1) header ----
   // 【阶段3 2026-09-10 回归修复】**不在此处改 cwd**。header.cwd 与所在目录名是一对
@@ -195,7 +218,7 @@ export function repairSessionForV3(content: string): SessionRepairResult {
             sections: [{ name: 'dsht:surgical', text: JSON.stringify({ shadowedSeqs: refs }) }],
           },
         },
-        surfaceOp: { op: 'replace', start: range.start, end: range.end },
+        surfaceOp: makeReplaceOp(range.start, range.end),
         sourceEventSeqs: refs,
       }
       out.push(mark)
@@ -226,6 +249,22 @@ export function repairSessionForV3(content: string): SessionRepairResult {
   // 注意：此步可能**只**需要结构修复（无其他改动），故必须在下面的 changed 早退之前执行。
   if (normalizeStructure(out, notes)) changed = true
 
+  // 【心跳 47】v3 文件里出现 **v2 形状**的 replace（缺 startSeq）本身就要算「需要修」。
+  // 否则：一个除了字段名之外全都合法的 v3 文件会走下面的 changed=false 早退，
+  // **永远修不好**（已污染的文件不会自愈）——而它的症状正是「会话打不开」。
+  // 这条必须在早退之前判定（重写发生在第 5 步，比早退晚）。
+  if (currentOpStyle) {
+    for (const ev of out) {
+      const op = ev.surfaceOp
+      if (op === undefined || op === 'append') continue
+      if (typeof op === 'object' && op !== null && !Object.hasOwn(op, 'startSeq')) {
+        changed = true
+        notes.push('v3 文件里发现 v2 形状的 replace surfaceOp（start/end）→ 按 v3 契约改写为 startSeq/endSeq')
+        break
+      }
+    }
+  }
+
   if (!changed) return { content, changed: false, notes: [], events: out.length, salvaged: [] }
 
   // ---- 4) 重编号 ----
@@ -245,7 +284,7 @@ export function repairSessionForV3(content: string): SessionRepairResult {
     if (ev.sourceEventSeqs) ev.sourceEventSeqs = uniqueSorted(ev.sourceEventSeqs.map(mapRef)).filter(q => q < ev.seq)
     if (isReplaceSurfaceOp(ev.surfaceOp)) {
       const r = replaceRangeOf(ev.surfaceOp)!
-      ev.surfaceOp = { op: 'replace', start: mapRef(r.start), end: mapRef(r.end) }
+      ev.surfaceOp = makeReplaceOp(mapRef(r.start), mapRef(r.end))
     }
     if (ev.type === 'compaction/prune') {
       const d = ev.data as { shadowedRange?: { start?: number; end?: number }; shadowedSeqs?: number[] }

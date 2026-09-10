@@ -47,8 +47,22 @@ build_one() {
   # → 所有消息都发不出去**，且现象是"点发送毫无反应"，极难归因。
   # 脚本本身幂等（marker 检测）+ 断言（命中数不符即失败退出），失败必须中止构建。
   say "[0.5/7] 平台补丁（apply-platform-patches.py，幂等 + 命中数断言）"
-  "$PY" "$WS/scripts/apply-platform-patches.py" "$DST" \
-    || die "平台补丁失败——产物形态可能变了，禁止带病打包"
+  # 【2026-09-11 心跳 47 新增】把「安全删除预算耗尽」这种环境性失败与「产物形态变了」区分开。
+  # 背景：宿主沙箱有一个 node 侧 safe-delete 守卫（`node-safe-delete-shim.cjs`，阈值 50、
+  # scope=turn）。预算按**轮次**累计，被本轮其它命令（如 npm install 的 cleanup 阶段）吃掉后，
+  # 补丁脚本 Step 3a 的 rmtree 就会撞闸，脚本非零退出 → 这里 die。
+  # 现象极具误导性：输出只是 `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]` +
+  # `[build-wb][FATAL] 平台补丁失败`，看起来像补丁脚本坏了，实际**重跑一次即可**（预算按轮重置）。
+  # 这与「构建/部署断链」家族第 ⑧ 类（rm -rf 撞 50 文件闸 → 构建静默中止）同源，只是触发方不同。
+  local PATCH_LOG
+  PATCH_LOG="$("$PY" "$WS/scripts/apply-platform-patches.py" "$DST" 2>&1)" && PATCH_RC=0 || PATCH_RC=$?
+  printf '%s\n' "$PATCH_LOG"
+  if [ "${PATCH_RC:-1}" != "0" ]; then
+    if printf '%s' "$PATCH_LOG" | grep -q "SAFE_DELETE_BULK_CONFIRM_REQUIRED"; then
+      die "平台补丁被宿主安全删除守卫拦住（本轮删除预算已耗尽，非产物问题）——重跑一次 build-wb.sh 即可"
+    fi
+    die "平台补丁失败——产物形态可能变了，禁止带病打包"
+  fi
 
   say "[0/7] 确保我方插件就位（dsht-rp-plugin 等 7 个）"
   # 【2026-09-11 修复】原判据只查「产物文件是否存在」→ 除 dsht-rp-plugin（[1/6] 每次重打）外

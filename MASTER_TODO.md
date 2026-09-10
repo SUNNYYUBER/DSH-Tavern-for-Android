@@ -64,9 +64,14 @@
 | 5 | ✅ **两道类型闸门现在都是真闸门**：`typecheck:core` **0 错**、`typecheck:ui` **0 错**，且**都跑过正控**（注入已知错误确认会 report） | `npm run typecheck` 现在 = 双 0 错；UI 层原来说"缺 `@types/react`"是**误判**，真阻塞是两个宿主 shell 模块没类型声明 |
 | 6 | 🔴 **构建链第 ⑩ 类断链**：构建期 vendor 依赖（jquery 等 5 个）**不在 package.json**，靠手工 `npm --no-save` 装 → 别人跑一次 `pnpm install` 全被剪掉 → 构建报 `Could not resolve "jquery"`，**且报错行指向仓库里根本不存在的虚拟文件名** | 已建 `scripts/vendor-deps.json`（锚定表）+ `scripts/vendor-deps.mjs`（自愈预检，接入构建，正/负控均过） |
 | 7 | 🔴 平台补丁 Step 3a **删自己刚落下的 stub 再重建**（非幂等 churn）→ 撞宿主安全删除守卫使构建 FATAL；且 `ignore_errors=True` 把「被拦」静默报成「已删 1 个」 | 已修：认领自有 stub 后跳过 + 删完断言真的不在了；build-wb.sh 也把「删除预算耗尽」与「产物形态变了」区分开 |
+| 8 | 🔴 **最严重的一条：我们自己的"会话修复器"把可读会话改成了不可读**。用户在用的那个会话**打不开**（UI 红字 `Failed to load history: … corrupt: format v3 system/message at seq 21 requires exact replace fields op/startSeq/endSeq`）。根因：`session-repair.ts` **无条件**写 v2 字段名 `{op,start,end}`，而调用点**不看 `header.version`** → 把已经是 v3 的会话写成 v3 读不了的形状；**修复器每次启动都跑 → 修一次坏一次，会自我扩散** | 官方迁移器**会**改名（`dsh-session-format-v2-to-v3/lib/index.js:353-367`）；我们没跟上。已修（按 `header.version` 分叉 + 自愈判据 + 5 回归 + 负控）。**设备实证**：`repair-sessions(v3): … 改写为 startSeq/endSeq` → `repaired=1 errors=0` → 该文件 `startSeq=26 / v2 式 = 0` + `.bak` 已留 → **UI 报错消失、会话正常打开** |
+| 9 | 🟠 上面这条**此前漏网**的原因值得单独记住：阶段 3 的判据用 `foldSurface`，它是**兼容读取器**（两代字段名都认），比运行时加载会话日志用的**严格校验器**宽松 → **验证读侧 ≠ 运行时读侧**，防线在"真读"那一步是空的 | 见 LEARNINGS **L30**（含元教训：修数据的工具必须按代次分叉；修复类改动必须断言"修完还能不能被读"） |
+| 10 | 🟠 **TH 宿主全局面还缺 `Vue` / `SillyTavern`**：卡脚本抛 `Uncaught ReferenceError`，并进入**每秒重跑的注册循环**（`[🦊][狐裁] 独立拦截器已注册` 每 2s、`[StoryCtrl] 状态变更…` 每 1s），logcat 被刷成主噪音 | 已记 T-37 + LEARNINGS **L31**。判据：脚本"反复重注册才算成功" = 上一次没真正生效 = 静默失败形态 |
+| 11 | ✅ **发消息端到端的真实阻塞已定位并排除**（上轮遗留的"能不能发出去"）：app 确实发出请求，`outbound fetch 失败 :: ECONNREFUSED 10.0.2.2:31101` —— 配置里的 provider 指向本地 mock，当时没起。起 mock 后请求正常落到 mock（新增 `MOCK_DUMP` 落盘真实出站 payload，31KB 实测快照存 `stage3-device/heartbeat47/`） | 设备日志 + `stage3-device/heartbeat47/outbound.sample.json` |
 
-**交付**：双架构 APK 重打（x86_64 debug **sentinel v229** + arm64 release **sentinel v230**），**838 单测全绿**，
-新增 14 条回归测试。
+**交付**：双架构 APK 重打（x86_64 debug **sentinel v231** + arm64 release **sentinel v232**），**843 单测全绿**，
+新增 19 条回归测试；`npm run typecheck`（core+ui）**双 0 错**；设备侧 `stage4-regression` **20/21**（唯一失败=探针未 attach）、
+路由契约 **67 路由 0 违约**、损坏会话**已自愈且 UI 症状消失**。
 
 ## 升级已完成：DSH 0.1.2 → 0.1.5 ✅（度量 5/5）
 
