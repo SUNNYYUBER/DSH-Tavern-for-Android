@@ -427,3 +427,42 @@ adb pull /data/local/tmp/dsht-backup.tar.gz "D:/DSH RolePlay/backup/dsht-0.1.2-p
 - 本方案覆盖 `MASTER_TODO.md` 中「DSH 0.1.3-alpha.1 侦察（用户裁决：暂不升级）」条目的**解冻**
 - 升级完成后，`§2.2b D-3` 的验证方式应更新为"Web 上可直接检视 system 提示词卡片"
 - `D-4` 状态从「核心约束不可达」改为「待 `in-history` 评估」
+
+---
+
+## 附录 A：会话格式迁移链实证（2026-09-10 心跳 41）
+
+### 版本事实
+| 项 | 值 | 证据 |
+|---|---|---|
+| **0.1.5 目标格式** | **v3** | `dsh-session/lib/index.js:56` `const SESSION_FORMAT_VERSION = 3;`<br>`dsh-session/lib/types/types.d.ts:54` |
+| **我方现役会话** | **v0** | `tmp/active-session.jsonl` 首行 `{"type":"session","version":0,...}`<br>（`session-7973a03e` / `session-5f4414a8` 两个真实会话均为 v0） |
+| 官方测试快照 | v0 | `deepseek-harness/apps/web/tests/snapshots/*/session.jsonl` 17 个全为 v0（旧格式样本，用于测试迁移器） |
+
+### 迁移链
+```
+我方 v0  ──sessionFormatV0ToV1──▶  v1  ──sessionFormatV1ToV2──▶  v2  ──sessionFormatV2ToV3──▶  v3
+```
+三个迁移器包均已就位（`dsh-session-format-v0-to-v1` / `-v1-to-v2` / `-v2-to-v3`），
+由 `dsh-session-format-catalog` 统一编排：
+
+```js
+// dsh-session-format-catalog/lib/index.js
+import { releasedV0SessionFormatCodec, sessionFormatV0ToV1 } from "@deepseek-ai/dsh-session-format-v0-to-v1";
+import { releasedV2SessionFormatCodec, sessionFormatV1ToV2 } from "@deepseek-ai/dsh-session-format-v1-to-v2";
+import { assertReleasedV3Header, sessionFormatV2ToV3 } from "@deepseek-ai/dsh-session-format-v2-to-v3";
+```
+
+### 严格校验（准入失败即拒绝，不静默降级）
+```js
+// catalog 内的两处断言
+`installed Session format is v${SESSION_FORMAT_VERSION}, got v${header.version}`
+`installed Session format is v${SESSION_FORMAT_VERSION}, got v${artifact.header.version}`
+```
+→ 若迁移产物版本不等于 3，**直接 throw**（不会带病运行）。这是我方必须实测的第一判据。
+
+### 对我方的影响（阶段 3 验证项）
+1. **迁移是一次性还是每次**：取决于是否就地发布 v3 generation（走 `publishCurrentExclusive`）
+2. **耗时**：三段串行迁移，需实测 12MB / 50MB / 214MB 三档
+3. **自定义 source.plugin 是否过 v3 校验**：`source.plugin: 'dsht-rp'` 等值须实测
+4. **我方 3 个解析器**（rollback-mask / extractFloors / collectVariantGroups）在 v3 文件上的行为

@@ -39,6 +39,16 @@ build_one() {
 
   say "=== 构建开始: $ARCH ==="
 
+  say "[0/7] 确保我方插件就位（dsht-rp-plugin 等 7 个）"
+  if [ ! -f "$DST/node_modules/dsht-plugin-mvu/lib/index.js" ] \
+     || [ ! -f "$DST/node_modules/dsht-plugin-tavern-helper/lib/index.js" ] \
+     || [ ! -f "$DST/node_modules/dsht-plugin-memory/lib/index.js" ]; then
+    say "  插件缺失 → 调用 build-plugins.sh 构建"
+    bash "$WS/scripts/build-plugins.sh" "$DST" >/dev/null || die "插件构建失败"
+  else
+    say "  ✓ 插件已就位（跳过构建）"
+  fi
+
   say "[A3] NodeService.kt 无 BOM 检查"
   [ "$("$PY" -c "print(open(r'$ANDROID/app/src/main/java/com/dshtavern/app/NodeService.kt','rb').read()[:3]==b'\xef\xbb\xbf')")" = "False" ] \
     || die "A3: NodeService.kt 有 BOM（R35 双 BOM 会让 kotlinc 炸）"
