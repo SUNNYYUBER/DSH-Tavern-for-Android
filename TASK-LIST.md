@@ -72,8 +72,8 @@
 | ~~T-05~~ | ~~升级时机：立即走完 vs 等正式版~~ | ✅ **已按建议执行**：立即走完，阶段 0~4 全部通过（度量 5/5） | — |
 | ~~T-06~~ | ~~能否接受「打开旧聊天要等一会儿」（迁移耗时）~~ | ✅ **已实测解答**：151MB / **1.7 秒**，毫秒级，用户无感；**不构成体验问题** | — |
 | ~~T-07~~ | ~~要不要启用「动态替换提示词」（可能解 D-4）~~ | ✅ **已评估**（T-03 内）：需切 `llm-deepseek` 路由 + 显式声明 models 才生效，**属独立任务**（见 T-11） | D-4 可达性 |
-| T-08 | 31 个工具定义（D-6）要不要关 | ⏳ **仍等你拍板**（建议：分开做，别和升级叠加） | RP 会话纯净度 |
-| T-09 | **存量脏楼层清洗**：`$1` 残留 + `<interactive_input>` 包装回写（3 会话 146 处） | ⏳ **仍等你拍板**（一次性 migration） | 历史聊天外观（**不影响新消息**） |
+| T-08 | 工具定义（D-6）要不要关 | ⏳ **仍等你拍板**（建议：分开做，别和升级叠加）<br>▸ **实测口径**（T-13/D-7）：TT 请求体**完全没有** `tools` 字段；DSHT 侧实测 **32 个**（早期记录写 31 —— 工具数随当时注册的插件集浮动，故两个数字都出现过；以最近一次抓包 32 为准） | RP 会话纯净度 |
+| T-09 | **存量脏楼层清洗**：`<interactive_input>` 包装 + `$1` 占位残留 | ⏳ **仍等你拍板**（一次性 migration）<br>▸ **实测口径已漂移**（2026-09-11 心跳 47 复核设备真值，原记「3 会话 146 处」）：<br>· 含 `<interactive_input>` 的文件 **20 个 / 共 965 处**<br>· 其中 **`$1` 真未替换**的 **12 个文件 / 共 73 处**（其余是已被替换或本就为空）<br>· 影响面集中在 3 个会话（`st-vr2jg2` 29、`64e580f0` 8、`st-asm3yf` 5 + 9 个 wuwa 会话各 3） | 历史聊天外观（**不影响新消息**） |
 
 ---
 
@@ -85,7 +85,7 @@
 |---|---|---|---|
 | T-10 | D-3 role 映射（系统级内容走 system） | ✅ 主体已修 | 过渡态收敛（历史 user 席快照靠影子化逐轮折叠），观察即可 |
 | T-11 | D-4 用户输入绝对位置 | ✅ **重评完成**（2026-09-11，心跳 45） | 结论维持「**有条件可达**」（非当前可达）：`dsh-llm-deepseek/lib/index.js:1849` 声明 `systemPromptUpdate:"in-history"`，`dsh-llm-pi-ai` **无**该能力；我方走 pi-ai → 默认不生效。解锁 = 独立任务（切 `llm-deepseek` 路由 + 显式声明 models），**不叠加在升级窗口** |
-| T-12 | D-6 agent 层污染（31 tools / 24k 字说明书） | ⏳ 待拍板 | 见 T-08 |
+| T-12 | D-6 agent 层污染（32 tools / 24k 字说明书） | ⏳ 待拍板 | 见 T-08 |
 | T-13 | D-7 采样参数对照（TT 侧 `GENERATE_AFTER_COMBINE_PROMPTS` dump 未采） | ✅ **对照已补齐**（2026-09-11，心跳 46 + 修正） | 新建 `rp-workspace/scripts/golden-tt-sampling.mjs`（TT WebView CDP 里 monkey-patch `fetch`+`XHR` 抓**最终请求体**；采样参数不在 prompt 事件里，必须走网络层）。**修正后结论**（首版误判已作废）：① `max_tokens` **映射正常**（切真实 ST 预设 `maxTokens=65535` → 请求实测 65535；首版用无 `maxTokens` 的示范预设测到宿主默认 384000，属**测量口径错误**）② `top_p`/penalties 未发送 = **宿主限制 H-②**（非我方缺陷，预设值已持久化待宿主支持）③ `tools` TT **无** vs DSHT **32 个** = **唯一真差异**（D-6 实锤）。详见 [docs/DSHT-VS-TT-DIFF-2026-09-10.md](docs/DSHT-VS-TT-DIFF-2026-09-10.md) §D-7 |
 | T-14 | golden 接收器迁入 `ctx.webServer`（摆脱宿主进程回收） | ✅ 评估后**决定不改**（2026-09-11，心跳 45） | 现为独立 `golden-receiver.mjs`:31100，**仅在手动采集 Golden Master 对照时启用**，不进产品链路；迁入 `ctx.webServer` 会让生产代码多背一个纯测试设施（且需处理路由命名空间冲突），**无功能收益**。若将来需要常驻采集再迁 |
 | T-15 | rp-plugin msg dump 口径修正（`raw.messages` → `decision.messages`） | ✅ 已修（2026-09-11，心跳 45） | 原落 `raw.messages`（RP 注入**前**的原始批）→ 与 TT 侧 `chat_completion_prompt_ready`（最终组装态）一比，差异全是假的。现改为在各出口落**最终态**（组装 + `dsht-rp/assemble` 钩子后）；`viaAssembleHook` 统一收口 |
@@ -239,14 +239,75 @@
   可正常打开（`startSeq` 计数与 v3 契约一致）。**无需再拍板**——数据已修好且可回滚（`.bak` 在）。
   详见 LEARNINGS **L30**
 
-### T-37　🟠 TH 宿主全局面缺 `Vue` / `SillyTavern`（卡脚本 ReferenceError + 每秒重跑注册循环）
-- **实测**：设备 WebView 控制台每次启动抛 `Uncaught ReferenceError: Vue is not defined` 与
-  `SillyTavern is not defined`；伴随 `[🦊][狐裁] 独立拦截器已注册`（每 2s）+
-  `[StoryCtrl] 状态变更，更新注入…`（每 1s）的**注册循环**，把 logcat 刷成主噪音
-- **判据**：脚本"反复重注册才算成功"= 上一次没真正生效 → **静默失败的一种形态**
-- **方向**：把「TH 宿主全局面」当**逐项补齐的清单**，来源 = 卡脚本实际 ReferenceError 的符号名
-  （已知需 `EjsTemplate`/`TavernHelper`/`YAML`/`showdown`/`toastr`/`z` + 实测的 `Vue`/`SillyTavern`），
-  沿用现有 vendor iife 机制（`build-rp-ui.mjs`）。详见 LEARNINGS **L31**
+### T-37　🟠→✅ 宿主全局面缺口：`SillyTavern`（已修）／`eventSource`（已修）／`Vue`（**判定为 TT 同等行为，不改**）
+**结论先行：拆成三件事，各自有独立证据，其中两件是真缺口、一件是误判。**
+
+#### (a) `SillyTavern is not defined` —— ✅ **真缺口，已修（设备 A/B 实证）**
+- **证据链（三条独立）**：
+  1. **基准源**：真 ST 宿主页有 `globalThis.SillyTavern = { libs, getContext }`
+     （`SillyTavern-reference/public/script.js:292`「API OBJECT FOR EXTERNAL WIRING」），TT 同。
+  2. **触发源**：设备 CDP `Runtime.exceptionThrown` → `ReferenceError: SillyTavern is not defined`
+     @ `https://jnai2d9kgnbs6xzx5c.com/regex_bind/inject.js:55`（**宿主帧**，非 iframe）。
+     抓下该脚本（220KB）逐条枚举取用面：`SillyTavern.getContext` **11 处**，首行即
+     `const ctx = SillyTavern.getContext(); for (const p of ctx.chatCompletionSettings.prompts)`；
+     另有 `ctx.chat?.[…]`（取 `.mes/.is_user/.is_system/.swipe_id`）、`const { uuidv4 } = …`。
+  3. **缺面**：设备实测宿主帧 `sillyKeys = null`（无该全局）；脚本帧有、宿主帧无。
+- ✅ **修复**：`host-vendor.ts` 新增 `installHostSillyTavern()` + 纯函数 `buildHostStContext()`
+  （`??=` 语义，宿主已有则一字不改；`libs` 只暴露真有的 lodash）。
+  `index.tsx` 启动时以 `RpScriptHost` 的会话快照为源装上。
+- ✅ **实机判据**（新包 v233/234）：宿主帧 `sillyKeys = ["libs","getContext"]` —— 与真 ST **逐字同形**。
+
+#### (b) `ctx.eventSource` 缺失 —— ✅ **真缺口（补齐 (a) 后才暴露的第二道墙），已修**
+- **证据（A/B 的「错误往深处移」）**：补 `SillyTavern` 前 → 脚本死在 `:55`（整段作废）；
+  补齐后 → **同一脚本推进 2190 行**，改死在
+  `ctx.eventSource.on('module_imported', …)` → `TypeError: … reading 'on'`（`inject.js:2245`）。
+  全篇 `eventSource` **27 处** = 它的事件挂载总入口。
+- 真 ST `getContext()` 返回体含 `eventSource`；我方**宿主与 iframe 两侧都没有**
+  （iframe 只有函数式 `eventOn/eventEmit`，从未包成 `eventSource` 对象 → 实测脚本帧 `eventSource=undefined`）。
+- ✅ **修复**：新建**单源**发射器 `client/th-event-source.ts`（逐条对齐真 TH 语义：
+  `on/once` 对同一函数引用**幂等**、`makeFirst/makeLast` 是**移动**不是新增、
+  `emit` 顺序串行且 await、单监听器抛错**不扩散**、返回 `{stop}` 句柄）；
+  `getContext().eventSource` 接**进程级单例**（否则脚本的 `off` 摘不掉自己挂的监听）。
+- ✅ **回归**：+16 测试；**负控**：去掉幂等 → 2 条立刻失败。
+- ⚠️ **残留（记 T-39）**：iframe 侧 `SillyTavern.getContext().eventSource` 仍缺，
+  卡在架构上（shim 是构建期拼进 iframe 的整段字符串，无法 import TS 模块）。
+
+#### (c) `Vue is not defined` —— ❌ **不是移植缺口，判定为「与 TT 同等行为」，**有意不改**
+- **实测定位**：异常发生在**脚本帧**内、栈顶为
+  `vue-router/dist/vue-router.global.prod.min.js:12` —— 即**卡自己**用
+  `<script src="https://testingcf.jsdelivr.net/npm/vue/…">` 从 CDN 拉 Vue 与 vue-router，
+  Vue 未就绪/拉取失败时 vue-router 先执行 → 报错。
+- **基准对照**：真 ST 首页 `public/lib/` 与 `index.html` **均无 Vue**（只有 jquery 家族/toastr/select2…），
+  `grep -rn "window\.Vue\s*="` 在 ST 与 TT 全仓 **0 命中** → **TT 上同样会报这个错**。
+- → 按验收基准（与 TT 三方一致），**主动提供 Vue 反而构成偏离**，故不改；
+  仅记录该卡存在 CDN 依赖（离线时其前端自渲染会失效，属卡侧问题）。
+
+#### (d) 顺带核对：`showdown` 仍缺，但**无 ReferenceError 证据** → 不猜着补
+真 TH `predefine.js` 的合并清单含 `showdown`（文档 `DSH Android Roleplay App Plan.md:15603/20664`），
+当前 9 个脚本帧实测 `showdown=undefined`。但没有任何卡脚本抛 `showdown is not defined` ——
+按 L31 纪律（面名从**实际报错**枚举，不凭文档猜），**只登记不实施**。
+同时确认真 ST 的 `showdown` 是 `import` 进来的模块变量（`script.js:2`），**不是**宿主全局，
+所以「宿主缺 showdown」本身也未必构成与 TT 的差异。→ 等第三次冒同类现象再升时间盒。
+
+### T-39　🟠 iframe 侧 `SillyTavern.getContext().eventSource` 仍缺（宿主侧已修）
+- 现状：宿主页已有可用 `eventSource`（T-37(b)）；脚本 iframe 内 `getContext().eventSource` 仍是 undefined。
+- **阻塞在架构**：`th-shim.ts` 整段是构建期拼进 iframe 的**字符串**（`buildShimSource`），
+  无法 `import` `th-event-source.ts`。要么改成「注入式装配」（把共享模块源码作为参数传进去），
+  要么在字符串里再抄一份（**违反单源纪律，不做**）。
+- 触发条件：出现**卡脚本在 iframe 内**用 `ctx.eventSource` 的实测报错时再升。
+
+### T-38　✅ tests 纳入类型闸门（`typecheck:tests`）
+- **已存在的洞**：`tsconfig.json` 的 `exclude` 含 `tests` → **46 个 spec 文件从未被类型检查**
+  （`typecheck:core`/`:ui` 都覆盖不到）。这是「验证读侧 ≠ 运行时读侧」的又一实例。
+- ✅ 新增 `tsconfig.tests.json` + `typecheck:tests`（已并入 `npm run typecheck` 三段式）。
+- **首次开启即抓到 15 处**，全部为**测试侧**问题（无生产缺陷），逐条修掉而非放宽：
+  | 类别 | 处数 | 例 |
+  |---|---|---|
+  | fixture 缺必填字段 | 1 | `LoreEntry` 漏 `sticky/cooldown/delay/group/groupOverride` |
+  | **断言了不存在的字段** | 2 | `subset.ok`（subset 引擎原始返回**没有** `ok`）——断言对象是输入而非行为 |
+  | mock 桩**静默缺 14 个 deps** | 14→1 | `makeDeps()` 从未提供 `chatAppend/injectsPut/generate/…`；改为**显式抛错桩**（禁止静默假成功） |
+  | 窄化/形状标注缺失 | 8 | union 未按判别式窄化就取 `messages`；字面量当接口用 |
+- 判据：三闸门全 0 错（`core` / `ui` / `tests`），全量 **46 文件 / 875 测试全绿**。
 
 ### T-35　清理：4 份 deep-merge 实现收敛到 `dsht-plugin-shared`（P3）
 - 现存：`tavern-helper/variables.ts:deepMergeVars`、`th-shim.ts:deepMergeAssign`、
