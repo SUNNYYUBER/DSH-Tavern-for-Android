@@ -80,8 +80,8 @@
 | T-17 | 正则 `$1/$<name>` 捕获组失效 | ✅ 已修（TT 对照修复 2026-09-09） | `regex/engine.ts:165+` |
 | T-18 | `{{match}}` 大小写不敏感 | ✅ 已修（v181，改 `/gi`） | `th-shim.ts:1086` |
 | T-19 | shim `Mvu.parseMessage` 与 `state/mvu.ts` 不对称 | ✅ 已修 | `th-shim.ts:1594` |
-| T-20 | `getTavernRegexes` 未对齐真 TH **snake_case** 形状 | ⏳ **仍待办** | `th-shim.ts:1023`（现返回数据面原形，卡读 `script_name` 会 undefined） |
-| T-21 | `getChatMessages` / `getWorldbook` / `deleteVariable` 字段透传 | ⏳ 待办 | 逐项对真 TH 类型定义补齐 |
+| T-20 | `getTavernRegexes` 未对齐真 TH **snake_case** 形状 | ✅ 已修（2026-09-10，e78e433） | 出口/入口双向映射 + 契约测试 `th-regex-contract.spec.ts` |
+| T-21 | `getChatMessages` / `getWorldbook` / `deleteVariable` 字段透传 | ✅ 已修（2026-09-10，ae59380） | 逐项对真 TH 类型定义补齐 |
 | T-22 | `setglobalvar` 宏族 | ✅ 已修 | `th-shim.ts:1339+` |
 
 ---

@@ -46,6 +46,12 @@ import { expandTavernMacros, readVarPath, writeVarPath, registerMacro, unregiste
 import { appendUndoEntries, makeUndoEntry, replayUndoLog } from '../dsht-plugin-shared/undo.ts'
 import { restoreSnapshotsAfter, snapshotBeforeWrite, snapshotRestoreBoundary } from '../dsht-plugin-shared/file-snapshots.ts'
 import { scanSessionHeaders as scanSessionHeadersShared, normalizeSnapshotMessageRoles, repairDuplicateTurnStarts } from '../dsht-plugin-shared/session-surgery.ts'
+// 【阶段3 2026-09-10】会话写入合法形态层：surfaceOp 字段名自适应 + 合法标记载体
+// （0.1.5 把 start/end 改成 startSeq/endSeq，且禁止 assistant/message 做 replace 节点）
+import {
+  appendReplace, replaceRange, isReplaceOp, markerSource, readMarker, readLegacySourceKeys,
+  sanitizeEnvelope, planAssistantRewrite, type AppendableSession, type SurgicalMarkerPayload,
+} from '../dsht-plugin-shared/session-write.ts'
 // D-3：system 槽位路由（TT 对齐投影；合法通道 = system-prompt/assemble 的 assembly.sections）
 import { planSlotSections, SLOT_ORDERS, type SlotBatch, type SlotSection } from '../dsht-plugin-shared/tt-projection.ts'
 // T3.2：会话长期记忆（rp-memory 最小闭环）——核心逻辑纯函数化便于单测，这里只做接线
@@ -1162,13 +1168,39 @@ export function collectVariantGroups(events: Array<{ type: string; seq: number; 
     }
     return ''
   }
+  /** 加入成员（组内去重——新形态的 marker+append 会被多遍扫描看到） */
+  const addMember = (anchor: number, memberSeq: number, active: number): void => {
+    const prevGroup = groups.get(anchor)
+    const text = textOf(eventBySeq.get(memberSeq) ?? { type: '', seq: memberSeq })
+    if (prevGroup) {
+      if (prevGroup.members.some(m => m.seq === memberSeq)) {
+        // 同签名重复扫描：只前进 active（变体来回滑动时以最后一次切换为准）
+        prevGroup.activeSeq = active
+        return
+      }
+      prevGroup.members.push({ seq: memberSeq, text })
+      prevGroup.activeSeq = active
+      groups.set(memberSeq, prevGroup)
+      return
+    }
+    const g: VariantGroup = {
+      members: [
+        { seq: anchor, text: textOf(eventBySeq.get(anchor) ?? { type: '', seq: anchor }) },
+        { seq: memberSeq, text },
+      ],
+      activeSeq: active,
+    }
+    groups.set(anchor, g)
+    groups.set(memberSeq, g)
+  }
 
+  // ---- 形态 1（存量 0.1.2 会话）：assistant/message 自己做 replace 节点 + sourceEventSeqs 血缘 ----
+  // 注：该形态在 0.1.5 已被官方禁止（见 session-write.ts），仅用于读旧会话。
   for (const ev of events) {
     if (ev.type !== 'assistant/message') continue
-    const op = ev.surfaceOp as { op?: string; start?: number; end?: number } | 'append' | undefined
-    if (op === undefined || op === 'append') continue
-    // replace：找前驱组（被替换者可能本身就是链成员）
-    const prevSeq = ev.sourceEventSeqs?.[0] ?? op.start
+    const range = replaceRange(ev.surfaceOp)
+    if (range === null) continue
+    const prevSeq = ev.sourceEventSeqs?.[0] ?? range.start
     const prevGroup = groups.get(prevSeq)
     if (prevGroup) {
       prevGroup.members.push({ seq: ev.seq, text: textOf(ev) })
@@ -1186,44 +1218,49 @@ export function collectVariantGroups(events: Array<{ type: string; seq: number; 
       groups.set(ev.seq, g)
     }
   }
-  // 【⑤修复 2026-09-05】regenerate 的逻辑回退标记（user/message replace）遮蔽了旧回复段——
-  // collectVariantGroups 扫描时包含被遮蔽的旧回复（surfaceOp replace 的 start/end 范围内的
-  // assistant/message），否则 regenerate 后 variant/switch 回旧回复必报 "target not in any variant group"
+
+  // ---- 形态 2（0.1.5 起的新写法）：user/message 标记 replace 掉旧成员，紧随其后 append 新成员 ----
+  // 标记载荷（sections 里的 dsht:surgical）给出 variantOf/scaledBackTo 等锚点。
+  const assistantSeqs = events.filter(e => e.type === 'assistant/message').map(e => e.seq).sort((a, b) => a - b)
   for (const ev of events) {
     if (ev.type !== 'user/message') continue
-    const op = ev.surfaceOp as { op?: string; start?: number; end?: number } | 'append' | undefined
-    if (op === undefined || op === 'append' || typeof op !== 'object') continue
-    const s = (ev.data as { source?: { regeneratedFrom?: unknown; rolledBackTo?: unknown } } | undefined)?.source
-    if (s === undefined) continue
-    const anchor = typeof s.regeneratedFrom === 'number' ? s.regeneratedFrom : (typeof s.rolledBackTo === 'number' ? s.rolledBackTo : undefined)
-    if (anchor === undefined) continue
-    // 被遮蔽段 [start, end] 内的 assistant/message 加入变体组（anchor 为前驱）
-    for (let q = op.start ?? 0; q <= (op.end ?? 0); q++) {
+    const range = replaceRange(ev.surfaceOp)
+    if (range === null) continue
+    const src = (ev.data as { source?: unknown } | undefined)?.source
+    const marker = readMarker<{ variantOf?: number; shadowedSeqs?: number[]; rolledBackTo?: number; regeneratedFrom?: number }>(src, 'surgical')
+    // 变体切换：下一个 assistant 即新 active；锚点 = 被移出的旧成员
+    const anchor = marker?.variantOf ?? range.start
+    const next = assistantSeqs.find(q => q > ev.seq)
+    if (marker?.variantOf !== undefined && next !== undefined) {
+      addMember(anchor, next, next)
+    }
+    // 回退/重生成标记遮蔽的旧回复也纳入组（否则切回旧回复报 "target not in any variant group"）
+    const legacy = readLegacySourceKeys(src)
+    const hideAnchor = marker?.regeneratedFrom ?? legacy.regeneratedFrom
+      ?? marker?.rolledBackTo ?? legacy.rolledBackTo
+    if (hideAnchor === undefined) continue
+    for (let q = range.start; q <= range.end; q++) {
       const shadowed = eventBySeq.get(q)
       if (shadowed?.type !== 'assistant/message') continue
-      const prevGroup = groups.get(anchor)
-      if (prevGroup) {
-        prevGroup.members.push({ seq: q, text: textOf(shadowed) })
-        groups.set(q, prevGroup)
-      } else {
-        const g: VariantGroup = {
-          members: [
-            { seq: anchor, text: textOf(eventBySeq.get(anchor) ?? { type: '', seq: anchor }) },
-            { seq: q, text: textOf(shadowed) },
-          ],
-          activeSeq: anchor,
-        }
-        groups.set(anchor, g)
-        groups.set(q, g)
-      }
+      addMember(hideAnchor, q, hideAnchor)
     }
   }
   return groups
 }
 
 /**
- * 切换变体的写入载荷：append 一条 assistant/message（replace 当前 active，内容=目标变体文本）。
- * 返回 null 表示无需切换（目标即 active）。
+ * 助手楼层改写的落点规划——实现在 dsht-plugin-shared/session-write.ts
+ * （三处消费：回退/编辑、TH 编辑、EJS 写回；在此 re-export 保持本模块公开面）。
+ */
+export { planAssistantRewrite } from '../dsht-plugin-shared/session-write.ts'
+
+/**
+ * 变体切换的 assistant 消息载荷（纯函数）。
+ *
+ * 【阶段3 2026-09-10 重写】原实现让 assistant/message 自己做 replace 节点 + 带
+ * sourceEventSeqs 血缘——0.1.2 合法，**0.1.5 被官方双重禁止**（assistant/message
+ * 不能带 sourceEventSeqs，且 replace 必须列全被遮蔽节点 → 带也错、不带也错）。
+ * 新形态：变体切换 = user/message 标记（把旧变体移出上下文）+ 本 assistant 消息追加。
  */
 export function buildVariantSwitchEvent(
   sessionId: string,
@@ -1235,8 +1272,10 @@ export function buildVariantSwitchEvent(
   seq: number
   time: number
   data: { turn: number; step: number; message: { id: string; role: 'assistant'; content: Array<{ type: 'text'; text: string }>; source: { kind: 'model'; provider: string; model: string } } }
-  surfaceOp: { op: 'replace'; start: number; end: number }
-  sourceEventSeqs: number[]
+  /** 追加到 surface 尾部（不再是 replace） */
+  surfaceOp: 'append'
+  /** 被移出上下文的旧变体 seq（写入标记用，不再进本事件信封） */
+  shadowedActiveSeq: number
 } | null {
   if (!targetText.trim()) return null
   return {
@@ -1253,8 +1292,8 @@ export function buildVariantSwitchEvent(
         source: { kind: 'model', provider: 'dsht-variant', model: 'user-switch' },
       },
     },
-    surfaceOp: { op: 'replace', start: activeSeq, end: activeSeq },
-    sourceEventSeqs: [activeSeq],
+    surfaceOp: 'append',
+    shadowedActiveSeq: activeSeq,
   }
 }
 
@@ -4817,14 +4856,19 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                   : includeAnchor
                     ? `[已回退] 该消息及其后的对话已从上下文移除（原文已放回输入框；事件仍保留在日志，可经 /expand 查看）。`
                     : `[已回退] 该消息之后的对话已从上下文移除（事件仍保留在日志，可经 /expand 查看）。`
-                live.append('user/message', {
+                // 【阶段3 2026-09-10】标记载荷必须放进官方白名单字段：旧写法
+                // `source.editedFrom` / `source.rolledBackTo` 是顶层自定义键 → v0→v1 迁移器
+                // 判 `source has unexpected member` → 整会话在 0.1.5 下打不开（实测 6 个真实会话）。
+                // 改用 form:'snapshot' + sections（官方唯一能带结构化文本的合法形态）。
+                const markerPayload: SurgicalMarkerPayload = isEdit
+                  ? { editedFrom: anchor, shadowedSeqs: seqs }
+                  : { rolledBackTo: includeAnchor ? anchor - 1 : keepThroughSeq, shadowedSeqs: seqs }
+                appendReplace(live, 'user/message', {
                   id: `dsht-rp-${isEdit ? 'edit' : 'rollback'}-${randomUUID()}`,
                   role: 'user',
                   content: [{ type: 'text', text: markerText }],
-                  source: isEdit
-                    ? { kind: 'plugin', plugin: 'dsht-rp', editedFrom: anchor }
-                    : { kind: 'plugin', plugin: 'dsht-rp', rolledBackTo: includeAnchor ? anchor - 1 : keepThroughSeq },
-                }, { surfaceOp: { op: 'replace', start, end }, sourceEventSeqs: seqs })
+                  source: markerSource('dsht-rp', 'surgical', markerPayload as unknown as Record<string, unknown>),
+                }, { start, end }, seqs)
                 logLine(`${isEdit ? 'session-edit' : 'session-rollback'}(live): ${sessionId} 锚 seq ${anchor} → replace [${start},${end}] ${seqs.length} 事件；变量回滚 ${undo.restored} 条`)
                 console.log(`[dsht-rp] ${isEdit ? 'session-edit' : 'session-rollback'}: ${sessionId} (live) replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`)
                 // I8-1：立即耐久 barrier——手机端进程被杀在 200ms 窗口内 = 回退标记丢失
@@ -4977,12 +5021,13 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 const undo = await replayUndoLog(dshHome, sessionId, anchorTime)
                 live.append('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed })
                 const markerText = `[重新生成中] 该消息此前的回复已从上下文移除，正在以原消息重新生成。`
-                live.append('user/message', {
+                // 【阶段3 2026-09-10】同 rollback：标记载荷进 sections（顶层自定义键会被迁移器拒）
+                appendReplace(live, 'user/message', {
                   id: `dsht-rp-regenerate-${randomUUID()}`,
                   role: 'user',
                   content: [{ type: 'text', text: markerText }],
-                  source: { kind: 'plugin', plugin: 'dsht-rp', regeneratedFrom: anchorEv.seq },
-                }, { surfaceOp: { op: 'replace', start, end }, sourceEventSeqs: seqs })
+                  source: markerSource('dsht-rp', 'surgical', { regeneratedFrom: anchorEv.seq, shadowedSeqs: seqs }),
+                }, { start, end }, seqs)
                 logLine(`session-regenerate(live): ${sessionId} 锚 seq ${anchorEv.seq} → replace [${start},${end}] ${seqs.length} 事件；变量回滚 ${undo.restored} 条`)
                 console.log(`[dsht-rp] session-regenerate: ${sessionId} (live) anchor=${anchorEv.seq} replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`)
                 // I8-1：立即耐久 barrier（同 rollback）
@@ -5546,15 +5591,58 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               if (group.activeSeq === targetSeq) return send(200, { ok: true, note: 'already active' })
               const target = group.members.find(m => m.seq === targetSeq)
               if (!target) return send(400, { error: 'target member missing' })
+              // 【阶段3 2026-09-10 重写】assistant/message 在 0.1.5 不能做 replace 节点
+              // 也不能带 sourceEventSeqs（官方设计死锁）。改走官方 compaction 同款形态：
+              //   ① user/message 标记（合法 replace）把当前 active 变体移出模型上下文
+              //   ② 目标变体文本作为新 assistant/message **追加**（落进打开的 step）
+              // 前端显示层照旧按变体组覆盖渲染（RpNativeChat variantOverride 不变）。
+              const existingView = (session as unknown as { surface?: { nodes?: number[] } }).surface?.nodes ?? []
+              if (!existingView.includes(group.activeSeq)) {
+                return send(400, { error: '当前变体不在模型视图（可能已被回退/折叠），无法切换' })
+              }
+              const agent = ctx.agents?.get(sessionId) as { phase?: { kind?: string; lastTurn?: number } } | undefined
+              const idle = agent?.phase?.kind === 'idle'
+              const plan = planAssistantRewrite(eventsForGroups as Array<{ type?: unknown; data?: { turn?: unknown } }>, idle)
               const ev = buildVariantSwitchEvent(sessionId, eventsForGroups.length, group.activeSeq, target.text)
               if (!ev) return send(400, { error: 'empty target text' })
-              session.append(ev.type, ev.data, {
-                surfaceOp: ev.surfaceOp,
-                sourceEventSeqs: ev.sourceEventSeqs,
+              if (plan.openTurn) session.append('turn/start', { turn: plan.turn })
+              session.append('step/start', { turn: plan.turn, step: plan.step })
+              // compaction/prune 必须**紧邻** replace（影子化协议铁律，官方 toolResultPruner 同款）
+              const activeEv = sessionEventAt(session, group.activeSeq)
+              const activeBlocks = (() => {
+                const dm = (activeEv?.data ?? {}) as { message?: { content?: unknown }; content?: unknown }
+                const inner = (dm.message && typeof dm.message === 'object' ? dm.message : dm) as { content?: unknown }
+                return Array.isArray(inner.content) ? inner.content as Array<Record<string, unknown>> : []
+              })()
+              const shadowedTokens = activeBlocks.reduce((t, b) =>
+                t + (b && (b['type'] === 'text' || b['type'] === 'reasoning') && typeof b['text'] === 'string'
+                  ? Math.ceil((b['text'] as string).length / 4) + 4
+                  : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4
+              session.append('compaction/prune', {
+                shadowedRange: { start: group.activeSeq, end: group.activeSeq },
+                shadowedSeqs: [group.activeSeq],
+                shadowedTokenCount: shadowedTokens,
               })
+              appendReplace(session as unknown as AppendableSession, 'user/message', {
+                id: `dsht-variant-mark-${randomUUID()}`,
+                role: 'user',
+                content: [{ type: 'text', text: `[变体切换] 已切换到该楼层的第 ${group.members.findIndex(m => m.seq === targetSeq) + 1}/${group.members.length} 个变体。` }],
+                source: markerSource('dsht-rp', 'surgical', { variantOf: targetSeq, shadowedSeqs: [group.activeSeq] }),
+              }, { start: group.activeSeq, end: group.activeSeq }, [group.activeSeq])
+              session.append(ev.type, {
+                ...(ev.data as object),
+                turn: plan.turn, step: plan.step,
+                message: { ...(ev.data as { message: object }).message, id: `dsht-variant-${sessionId}-${eventsForGroups.length}` },
+              }, { surfaceOp: 'append' })
+              session.append('step/end', { turn: plan.turn, step: plan.step })
+              if (plan.openTurn) session.append('turn/end', { turn: plan.turn, reason: { kind: 'completed' } })
+              // R49 同步：内核 phase.lastTurn 不刷新会让内核重开同一 turn（前端装配器崩溃）
+              if (plan.openTurn && agent?.phase && typeof agent.phase.lastTurn === 'number' && agent.phase.lastTurn < plan.turn) {
+                agent.phase.lastTurn = plan.turn
+              }
               group.activeSeq = targetSeq
               groups.set(targetSeq, group)
-              console.log(`[dsht-rp] variant switch: session=${sessionId} → seq ${targetSeq}`)
+              console.log(`[dsht-rp] variant switch: session=${sessionId} → seq ${targetSeq}（marker replace + append，turn=${plan.turn}）`)
               // I8-1：立即耐久 barrier（切变体后崩溃 = 变体切换丢失）
               try { await flushLiveSession(ctx.sessions, session) } catch (e) {
                 return send(500, { error: `变体切换已应用但落盘失败：${(e as Error).message}` })
@@ -6194,6 +6282,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               }
               let updated = 0
               const errors: string[] = []
+              // 助手楼层改写先收集（必须延后到 replace 批之后统一 append——
+              // assistant/message 只能落在打开的 step 内，且不能作为 replace 节点）
+              const pendingAssistantEdits: Array<{ text: string; thSystem: boolean; thData: unknown }> = []
               for (const t of targets) {
                 const mid = Number(t.message_id ?? -1)
                 const seq = exportSeqs[mid]
@@ -6229,37 +6320,71 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                     ? Math.ceil((b['text'] as string).length / 4) + 4
                     : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4
                 live.append('compaction/prune', { shadowedRange: { start: seq, end: seq }, shadowedSeqs: [seq], shadowedTokenCount: shadowedTokens })
-                const turn = typeof oldData.turn === 'number' ? oldData.turn : 1
-                const step = typeof oldData.step === 'number' ? oldData.step : 1
                 if (isUser) {
-                  // user 楼层替换：plugin source（内核对 user/message 的 source kind 宽容）
+                  // user 楼层替换：user/message 自己做 replace 合法（0.1.5 允许）。
+                  // 【阶段3 2026-09-10】surfaceOp 字段名走 appendReplace 自适应
+                  // （0.1.5 起是 startSeq/endSeq，旧 start/end 直接抛 invalid replace surfaceOp）。
                   const source: Record<string, unknown> = { kind: 'plugin', plugin: 'dsht-tavern-helper' }
                   if (data !== null && typeof data === 'object') source['thData'] = data
-                  live.append('user/message', {
+                  appendReplace(live, 'user/message', {
                     id: `dsht-th-${randomUUID()}`,
                     role: 'user',
                     content: [{ type: 'text', text }],
                     source,
-                  }, { surfaceOp: { op: 'replace', start: seq, end: seq }, sourceEventSeqs: [seq] })
+                  }, { start: seq, end: seq }, [seq])
                 } else {
-                  // assistant 楼层替换：必须 model source（内核校验）——provider/model 换成
-                  // th-edit 身份，原 replayState 不随行（文本已改，回放态失配且跨 provider 永不命中）
+                  // assistant 楼层改写：0.1.5 **禁止 assistant/message 做 replace 节点**
+                  // （带 sourceEventSeqs 抛「embeds its source stream」，不带抛「missing shadowed node」
+                  // ——官方设计死锁）。改用官方 compaction 同款形态：user 标记把旧楼层移出上下文，
+                  // 改写后的新文本作为新 assistant 消息**追加**（落进打开的 step）。
+                  const markerSourceObj = markerSource('dsht-tavern-helper', 'surgical',
+                    { editedFrom: seq, shadowedSeqs: [seq] })
+                  appendReplace(live, 'user/message', {
+                    id: `dsht-th-mark-${randomUUID()}`,
+                    role: 'user',
+                    content: [{ type: 'text', text: '[消息已编辑] 该楼层的原文已从上下文移除，编辑后的内容随后追加。' }],
+                    source: markerSourceObj,
+                  }, { start: seq, end: seq }, [seq])
+                  // 重写的助手楼层延后统一追加（同一 turn 内、顺序稳定，避免 turn 膨胀）
+                  pendingAssistantEdits.push({
+                    text,
+                    thSystem: oldSource['thSystem'] === true,
+                    thData: data,
+                  })
+                }
+                updated++
+              }
+              // 助手楼层改写：统一在 replace 批之后追加（assistant/message 只能 append 到打开的 step）
+              if (pendingAssistantEdits.length > 0) {
+                const agent = ctx.agents?.get(sessionId) as { phase?: { kind?: string; lastTurn?: number } } | undefined
+                const idle = agent?.phase?.kind === 'idle'
+                const plan = planAssistantRewrite(sessionEventsSnapshot(live) as Array<{ type?: unknown; data?: { turn?: unknown } }>, idle)
+                if (plan.openTurn) live.append('turn/start', { turn: plan.turn })
+                for (let i = 0; i < pendingAssistantEdits.length; i++) {
+                  const pe = pendingAssistantEdits[i]
+                  const step = plan.step + i
+                  live.append('step/start', { turn: plan.turn, step })
                   const source: Record<string, unknown> = {
                     kind: 'model', provider: 'dsht-tavern-helper', model: 'th-edit',
-                    ...(oldSource['thSystem'] === true ? { thSystem: true } : {}),
-                    ...(data !== null && typeof data === 'object' ? { thData: data } : {}),
+                    ...(pe.thSystem ? { thSystem: true } : {}),
+                    ...(pe.thData !== null && typeof pe.thData === 'object' ? { thData: pe.thData } : {}),
                   }
                   live.append('assistant/message', {
-                    turn, step,
+                    turn: plan.turn, step,
                     message: {
                       id: `dsht-th-${randomUUID()}`,
                       role: 'assistant',
-                      content: [{ type: 'text', text }],
+                      content: [{ type: 'text', text: pe.text }],
                       source,
                     },
-                  }, { surfaceOp: { op: 'replace', start: seq, end: seq }, sourceEventSeqs: [seq] })
+                  }, { surfaceOp: 'append' })
+                  live.append('step/end', { turn: plan.turn, step })
                 }
-                updated++
+                if (plan.openTurn) live.append('turn/end', { turn: plan.turn, reason: { kind: 'completed' } })
+                // R49 同步：内核 phase.lastTurn 不刷新会让内核重开同一 turn
+                if (plan.openTurn && agent?.phase && typeof agent.phase.lastTurn === 'number' && agent.phase.lastTurn < plan.turn) {
+                  agent.phase.lastTurn = plan.turn
+                }
               }
               if (updated > 0) {
                 try { await flushLiveSession(ctx.sessions, live) } catch (e) {

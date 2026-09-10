@@ -152,22 +152,34 @@ describe('dsh-export: 单卡导入路径（T1.15：preset + rp.json + 内嵌书 
   })
 
   // ---- T7a：alternateGreetings 作为 swipe 变体组写进开场白 session ----
-  it('多开场白卡 → 变体链（变体依次 replace 前驱 + 回切 firstMes），seq 连续、active=firstMes', () => {
+  it('多开场白卡 → 变体组（user 标记移出旧变体 + append 新变体），seq 连续、active=firstMes', () => {
+    // 【阶段3 2026-09-10 契约修正】原断言是「修复前的错误契约」：assistant/message 依次
+    // 做 replace 节点 + 带 sourceEventSeqs 血缘——0.1.2 合法，0.1.5 被官方双重禁止
+    // （带 ses 抛 "embeds its source stream"、不带抛 "missing shadowed node"，官方设计死锁）。
+    // 新契约：user/message 标记（合法 replace）移出旧变体 + 新变体做 assistant append。
     const multi = { ...card, alternateGreetings: ['另一个开场', '第三个开场'] } as unknown as CharacterCard
     const files = exportSingleCardFiles(multi)
     const ses = files.find(f => f.path.endsWith('/session.jsonl'))!
     const lines = ses.content.trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
     const events = lines.slice(1)
-    // 3 变体 + 1 回切：4 个 step（step/start + assistant/message + step/end），seq 严格连续
     expect(events.map(e => e.seq)).toEqual(events.map((_, i) => i))
     const msgs = events.filter(e => e.type === 'assistant/message')
     expect(msgs).toHaveLength(4)
-    expect(msgs[0].surfaceOp).toBe('append') // firstMes
-    // 变体链契约同 convertChatFile：每个 replace 指向直接前驱 + sourceEventSeqs 血缘
-    expect(msgs[1].surfaceOp).toEqual({ op: 'replace', start: 2, end: 2 })
-    expect(msgs[1].sourceEventSeqs).toEqual([2])
-    expect(msgs[2].surfaceOp).toEqual({ op: 'replace', start: 5, end: 5 })
-    expect(msgs[2].sourceEventSeqs).toEqual([5])
+    // 变体必须是 append（0.1.5 禁止 assistant 做 replace 节点）
+    for (const m of msgs) expect(m.surfaceOp).toBe('append')
+    // 旧变体的移出改由紧随其前的 user/message 标记 + compaction/prune 承担
+    const markers = events.filter(e => e.type === 'user/message')
+    expect(markers.length).toBeGreaterThanOrEqual(2)
+    for (const m of markers) {
+      expect(m.surfaceOp).toMatchObject({ op: 'replace' })
+      expect(m.sourceEventSeqs).toHaveLength(1)
+    }
+    // compaction/prune 必须紧邻其后的 replace（影子化协议铁律）
+    for (let i = 0; i < events.length; i++) {
+      if (events[i].type !== 'compaction/prune') continue
+      expect(events[i + 1]?.type).toBe('user/message')
+      expect(events[i + 1]?.surfaceOp).toMatchObject({ op: 'replace' })
+    }
     // 回切：active 换回 firstMes（ST 默认 swipe_id 0）
     const textOf = (e: Record<string, unknown>) =>
       ((e.data as { message: { content: Array<{ text: string }> } }).message.content[0].text)
@@ -175,9 +187,9 @@ describe('dsh-export: 单卡导入路径（T1.15：preset + rp.json + 内嵌书 
     expect(textOf(msgs[1])).toBe('另一个开场')
     expect(textOf(msgs[2])).toBe('第三个开场')
     expect(textOf(msgs[3])).toBe('你好，旅行者。')
-    // 组重建：回切事件按 append-only 语义入组（原始计数，前端按文本归一化显示 3 变体），active 指向链尾
+    // 组重建：4 个变体全文入组，active 指向链尾
     const groups = collectVariantGroups(events as never[])
-    const g = groups.get(2)!
+    const g = groups.get(Number(msgs[0].seq))!
     expect(g.members.map(m => m.text)).toEqual(['你好，旅行者。', '另一个开场', '第三个开场', '你好，旅行者。'])
     expect(g.activeSeq).toBe(Number(msgs[3].seq))
     // 空/重复备选不收
@@ -211,24 +223,31 @@ describe('dsh-export: 聊天 → session.jsonl（oneTurnLog 事件契约）', ()
     expect(header.createdAt).toBe(1700000000000)
 
     const events = lines.slice(1).map(l => JSON.parse(l))
+    // 【阶段3 2026-09-10 契约修正】user/message 也必须落在打开的 step 内——
+    // 0.1.5 v2→v3 迁移器（dsh-session-format-v2-to-v3/lib/index.js:733）对
+    // 「首个 step 之前的 surface 事件」直接抛 `cannot acquire a system head
+    // without changing chronology`。故 user 楼层也各自包一个 step（复刻真实 DSH 形态）。
     expect(events.map(e => e.type)).toEqual([
-      'turn/start', 'user/message', 'step/start', 'assistant/message', 'step/end', 'turn/end',
+      'turn/start',
+      'step/start', 'user/message', 'step/end',
+      'step/start', 'assistant/message', 'step/end',
+      'turn/end',
     ])
     // seq 从 0 连续
-    expect(events.map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5])
+    expect(events.map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
     // 表面事件必须带 surfaceOp（契约：guard 拒绝缺失）
-    expect(events[1].surfaceOp).toBe('append')
-    expect(events[3].surfaceOp).toBe('append')
+    expect(events[2].surfaceOp).toBe('append')
+    expect(events[5].surfaceOp).toBe('append')
     expect(events[0].surfaceOp).toBeUndefined()
     // user/message data = Message
-    expect(events[1].data).toMatchObject({ role: 'user', content: [{ type: 'text', text: '你好' }], source: { kind: 'user' } })
+    expect(events[2].data).toMatchObject({ role: 'user', content: [{ type: 'text', text: '你好' }], source: { kind: 'user' } })
     // assistant/message data = { turn, step, message }（source.model 契约）
-    expect(events[3].data.message).toMatchObject({
+    expect(events[5].data.message).toMatchObject({
       role: 'assistant', content: [{ type: 'text', text: '你好，旅行者。' }],
       source: { kind: 'model', provider: 'sillytavern-import' },
     })
     // turn/end completed
-    expect(events[5].data).toEqual({ turn: 1, reason: { kind: 'completed' } })
+    expect(events[7].data).toEqual({ turn: 1, reason: { kind: 'completed' } })
     expect(conv.turns).toBe(1)
     expect(conv.firstUserText).toBe('你好')
   })
@@ -279,27 +298,32 @@ describe('dsh-export: 聊天 → session.jsonl（oneTurnLog 事件契约）', ()
     const asst = events.filter(e => e.type === 'assistant/message')
     expect(conv.variantGroups).toBe(1)
 
-    // 变体0：append；变体1/2：replace 前驱；active=1 非末位 → 追加切换事件（共4条 assistant）
+    // 【阶段3 2026-09-10 契约修正】原断言是「修复前的错误契约」：变体依次用
+    // assistant/message 做 replace 节点 + 带 sourceEventSeqs 血缘——0.1.5 被官方
+    // 双重禁止（带 ses 抛 "embeds its source stream"、不带抛 "missing shadowed node"）。
+    // 新契约：四个变体全部 append；旧变体由紧随其前的 user/message 标记（合法 replace）移出。
     expect(asst).toHaveLength(4)
-    expect(asst[0].surfaceOp).toBe('append')
+    for (const a of asst) expect(a.surfaceOp).toBe('append')
     expect(asst[0].data.message.content[0].text).toBe('版本A')
-
-    // 变体1 replace 变体0：start/end = 被覆盖节点的 seq；sourceEventSeqs 必含之（surface.ts 契约）
-    const v0Seq = asst[0].seq
-    expect(asst[1].surfaceOp).toEqual({ op: 'replace', start: v0Seq, end: v0Seq })
-    expect(asst[1].sourceEventSeqs).toEqual([v0Seq])
     expect(asst[1].data.message.content[0].text).toBe('版本B')
-
-    // 变体2 replace 变体1
-    const v1Seq = asst[1].seq
-    expect(asst[2].surfaceOp).toEqual({ op: 'replace', start: v1Seq, end: v1Seq })
-    expect(asst[2].sourceEventSeqs).toEqual([v1Seq])
-
-    // 切换事件：把 active（版本B）换回 surface（replace 变体2）
-    const v2Seq = asst[2].seq
-    expect(asst[3].surfaceOp).toEqual({ op: 'replace', start: v2Seq, end: v2Seq })
-    expect(asst[3].sourceEventSeqs).toEqual([v2Seq])
     expect(asst[3].data.message.content[0].text).toBe('版本B')
+
+    // 每个变体切换前都有一个 user 标记（replace 掉上一变体）+ 紧邻的 compaction/prune
+    // （distinct from 原始用户消息——它 surfaceOp='append'）
+    const markers = events.filter(e => e.type === 'user/message' && e.surfaceOp !== 'append')
+    expect(markers).toHaveLength(3)
+    for (const m of markers) {
+      expect(m.surfaceOp).toMatchObject({ op: 'replace' })
+      expect(m.sourceEventSeqs).toHaveLength(1)
+      const secs = (m.data as { source?: { sections?: Array<{ name: string }> } }).source?.sections
+      expect(secs?.[0]?.name).toBe('dsht:surgical')
+    }
+    // compaction/prune 必须紧邻其后的 replace（影子化协议铁律）
+    for (let i = 0; i < events.length; i++) {
+      if (events[i].type !== 'compaction/prune') continue
+      expect(events[i + 1]?.type).toBe('user/message')
+      expect(events[i + 1]?.surfaceOp).toMatchObject({ op: 'replace' })
+    }
 
     // surface 投影验证：重放 surfaceOp 后 active 是"版本B"（asst[3]）
     const surface: number[] = []
@@ -311,8 +335,14 @@ describe('dsh-export: 聊天 → session.jsonl（oneTurnLog 事件契约）', ()
         surface.splice(s, t - s + 1, e.seq)
       }
     }
-    // surface = [user, active变体]；active 变体事件即 asst[3]
-    expect(surface).toEqual([events.find(e => e.type === 'user/message')!.seq, asst[3].seq])
+    // surface = [user, 标记, active变体]（新形态多一条标记节点）
+    expect(surface[0]).toBe(events.find(e => e.type === 'user/message')!.seq)
+    expect(surface[surface.length - 1]).toBe(asst[3].seq)
+    // 变体组重建：4 个变体全文可切，active 指向链尾
+    const groups = collectVariantGroups(events as never[])
+    const g = groups.get(Number(asst[0].seq))!
+    expect(g.members.map(m => m.text)).toEqual(['版本A', '版本B', '版本C', '版本B'])
+    expect(g.activeSeq).toBe(Number(asst[3].seq))
   })
 
   it('swipes active 在末位：无追加切换事件', () => {
@@ -363,15 +393,19 @@ describe('dsh-export: 聊天 → session.jsonl（oneTurnLog 事件契约）', ()
     }
     const conv = convertChatFile(mk(rows), { sessionId: sid, createdAt: 1700000000000 })
     const lines = conv.content.trimEnd().split('\n')
-    // 1200 行消息 → 1 header + 每消息 1 表面事件 + 600 turn 开/闭对（1200 事件）
-    // assistant 消息另有 step 包裹：600 step/start + 600 step/end
-    expect(lines).toHaveLength(1 + 1200 + 1200 + 1200)
+    // 【阶段3 2026-09-10 契约修正】user 楼层也各自包 step（0.1.5 要求 surface 事件
+    // 必须落在打开的 step 内）。
+    // 1200 行消息 → 1 header + 600 user 表面事件 + 600 user step/start + 600 user step/end
+    //              + 600 assistant 表面事件 + 600 assistant step/start + 600 assistant step/end
+    //              + 600 turn/start + 600 turn/end
+    expect(lines).toHaveLength(1 + 1200 + 1200 + 1200 + 1200)
     expect(conv.turns).toBe(600)
     expect(conv.skipped).toBe(0)
     // 首尾消息都在（无截断）
     expect(conv.content).toContain('消息 0')
     expect(conv.content).toContain('消息 1199')
-    const firstUser = (JSON.parse(lines[2]) as { data: { content: Array<{ text: string }> } }).data.content[0].text
+    // 首条 = header，line[1] = turn/start，line[2] = step/start，line[3] = user/message
+    const firstUser = (JSON.parse(lines[3]) as { data: { content: Array<{ text: string }> } }).data.content[0].text
     expect(firstUser).toBe('消息 0')
   })
 })
@@ -427,11 +461,15 @@ describe('dsh-export: 一卡一工作区布局（§4.14 用户定案）', () => 
     expect(orphanReadme).toBeTruthy()
     expect(orphanReadme!.content).toContain('待认领')
 
-    // swipes 也进了 session 事件流（v1 append + v2 replace）
+    // 【阶段3 2026-09-10 契约修正】swipes 两个变体都 append；旧变体的移出由
+    // user/message 标记（合法 replace）承担——0.1.5 禁止 assistant 做 replace 节点。
     const events = seraphinaSession!.content.trimEnd().split('\n').slice(1).map(l => JSON.parse(l))
     const asst = events.filter((e: { type: string }) => e.type === 'assistant/message')
     expect(asst).toHaveLength(2)
-    expect(asst[1].surfaceOp).toEqual({ op: 'replace', start: asst[0].seq, end: asst[0].seq })
+    for (const a of asst) expect(a.surfaceOp).toBe('append')
+    const marks = events.filter((e: { type: string; surfaceOp?: unknown }) => e.type === 'user/message' && e.surfaceOp !== 'append')
+    expect(marks).toHaveLength(1)
+    expect((marks[0].surfaceOp as { op: string }).op).toBe('replace')
   })
 })
 

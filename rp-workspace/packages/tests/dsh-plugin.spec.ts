@@ -131,22 +131,26 @@ describe('dsht-rp-plugin: 变体组（T1.13 重roll/切换）', () => {
     expect(groups.size).toBe(0)
   })
 
-  it('buildVariantSwitchEvent：replace 当前 active + sourceEventSeqs 血缘', () => {
+  it('buildVariantSwitchEvent：变体文本作为 append（0.1.5 禁止 assistant 做 replace 节点）', () => {
+    // 【阶段3 2026-09-10 契约修正】原断言是「修复前的错误契约」：
+    // assistant/message 做 replace 节点 + 带 sourceEventSeqs 血缘——0.1.2 合法，
+    // 0.1.5 被官方双重禁止（带 ses 抛 "embeds its source stream"、不带抛 "missing shadowed node"）。
+    // 新契约：本函数只产出 assistant 消息载荷，且一定是 append；旧变体的移出
+    // 由调用方用 user/message 标记（markerSource）单独写入。
     const ev = buildVariantSwitchEvent('s1', 5, 4, '版本B')!
     expect(ev.type).toBe('assistant/message')
-    expect(ev.surfaceOp).toEqual({ op: 'replace', start: 4, end: 4 })
-    expect(ev.sourceEventSeqs).toEqual([4])
+    expect(ev.surfaceOp).toBe('append')
+    expect(ev.shadowedActiveSeq).toBe(4) // 旧 active 交由调用方写标记
     expect(ev.data.message.content[0].text).toBe('版本B')
     expect(ev.data.message.source.provider).toBe('dsht-variant')
     expect(buildVariantSwitchEvent('s1', 5, 4, '  ')).toBeNull() // 空文本拒绝
   })
 
-  it('T7b：replace 链血缘不重复累积——每条 switch 事件的 sourceEventSeqs 恒为单元素直接前驱', () => {
-    // 来回滑动后读模型 members 增长是 append-only 语义的如实映射（前端按文本归一化，
-    // 见 variant-groups.spec.ts 的不变量钉板）；后端侧要验证的是血缘不劣化
+  it('T7b：变体切换事件不再携带 sourceEventSeqs（0.1.5 硬约束）', () => {
     const ev = buildVariantSwitchEvent('s1', 9, 5, '版本A')!
-    expect(ev.sourceEventSeqs).toEqual([5]) // 只含被替换的直接前驱，不累积历史链
-    expect(ev.surfaceOp).toEqual({ op: 'replace', start: 5, end: 5 })
+    expect(ev).not.toHaveProperty('sourceEventSeqs')
+    expect(ev.surfaceOp).toBe('append')
+    expect(ev.shadowedActiveSeq).toBe(5)
   })
 })
 
