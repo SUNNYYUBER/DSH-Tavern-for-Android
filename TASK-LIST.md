@@ -148,7 +148,7 @@
 | T-29 | EJS 完整语法（当前子集：无函数调用/箭头函数/模板字符串/正则字面量） | 显式报错，非静默失败 |
 | T-30 | 采样参数长尾（topP/topK/minP/penalties/seed…） | 等宿主 LLM 适配器白名单 |
 | T-31 | 表格记忆长尾（E7 自定义渲染占位符 / E9 编辑器 / E12 设置导入导出） | 每项时间盒 |
-| T-32 | `st-migration` skill 契约漂移复核 + 配探测脚本 | 防文档再次滞后于实现（本次已手工对齐一轮） |
+| T-32 | `st-migration` skill 契约漂移复核 + 配探测脚本 | ✅ **契约漂移已复核并修正**（2026-09-11，心跳 45）：`references/session-jsonl-contract.md` 仍在教**已被 0.1.5 禁止**的 `assistant/message` replace 链（21/80 会话因此打不开的根源），已改为 user 标记 + append；补 `startSeq/endSeq` 字段名、source 白名单、user/message 必须包 step、官方不变量、**会话世代读法**、存量修复三重链。探针脚本暂缺（改由 `verify-session-pipeline.mjs` + 契约测试覆盖） |
 | T-33 | 复杂卡脚本逐卡适配（飞讯 / 示例游戏类） | 第三次冒同类问题即升 Tier 2 时间盒 |
 
 ---
