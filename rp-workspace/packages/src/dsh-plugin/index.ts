@@ -20,7 +20,7 @@ import { createReadStream } from 'node:fs'
 import { access, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 import { randomUUID } from 'node:crypto'
 import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
@@ -615,9 +615,16 @@ function normAndroidPath(p: string): string {
 //   所以修复必须同时改 header 并把会话目录搬到 projectKey(规范 cwd) 下。
 // ---------------------------------------------------------------------------
 
-/** header cwd 是否需要修复（仅处理 Android symlink 形态；相对路径/其他形态不动） */
+/**
+ * header cwd 是否需要规范化（两种形态）：
+ *  ① Android symlink 形态 `/data/user/0/…`（与 WorkspaceRegistry 的 realpath 规范形态不一致）
+ *  ② **非绝对路径**（v0 迁移器硬要求 `header cwd must be absolute`；历史引导会话
+ *     写的是 `rp/_start` 这种相对形态）——【阶段3 2026-09-10 新增】
+ * 绝对且已规范的路径不动。
+ */
 export function sessionCwdNeedsRepair(cwd: unknown): cwd is string {
-  return typeof cwd === 'string' && cwd.startsWith('/data/user/0/')
+  if (typeof cwd !== 'string') return false
+  return cwd.startsWith('/data/user/0/') || !isAbsolute(cwd)
 }
 
 /**
@@ -631,6 +638,15 @@ export function rewriteSessionHeaderCwd(line: string, canonicalCwd: string): str
   if (obj.cwd === canonicalCwd) return null
   obj.cwd = canonicalCwd
   return JSON.stringify(obj)
+}
+
+/** 读一段会话文本首行的 header.cwd（非 session header / 非法 JSON → null）。 */
+export function sessionHeaderCwd(content: string): string | null {
+  const nl = content.indexOf('\n')
+  const line = nl === -1 ? content : content.slice(0, nl)
+  let obj: { type?: unknown; cwd?: unknown }
+  try { obj = JSON.parse(line) as { type?: unknown; cwd?: unknown } } catch { return null }
+  return obj?.type === 'session' && typeof obj.cwd === 'string' ? obj.cwd : null
 }
 
 // ---------------------------------------------------------------------------
@@ -1913,7 +1929,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   }
 
   /**
-   * 存量 session cwd 修复（/data/user/0 symlink 形态 → realpath 规范形态）。
+   * 存量 session cwd 规范化（两种形态 → 绝对且 realpath 规范）。
+   *  ① `/data/user/0/…` symlink 形态 → realpath
+   *  ② 相对路径（如 `rp/_start`）→ 相对 $DSH_HOME 解析后 realpath
    * 幂等：只处理 sessionCwdNeedsRepair 命中的 header；live session 跳过（目录搬迁会
    * 拔掉它的落盘句柄）；projectKey 变化时先搬目录再改首行（assertStoredIdentity 契约）。
    */
@@ -1929,7 +1947,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         continue
       }
       try {
-        const canonical = await realpath(h.cwd)
+        // 相对 cwd 以 $DSH_HOME 为基准解析（历史引导会话写的 `rp/_start`）；
+        // 绝对形态直接 realpath（symlink → 规范）。realpath 失败（目录不存在）保留原值。
+        const resolved = isAbsolute(h.cwd) ? h.cwd : resolve(dshHome, h.cwd)
+        const canonical = await realpath(resolved).catch(() => resolved)
         if (canonical === h.cwd) continue
         const newLine = rewriteSessionHeaderCwd(h.firstLine, canonical)
         if (newLine === null) continue
@@ -2017,6 +2038,19 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         const r = repairSessionSeqs(v3.content)
         if (r.error) { errors.push(`${h.sessionId}: ${r.error}`); continue }
         if (!r.repaired && norm.changed === 0 && v3.changed === 0) continue
+        // 【2026-09-10 回归事故防呆闸】官方 persistence `assertStoredIdentity` 要求
+        // 物理路径恒等于 logPath(root, cwd, id)，即**目录名必须 == projectKey(header.cwd)**。
+        // 本函数只该改事件、不该改 header.cwd；一旦某次「顺手」的 header 改写把 cwd 换了
+        // （事故实证：相对 cwd `rp/_start` 被补成绝对路径，而目录仍叫 `--rp-_start--`），
+        // 会话就变成「目录名与 cwd 不符」的形态：DSH 下次列 header 即抛
+        // `corrupt session log ... header id ... and cwd identify ...`，整个 plugin tree
+        // 加载失败、node 退出码 1 无限重启；实测还伴随**会话文件在核心搬迁中丢失**。
+        // 故落盘前做最后一道闸：cwd 改变导致 projectKey 不匹配 → 拒绝写入并如实报错。
+        const outCwd = sessionHeaderCwd(r.content)
+        if (outCwd !== null && projectKey(outCwd) !== h.project) {
+          errors.push(`${h.sessionId}: 修复后 cwd 与目录身份不符（projectKey=${projectKey(outCwd)} 目录=${h.project}），拒绝落盘（须走 repairSessionCwds 的搬迁路径）`)
+          continue
+        }
         // I8-2：原子写 + I8-3：.bak 先耐久再发布正文件
         await atomicWriteFile(`${file}.bak`, content)
         await atomicWriteFile(file, r.content)
@@ -2687,8 +2721,14 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         '',
         '有什么想调整的，直接在这个会话里留言即可——祝玩得开心！',
       ].join('\n')
+      // 【阶段3 2026-09-10 修正】header.cwd 必须是**绝对且 realpath 规范**形态：
+      // 历史实现写的 `rp/_start` 是相对路径，0.1.5 的 v0 迁移器硬要求
+      // `header cwd must be absolute`（dsh-session-format-v0-to-v1:1487），该会话
+      // 迁移即被拒。且 cwd 与所在目录名是一对强不变量（目录名 == projectKey(cwd)），
+      // 故此处用 realpath 求出的绝对路径同时决定两者，杜绝再次错配。
+      const wsCwd = normAndroidPath(await realpath(startDir).catch(() => startDir))
       const lines = [
-        JSON.stringify({ type: 'session', version: 0, id: sessionId, createdAt, cwd: `rp/${WELCOME_SLUG}`, delegationDepth: 0 }),
+        JSON.stringify({ type: 'session', version: 0, id: sessionId, createdAt, cwd: wsCwd, delegationDepth: 0 }),
         ev('turn/start', 0, { turn: 1 }),
         ev('step/start', 1, { turn: 1, step: 1 }),
         ev('assistant/message', 2, {
@@ -2703,7 +2743,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         ev('step/end', 3, { turn: 1, step: 1 }),
         ev('turn/end', 4, { turn: 1, reason: { kind: 'completed' } }),
       ]
-      const sessionDir = join(dshHome, 'sessions', projectKey(`rp/${WELCOME_SLUG}`), sessionId)
+      // 目录名必须 == projectKey(header.cwd)（官方 assertStoredIdentity 强不变量）——
+      // 与上面 header 用同一个 wsCwd 派生，两者不会再错配。
+      const sessionDir = join(dshHome, 'sessions', projectKey(wsCwd), sessionId)
       await mkdir(sessionDir, { recursive: true })
       // 【鲁棒轮收尾】原子发布（欢迎会话首建；半写文件会被幂等跳过——原子写消除该窗口）
       await atomicWriteFile(join(sessionDir, 'session.jsonl'), lines.join('\n') + '\n')
@@ -2849,6 +2891,19 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
     const n = (r.repaired as unknown[]).length
     if (n > 0) logLine(`启动即修：seq 断号修复 ${n} 个会话`)
   }).catch(e => console.log(`[dsht-rp] startup repair skipped: ${(e as Error).message}`))
+
+  // ---- 【阶段3 2026-09-10】session header cwd 规范化「启动即修」----
+  // 为什么必须在启动做：0.1.5 的 v0 迁移器硬要求 `header cwd must be absolute`
+  // （dsh-session-format-v0-to-v1:1487），历史引导会话写的是相对形态 `rp/_start`；
+  // 而 DSH 的 dsh-workspace 在**插件树加载期**就逐个校验 header 与所在目录的身份一致性
+  // （persistence assertStoredIdentity：目录名必须 == projectKey(header.cwd)）——
+  // 校验失败会让整个 plugin tree 加载失败、node 退出码 1 无限重启（实机 crash-loop 实证）。
+  // 故 cwd 修复必须在此窗口完成（只改 cwd 不搬目录 = 制造上述 crash-loop，本函数两者同做）。
+  void repairSessionCwds().then(r => {
+    const n = (r.repaired as unknown[]).length
+    const errs = (r.errors as unknown[]).length
+    if (n > 0 || errs > 0) logLine(`启动即修：session cwd 规范化 ${n} 个（失败 ${errs}）`)
+  }).catch(e => console.log(`[dsht-rp] startup cwd repair skipped: ${(e as Error).message}`))
 
   // ---- R49：重复 turn/start「启动即修」----
   // 物化 turn 计数失同步（已修源头，phase 同步）留下的存量日志：重复 turn/start 让

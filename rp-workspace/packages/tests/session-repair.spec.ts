@@ -170,12 +170,14 @@ describe('session-repair: 存量 v0 会话 → 合法形态', () => {
     expect(r.changed).toBe(true)
   })
 
-  it('header.cwd 非绝对路径 → 补全', () => {
+  it('header.cwd 不在此模块改写（cwd↔目录名强耦合，改 cwd 必须同时搬目录）', () => {
+    // 回归护栏：曾经这里把相对 cwd 补成绝对路径，但没搬目录 →
+    // 官方 assertStoredIdentity 要求 目录名 == projectKey(cwd)，
+    // 实机表现为 node 启动 crash-loop（corrupt session log ... and cwd identify ...）。
     const src = JSON.stringify({ type: 'session', version: 0, id: 's', createdAt: 1, cwd: 'rp/_start', delegationDepth: 0 }) + '\n'
     const r = repairSessionForV3(src)
-    expect(r.changed).toBe(true)
     const hdr = JSON.parse(r.content.split('\n')[0]) as { cwd: string }
-    expect(hdr.cwd.startsWith('/')).toBe(true)
+    expect(hdr.cwd).toBe('rp/_start') // 原样保留，交给 repairSessionCwds（带 fs）处理
   })
 
   it('幂等：已合法的会话 → 零改动', () => {

@@ -6,8 +6,9 @@ import {
   hasDirectUserInput,
   processActivatedEntries, renderWorldInfoSnapshot, repairSessionSeqs, rewriteSessionHeaderCwd,
   rpSlugFromCwd, scanSurfaceHistory, searchLoreEntries, sessionContentMaxTime,
-  sessionCwdNeedsRepair, spliceDepthInjections, truncateSessionJsonl,
+  sessionCwdNeedsRepair, sessionHeaderCwd, spliceDepthInjections, truncateSessionJsonl,
 } from '../src/dsh-plugin/index.ts'
+import { projectKey } from '../src/import/dsh-export.ts'
 import type { LoreEntry } from '../src/lore/entry.ts'
 import type { RegexScript } from '../src/regex/engine.ts'
 
@@ -25,6 +26,36 @@ describe('dsht-rp-plugin: 工作区识别', () => {
     expect(rpSlugFromCwd('/other/path', home)).toBeNull()
     expect(rpSlugFromCwd(`${home}/skills/x`, home)).toBeNull()
     expect(rpSlugFromCwd(`${home}/rp/a/b`, home)).toBeNull() // 嵌套不算
+  })
+})
+
+describe('dsht-rp-plugin: 会话目录身份不变量（assertStoredIdentity 前置闸）', () => {
+  // 回归事故（2026-09-10 实机）：`dsht-welcome` 的相对 cwd `rp/_start` 被某次修复
+  // 补成绝对路径，但目录仍叫 `--rp-_start--` → 目录名 ≠ projectKey(cwd)。
+  // 官方 persistence assertStoredIdentity 在下次列 header 时判不合规，
+  // 实测后果 = 会话文件在核心搬迁中丢失（设备会话数 80 → 79）。
+  const home = '/data/data/com.dshtavern.app/files/.dsh'
+  const abs = `${home}/rp/_start`
+
+  it('sessionHeaderCwd：读首行 cwd；非 session header / 非法 JSON → null', () => {
+    expect(sessionHeaderCwd(`${JSON.stringify({ type: 'session', cwd: abs })}\n{"type":"turn/start"}`)).toBe(abs)
+    expect(sessionHeaderCwd(JSON.stringify({ type: 'session', cwd: abs }))).toBe(abs) // 无换行的单行
+    expect(sessionHeaderCwd(JSON.stringify({ type: 'turn/start', cwd: abs }))).toBeNull()
+    expect(sessionHeaderCwd('not json\n')).toBeNull()
+    expect(sessionHeaderCwd('')).toBeNull()
+  })
+
+  it('相对 cwd 与绝对 cwd 的 projectKey 不同 —— 这正是事故形态', () => {
+    expect(projectKey('rp/_start')).toBe('--rp-_start--') // 事故前设备上的旧目录名
+    expect(projectKey(abs)).toBe('--data-data-com.dshtavern.app-files-.dsh-rp-_start--')
+    expect(projectKey('rp/_start')).not.toBe(projectKey(abs))
+  })
+
+  it('落盘闸判据：只有 projectKey(cwd) == 目录名才放行', () => {
+    const accepted = (dirKey: string, cwd: string): boolean => projectKey(cwd) === dirKey
+    expect(accepted(projectKey(abs), abs)).toBe(true)
+    // cwd 被改写而目录未搬 → 必须拒（否则会话在核心搬迁中丢失）
+    expect(accepted(projectKey('rp/_start'), abs)).toBe(false)
   })
 })
 
@@ -285,10 +316,12 @@ describe('dsht-rp-plugin: 组装管线接线', () => {
 })
 
 describe('dsht-rp-plugin: 存量 session cwd 修复（R14）', () => {
-  it('sessionCwdNeedsRepair：仅 /data/user/0 形态命中', () => {
+  it('sessionCwdNeedsRepair：symlink 形态 + 相对路径都命中；已规范形态不动', () => {
     expect(sessionCwdNeedsRepair('/data/user/0/com.dshtavern.app/files/.dsh/rp/rp-x')).toBe(true)
     expect(sessionCwdNeedsRepair('/data/data/com.dshtavern.app/files/.dsh/rp/rp-x')).toBe(false)
-    expect(sessionCwdNeedsRepair('rp/_start')).toBe(false) // 相对路径不动
+    // 【阶段3 2026-09-10】相对 cwd 也命中：v0 迁移器硬要求 cwd 绝对
+    // (`format v0 header cwd must be absolute`)，历史引导会话写的是 `rp/_start`。
+    expect(sessionCwdNeedsRepair('rp/_start')).toBe(true)
     expect(sessionCwdNeedsRepair(undefined)).toBe(false)
     expect(sessionCwdNeedsRepair(42)).toBe(false)
   })

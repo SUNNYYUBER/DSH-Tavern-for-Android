@@ -17,10 +17,15 @@
  *   2. 内容零丢失（原始文本集合 ⊄ 修复后文本集合 的差为空）
  *   3. 幂等（二次跑三步链零改动）
  *   4. 无回归（原本可迁移的不能被修坏）
+ *   5. 【2026-09-10 新增】**目录身份不变**：修复后 projectKey(header.cwd) 必须仍等于
+ *      会话所在目录名（官方 persistence `assertStoredIdentity` 契约）。
+ *      加这条的原因 = 实机事故：某次修复把 `dsht-welcome` 的相对 cwd `rp/_start`
+ *      补成绝对路径却没搬目录 → 目录名与 cwd 不符 → 会话在核心搬迁中**整份丢失**
+ *      （设备 80 → 79）。离线链若能改 cwd，就该在这里被拦下。
  *
  * 用法：
  *   node verify-session-pipeline.mjs <会话树根目录> [--out <证据日志路径>]
- * 退出码：0 = 四项判据全过；1 = 有失败
+ * 退出码：0 = 五项判据全过；1 = 有失败
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -38,6 +43,7 @@ const RT = `${WS}/dsh-runtime-android`
 const BUNDLE = `${RT}/.verify/dsh-plugin.bundle.mjs`
 const BUNDLE_SURGERY = `${RT}/.verify/session-surgery.bundle.mjs`
 const BUNDLE_REPAIR = `${RT}/.verify/session-repair.bundle.mjs`
+const BUNDLE_EXPORT = `${RT}/.verify/dsh-export.bundle.mjs`
 
 const treeRoot = process.argv[2]
 if (!treeRoot || !fs.existsSync(treeRoot)) {
@@ -62,15 +68,20 @@ execFileSync(NODE, [ESB, `${PKG}/src/dsht-plugin-shared/session-surgery.ts`, '--
 execFileSync(NODE, [ESB, `${PKG}/src/dsht-plugin-shared/session-repair.ts`, '--bundle', '--format=esm',
   '--platform=node', `--outfile=${BUNDLE_REPAIR}`, '--external:@deepseek-ai/*', '--log-level=warning'],
 { cwd: PKG, stdio: 'inherit' })
-const { repairSessionSeqs } = await import(pathToFileURL(BUNDLE).href)
+const { repairSessionSeqs, sessionHeaderCwd } = await import(pathToFileURL(BUNDLE).href)
 const { normalizeSnapshotMessageRoles } = await import(pathToFileURL(BUNDLE_SURGERY).href)
 const { repairSessionForV3 } = await import(pathToFileURL(BUNDLE_REPAIR).href)
+// projectKey 必须取**实现本身**（不重写）——目录身份判据的基准
+execFileSync(NODE, [ESB, `${PKG}/src/import/dsh-export.ts`, '--bundle', '--format=esm',
+  '--platform=node', `--outfile=${BUNDLE_EXPORT}`, '--external:@deepseek-ai/*', '--log-level=warning'],
+{ cwd: PKG, stdio: 'inherit' })
+const { projectKey } = await import(pathToFileURL(BUNDLE_EXPORT).href)
 if (typeof repairSessionSeqs !== 'function' || typeof normalizeSnapshotMessageRoles !== 'function'
-  || typeof repairSessionForV3 !== 'function') {
-  console.error(`[build] FATAL 修复链函数缺失: seq=${typeof repairSessionSeqs} norm=${typeof normalizeSnapshotMessageRoles} v3=${typeof repairSessionForV3}`)
+  || typeof repairSessionForV3 !== 'function' || typeof projectKey !== 'function') {
+  console.error(`[build] FATAL 修复链函数缺失: seq=${typeof repairSessionSeqs} norm=${typeof normalizeSnapshotMessageRoles} v3=${typeof repairSessionForV3} pk=${typeof projectKey}`)
   process.exit(2)
 }
-emit(`[build] ✓ 三步链就位 repairSessionSeqs / normalizeSnapshotMessageRoles / repairSessionForV3`)
+emit(`[build] ✓ 四函数就位 repairSessionSeqs / normalizeSnapshotMessageRoles / repairSessionForV3 / projectKey`)
 
 /** 设备三步链（dsh-plugin/index.ts:2013-2015 逐字复刻） */
 function runtimePipeline(content) {
@@ -181,7 +192,7 @@ const files = findSessions(treeRoot).sort()
 emit(`\n[pipeline] 会话树 ${treeRoot} → ${files.length} 个会话\n`)
 
 let beforeFail = 0, afterFail = 0, fixed = 0, regress = 0
-let nonIdempotent = 0, lossy = 0, totalBytes = 0, salvagedTotal = 0, movedTotal = 0
+let nonIdempotent = 0, lossy = 0, keyDrift = 0, totalBytes = 0, salvagedTotal = 0, movedTotal = 0
 const failures = [], problems = [], noteCounts = new Map()
 const t0 = Date.now()
 
@@ -231,6 +242,18 @@ for (const f of files) {
     lossy++
     problems.push({ rel, kind: '内容丢失', detail: `${lost.length} 段，例：${JSON.stringify(lost[0].slice(0, 60))}` })
   }
+  // 判据 5：目录身份不变 —— projectKey(修复后 header.cwd) 必须 == 会话所在目录名。
+  // 违反 = 交给 DSH 一个「目录名与 cwd 不符」的会话：官方 assertStoredIdentity 判不合规，
+  // 实机后果是 plugin tree 加载失败（crash-loop）+ 会话文件在核心搬迁中丢失。
+  const dirKey = rel.replaceAll(path.sep, '/').split('/')[0]
+  const outCwd = typeof sessionHeaderCwd === 'function' ? sessionHeaderCwd(r.content) : null
+  if (outCwd !== null && projectKey(outCwd) !== dirKey) {
+    keyDrift++
+    problems.push({
+      rel, kind: '目录身份漂移',
+      detail: `修复后 cwd=${JSON.stringify(outCwd)} → projectKey=${projectKey(outCwd)}，目录名=${dirKey}`,
+    })
+  }
   const tag = afterErr === null ? (origErr === null ? '✓' : '★') : '✗'
   emit(`  ${tag} ${rel}  ${(Buffer.byteLength(orig) / 1048576).toFixed(2)}MiB  ` +
     (afterErr === null ? (origErr === null ? '本就通过' : '修复后通过') : `FAIL: ${afterErr.slice(0, 110)}`))
@@ -245,6 +268,7 @@ emit(`本次救回            ${fixed}`)
 emit(`被修坏（回归）      ${regress}`)
 emit(`内容丢失            ${lossy}`)
 emit(`非幂等              ${nonIdempotent}`)
+emit(`目录身份漂移        ${keyDrift}`)
 emit(`source 扩展键迁移   ${salvagedTotal} 个楼层 / ${movedTotal} 段文本改载 sidecar（未丢失）`)
 emit(`总数据量            ${(totalBytes / 1048576).toFixed(1)}MB / 耗时 ${secs}s`)
 if (failures.length) {
@@ -258,8 +282,8 @@ if (problems.length) {
 emit(`\n--- 修复动作分布 ---`)
 for (const [k, n] of [...noteCounts].sort((a, b) => b[1] - a[1])) emit(`  ${String(n).padStart(4)}  ${k}`)
 
-const pass = afterFail === 0 && regress === 0 && lossy === 0 && nonIdempotent === 0
-emit(`\n[pipeline] ${pass ? '✅ 四项判据全过 —— 阶段 3 通过' : '❌ 存在未通过项 —— 阶段 3 不通过'}`)
+const pass = afterFail === 0 && regress === 0 && lossy === 0 && nonIdempotent === 0 && keyDrift === 0
+emit(`\n[pipeline] ${pass ? '✅ 五项判据全过 —— 阶段 3 通过' : '❌ 存在未通过项 —— 阶段 3 不通过'}`)
 
 // 清理现场（不要把验证产物留在会被打包的 staging 目录）
 try { fs.rmSync(path.dirname(BUNDLE), { recursive: true, force: true }) } catch { /* 忽略 */ }
