@@ -52,6 +52,8 @@ import {
   appendReplace, replaceRange, isReplaceOp, markerSource, readMarker, readLegacySourceKeys,
   sanitizeEnvelope, planAssistantRewrite, type AppendableSession, type SurgicalMarkerPayload,
 } from '../dsht-plugin-shared/session-write.ts'
+// 【阶段3 2026-09-10】存量 v0 会话 → 0.1.5 可迁移形态（8 类不合规的纯函数重写器）
+import { repairSessionForV3 } from '../dsht-plugin-shared/session-repair.ts'
 // D-3：system 槽位路由（TT 对齐投影；合法通道 = system-prompt/assemble 的 assembly.sections）
 import { planSlotSections, SLOT_ORDERS, type SlotBatch, type SlotSection } from '../dsht-plugin-shared/tt-projection.ts'
 // T3.2：会话长期记忆（rp-memory 最小闭环）——核心逻辑纯函数化便于单测，这里只做接线
@@ -1992,16 +1994,24 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           continue
         }
         const content = await readFile(file, 'utf8')
-        // 双重修复：① seq 断号修复（I8-4：回绕截尾/单调重编号）；② 快照消息角色归一化（rc.8 冷启动校验要求
-        // user/message 的 role === 'user'——历史快照写的是 system，会话打不开）
+        // 三重修复：
+        //  ① seq 断号修复（I8-4：回绕截尾/单调重编号）
+        //  ② 快照消息角色归一化（rc.8 冷启动校验要求 user/message 的 role === 'user'）
+        //  ③【阶段3 2026-09-10】v0→v3 迁移合法性修复——0.1.5 的两处破坏性契约收紧
+        //    （surfaceOp start/end→startSeq/endSeq；assistant/message 禁止做 replace 节点）
+        //    外加存量写入习惯留下的 8 类不合规（缺 id / source 自定义键 / 信封 source /
+        //    prune 端点 / turn-step 状态机 / 聚合行 seq 冲突 / header cwd 非绝对）。
+        //    实测：设备 80 个真实会话里 41 个因此打不开；本步把它们全部救回且内容无损。
         const norm = normalizeSnapshotMessageRoles(content)
-        const r = repairSessionSeqs(norm.content)
+        const v3 = repairSessionForV3(norm.content)
+        const r = repairSessionSeqs(v3.content)
         if (r.error) { errors.push(`${h.sessionId}: ${r.error}`); continue }
-        if (!r.repaired && norm.changed === 0) continue
+        if (!r.repaired && norm.changed === 0 && v3.changed === 0) continue
         // I8-2：原子写 + I8-3：.bak 先耐久再发布正文件
         await atomicWriteFile(`${file}.bak`, content)
         await atomicWriteFile(file, r.content)
-        repaired.push({ sessionId: h.sessionId, events: r.events + norm.changed })
+        repaired.push({ sessionId: h.sessionId, events: r.events + norm.changed + v3.changed })
+        if (v3.changed) console.log(`[dsht-rp] repair-sessions(v3): ${h.sessionId} ${v3.notes.join('；')}`)
         if (r.note) console.log(`[dsht-rp] repair-sessions: ${h.sessionId} ${r.note}${r.truncated ? `（truncated=${r.truncated}）` : ''}`)
       } catch (e) {
         errors.push(`${h.sessionId}: ${(e as Error).message}`)
