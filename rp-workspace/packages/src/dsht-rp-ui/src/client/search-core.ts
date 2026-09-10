@@ -91,7 +91,13 @@ export function extractSnippet(text: string, hitIndex: number, matchLen: number,
  * query 为空（未输入）返回 []——面板空态由组件按「无输入 / 无结果」区分。
  */
 export function searchMessages(
-  messages: readonly SearchableMessage[] | undefined,
+  /**
+   * 【心跳 47·T-34】放宽为 `| null`：函数体第一件事就是 `for (const m of messages ?? [])`，
+   * **早已把 null 当空集处理**；而唯一的调用点（RpSearchPanel.tsx:62）传的正是
+   * `SearchableMessage[] | null`（数据尚未拉回时为 null）。声明比实现更严 →
+   * 忠实反映实现的调用点反而报 TS2345。按实际行为对齐契约。
+   */
+  messages: readonly SearchableMessage[] | null | undefined,
   query: string,
   limit: number = SEARCH_RESULT_LIMIT,
 ): SearchHit[] {

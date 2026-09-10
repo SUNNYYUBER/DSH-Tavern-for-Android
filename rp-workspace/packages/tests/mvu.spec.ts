@@ -7,6 +7,7 @@ import {
   flattenState,
   parseYamlLite,
   parseUnderscoreCommands,
+  deepMergeInitVars,
 } from '../src/state/mvu.ts'
 
 describe('parseUpdateVariable（T2.3：assistant 消息 → JSONPatch 提取）', () => {
@@ -204,5 +205,73 @@ describe('【鲁棒轮回归 2026-09-09】多 JSONPatch 块 / op 白名单 / 数
     const patches = parseJsonPatches(text)
     expect(patches).toHaveLength(1)
     expect(patches[0].path).toBe('/ok')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// deepMergeInitVars（心跳 47 新增：该函数此前**从未存在**，调用点一直抛
+// ReferenceError 并被"不阻塞"catch 吞掉 → D1 MVU initvar 开局变量初始化从未生效）
+// ---------------------------------------------------------------------------
+describe('deepMergeInitVars（开局变量：存量优先，只补缺口）', () => {
+  it('顶层缺口按 init 补齐', () => {
+    const out = deepMergeInitVars({ hp: 10 }, { hp: 999, mp: 5 })
+    expect(out).toEqual({ hp: 10, mp: 5 })
+  })
+
+  it('存量叶值恒胜（世界书改了也不回档）', () => {
+    const existing = { 云梦璃: { 好感度: 42, 已解锁: true } }
+    const init = { 云梦璃: { 好感度: 0, 已解锁: false, 新字段: 1 } }
+    expect(deepMergeInitVars(existing, init)).toEqual({
+      云梦璃: { 好感度: 42, 已解锁: true, 新字段: 1 },
+    })
+  })
+
+  it('数组整体保留存量，不做按下标的半合并', () => {
+    const out = deepMergeInitVars({ items: [1, 2, 3] }, { items: [9] })
+    expect(out.items).toEqual([1, 2, 3])
+  })
+
+  it('类型冲突时保留存量（对象 vs 标量 双向）', () => {
+    expect(deepMergeInitVars({ a: 1 }, { a: { b: 2 } })).toEqual({ a: 1 })
+    expect(deepMergeInitVars({ a: { b: 2 } }, { a: 1 })).toEqual({ a: { b: 2 } })
+  })
+
+  it('init 为 null 的对象键不覆盖已有值，但会填进缺失键', () => {
+    const out = deepMergeInitVars({ x: 1 } as Record<string, unknown>, { x: { k: 1 }, y: null })
+    expect(out).toEqual({ x: 1, y: null })
+  })
+
+  it('补进去的值是深拷贝——改结果不影响 init 树（init 树会被多处复用）', () => {
+    const init = { cfg: { list: [1, 2], deep: { k: 1 } } }
+    const out = deepMergeInitVars({}, init)
+    ;(out.cfg as { list: number[] }).list.push(3)
+    ;((out.cfg as { deep: { k: number } }).deep).k = 99
+    expect(init.cfg.list).toEqual([1, 2])
+    expect(init.cfg.deep.k).toBe(1)
+  })
+
+  it('不修改任何入参（纯函数）', () => {
+    const existing = { a: { b: 1 } }
+    const init = { a: { c: 2 }, d: 3 }
+    const snapshotExisting = JSON.stringify(existing)
+    const snapshotInit = JSON.stringify(init)
+    deepMergeInitVars(existing, init)
+    expect(JSON.stringify(existing)).toBe(snapshotExisting)
+    expect(JSON.stringify(init)).toBe(snapshotInit)
+  })
+
+  it('幂等：对同一份 init 反复合并结果不变（mvuInitHash 重放的前提）', () => {
+    const init = { a: { b: 1, c: 2 }, d: [1] }
+    const once = deepMergeInitVars({ a: { b: 0 } }, init)
+    const twice = deepMergeInitVars(once, init)
+    expect(twice).toEqual(once)
+  })
+
+  it('空 init 不产生任何变化；空 existing 等价于取 init 的深拷贝', () => {
+    const existing = { a: 1 }
+    expect(deepMergeInitVars(existing, {})).toEqual({ a: 1 })
+    const init = { a: { b: 2 } }
+    expect(deepMergeInitVars({}, init)).toEqual(init)
+    expect(deepMergeInitVars({}, init)).not.toBe(init)
   })
 })

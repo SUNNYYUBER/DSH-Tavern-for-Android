@@ -32,8 +32,15 @@ function run(): unknown {
     const r = renderMessagesSandbox(p.template, p.context, pre.length > 0
       ? messages.map((m, i) => ({ ...m, mes: pre[i].text }))
       : messages)
+    // 【心跳 47】原为就地改 `r.messages`——`SandboxMessagesResult` 声明为 `readonly`（sandbox.ts:51），
+    // 运行时"侥幸能改"（readonly 只是编译期约束），但属类型契约违背（TS2540）。改为不可变重建。
     if (r.ok && pre.length > 0) {
-      r.messages = r.messages.map((m, i) => ({ ...m, mes: restorePreBlocks(String(m.mes ?? ''), pre[i]?.blocks ?? []) }))
+      return {
+        ok: true as const,
+        messages: r.messages.map((m, i) => ({ ...m, mes: restorePreBlocks(String(m.mes ?? ''), pre[i]?.blocks ?? []) })),
+        rendered: r.rendered,
+        skipped: r.skipped,
+      }
     }
     return r
   }

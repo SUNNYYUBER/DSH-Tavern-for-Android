@@ -202,11 +202,14 @@ export async function editUserMessage(deps: UndoDeps, payload: Record<string, un
   const lines = content.split('\n')
   let targetIdx = -1
   const events: Array<{ seq: number }> = []
+  // 【心跳 47】`as typeof ev` 在初始化式里等于 `as null`（见 dsh-plugin/index.ts 同款注释），
+  // 会让 ev 的流类型塌成 never。改显式命名类型。
+  type RawEventLine = { type?: string; seq?: unknown; data?: { source?: { kind?: unknown } } }
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]
     if (!line.trim()) continue
-    let ev: { type?: string; seq?: unknown; data?: { source?: { kind?: unknown } } } | null = null
-    try { ev = JSON.parse(line) as typeof ev } catch { continue }
+    let ev: RawEventLine | null = null
+    try { ev = JSON.parse(line) as RawEventLine } catch { continue }
     if (ev === null || typeof ev.seq !== 'number') continue
     if (targetIdx === -1 && ev.type === 'user/message' && ev.seq === seq
       && (ev.data as { source?: { kind?: unknown } } | undefined)?.source?.kind === 'user') {

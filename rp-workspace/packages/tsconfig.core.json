@@ -6,7 +6,7 @@
     "moduleResolution": "Bundler",
     "module": "ESNext",
     "types": [],
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "ES2023.Array"],
     "skipLibCheck": true
   },
   "include": [
@@ -17,6 +17,12 @@
     "src/lore",
     "src/preset",
     "src/assembly",
-    "src/import"
+    "src/import",
+    "src/dsh-plugin",
+    "src/dsht-plugin-memory",
+    "src/dsht-plugin-prompt-template",
+    "src/dsht-plugin-tavern-helper",
+    "src/dsht-plugin-undo",
+    "src/dsht-plugin-mvu"
   ]
 }

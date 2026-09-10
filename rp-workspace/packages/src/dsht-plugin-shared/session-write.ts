@@ -51,7 +51,12 @@
 /** 一次 append 的最小会话接口（结构化，避免依赖官方类型） */
 export interface AppendableSession {
   append: (type: string, data: unknown, opts?: { surfaceOp?: unknown; sourceEventSeqs?: number[] }) => unknown
-  readonly surface?: { nodes?: number[] }
+  /**
+   * 【心跳 47 放宽】官方 `Session.surface.nodes` 暴露的是 `readonly number[]`，
+   * 本层只读它（全文件无写点），原声明写成可变 `number[]` 于是把**忠实反映官方形状**的
+   * 调用方（`LikeSession`）挡在门外（TS2345 ×3）。放宽为 readonly。
+   */
+  readonly surface?: { readonly nodes?: readonly number[] }
   readonly seq?: number
   readonly lastSeq?: number
 }

@@ -497,7 +497,14 @@ export function applyOutputProtocolSegments(text: string, proto: OutputProtocol,
   }
   // 去掉首尾空白文本段
   while (merged.length > 0 && merged[0].kind === 'text' && !merged[0].content.trim()) merged.shift()
-  while (merged.length > 0 && merged[merged.length - 1].kind === 'text' && !merged[merged.length - 1].content.trim()) merged.pop()
+  // 【心跳 47·T-34】尾部判定原写作 `merged[merged.length - 1].kind === 'text' && !merged[...].content`：
+  // 下标不是字面量 → TS 无法在同一表达式内把两次元素访问认定为同一对象，故 `.content` 报 TS2339。
+  // 提到局部变量后收窄生效，运行时语义完全不变。
+  while (merged.length > 0) {
+    const last = merged[merged.length - 1]
+    if (last.kind !== 'text' || last.content.trim() !== '') break
+    merged.pop()
+  }
   return [...merged, ...actions]
 }
 

@@ -47,6 +47,11 @@ export function PresetPanel(): JSX.Element {
   const [editing, setEditing] = useState<RPPresetUi | null>(null)
   const [isBuiltin, setIsBuiltin] = useState(false)
   const [status, setStatus] = useState('')
+  // 【T-34 2026-09-11 修复 · 运行时 ReferenceError】`expandedKey`/`setExpandedKey` 此前
+  // **从未声明**，却被 5 处引用（切预设时 reset、槽位/Toggle 条目展开）。产物里同样是
+  // 自由变量 → 用户在预设面板点任意条目「展开编辑」即抛 ReferenceError 整屏崩。
+  // 该缺陷长期未被发现：`typecheck:core` 的 include 不含 UI 目录，而 UI 层此前无 tsc 覆盖。
+  const [expandedKey, setExpandedKey] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {

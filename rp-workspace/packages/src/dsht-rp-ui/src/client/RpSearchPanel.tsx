@@ -59,7 +59,10 @@ export function RpSearchPanel(props: { sessionId: string; onClose: () => void })
   // 挂载即聚焦输入框（搜索优先交互）
   useEffect(() => { inputRef.current?.focus() }, [])
 
-  const hits = useMemo(() => searchMessages(messages, debounced), [messages, debounced])
+  // 【T-34 2026-09-11】`messages` 的初值是 `null`（未加载完），而 searchMessages 的形参
+  // 契约是 `… | undefined`（内部 `messages ?? []` 已含空值语义）。传 null 在运行时无害，
+  // 但类型上不匹配 → 统一归一为 undefined（与 64 行的 `messages ?? []` 口径一致）。
+  const hits = useMemo(() => searchMessages(messages ?? undefined, debounced), [messages, debounced])
   const expanded = useMemo(
     () => (expandedId === null ? null : (messages ?? []).find(m => m.message_id === expandedId) ?? null),
     [messages, expandedId],

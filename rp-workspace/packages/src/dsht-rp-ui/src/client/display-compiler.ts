@@ -528,7 +528,11 @@ export type { DisplayMacroCtx }
 /** 缓存 TTL（任务定案：5s——渲染期高频重入，长 TTL 会拖住设置改动生效） */
 const DISPLAY_DATA_TTL = 5000
 
-interface TimedCache<T> { at: number; value: Promise<T> }
+/** 【T-34 2026-09-11 修复】原为 `{ at: number; value: Promise<T> }`，但 4 处调用点
+ *  全部写成 `TimedCache<Promise<X>>`（缓存的是**待决 Promise 本身**，用于并发去重）→
+ *  实际值是 `Promise<Promise<X>>`，与声明不符（TS2322 四处）。把 `value` 的类型参数
+ *  去掉一层包装即与全部调用点一致；语义不变（仍是「TTL 内复用同一个 Promise」）。 */
+interface TimedCache<T> { at: number; value: T }
 
 /** GET 数据面（/dsht-mvu、/dsht-prompt-template 的查询串路由；失败抛错由调用方兜底） */
 async function getJson<T>(url: string): Promise<T> {

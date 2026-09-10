@@ -39,9 +39,16 @@ import { AGENT_COMPACT_PERSONA_MARKER, compilePreset, isDshtRpAgentComposition }
 import { demoDirectPreset, demoLightAgentPreset } from '../preset/demo.ts'
 import { importStPreset, pendingSkillDir, renderPendingSkillMd, renderPresetSkillMd } from '../preset/st-import.ts'
 import { installManagedPreset, markPresetUserOwned, type PresetContentFile } from '../preset/managed.ts'
-import { parseUpdateVariable, parseJsonPatches, applyStatePatches, renderStateSummary } from '../state/mvu.ts'
-import { renderMessages as ejsRenderMessages, renderMessagesSandbox as ejsRenderMessagesSandbox, renderEjsSubset, type LikeStMessage } from '../dsht-plugin-prompt-template/ejs.ts'
-import { renderMessagesSandbox as ejsRenderMessagesSandboxVm } from '../dsht-plugin-prompt-template/sandbox.ts'
+import { parseUpdateVariable, parseJsonPatches, applyStatePatches, renderStateSummary, deepMergeInitVars } from '../state/mvu.ts'
+// 【心跳 47 修复】原第 43 行从 ejs.ts 导入 `renderMessagesSandbox`——**该模块从未导出此名**
+// （真身在 sandbox.ts，见下一行 `...SandboxVm`）。该导入全程未被使用，esbuild 摇树后静默丢弃
+// → 构建零报错。留着它就是一个陷阱：将来谁一用就炸在构建期。已删除。
+import { renderMessages as ejsRenderMessages, renderEjsSubset, type LikeStMessage } from '../dsht-plugin-prompt-template/ejs.ts'
+import { renderMessagesSandbox as ejsRenderMessagesSandboxVm, asSandboxMessagesResult, type SandboxMessagesResult } from '../dsht-plugin-prompt-template/sandbox.ts'
+// 【心跳 47 修复】表格记忆（E1–E12）在 `dsht-plugin-memory/tables.ts` 里实现，本文件曾**只调用不导入**
+// → `loadSheets`/`renderTablePrompt`/`expandTableMacros` 全是自由变量 → 运行时 ReferenceError，
+// 而三处调用点分别被空 catch 与"不阻塞"catch 吞掉 → **整个表格记忆功能从上线起从未生效**（详见 LEARNINGS L26）。
+import { loadSheets, renderTablePrompt, expandTableMacros } from '../dsht-plugin-memory/tables.ts'
 import { expandTavernMacros, readVarPath, writeVarPath, registerMacro, unregisterMacro, listCustomMacros, hydrateCustomMacros } from '../dsht-plugin-shared/macros.ts'
 import { appendUndoEntries, makeUndoEntry, replayUndoLog } from '../dsht-plugin-shared/undo.ts'
 import { restoreSnapshotsAfter, snapshotBeforeWrite, snapshotRestoreBoundary } from '../dsht-plugin-shared/file-snapshots.ts'
@@ -110,13 +117,27 @@ export async function loadEjsSettings(dshHomeDir: string): Promise<Record<string
 // 类型（最小面——不 import @deepseek-ai 运行时值，插件自包含）
 // ---------------------------------------------------------------------------
 
-interface LikeMessage { role: string; content: Array<{ type: string; text?: string }>; source?: { kind?: string; plugin?: string; form?: string } }
+interface LikeMessage {
+  role: string
+  content: Array<{ type: string; text?: string }>
+  /**
+   * 【心跳 47 扩声明】source 是官方**闭集白名单**（`assertReleasedV0Keys`，多一键即拒整会话）。
+   * plugin 源唯一能带结构化文本的形态是 `form:'snapshot'` + `sections`——本文件多处注入
+   * 快照都用了它，但接口此前没声明 `sections`，于是调用点只能写 `as LikeMessage & { sections: unknown }`
+   * 硬转（而那个目标类型要求的是**顶层** sections，与实际形状不符 → TS2352）。
+   */
+  source?: { kind?: string; plugin?: string; form?: string; sections?: Array<{ name: string; text: string }> }
+}
 interface LikeEvent { type: string; seq: number; data: unknown }
 interface LikeSession {
   header: { cwd?: string; agentPreset?: string }
   surface: { nodes: readonly number[] }
   events: readonly LikeEvent[]
   append: (type: string, data: unknown, opts?: { surfaceOp?: unknown; sourceEventSeqs?: number[] }) => unknown
+  /** 【心跳 47 补声明】官方基准消息派生（`dsh-agent-loop/src/invariant.ts:38`：
+   *  `options.messages` 必须恒等 `session.deriveMessages()`）。此前接口漏了它，
+   *  导致 `agent.session.deriveMessages()` 报 TS2339（运行时存在，纯声明缺口）。 */
+  deriveMessages: () => unknown[]
 }
 interface LikeAgent { session: LikeSession }
 interface LikePreStepEvent { agent: LikeAgent; messages: LikeMessage[]; turn: number; step: number; signal: AbortSignal }
@@ -140,7 +161,28 @@ interface LikeToolDef {
   execute: (args: Record<string, unknown>, exec: LikeToolExec) => Promise<unknown>
 }
 interface LikeContext {
-  on: (event: string, listener: (event: unknown, next: () => Promise<unknown>) => Promise<unknown>) => void
+  /**
+   * 【心跳 47 补声明】cordis 事件钩子注册。宿主按事件名传**不同个数**的参数：
+   *   · `agent/pre-step` / `agent/request` → (payload, next)
+   *   · `system-prompt/assemble`          → (assembly, context, next)
+   * 且 `next` 的返回类型随事件而异（`agent/request` 是 Promise，`llm/stream` 是同步值）。
+   * 写成固定的「2 参 + `() => Promise<unknown>`」会把真实存在的 3 参监听器判成 TS2345
+   * （"Target signature provides too few arguments"）。故用两条重载忠实描述宿主契约。
+   */
+  on: {
+    (event: string, listener: (event: unknown, next: () => any) => unknown): void
+    (event: string, listener: (event: unknown, context: unknown, next: () => any) => unknown): void
+  }
+  /**
+   * 【心跳 47 补声明】cordis 瀑布钩子 `waterfall(signal, name, value, fn)` —— 本项目**唯一**
+   * 的对话消息改写通道（`agent/pre-step` 的 `decision.messages`）。`fn` 收到上一环的值并返回
+   * 改写值；调用方对结果需自行断言目标类型。
+   * 签名有意宽松：各钩子承载的值/返回类型互不相同（LikeMessage[] / 整批 decision / unknown），
+   * 强行统一泛型会把真实调用判成错误；此处保留边界宽度，由调用点的显式断言承担类型责任。
+   */
+  waterfall: (signal: unknown, name: string, value: any, fn: (value: any) => any) => Promise<any>
+  /** 【心跳 47 补声明】cordis 事件广播（只读、无返回值）：`emit(signal, name, payload?)` */
+  emit: (signal: unknown, name: string, payload?: unknown) => void
   tools?: { register: (tool: LikeToolDef) => unknown }
   systemPrompt?: { section: (section: { name: string; order: number; text: string }) => unknown }
   /** llm 最小面（dsh-llm GenerateOptions/StreamChunk；导入管线 AI 语义分类用） */
@@ -990,8 +1032,7 @@ export function buildPersonaSnapshotMessage(text: string): LikeMessage {
     role: 'user',
     content: [{ type: 'text', text: neutralizeResidualMacros(text) }],
     source: { kind: 'plugin', plugin: name, form: 'snapshot', sections: [{ name: 'dsht-rp:persona', text: neutralizeResidualMacros(text) }] },
-  } as LikeMessage & { sections: unknown }
-  ;(m as { id?: string }).id = `dsht-rp-persona-${randomUUID()}`
+  }  ;(m as { id?: string }).id = `dsht-rp-persona-${randomUUID()}`
   return m
 }
 
@@ -1726,8 +1767,7 @@ function withSnapshot(decision: LikeDecision, snapshotText: string): LikeDecisio
       // sections 结构由官方 ContextFormed 契约定义（快照分节署名）
       sections: [{ name: 'dsht-rp:worldinfo', text: neutralizeResidualMacros(snapshotText) }],
     },
-  } as LikeMessage & { sections: unknown }
-  ;(snapshotMessage as { id?: string }).id = `dsht-rp-${randomUUID()}`
+  }  ;(snapshotMessage as { id?: string }).id = `dsht-rp-${randomUUID()}`
   return { kind: decision.kind, messages: [...decision.messages, snapshotMessage] }
 }
 
@@ -1899,9 +1939,12 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       cookie = await ensureAuthCookie()
       resp = await doFetch(cookie)
     }
+    // 【心跳 47】同款 `as typeof body` 自引用：初始化式里 `typeof body` 退化为 `{}`，
+    // 于是 `body.result` 的类型保护失效（这是 RPC 直调路径）。改显式命名类型。
+    interface RpcEnvelope { result?: { ok: boolean; value?: Record<string, unknown>; error?: { code?: string; message?: string } } }
     const text = await resp.text()
-    let body: { result?: { ok: boolean; value?: Record<string, unknown>; error?: { code?: string; message?: string } } } = {}
-    try { body = JSON.parse(text) as typeof body } catch {
+    let body: RpcEnvelope = {}
+    try { body = JSON.parse(text) as RpcEnvelope } catch {
       throw new Error(`${method}: HTTP ${resp.status} ${text.slice(0, 80)}`)
     }
     if (!body.result || body.result.ok === false) {
@@ -2063,7 +2106,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   //   → 32MiB 文件峰值 ≈ 230MiB，占堆上限 11%，安全；254MB 的 import 怪物仍被挡在外面。
   const REPAIR_MAX_FILE_BYTES = 32 * 1024 * 1024
   const repairAllSessionSeqs = async (): Promise<Record<string, unknown>> => {
-    const repaired: Array<{ sessionId: string; events: number; salvaged?: number }> = []
+    const repaired: Array<{ sessionId: string; events: number; normChanged: number; v3Changed: boolean; salvaged?: number }> = []
     const skipped: Array<{ sessionId: string; reason: string }> = []
     const errors: string[] = []
     const headers = await scanSessionHeaders()
@@ -2129,7 +2172,19 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           const n = mergeSalvagedThFloors(dshHome, h.sessionId, table)
           console.log(`[dsht-rp] repair-sessions(salvage): ${h.sessionId} ${n} 个楼层的 source 扩展键已迁入 sidecar`)
         }
-        repaired.push({ sessionId: h.sessionId, events: r.events + norm.changed + v3.changed, salvaged: v3.salvaged.length })
+        repaired.push({
+          sessionId: h.sessionId,
+          // 【心跳 47 修复】原为 `r.events + norm.changed + v3.changed` —— `norm.changed` 是
+          // **number**、`v3.changed` 是 **boolean**（session-repair.ts:56），运行时靠 `true → 1`
+          // 隐式转换"凑合能跑"，把一个「事件总数」字段污染成「事件数 + 0/1 + 0/1」。
+          // 这正是 L14 记录过的同型缺陷（布尔当计数）。类型闸门一开即报 TS2365。
+          // 现在各归其位：events 就是事件总数，改动量单独记字段（消费方只用 repaired.length，
+          // 无人读 events，故不构成下游兼容风险）。
+          events: r.events,
+          normChanged: norm.changed,
+          v3Changed: v3.changed,
+          salvaged: v3.salvaged.length,
+        })
         if (v3.changed) console.log(`[dsht-rp] repair-sessions(v3): ${h.sessionId} ${v3.notes.join('；')}`)
         if (r.note) console.log(`[dsht-rp] repair-sessions: ${h.sessionId} ${r.note}${r.truncated ? `（truncated=${r.truncated}）` : ''}`)
       } catch (e) {
@@ -2406,8 +2461,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       role: 'user', // rc.8 冷启动校验：user/message 的 role 必须 'user'（同 persona 快照注释）
       content: [{ type: 'text', text: neutralizeResidualMacros(summary) }],
       source: { kind: 'plugin', plugin: name, form: 'snapshot', sections: [{ name: 'dsht-rp:state', text: neutralizeResidualMacros(summary) }] },
-    } as LikeMessage & { sections: unknown }
-    ;(m as { id?: string }).id = `dsht-rp-state-${randomUUID()}`
+    }    ;(m as { id?: string }).id = `dsht-rp-state-${randomUUID()}`
     return { kind: decision.kind, messages: [...decision.messages, m] }
   }
 
@@ -2427,8 +2481,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       role: 'user', // rc.8 冷启动校验：user/message 的 role 必须 'user'（同 persona 快照注释）
       content: [{ type: 'text', text: neutralizeResidualMacros(text) }],
       source: { kind: 'plugin', plugin: name, form: 'snapshot', sections: [{ name: 'dsht-rp:memory', text: neutralizeResidualMacros(text) }] },
-    } as LikeMessage & { sections: unknown }
-    ;(m as { id?: string }).id = `dsht-rp-memory-${randomUUID()}`
+    }    ;(m as { id?: string }).id = `dsht-rp-memory-${randomUUID()}`
     return { kind: decision.kind, messages: [...decision.messages, m] }
   }
 
@@ -2441,8 +2494,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       role: 'user', // rc.8 冷启动校验：user/message 的 role 必须 'user'（同记忆快照注释）
       content: [{ type: 'text', text: neutralizeResidualMacros(text) }],
       source: { kind: 'plugin', plugin: name, form: 'snapshot', sections: [{ name: 'dsht-memory:tables', text: neutralizeResidualMacros(text) }] },
-    } as LikeMessage & { sections: unknown }
-    ;(m as { id?: string }).id = `dsht-memory-tables-${randomUUID()}`
+    }    ;(m as { id?: string }).id = `dsht-memory-tables-${randomUUID()}`
     return { kind: decision.kind, messages: [...decision.messages, m] }
   }
 
@@ -2538,8 +2590,14 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       // 表格宏语义，用当前会话 sheets 渲染替换；只在快照求值链路做（不改全局宏引擎），
       // 文本含宏才读 sheets（避免每轮多一次状态文件 IO）
       if (/\{\{\s*(?:tableData|tablePrompt|GET::)/i.test(out)) {
-        const { sheets } = await loadSheets(dshHome, sid)
-        out = expandTableMacros(out, sheets)
+        // 【心跳 47】独立 try：表格宏取不到 sheets 时**只跳过表格宏**，
+        // 不得连带放弃整段宏展开（外层 catch 会 `return text`，把 {{user}}/{{char}} 等全丢）。
+        try {
+          const { sheets } = await loadSheets(dshHome, sid)
+          out = expandTableMacros(out, sheets)
+        } catch (e) {
+          console.log(`[dsht-rp] 表格宏跳过（sheets 读取失败，其余宏照常展开）：${(e as Error).message}`)
+        }
       }
       if (r.unknownMacros.length > 0) {
         console.log(`[dsht-rp] macro expand: writes=${r.writes.length} unknown=${r.unknownMacros.length}（原样保留）`)
@@ -2656,7 +2714,12 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           const tablesText = renderTablePrompt(active)
           if (tablesText) out.push({ name: 'dsht-memory:slot:tables', order: SLOT_ORDERS.tables, text: tablesText })
         }
-      } catch { /* 无表格系统或加载失败：静默跳过 */ }
+      } catch (e) {
+        // 【心跳 47】原为空 catch：任何失败都无声无息。空 catch 是静默失败的温床（LEARNINGS L24），
+        // 正因为它是空的，`loadSheets 未定义` 这个致命错误藏了整整一个版本周期没被发现。
+        // 注：loadSheets 对「无表文件」返回空集而非抛错（tables.ts:163-171），故此处只会记录真实故障。
+        console.log(`[dsht-rp] 表格槽位跳过（sheets 读取失败）：${(e as Error).message}`)
+      }
 
       // ---- 【2026-09-10】promptOnly 正则投影 → system 槽位（TT GENERATE_AFTER_COMBINE_PROMPTS）----
       // 为什么在这里而不是 llm/stream：见该钩子头注 —— loop 组装的 options 是 deep-frozen
@@ -3594,13 +3657,15 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         const finalize = (dd: LikeDecision): LikeDecision => {
           try {
             // I7（性能）：重载荷截断先行（工具参数 base64 等 10MB+ 大字符串占位化）
-            const heavy = truncateHeavyToolPayloads(dd.messages as Array<Record<string, unknown>>)
+            // 【心跳 47】两处 `as` 直转失败：`LikeMessage`（有 role/content 必填）与
+            // `Record<string, unknown>`（有字符串索引签名）互不可比 → TS2352。走 unknown 中转。
+            const heavy = truncateHeavyToolPayloads(dd.messages as unknown as Array<Record<string, unknown>>)
             if (heavy.truncated > 0) console.log(`[dsht-rp] heavy-payload truncate: ${heavy.truncated} 个工具块参数占位化`)
             const macroCtx = {
               user: userName,
               char: rp.macros.char || rp.characterName,
             }
-            const messages = (heavy.messages as LikeDecision['messages']).map(m => {
+            const messages = (heavy.messages as unknown as LikeDecision['messages']).map(m => {
               if (!m || !Array.isArray(m.content)) return m
               let changed = false
               const content = m.content.map(b => {
@@ -3666,7 +3731,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                   if (!SLOT_ROUTING) d = withTablesSnapshot(d, tablesText)
                 }
               }
-            } catch { /* 表格加载失败不阻塞主流程 */ }
+            } catch (e) {
+              // 【心跳 47】原为空 catch（"不阻塞主流程"）：改成如实记录，否则表格快照永不注入也无迹可循。
+              console.log(`[dsht-rp] 表格快照跳过（sheets 读取失败，不阻塞）：${(e as Error).message}`)
+            }
           }
           // ---- T2.7/⑧ 预设注入（有效预设 = 显式选择 ?? ST 激活预设默认）----
           // relative 条目由 system-prompt/assemble 瀑布注入 request.system（顶部、prompt_order
@@ -3772,9 +3840,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         // persona 切换后 EJS 楼层自求值的 {{user}} 与其他通道不一致）
         const ejsCtx = { user: userName, char: rp.macros.char || rp.characterName }
         if (ejs.enabled !== false && ejs.filterChatMessage === true) {
-          const fr = filterTemplateStatements(batch as Array<Record<string, unknown>>)
+          const fr = filterTemplateStatements(batch as unknown as Array<Record<string, unknown>>)
           if (fr.filtered > 0) {
-            batch = fr.messages as typeof batch
+            batch = fr.messages as unknown as typeof batch
             regexHits.push({ scriptName: 'ejs:filter-chat-message', count: fr.filtered })
             console.log(`[dsht-rp] ejs filter-chat: ${fr.filtered} 条消息剥除 <% %> 模板语句`)
           }
@@ -3792,9 +3860,19 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           })
           if (idxs.length > 0) {
             const stMsgs: LikeStMessage[] = idxs.map(i => ({ mes: messageText(batch[i]), role: batch[i].role }))
-            const r = ejs.sandbox === true
-              ? ejsRenderMessagesSandboxVm('', ejsCtx, stMsgs)
-              : { ok: true as const, messages: ejsRenderMessages('', ejsCtx, stMsgs) }
+            // 【心跳 47 修复】两个引擎的返回形状必须归一：
+            //  · sandbox 引擎 → SandboxMessagesResult（ok:true 时 `messages` 是**数组**）
+            //  · subset 引擎的 renderMessages → **对象** {messages, rendered, skipped}（ejs.ts:521）
+            // 原实现写作 `{ ok: true, messages: ejsRenderMessages(...) }`，把**对象**塞进了 messages 字段
+            // → 下面 `r.messages[k]` 恒 undefined → `mes` 恒 '' → **含 <% %> 的楼层正文被静默清空**，
+            // 且因 batch 随 decision.messages 落盘，是"写得成功、无报错、内容全错"（LEARNINGS L24 同族）。
+            // 类型闸门一开即报 TS7053（number 不能索引该联合类型）。
+            let r: SandboxMessagesResult
+            if (ejs.sandbox === true) {
+              r = ejsRenderMessagesSandboxVm('', ejsCtx, stMsgs)
+            } else {
+              r = asSandboxMessagesResult(ejsRenderMessages('', ejsCtx, stMsgs))
+            }
             if (r.ok) {
               batch = [...batch]
               idxs.forEach((origIdx, k) => {
@@ -4246,7 +4324,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       handler: (rawReq: unknown, rawRes: unknown) => {
         void (async () => {
           const req = rawReq as { method?: string; url?: string; headers: Record<string, unknown> } & AsyncIterable<Buffer>
-          const res = rawRes as { writeHead: (code: number, headers?: Record<string, string>) => void; end: (body?: string) => void }
+          const res = rawRes as { writeHead: (code: number, headers?: Record<string, string | number>) => void; end: (body?: string) => void }
           const send = (code: number, body: unknown): void => {
             res.writeHead(code, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify(body))
@@ -5036,10 +5114,17 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               // ST「回退」同语义）。掩码 rolledBackTo = anchor-1 → UI 连锚一起隐藏。
               const includeAnchor = payload.includeAnchor === true
               if (live !== undefined && typeof live.append === 'function' && Array.isArray(live.surface?.nodes)) {
+                // 【心跳 47】把守卫收窄结果固化为非可选局部：闭包（async () => …）内 TS 会丢弃对
+                // `live.append` / `live.surface` 的收窄（TS2722 / TS18048）。纯类型层修正，运行时语义不变。
+                const liveAppend = live.append
+                const liveNodes = live.surface.nodes
+                // 【心跳 47】本块的内联类型把 `append` 声明为**可选**（守卫已证实它是函数），
+                // 而 `appendReplace` 需要「必需 append」的 AppendableSession → 断言收敛一次。
+                const liveWritable = live as unknown as AppendableSession
                 // ---- live：逻辑回退（官方原语）——【鲁棒轮】per-session 串行（withLiveSurgery），
                 // 防 await replayUndoLog 窗口内并发请求捕获过期视图 → 错位 replace ----
                 return await withLiveSurgery(sessionId, async () => {
-                const view = live.surface.nodes
+                const view = liveNodes
                 const anchor = isEdit ? editSeq : keepThroughSeq // edit 锚点消息本身也移出视图
                 // 【2026-09-08 大会话修复】锚不在当前视图不再硬报错：视图窗口化/此前压缩
                 // 后旧 seq 不在 surface.nodes（实机 155 轮会话 seq=1362 实证）。取视图中
@@ -5072,7 +5157,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 // → marker，await 窗口里运行中 turn 的 append 会插进两者之间，投影/meter 漂移。
                 const anchorTime = typeof sessionEventAt(live, anchor)?.time === 'number' ? sessionEventAt(live, anchor)?.time as number : Date.now()
                 const undo = await replayUndoLog(dshHome, sessionId, anchorTime)
-                live.append('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed })
+                liveAppend('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed })
                 const markerText = isEdit
                   ? `[消息已编辑] 该消息原文及其后的回复已从上下文移除，编辑后的新消息随后发出。`
                   : includeAnchor
@@ -5085,7 +5170,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 const markerPayload: SurgicalMarkerPayload = isEdit
                   ? { editedFrom: anchor, shadowedSeqs: seqs }
                   : { rolledBackTo: includeAnchor ? anchor - 1 : keepThroughSeq, shadowedSeqs: seqs }
-                appendReplace(live, 'user/message', {
+                appendReplace(liveWritable, 'user/message', {
                   id: `dsht-rp-${isEdit ? 'edit' : 'rollback'}-${randomUUID()}`,
                   role: 'user',
                   content: [{ type: 'text', text: markerText }],
@@ -5154,12 +5239,17 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 const lines = content.split('\n')
                 let keep = -1
                 let found = false
+                // 【心跳 47】原写法 `let ev: X | null = null` + `as typeof ev`：初始化式里的 `typeof ev`
+                // 取到的是**声明点已被收窄成 `null` 的类型** → 等价 `as null` → 守卫之后 `ev` 的流类型
+                // 塌成 `never`（ev.seq / ev.type / ev.data 全报 TS2339）。运行时因 JSON.parse 返回真对象
+                // 而"侥幸正确"，但编辑/重生成这条关键路径的类型保护等于零。改为显式命名类型。
+                type RawEventLine = { type?: string; seq?: unknown; data?: { source?: { kind?: unknown } } }
                 let prevSeq = -1
                 for (let i = 1; i < lines.length; i++) {
                   const line = lines[i]
                   if (!line.trim()) continue
-                  let ev: { type?: string; seq?: unknown; data?: { source?: { kind?: unknown } } } | null = null
-                  try { ev = JSON.parse(line) as typeof ev } catch { continue }
+                  let ev: RawEventLine | null = null
+                  try { ev = JSON.parse(line) as RawEventLine } catch { continue }
                   if (ev === null || typeof ev.seq !== 'number') continue
                   if (!found && ev.type === 'user/message' && ev.seq === editSeq
                     && (ev.data as { source?: { kind?: unknown } } | undefined)?.source?.kind === 'user') {
@@ -5204,6 +5294,13 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 | { surface?: { nodes?: number[] }; events?: Record<string | number, { type?: unknown; time?: unknown; data?: { content?: unknown; source?: { kind?: unknown } } | undefined }> | Map<string | number, { type?: unknown; time?: unknown; data?: { content?: unknown; source?: { kind?: unknown } } | undefined }>; append?: (type: string, data: unknown, opts?: { surfaceOp?: { op: 'replace'; start: number; end: number }; sourceEventSeqs?: number[] }) => unknown }
                 | undefined
               if (live !== undefined && typeof live.append === 'function' && Array.isArray(live.surface?.nodes)) {
+                // 【心跳 47】守卫收窄固化（闭包内 TS 会丢弃对 live.append / live.surface 的收窄，
+                // 报 TS2722 / TS18048）。纯类型层修正，运行时语义不变。
+                const liveAppend = live.append
+                const liveNodes = live.surface.nodes
+                // 【心跳 47】本块的内联类型把 `append` 声明为**可选**（守卫已证实它是函数），
+                // 而 `appendReplace` 需要「必需 append」的 AppendableSession → 断言收敛一次。
+                const liveWritable = live as unknown as AppendableSession
                 // live：找事件流里最后一条真 user 消息——【鲁棒轮】per-session 串行（同 rollback）
                 return await withLiveSurgery(sessionId, async () => {
                 const evList: Array<{ seq: number; time?: number; text: string }> = []
@@ -5211,15 +5308,19 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 for (const ev of sessionEventsSnapshot(live)) {
                   const seq = typeof ev.seq === 'number' ? ev.seq : n++
                   if (!ev || ev.type !== 'user/message') continue
-                  if ((ev.data as { source?: { kind?: unknown } } | undefined)?.source?.kind !== 'user') continue
-                  const blocks = Array.isArray(ev.data?.content) ? ev.data.content as Array<{ type?: unknown; text?: unknown }> : []
+                  // 【心跳 47】`sessionEventsSnapshot` 的 `data` 是 unknown，原代码在同一行里两次
+                  // 以不同形状访问它（`ev.data as {source}` 与 `ev.data?.content`），后者 TS 判为
+                  // "Property 'content' does not exist on type '{}'"。取一次带类型的局部，两处共用。
+                  const evData = ev.data as { content?: unknown; source?: { kind?: unknown } } | undefined
+                  if (evData?.source?.kind !== 'user') continue
+                  const blocks = Array.isArray(evData.content) ? evData.content as Array<{ type?: unknown; text?: unknown }> : []
                   const text = blocks.filter(b => b && b.type === 'text' && typeof b.text === 'string').map(b => b.text as string).join('\n')
                   evList.push({ seq, time: typeof ev.time === 'number' ? ev.time : undefined, text })
                 }
                 evList.sort((a, b) => a.seq - b.seq)
                 const anchorEv = evList[evList.length - 1]
                 if (anchorEv === undefined) return send(400, { error: '会话里没有用户消息（无可重新生成的锚点）' })
-                const view = live.surface.nodes
+                const view = liveNodes
                 const idx = view.indexOf(anchorEv.seq)
                 // 【2026-09-08 大会话修复】锚不在视图不再硬报错（回退路由同款降级）——
                 // 取视图中第一个 > 锚 的 seq 作为 replace 起点；视图全部 ≤ 锚 → no-op。
@@ -5241,10 +5342,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 // 【2026-09-08 鲁棒性】undo 回放挪到 claim 之前（紧邻铁律，同 session-rollback）
                 const anchorTime = typeof anchorEv.time === 'number' ? anchorEv.time : Date.now()
                 const undo = await replayUndoLog(dshHome, sessionId, anchorTime)
-                live.append('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed })
+                liveAppend('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed })
                 const markerText = `[重新生成中] 该消息此前的回复已从上下文移除，正在以原消息重新生成。`
                 // 【阶段3 2026-09-10】同 rollback：标记载荷进 sections（顶层自定义键会被迁移器拒）
-                appendReplace(live, 'user/message', {
+                appendReplace(liveWritable, 'user/message', {
                   id: `dsht-rp-regenerate-${randomUUID()}`,
                   role: 'user',
                   content: [{ type: 'text', text: markerText }],
@@ -5984,7 +6085,11 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 for (let i = snap.length - 1; i >= 0; i--) {
                   const ev = snap[i]
                   if (ev?.type === 'assistant/message') {
-                    replyText = messageText((ev.data as { message?: LikeMessage }).message ?? {})
+                    // 【心跳 47】原为 `messageText((ev.data as {message?: LikeMessage}).message ?? {})`：
+                    // `?? {}` 产出 `LikeMessage | {}`，直传 messageText 报 TS2345。改为显式取值，
+                    // **保持原控制流**（无论有无 message 都在此处 break，缺 message 时留空串）。
+                    const replyMsg = (ev.data as { message?: LikeMessage } | undefined)?.message
+                    replyText = replyMsg !== undefined ? messageText(replyMsg) : ''
                     break
                   }
                 }
@@ -6577,7 +6682,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               if (targets.length === 0) return send(400, { error: 'targets required' })
               const live = ctx.sessions?.get(sessionId)
               if (!live) return send(404, { error: 'session not live' })
-              const view = (live as { surface?: { nodes?: number[] } }).surface?.nodes
+              // 【心跳 47】官方 Session.surface.nodes 是 readonly，直转可变类型报 TS2352 → 走 unknown。
+              const view = (live as unknown as { surface?: { nodes?: number[] } }).surface?.nodes
               if (!Array.isArray(view)) return send(409, { error: 'session surface unavailable' })
               // 【阶段3 2026-09-10】TH 楼层元数据 sidecar（thData/thSystem 已迁出 source）
               const thFloors = readThFloors(dshHome, sessionId)

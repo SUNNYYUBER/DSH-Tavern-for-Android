@@ -29,7 +29,13 @@ import type { LoreEntry } from './entry.ts'
  * 不能作时间游标；正确来源是会话事件流。游标值由 dsh-plugin pre-step 写进
  * rp/state/<sid>.json 的 cursor 键（供未来 sticky/cooldown/delay 等跨轮语义消费）。
  */
-export function visibleMessageCursor(events: Array<{ type: string; data?: unknown }>): number {
+/**
+ * 【心跳 47】`type` 放宽为可选：消费方 `sessionEventsSnapshot`（dsh-plugin/index.ts:302）
+ * 的返回契约里 `type` 本就是可选的（适配器可能拿到不带 type 的坏行）。本函数内部只做
+ * `e.type === '...'` 比较，对缺 type 的行天然安全——原来的必填声明反而让**忠实反映上游
+ * 契约的调用点**报 TS2345，属于"声明比事实更严"的方向性错误。
+ */
+export function visibleMessageCursor(events: Array<{ type?: string; data?: unknown }>): number {
   let cursor = 0
   for (const e of events) {
     if (e.type === 'user/message') {

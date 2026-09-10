@@ -47,10 +47,14 @@ function installDetailsToggleProxy(): void {
     const target = e.target as Element | null
     const summary = target?.closest?.('summary') ?? null
     if (summary === null) return
-    const details = summary.parentElement
-    if (details === null || details.tagName !== 'DETAILS') return
+    const parent = summary.parentElement
+    if (parent === null || parent.tagName !== 'DETAILS') return
     e.preventDefault()
     e.stopPropagation()
+    // 【心跳 47·T-34】`open` 是 `HTMLDetailsElement` 的成员，而 `parentElement` 的静态类型是
+    // `HTMLElement`。上一行已用 tagName 在运行时确认它就是 <details>，此处按事实收窄类型。
+    // （原写法直接 `details.open` → TS2339；运行时恰好能跑，属"类型没跟上事实"。）
+    const details = parent as HTMLDetailsElement
     details.open = !details.open
   }, true)
 }

@@ -348,10 +348,16 @@ export function apply(ctx: {
 
   // 设置 → 插件 →「可配置」tab：三个预适配插件的中文辨识卡（keyed 槽位，
   // key = host 侧 registerSettingsNamespace 注册的命名空间；对照 ui-settings-plugins/index.ts 的注册形态）
-  ctx.slots.inject('settings.plugin.item', function* () {
-    for (const key of PLUGIN_CARD_KEYS) {
-      yield ctx.slots.register({ name: 'settings.plugin.item', key }, makePluginCard(key))
-    }
+  ctx.slots.inject('settings.plugin.item', () => {
+    // 【心跳 47·T-34】原为**生成器函数** `function* () { … yield ctx.slots.register(...) }`。
+    // 生成器函数返回的是 Generator 对象，而本文件声明的契约为 `factory: () => (() => void)`
+    // （:99），宿主拿它当 disposer：① 函数体在 `.next()` 之前**不执行** → 三张卡从未注册；
+    // ② 卸载时宿主调用该"disposer" → 生成器对象不可调用，抛 TypeError。
+    // 同文件其余 14 处 slots.inject（:175/:237/:246/…）一律是"箭头函数 + 返回清理函数"，
+    // 仅此处例外 → 判定为笔误。改为正常注册并返回合并后的清理函数。
+    const disposers = PLUGIN_CARD_KEYS.map(key =>
+      ctx.slots.register({ name: 'settings.plugin.item', key }, makePluginCard(key)))
+    return () => { for (const d of disposers) d() }
   })
 
   // ⑦修复（2026-09-05）：手机键盘点「换行」直接发送消息——composer 是 Lexical

@@ -103,12 +103,16 @@ function SliderRow(props: { label: string; hint?: string; na?: string; value: nu
 }
 
 /** 文本行 */
-function TextRow(props: { label: string; hint?: string; value: string; onChange: (v: string) => void }): JSX.Element {
+// 【T-34 2026-09-11 修复】补 `na`（"不适用"说明）——ToggleRow/SelectRow/SliderRow 三者
+// 都支持，唯独 TextRow 漏了；而 297 行「监听地址」传了 na 却无处显示 → 用户看不到
+// "PC 联动特性——移动端不适用，仅存盘" 这句关键说明（改动的后果不透明）。
+function TextRow(props: { label: string; hint?: string; na?: string; value: string; onChange: (v: string) => void }): JSX.Element {
   return (
     <div className="dsht-npc-row">
       <span className="dsht-npc-rowLabel">
         {props.label}
         {props.hint !== undefined && <div className="dsht-npc-hint">{props.hint}</div>}
+        {props.na !== undefined && <div className="dsht-npc-na">{props.na}</div>}
       </span>
       <input type="text" className="dsht-npc-input dsht-npc-inputText" value={props.value}
         onChange={e => props.onChange(e.target.value)} />
@@ -141,6 +145,10 @@ function usePluginSettings(api: SettingsApi, alive: boolean | null): {
   failed: boolean
   save: () => Promise<void>
   discard: () => void
+  /** 【T-34 2026-09-11 修复】`alive` 此前**未随返回值暴露**，而消费者读 `st.alive === false`
+   *  判「插件不可用」→ 恒 `undefined === false` = false → 该提示**永不出现**（静默失效）。
+   *  补进返回值：消费者现在读到的就是入参那份探测结果。 */
+  alive: boolean | null
 } {
   const [cfg, setCfg] = useState<Json | null>(null)
   const [draft, setDraftState] = useState<Json | null>(null)
@@ -167,7 +175,7 @@ function usePluginSettings(api: SettingsApi, alive: boolean | null): {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, saving])
   const discard = useCallback(() => { if (cfg !== null) setDraftState(cfg) }, [cfg])
-  return { cfg, draft, setDraft, dirty, saving, failed, save, discard }
+  return { cfg, draft, setDraft, dirty, saving, failed, save, discard, alive }
 }
 
 /** 原生 PluginCard 结构复刻（li.card > header > body+footer） */

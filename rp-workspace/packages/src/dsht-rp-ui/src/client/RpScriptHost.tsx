@@ -33,7 +33,7 @@ import { notifyDisplayMutation } from './RpNativeChat.tsx'
 import {
   buildIframeDocument, deepMergeAssign, deepMergeInsert, getButtonEventId, handleBridgeCall,
   parseIncomingMessage, type ScriptStatus, type SessionScript, type ThBridgeDeps, type ThChatMessage,
-  type ThContextSnapshot, type VarScope,
+  type ThContextSnapshot, type ThPreset, type VarScope,
 } from './th-shim.ts'
 
 // 【Kemini 适配 2026-09-08】这些桥 API 成功后需要失效 RP 显示面缓存并重渲染
@@ -170,9 +170,14 @@ async function thMessageVarsDelete(sessionId: string, path: string): Promise<voi
   const cur = await thVarsGet('message', '', sessionId, '')
   const next = structuredClone(cur)
   // lodash 路径分段（a.b[0].c / a['b-c']）——与 for-session.ts lodashPathToPointer 同语义
-  const segs = Array.from(path.matchAll(/\[\s*'([^']*)'\s*\]|\[\s*"([^"]*)"\s*\]|\[(\d+)\]|([^.[]+)/g)
-    .map(m => m[1] ?? m[2] ?? m[3] ?? m[4])
-    .filter(Boolean)) as string[]
+  // 【T-34 2026-09-11 修复 · 运行时可移植性】原写法 `Array.from(iter.matchAll(...).map(...))`
+  // 依赖 **Iterator Helpers**（`Iterator.prototype.map`，ES2025）。Android WebView 多数版本
+  // 无此方法 → `TypeError: ...map is not a function` → 脚本按 lodash 路径删 message 变量全废。
+  // 改用 `Array.from(iterable, mapFn)`（ES6 起广泛支持，语义等价）。
+  const segs = Array.from(
+    path.matchAll(/\[\s*'([^']*)'\s*\]|\[\s*"([^"]*)"\s*\]|\[(\d+)\]|([^.[]+)/g),
+    m => m[1] ?? m[2] ?? m[3] ?? m[4],
+  ).filter(Boolean) as string[]
   if (segs.length > 0) {
     let node: Record<string, unknown> = next
     for (let i = 0; i < segs.length - 1; i++) {
@@ -578,7 +583,12 @@ class SessionRuntime {
     varsGet: (scope, scriptId) => thVarsGet(scope === 'script' && !scriptId ? 'chat' : scope, this.slug, this.sessionId, scriptId),
     varsPut: async (scope, tree, scriptId) => {
       if (scope === 'script' && !scriptId) scope = 'chat'
-      if (scope === 'message') return void await thMessageVarsReplace(this.sessionId, tree)
+      // 【T-34 2026-09-11 修复 · 运行时 ReferenceError】此处原调 `thMessageVarsReplace`，
+      // 而该函数**全库不存在**（真身是 `thMessageVarsRegister`，见本文件 153 行：
+      // 它 POST /dsht-mvu/variables/register with replace:true，语义正是"整树替换"）。
+      // 后果：脚本对 message 作用域做 replaceVariables 必抛 ReferenceError →
+      // 真 TH 的 message 作用域写路径**从未生效**。产物同样是自由变量。
+      if (scope === 'message') return void await thMessageVarsRegister(this.sessionId, tree)
       await thApi('variables', { scope, slug: this.slug, sessionId: this.sessionId, scriptId, variables: tree })
     },
     varsMerge: async (scope, vars, mode, scriptId) => {
@@ -850,6 +860,27 @@ class SessionRuntime {
     }
   }
 
+  /** 【T-34 2026-09-11】诊断快照（CDP 排障钩子 `window.__dshtRtDebug.list()` 用）。
+   *  此前该钩子直接读 `rt.pendingEvents` / `rt.frames` 两个 **private** 字段 →
+   *  TS2341；产物虽能跑（JS 无真私有），但把内部结构暴露给了调试面。
+   *  改为本方法在类内自行读取，对外只给出稳定形状。 */
+  debugSnapshot(): {
+    scripts: Array<{ id: string; phase: string | undefined; error: string | undefined; buttons: string[]; queued: number }>
+    frames: string[]
+  } {
+    return {
+      scripts: this.scripts.map(sc => {
+        const st = this.statuses.get(sc.id)
+        return {
+          id: sc.id.slice(0, 8), phase: st?.phase, error: st?.error,
+          buttons: (st?.buttons ?? []).map(b => b.name),
+          queued: (this.pendingEvents.get(sc.id) ?? []).length,
+        }
+      }),
+      frames: [...this.frames.keys()].map(k => k.slice(0, 8)),
+    }
+  }
+
   /** 快照推进（组件 props 变化驱动；RP 会话才调用）
    *  【hook 移植 L1a 2026-09-06】事件桥补全（ST/Luker events.js 对照）：
    *  - 逐楼层投递（一次 advance 落多条时逐条发，不再只看末条）；
@@ -971,11 +1002,7 @@ if (typeof window !== 'undefined') {
     list(): unknown {
       return [...runtimes.entries()].map(([sid, rt]) => ({
         session: sid,
-        scripts: rt.scripts.map(sc => {
-          const st = rt.statuses.get(sc.id)
-          return { id: sc.id.slice(0, 8), phase: st?.phase, error: st?.error, buttons: st?.buttons.map(b => b.name), queued: (rt.pendingEvents?.get(sc.id) ?? []).length }
-        }),
-        frames: [...rt.frames.keys()].map(k => k.slice(0, 8)),
+        ...rt.debugSnapshot(),
       }))
     },
   }

@@ -235,9 +235,13 @@ function homePath(dshHome: string, relPath: string): string {
  * 控制脚本 + MVU 初始化并发写撕裂，此后 locateBook name 匹配分支 parse 恒失败 →
  * 「worldbook not found」）。rename 在同目录内原子替换，后写者完整获胜（ST 同语义）。
  */
-async function atomicWrite(path: string, data: string): Promise<void> {
+/** 原子写（临时文件 + rename）。encoding 默认 utf8。
+ *  【心跳 47】原签名只有 2 参，而 13 处调用点都按 `writeFile` 习惯传了第 3 个 `'utf8'`
+ *  → 该参数被静默忽略（TS2554）。补上并透传给 writeFile：语义不变（默认同为 utf8），
+ *  但调用点的意图不再落空。 */
+async function atomicWrite(path: string, data: string, encoding: 'utf8' | 'utf-8' = 'utf8'): Promise<void> {
   const tmp = `${path}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  await writeFile(tmp, data, 'utf8')
+  await writeFile(tmp, data, encoding)
   try {
     await rename(tmp, path)
   } catch (e) {

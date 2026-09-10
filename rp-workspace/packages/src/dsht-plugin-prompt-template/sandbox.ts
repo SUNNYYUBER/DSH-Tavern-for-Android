@@ -267,3 +267,20 @@ export function renderMessagesSandbox(
   }
   return { ok: true, messages: out, rendered, skipped }
 }
+
+/**
+ * 【心跳 47】把 subset 引擎（`ejs.ts:renderMessages`）的返回**归一**为 `SandboxMessagesResult`。
+ *
+ * 为什么需要它：两个引擎的成功形态**不同** ——
+ *   · subset  → `{ messages, rendered, skipped }`（无 `ok`）
+ *   · sandbox → `{ ok: true, messages, rendered, skipped }`
+ * 调用点若图省事写成 `{ ok: true, messages: renderMessages(...) }`，就把**对象**塞进了
+ * `messages` 字段；后续 `r.messages[k]?.mes` 恒 `undefined` → 正文被静默写成空串
+ * （`dsh-plugin/index.ts` 的 EJS 生成期管线曾如此，类型闸门以 TS7053 暴露）。
+ * 归一动作收在这里，调用点不再有两套形状可写错，并可被单测钉死。
+ */
+export function asSandboxMessagesResult(
+  rr: { messages: LikeStMessage[]; rendered: number; skipped: number },
+): SandboxMessagesResult {
+  return { ok: true, messages: rr.messages, rendered: rr.rendered, skipped: rr.skipped }
+}

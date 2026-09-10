@@ -619,8 +619,12 @@ const RpFloorHeader = memo(function RpFloorHeader({ useChat, nodeKey, side, sess
     if (showFloor) meta.push(`#${floor}`)
     if (typeof turnMs === 'number' && turnMs >= 500) meta.push(formatFloorDurationSt(turnMs))
   } else {
+    // 【T-34 2026-09-11 修复 · 死代码】此处原为
+    //   `if (side === 'assistant' && typeof turnMs === 'number' && turnMs >= 500) meta.push(formatDuration(turnMs))`
+    // 本分支的前提就是 `side !== 'assistant'`（上方 if 的 else）→ 条件恒假；且 `turnMs` 只按
+    // turn 内**最后一个 assistant-step** 的 key 落表（见 floorIndexOfChat :401），user 楼层的
+    // nodeKey 永远取不到值 → 无论怎么改条件都不可达。故直接删除，不留误导性的空转判断。
     if (showFloor) meta.push(`#${floor}`)
-    if (side === 'assistant' && typeof turnMs === 'number' && turnMs >= 500) meta.push(formatDuration(turnMs))
     if (typeof timeMs === 'number' && timeMs > 0) meta.push(formatFloorTime(timeMs))
   }
   const st = side === 'assistant' && typeof timeMs === 'number' && timeMs > 0 ? formatFloorTimeSt(timeMs) : null
@@ -1442,7 +1446,10 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
             // 完整 HTML 文档段 / sanitize 失败的平衡 HTML 块 → 沙箱 iframe（悬浮球舞台）
             // C3 use_blob_url：TH Blob URL 渲染形态（沙箱不变，blob 加载失败可关回 srcdoc）
             // guest shim：卡内脚本需要 TH API（示例游戏状态栏 getAllVariables 等）时注入
-            return <RpMessageFrame key={i} html={u.html} useBlobUrl={pipeline.th?.useBlobUrl === true} sessionId={sessionId} slug={slug} thShim={pipeline.th === null || pipeline.th.enabled === true} />
+            // 【T-34 2026-09-11】`slug ?? undefined`：本组件契约是「undefined = 不注 shim」，
+            // 而 `slugFromCwd` 无匹配时返回 **null**（null !== undefined → 会被判成"有 slug"
+            // 去 reserveMessageFrame/fetchFrameVars，把 null 当 string 用）。归一化后语义一致。
+            return <RpMessageFrame key={i} html={u.html} useBlobUrl={pipeline.th?.useBlobUrl === true} sessionId={sessionId} slug={slug ?? undefined} thShim={pipeline.th === null || pipeline.th.enabled === true} />
           }
           if (u.kind === 'statusbar') {
             return <StatusBarCard key={i} content={u.text} />

@@ -100,7 +100,12 @@ interface Ctx extends LikePluginContext {
   settings?: LikeSettingsSvc
   llm?: LikeLlm
   agentDefaultModel?: LikeAgentDefaultModel
-  on?: (event: string, handler: (raw: unknown, next: () => Promise<unknown>) => Promise<unknown>) => unknown
+  /**
+   * 【心跳 47】原声明为 `on?`（可选）→ `ctx.on(...)` 报 TS2722「possibly undefined」。
+   * 与 dsh-plugin 侧的 `LikeContext.on` 对齐：cordis Context 恒提供 `on`，宿主不提供它
+   * 本插件就毫无意义，故声明为**必需**（不是可选）。签名同样放宽参数个数以容纳 3 参监听器。
+   */
+  on: (event: string, handler: (...args: any[]) => unknown) => unknown
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +340,12 @@ export interface SurfaceNodeInfo {
   sig: string
   /** 消息 text 块总字数 */
   chars: number
+  /** 【心跳 47 补声明】单次展开副本（source.oneshot）：生命周期 = 一轮请求，无条件影子化。
+   *  构造点在本文件 :876、消费点 :464。此前接口漏了它 → TS2339 / TS2353（运行时正常）。 */
+  oneshot?: boolean
+  /** 【心跳 47 补声明】窗口副本（source.windowRange 存在）：豁免与否由 windowKeepSeq 管控。
+   *  构造点 :877、消费点 :461/:465。 */
+  windowCopy?: boolean
 }
 
 export interface ShadowOp {

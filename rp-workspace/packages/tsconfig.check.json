@@ -7,7 +7,7 @@
     "moduleResolution": "Bundler",
     "module": "ESNext",
     "types": [],
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "ES2023.Array", "DOM", "DOM.Iterable"],
     "skipLibCheck": true
   }
 }

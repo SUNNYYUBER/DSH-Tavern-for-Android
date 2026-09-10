@@ -203,9 +203,16 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
           })
           const filtered = eligibleIdx.map(i => all[i])
           if (dbg) console.log(`[dsht-ejs] render messages: depthLimit=${depthLimit} in=${all.length} eligible=${filtered.length}`)
-          let r: { ok?: boolean; kind?: string; messages?: LikeStMessage[]; rendered?: number; skipped?: number } | null = null
+          // 【心跳 47】原声明是三处必填字段可选 + `ok?: boolean` 的非判别联合，于是
+          // `r.skipped` / `r.rendered` 恒为 `number | undefined`（TS18048），且 sandbox 分支必须
+          // **就地改** `rs.messages`（SandboxMessagesResult 声明 readonly → TS2540）。
+          // 改为判别联合（与 worker.ts 头注的协议一致）+ 不可变重建：成功分支字段全部必填。
+          type RenderedMessages =
+            | { ok: true; messages: LikeStMessage[]; rendered: number; skipped: number }
+            | { ok: false; kind?: string }
+          let r: RenderedMessages | null = null
           if (wantWorker) {
-            r = await renderViaWorker<{ ok: boolean; messages: LikeStMessage[]; rendered: number; skipped: number } | { ok: false; kind: string }>({
+            r = await renderViaWorker<RenderedMessages>({
               kind: 'messages', engine, template, context, messages: filtered, protectPre,
             })
           }
@@ -216,10 +223,14 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
               const rs = renderMessagesSandbox(template, context, preList.length > 0
                 ? filtered.map((m, i) => ({ ...m, mes: preList[i].text }))
                 : filtered)
-              if (rs.ok && preList.length > 0) {
-                rs.messages = rs.messages.map((m, i) => ({ ...m, mes: restorePreBlocks(String(m.mes ?? ''), preList[i]?.blocks ?? []) }))
-              }
-              r = rs
+              r = rs.ok && preList.length > 0
+                ? {
+                    ok: true,
+                    messages: rs.messages.map((m, i) => ({ ...m, mes: restorePreBlocks(String(m.mes ?? ''), preList[i]?.blocks ?? []) })),
+                    rendered: rs.rendered,
+                    skipped: rs.skipped,
+                  }
+                : rs
             } else {
               // 【审查修复 2026-09-05】subset 引擎返回值无 ok 字段——不包装则 !r.ok 恒真 → messages 渲染恒 400
               r = { ok: true as const, ...renderMessages(template, context, filtered, { protectPre }) }
