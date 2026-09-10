@@ -57,13 +57,26 @@
 |---|---|---|
 | 0 | 备份设备数据 + 冻结 | ✅ **完成**：runtime staging 已备份（259MB，含 0.1.2-rc.1 实证） |
 | 1 | 静态预检（复核 11 个补丁点） | ✅ **完成**：8 稳定 / 2 需扩展 / 1 新 stub |
-| 2 | 升级运行时 + 重打补丁 | 🔄 **进行中**：0.1.5-rc.1 已装入 `dsh-runtime-src`（499 包）；**F1 补丁方案已实证**（link 有 3 处，补丁需 4 点），待实施 |
+| 2 | 升级运行时 + 重打补丁 | 🔄 **接近完成**：0.1.5-rc.1 已装 + **21 处补丁全部应用成功**；正在同步到 staging |
 | 3 | 会话迁移验证（最高风险） | ⏳ 待设备上线 |
 | 4 | 功能回归 + D-4 重评 | ⏳ |
 
-> **进展度量**：`bash .goal/upgrade-0.1.5/evaluate.sh` → 当前 **2 / 5**（目标 5）
+> **进展度量**：`bash .goal/upgrade-0.1.5/evaluate.sh` → 当前 **2 / 5**（阶段 2 同步完成后转 3）
 > 工作区：`.goal/upgrade-0.1.5/`（GOAL / STRATEGY / LEARNINGS / HEARTBEAT）
 > **回滚保险**：`backup/dsh-runtime-android-0.1.2-staging`（已 gitignore）
+> 　　　　　　`rp-workspace/dsh-runtime-android/node_modules-0.1.2-old`（本地就地回滚）
+
+### 本轮新增的两项基础设施
+
+1. **`rp-workspace/scripts/apply-platform-patches.py`** —— 平台补丁脚本（此前是断链）
+   发现 `build-wb.sh` **不含任何平台补丁**，而含补丁的 `build-dsht.ps1` 在当前沙箱**跑不了**。
+   新脚本把全部补丁（Step 3 / 3.5 / P2 / P3 / 4.8 / 4.5）复刻为可执行的 Python，
+   支持 `--check` 预检、幂等、命中数断言。**实测 21 处全部成功**。
+
+2. **`tools-cu/cu.py` + `computer-use` skill** —— Windows 桌面级 computer use
+   （用户 2026-09-10 要求）。截图/鼠标/键盘/图像定位，13 个子命令，带 FAILSAFE 与 `--dry-run`。
+   → 补齐「全自动实机测试」的最后一块拼图：
+   DSHT（adb+CDP）+ TT（playwright）+ 任意 GUI（pyautogui）+ 视觉验证（截图读图）
 
 📄 方案全文：`docs/DSH-0.1.5-UPGRADE-PLAN.md`
 

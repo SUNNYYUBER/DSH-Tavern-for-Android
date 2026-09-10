@@ -1,0 +1,458 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+apply-platform-patches.py — 给 DSH runtime 打 Android 平台补丁
+================================================================
+build-dsht.ps1 的 Step 3 / 3.5 / 4.5 / 4.8 的 Python 复刻（PowerShell 沙箱禁 node，
+build-dsht.ps1 在本环境跑不了，故需此 Bash/Python 可执行版本）。
+
+用法:
+    python apply-platform-patches.py [runtime_dir] [--check]
+
+    runtime_dir  默认 dsh-runtime-android（相对 rp-workspace）
+    --check      只检查命中情况，不写文件（预检模式）
+
+设计原则（与 build-dsht.ps1 一致）：
+  · 幂等 —— 带 marker 检测，已打则跳过
+  · 断言 —— 命中数不符即报错（防 DSH 升级后补丁静默失效）
+  · 半打检测 —— marker 数 >0 但 <expected 时报错（避免重复替换）
+"""
+import sys
+import os
+import re
+import shutil
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+WS = os.path.dirname(HERE)
+
+# ---------------------------------------------------------------- 参数解析
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+CHECK_ONLY = "--check" in sys.argv
+DST = args[0] if args else os.path.join(WS, "dsh-runtime-android")
+if not os.path.isabs(DST):
+    DST = os.path.join(WS, DST)
+NM = os.path.join(DST, "node_modules", "@deepseek-ai")
+STUBS = os.path.join(WS, "stubs")
+
+# ---------------------------------------------------------------- 统计
+STATS = {"applied": 0, "skipped": 0, "failed": 0, "checked": 0}
+
+
+def log(msg):
+    print("[patch] " + msg)
+
+
+def die(msg):
+    print("[patch][FATAL] " + msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def patch(path, marker, pattern, repl, expected, label):
+    """精确补丁：marker 幂等检测 + 命中数断言 + 替换。
+
+    path     目标文件绝对路径
+    marker   幂等标记（已打补丁时文件中应存在 expected 个）
+    pattern  正则（匹配目标代码）
+    repl     替换文本（字面量，不走正则反向引用）
+    expected 期望命中数
+    """
+    if not os.path.isfile(path):
+        log("  ✗ %s：目标不存在 %s" % (label, path))
+        STATS["failed"] += 1
+        return False
+
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        text = f.read()
+
+    marker_hits = text.count(marker)
+    if marker_hits >= expected:
+        log("  · %s：已打补丁，跳过" % label)
+        STATS["skipped"] += 1
+        return True
+    if marker_hits > 0:
+        log("  ✗ %s：半打状态（标记 %d/%d）" % (label, marker_hits, expected))
+        STATS["failed"] += 1
+        return False
+
+    hits = len(re.findall(pattern, text))
+    if CHECK_ONLY:
+        ok = hits == expected
+        log("  %s %s：期望 %d 处，实际 %d 处" % ("✓" if ok else "✗", label, expected, hits))
+        STATS["checked"] += 1
+        if not ok:
+            STATS["failed"] += 1
+        return ok
+
+    if hits != expected:
+        log("  ✗ %s：命中数不符（期望 %d，实际 %d）—— DSH 升级后产物形态变了？" % (label, expected, hits))
+        STATS["failed"] += 1
+        return False
+
+    # 用字面量替换（lambda 形式避免 \1 等反向引用被解释）
+    new_text = re.sub(pattern, lambda m: repl, text)
+
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(new_text)
+    log("  ✓ %s：%d 处已打补丁" % (label, expected))
+    STATS["applied"] += expected
+    return True
+
+
+def write_file(path, content, label):
+    """写辅助资产（如 android-fallback.mjs）。"""
+    if CHECK_ONLY:
+        log("  ? %s：检查模式，跳过写入" % label)
+        return True
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(content)
+    log("  ✓ %s" % label)
+    return True
+
+
+print("=" * 72)
+print("DSH Android 平台补丁  [%s]" % ("检查模式" if CHECK_ONLY else "应用模式"))
+print("目标: %s" % DST)
+print("=" * 72)
+
+# ============================================================ Step 3
+print("\n--- Step 3: 平台适配（删 win32/darwin 包 + stubs 六件套 + sim 补丁）---")
+
+# --- 3a. 删 win32/darwin 平台专属包（Android 用不到，且部分含原生二进制）
+if not CHECK_ONLY:
+    _removed = 0
+    for _root, _dirs, _files in os.walk(os.path.join(DST, "node_modules")):
+        for _d in list(_dirs):
+            if re.search(r"win32|darwin", _d):
+                shutil.rmtree(os.path.join(_root, _d), ignore_errors=True)
+                _dirs.remove(_d)
+                _removed += 1
+    log("  3a 删 win32/darwin 平台包：%d 个" % _removed)
+else:
+    log("  3a 删 win32/darwin 平台包（检查模式跳过）")
+
+# --- 3b. stubs（坑 #1/#2：stub 是 Android 唯一正解——原生二进制无法在 bionic 加载）
+STUB_MAP = [
+    ("node-addon-require-builtin/index.js", "node-addon-require-builtin/lib/index.js"),
+    ("sharp/index.js", "sharp/dist/index.cjs"),
+    ("sharp/index.mjs", "sharp/dist/index.mjs"),
+    ("koffi/index.js", "koffi/index.js"),
+    ("koffi/index.cjs", "koffi/index.cjs"),
+    ("node-pty/index.js", "node-pty/lib/index.js"),
+    ("node-addon-landlock-run/index.js", "@deepseek-ai/node-addon-landlock-run/lib/index.js"),
+    ("dsh-sandbox-windows-acl/index.js", "@deepseek-ai/dsh-sandbox-windows-acl/lib/index.js"),
+    ("dsh-sandbox-windows-acl/runner.js", "@deepseek-ai/dsh-sandbox-windows-acl/lib/runner.js"),
+]
+_stub_ok = 0
+for _src_rel, _dst_rel in STUB_MAP:
+    _s = os.path.join(STUBS, _src_rel)
+    _d = os.path.join(DST, "node_modules", _dst_rel)
+    if not os.path.isfile(_s):
+        log("  ! 3b stub 源缺失：%s" % _src_rel)
+        continue
+    if CHECK_ONLY:
+        _stub_ok += 1
+        continue
+    os.makedirs(os.path.dirname(_d), exist_ok=True)
+    shutil.copyfile(_s, _d)
+    _stub_ok += 1
+log("  3b stubs 六件套：%d 项%s" % (_stub_ok, "（待复制）" if CHECK_ONLY else "已落位"))
+
+# --- 3c. sim 补丁（PC 上伪装 linux 做 android-sim 验证；真机 Android 不受影响）
+patch(
+    os.path.join(NM, "dsh-storage-json", "lib", "index.js"),
+    "DSHT-SIM",
+    r'if \(process\.platform === "win32"\) return;',
+    'if (process.platform === "win32" || process.env.DSHT_ANDROID_SIM === "1") return; /* DSHT-SIM: Windows 真实 FS 上目录 fsync 报 EPERM，sim 态跳过 */',
+    1,
+    "sim-1 storage-json fsyncDirectory",
+)
+patch(
+    os.path.join(NM, "dsh-credentials-local", "lib", "index.js"),
+    "DSHT-SIM",
+    r'if \(process\.platform === "win32"\) return;',
+    'if (process.platform === "win32" || process.env.DSHT_ANDROID_SIM === "1") return; /* DSHT-SIM: Windows stat mode 恒 666，sim 态跳过 owner-only 检查 */',
+    1,
+    "sim-2 credentials-local assertOwnerOnly",
+)
+patch(
+    os.path.join(NM, "dsh-session-persistence-jsonl", "lib", "index.js"),
+    "DSHT-SIM",
+    r'async syncDirPosix\(dir\) \{',
+    'async syncDirPosix(dir) {\n\t\tif (process.env.DSHT_ANDROID_SIM === "1") return; /* DSHT-SIM: Windows 真实 FS 上目录 fsync 报 EPERM，sim 态跳过 */',
+    1,
+    "sim-3 session-persistence syncDirPosix",
+)
+
+# ============================================================ Step 3.5
+print("\n--- Step 3.5: Android shell / sandbox / rg 补丁 ---")
+
+SH_EXPR = 'process.platform === "android" ? "/system/bin/sh" : "bash"'
+
+# --- P0-1a  dsh-bash-local run()/start() 的 bash argv（2 处）
+patch(
+    os.path.join(NM, "dsh-bash-local", "lib", "index.js"),
+    "DSHT-ANDROID-SH",
+    r'\t\t\t"bash",\r?\n\t\t\t"-c",\r?\n\t\t\tspec\.command',
+    '\t\t\t' + SH_EXPR + ', /* DSHT-ANDROID-SH */\n\t\t\t"-c",\n\t\t\tspec.command',
+    2,
+    "P0-1a bash-local run/start argv",
+)
+
+# --- P0-1b  dsh-bash-sandbox confine() 的内层 bash argv
+patch(
+    os.path.join(NM, "dsh-bash-sandbox", "lib", "index.js"),
+    "DSHT-ANDROID-SH",
+    r'\t\t\t"bash",\r?\n\t\t\t"-c",\r?\n\t\t\tcommand\r?\n\t\t\], policy\);',
+    '\t\t\t' + SH_EXPR + ', /* DSHT-ANDROID-SH */\n\t\t\t"-c",\n\t\t\tcommand\n\t\t], policy);',
+    1,
+    "P0-1b bash-sandbox confine argv",
+)
+
+# --- P0-2  dsh-sandbox-local confine() 拒绝分支 → android 降级
+patch(
+    os.path.join(NM, "dsh-sandbox-local", "lib", "index.js"),
+    "DSHT-ANDROID-UNSANDBOXED",
+    r'\tconst selected = this\.selectRunner\(policy\.mode\);',
+    "\tlet selected;\n"
+    "\ttry {\n"
+    "\t\tselected = this.selectRunner(policy.mode);\n"
+    "\t} catch (error) {\n"
+    "\t\t/* DSHT-ANDROID-UNSANDBOXED: android 无 bwrap/Landlock/sandbox-exec/ACL 后端——降级语义：不拒绝，warn + 无隔离执行（fs 层做工作区边界） */\n"
+    '\t\tif (process.platform === "android" && error !== null && typeof error === "object" && error.name === "SandboxUnavailableError") {\n'
+    '\t\t\tconsole.warn("[dsht] sandbox-local: no sandbox backend on android; running unconfined (fs layer enforces the workspace boundary)");\n'
+    '\t\t\treturn { argv: [...argv], enforcement: "unusable", denialSignatures: [], runnerFailureRules: [] };\n'
+    "\t\t}\n"
+    "\t\tthrow error;\n"
+    "\t}",
+    1,
+    "P0-2 sandbox-local android 降级",
+)
+
+# --- P0-2b  PRoot 真隔离包装（必须在 P0-2 之后：改写 P0-2 的产物文本）
+PROOT_WRAP = '''\t\t\t/* DSHT-ANDROID-PROOT: PRoot 真隔离——proot 用户态 chroot 包装 argv（rootfs+bind 外不可读写）；
+\t\t\t   proot 二进制缺失/探测失败时回退下方 warn + fs 边界直通（降级开关） */
+\t\t\tconst dshtProotBin = process.env.DSHT_PROOT_BIN;
+\t\t\tconst dshtProotRootfs = process.env.DSHT_PROOT_ROOTFS;
+\t\t\tif (dshtProotBin && dshtProotRootfs && existsSync(dshtProotBin) && existsSync(join(dshtProotRootfs, "bin/busybox"))) {
+\t\t\t\tconst dshtStaticBinds = [];
+\t\t\t\tfor (const p of ["/proc", "/dev", "/system/bin/linker64", "/apex/com.android.runtime", "/system/lib64", "/sdcard", "/storage/emulated", process.env.DSHT_NATIVE_LIB_DIR, process.env.DSHT_RUNTIME_LIB_DIR, process.env.TMPDIR])
+\t\t\t\t\tif (p && existsSync(p) && !dshtStaticBinds.includes(p)) dshtStaticBinds.push(p);
+\t\t\t\tif (globalThis.__dshtProotOk === void 0) {
+\t\t\t\t\tconst dshtProbe = spawnSync(dshtProotBin, ["--kill-on-exit", "-r", dshtProotRootfs, ...dshtStaticBinds.flatMap((b) => ["-b", b]), "/bin/true"], { timeout: 10000 });
+\t\t\t\t\tglobalThis.__dshtProotOk = dshtProbe.status === 0;
+\t\t\t\t\tif (!globalThis.__dshtProotOk) console.warn("[dsht] proot probe failed (status=" + dshtProbe.status + (dshtProbe.stderr ? ", " + String(dshtProbe.stderr).slice(0, 200) : "") + "); falling back to unconfined sh + fs boundary");
+\t\t\t\t}
+\t\t\t\tif (globalThis.__dshtProotOk) {
+\t\t\t\t\tconst dshtArgv = [dshtProotBin, "--kill-on-exit", "-r", dshtProotRootfs];
+\t\t\t\t\tfor (const b of dshtStaticBinds) dshtArgv.push("-b", b);
+\t\t\t\t\tconst dshtDynBinds = [];
+\t\t\t\t\tfor (const b of [process.env.DSH_HOME || join(process.env.HOME || "/", ".dsh"), policy && policy.workspaceRoot])
+\t\t\t\t\t\tif (b && existsSync(b) && !dshtStaticBinds.includes(b) && !dshtDynBinds.includes(b)) dshtDynBinds.push(b);
+\t\t\t\t\tfor (const b of dshtDynBinds) dshtArgv.push("-b", b);
+\t\t\t\t\tif (process.env.TMPDIR) dshtArgv.push("-b", process.env.TMPDIR + ":/tmp");
+\t\t\t\t\tdshtArgv.push(...argv);
+\t\t\t\t\treturn { argv: dshtArgv, enforcement: "full", denialSignatures: [], runnerFailureRules: [] };
+\t\t\t\t}
+\t\t\t}
+\t\t\tconsole.warn("[dsht] sandbox-local: no sandbox backend on android; running unconfined (fs layer enforces the workspace boundary)");
+\t\t\treturn { argv: [...argv], enforcement: "unusable", denialSignatures: [], runnerFailureRules: [] };'''
+
+_sp_local = os.path.join(NM, "dsh-sandbox-local", "lib", "index.js")
+_p02_done = False
+if os.path.isfile(_sp_local):
+    with open(_sp_local, "r", encoding="utf-8", newline="") as _f:
+        _p02_done = "DSHT-ANDROID-UNSANDBOXED" in _f.read()
+
+if not _p02_done:
+    log("  · P0-2b sandbox-local PRoot：依赖 P0-2（本模式下未应用），跳过")
+    STATS["skipped"] += 1
+else:
+    patch(
+        _sp_local,
+        "DSHT-ANDROID-PROOT",
+        r'\t\t\tconsole\.warn\("\[dsht\] sandbox-local: no sandbox backend on android; running unconfined \(fs layer enforces the workspace boundary\)"\);\r?\n\t\t\treturn \{ argv: \[\.\.\.argv\], enforcement: "unusable", denialSignatures: \[\], runnerFailureRules: \[\] \};',
+        PROOT_WRAP,
+        1,
+        "P0-2b sandbox-local PRoot 真隔离",
+    )
+
+# --- P1-3  dsh-tool-fs-search：rg 不可用 → 纯 JS 降级
+_fallback_src = os.path.join(STUBS, "dsh-tool-fs-search", "android-fallback.mjs")
+_fallback_dst = os.path.join(NM, "dsh-tool-fs-search", "lib", "android-fallback.mjs")
+if os.path.isfile(_fallback_dst):
+    log("  · P1-3a fs-search android-fallback.mjs 已存在")
+elif os.path.isfile(_fallback_src):
+    if CHECK_ONLY:
+        log("  ✓ P1-3a fs-search android-fallback.mjs 源就位（待复制，%d 字节）" % os.path.getsize(_fallback_src))
+    else:
+        shutil.copyfile(_fallback_src, _fallback_dst)
+        log("  ✓ P1-3a fs-search android-fallback.mjs 已落位")
+else:
+    log("  ✗ P1-3a fs-search android-fallback.mjs 源缺失（%s）" % _fallback_src)
+    STATS["failed"] += 1
+
+patch(
+    os.path.join(NM, "dsh-tool-fs-search", "lib", "index.js"),
+    "android-fallback.mjs",
+    r'import \{ existsSync \} from "node:fs";',
+    'import { existsSync } from "node:fs";\nimport { dshtAndroidJsSearch } from "./android-fallback.mjs";',
+    1,
+    "P1-3b fs-search 降级模块导入",
+)
+
+patch(
+    os.path.join(NM, "dsh-tool-fs-search", "lib", "index.js"),
+    "DSHT-ANDROID-JS-SEARCH",
+    r'async function runRipgrep\(ctx, exec, toolName, argv, rawOutputMaxBytes, graceMs, stderrMaxBytes\) \{\r?\n\tif \(exec\.signal\.aborted\)',
+    "async function runRipgrep(ctx, exec, toolName, argv, rawOutputMaxBytes, graceMs, stderrMaxBytes) {\n"
+    "\t/* DSHT-ANDROID-JS-SEARCH: android 无 rg 二进制——glob/grep 走纯 JS 降级（lib/android-fallback.mjs） */\n"
+    '\tif (process.platform === "android") return dshtAndroidJsSearch(exec, toolName, argv);\n'
+    "\tif (exec.signal.aborted)",
+    1,
+    "P1-3c runRipgrep android 短路",
+)
+
+# --- P1-4  dsh-terminal-bash：默认 shell / 启动参数适配 mksh
+patch(
+    os.path.join(NM, "dsh-terminal-bash", "lib", "index.js"),
+    "DSHT-ANDROID-TERM-SHELL",
+    r'const DEFAULT_BASH_SHELL = "/bin/bash";',
+    'const DEFAULT_BASH_SHELL = process.platform === "android" ? "/system/bin/sh" : "/bin/bash"; /* DSHT-ANDROID-TERM-SHELL */',
+    1,
+    "P1-4a terminal-bash DEFAULT_BASH_SHELL",
+)
+
+patch(
+    os.path.join(NM, "dsh-terminal-bash", "lib", "index.js"),
+    "DSHT-ANDROID-TERM-ARGS",
+    r'const DEFAULT_BASH_ARGS = \[\r?\n\t"--noprofile",\r?\n\t"--norc",\r?\n\t"-i"\r?\n\];',
+    'const DEFAULT_BASH_ARGS = process.platform === "android" ? ["-i"] /* DSHT-ANDROID-TERM-ARGS */ : [\n\t"--noprofile",\n\t"--norc",\n\t"-i"\n];',
+    1,
+    "P1-4b terminal-bash DEFAULT_BASH_ARGS",
+)
+
+# ============================================================ P2 / P3
+print("\n--- P2 / P3: client-ui-chat 折叠行 + session-title 剥标签 ---")
+
+# --- P2  dsh-client-ui-chat：TurnProcessNodeView 折叠行大会话不可见修复
+_chat = os.path.join(NM, "dsh-client-ui-chat", "lib", "client.js")
+patch(
+    _chat,
+    "DSHT-CHAT-FOLD-OLDEST",
+    r'historyIncomplete: hasMore,',
+    "historyIncomplete: hasMore,\n"
+    "\t\t\t\t\t\tdshtOldestSeq: firstSeq, /* DSHT-CHAT-FOLD-OLDEST: 最老已加载节点 seq（本轮折叠放行判定） */",
+    1,
+    "P2-1a ChatNodeList 传入 firstSeq",
+)
+patch(
+    _chat,
+    "DSHT-CHAT-FOLD-SEAT",
+    r'function ChatNodeSeat\(\{ nodeKey, useChatNode, useChatNodeProcess, historyIncomplete, compactTranscript,',
+    "function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess, historyIncomplete, dshtOldestSeq, compactTranscript,",
+    1,
+    "P2-1b ChatNodeSeat 接收 dshtOldestSeq",
+)
+patch(
+    _chat,
+    "DSHT-CHAT-FOLD-READY",
+    r'processPresentation\.turn === processSpec\.turn && processPresentation\.turnClosed && !historyIncomplete;',
+    'processPresentation.turn === processSpec.turn && processPresentation.turnClosed && (!historyIncomplete || (typeof dshtOldestSeq === "number" && processSpec.processStartSeq >= dshtOldestSeq)); /* DSHT-CHAT-FOLD-READY: 本轮窗口完整在已加载区间即可折叠，不要求全会话历史加载完 */',
+    1,
+    "P2-1c processWindowReady 放宽",
+)
+
+# --- P3  dsh-session-title：剥 HTML/协议标签
+patch(
+    os.path.join(NM, "dsh-session-title", "lib", "index.js"),
+    "DSHT-TITLE-DETAG",
+    r'function cleanTitleText\(input\) \{\r?\n\treturn input\.replace\(OSC_SEQUENCE',
+    "\tfunction cleanTitleText(input) {\n"
+    "\t\t/* DSHT-TITLE-DETAG: RP 首条消息/LLM 标题常含 <status> 等协议标签——先剥成对标签与未闭合标签尾再走官方 normalize */\n"
+    '\t\tinput = input.replace(/<[^<>]{0,200}>/gu, " ").replace(/<[^<>]{0,200}$/u, " ");\n'
+    "\t\treturn input.replace(OSC_SEQUENCE",
+    1,
+    "P3-5a session-title 剥协议标签",
+)
+
+# ============================================================ Step 4.8
+print("\n--- Step 4.8: session 发布 link()→rename()（坑 #14 + F1 扩展）---")
+_sp = os.path.join(NM, "dsh-session-persistence-jsonl", "lib", "index.js")
+
+# F1 扩展：v0.1.5 起 link 出现 3 个位置（import / defaultFileSystem / 两处调用）
+# 1) import 加 rename
+patch(
+    _sp,
+    "DSHT-ANDROID-RENAME-PATCH",
+    r'import \{ link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate \} from "node:fs/promises";',
+    'import { link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, truncate } from "node:fs/promises"; /* DSHT-ANDROID-RENAME-PATCH */',
+    1,
+    "F1-1 import 补 rename",
+)
+# 2) defaultFileSystem 暴露 rename（v0.1.5 新增的 internals.fs 接口）
+patch(
+    _sp,
+    "DSHT-ANDROID-RENAME-FS",
+    r'\tlstat: \(path\) => lstat\(path\),\r?\n\tlink,',
+    "\tlstat: (path) => lstat(path),\n\tlink,\n\trename: (a, b) => rename(a, b), /* DSHT-ANDROID-RENAME-FS */",
+    1,
+    "F1-2 defaultFileSystem 暴露 rename",
+)
+# 3) 旧发布路径
+patch(
+    _sp,
+    "DSHT-ANDROID-RENAME-LEGACY",
+    r'await link\(tmp, finalPath\);',
+    "await rename(tmp, finalPath); /* DSHT-ANDROID-RENAME-LEGACY */",
+    1,
+    "F1-3 旧发布路径 link→rename",
+)
+# 4) 【F1 核心】generation 发布路径（publishCurrentExclusive）
+patch(
+    _sp,
+    "DSHT-ANDROID-RENAME-GEN",
+    r'await internals\.fs\.link\(staged, currentPath\);',
+    "await internals.fs.rename(staged, currentPath); /* DSHT-ANDROID-RENAME-GEN */",
+    1,
+    "F1-4 generation 发布路径 link→rename",
+)
+
+# ============================================================ Step 4.5
+print("\n--- Step 4.5: composition 补丁（session 持久化改明文）---")
+_base = os.path.join(NM, "dsh-base", "cordis.patch.yml")
+if os.path.isfile(_base):
+    with open(_base, "r", encoding="utf-8", newline="") as f:
+        bp = f.read()
+    if re.search(r"compression:\s*'none'", bp):
+        log("  · composition 补丁已存在，跳过")
+        STATS["skipped"] += 1
+    elif CHECK_ONLY:
+        ok = "dshHomePath('sessions')" in bp
+        log("  %s composition：目标锚点%s" % ("✓" if ok else "✗", "" if ok else "缺失"))
+        STATS["checked"] += 1
+    else:
+        bp2 = bp.replace(
+            "root: !!js dshHomePath('sessions')",
+            "root: !!js dshHomePath('sessions')\n        compression: 'none'",
+        )
+        if bp2 == bp:
+            log("  ✗ composition：补丁未命中锚点")
+            STATS["failed"] += 1
+        else:
+            with open(_base, "w", encoding="utf-8", newline="") as f:
+                f.write(bp2)
+            log("  ✓ composition：session-persistence → compression:'none'")
+            STATS["applied"] += 1
+else:
+    log("  ✗ composition：%s 不存在" % _base)
+    STATS["failed"] += 1
+
+# ============================================================ 汇总
+print("\n" + "=" * 72)
+if CHECK_ONLY:
+    print("检查完成：%d 项检查，%d 项失败" % (STATS["checked"], STATS["failed"]))
+else:
+    print("应用完成：%d 处已打，%d 项跳过，%d 项失败" % (STATS["applied"], STATS["skipped"], STATS["failed"]))
+print("=" * 72)
+sys.exit(1 if STATS["failed"] else 0)
