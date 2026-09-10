@@ -142,6 +142,11 @@ STUB_MAP = [
     ("node-addon-landlock-run/index.js", "@deepseek-ai/node-addon-landlock-run/lib/index.js"),
     ("dsh-sandbox-windows-acl/index.js", "@deepseek-ai/dsh-sandbox-windows-acl/lib/index.js"),
     ("dsh-sandbox-windows-acl/runner.js", "@deepseek-ai/dsh-sandbox-windows-acl/lib/runner.js"),
+    # 【2026-09-10 心跳 41 新增】0.1.5 的 dsh-subprocess-local 静态导入本包 →
+    # pnpm 在非 win32 平台不安装它 → 模块解析失败 → 整个 plugin tree 崩溃（DSH 启动失败）。
+    # 这是补齐 stubs 六件套的第 7 件。证据：实机 logcat "does not provide an export named
+    # 'loadWin32ProcessBindings'"。
+    ("dsh-win32-process/index.js", "@deepseek-ai/dsh-win32-process/lib/index.js"),
 ]
 _stub_ok = 0
 for _src_rel, _dst_rel in STUB_MAP:

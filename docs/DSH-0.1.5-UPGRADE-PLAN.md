@@ -594,3 +594,63 @@ inHistory: preparedCall?.systemPromptUpdate === "in-history"
 2. 切换到 `llm-deepseek` 路由 + 显式声明 `models: [{ id: "deepseek-v4-flash", systemPromptUpdate: "in-history" }]`
 
 **建议**：不在升级窗口内做第 2 步（变量叠加会导致无法归因）。升级稳定后单独评估。
+
+---
+
+## 附录 D：🔴 0.1.5 启动阻塞点（实机发现 + 已修复）—— 2026-09-10 心跳 41
+
+### 症状
+新 APK（0.1.5-rc.1）装上模拟器后，app 界面显示：
+```
+正在启动 DSH 运行时
+状态: node 运行中，等待端口就绪...
+端口 3080: 未监听          ← 启动失败
+```
+截图证据：`tmp/cu/device.png`
+
+### 根因（实机 logcat 精确到符号）
+```
+[cause]: Error: failed to apply loader entry include (cordis:include):
+failed to import loader entry subprocess (@deepseek-ai/dsh-subprocess-local):
+The requested module '@deepseek-ai/dsh-win32-process' does not provide
+an export named 'loadWin32ProcessBindings'
+
+SyntaxError: The requested module '@deepseek-ai/dsh-win32-process' does not
+provide an export named 'loadWin32ProcessBindings'
+```
+调用栈：`cordis-plugin-loader/lib/index.js:274 → Entry._init:522 → EntryGroup.update:97`
+
+### 三个事实叠加
+| # | 事实 | 证据 |
+|---|---|---|
+| ① | **0.1.5 的 `dsh-subprocess-local` 新增了对 win32-process 的静态导入** | `lib/index.js:11` `import { loadWin32ProcessBindings, probeCurrentTokenJobSupport } from "@deepseek-ai/dsh-win32-process"`<br>`lib/runner.js:3` 另导入 7 个符号 |
+| ② | **`pnpm install` 在非 win32 平台不安装该包** | 0.1.5 的 `dsh-runtime-src/node_modules/@deepseek-ai/` 下**无** `dsh-win32-process` |
+| ③ | **静态导入解析失败会杀死整个 plugin tree** | ESM 静态导入是加载期求值 → `SyntaxError` → cordis loader 崩溃 → 端口不监听 |
+
+> 对照：0.1.2 时代该包**存在**（`node_modules-0.1.2-old/@deepseek-ai/dsh-win32-process`，18230 字节），
+> 所以旧版从未暴露此问题 —— **这是 0.1.5 引入的新依赖形态**。
+
+### 修复：新增第 7 个 stub（`stubs/dsh-win32-process/index.js`）
+导出消费方需要的**全部 21 个符号**，保证静态导入可解析：
+```
+ERROR_INSUFFICIENT_BUFFER  Win32Error  allocPtrSlot  allocUint32
+closeHandleChecked  decodePtr  decodeUint32  drainPipe
+extendWin32ProcessBindings  isJobEmpty  isNullPtr  loadWin32ProcessBindings
+pollProcessExit  probeCurrentTokenJobSupport  spawnCurrentTokenJobProcess
+spawnInheritedJobProcess  spawnPipedProcess  terminateJob
+throwLastError  throwWin32  waitForProcessExit
+```
+**策略**（与其余 stub 同款"可加载但不可用"）：
+- 探测类（`loadWin32ProcessBindings` / `probeCurrentTokenJobSupport`）→ 返回**安全默认**
+- 功能类 → 抛 `Win32Error`（Android 上无合法调用点；真正走 Windows 沙箱的路径已被
+  `stubs/dsh-sandbox-windows-acl` 短路）
+- `isNullPtr` → 恒 `true`（避免调用方误判有指针）
+
+**已注册进 `apply-platform-patches.py` 的 `STUB_MAP`**（第 10 项），后续构建自动带上。
+
+### 教训（写入 LEARNINGS）
+> **DSH 大版本升级时，"平台过滤导致某包未安装"是一类隐蔽的启动杀手**：
+> 表现是**整个 plugin tree 崩溃**（端口不监听），而非单个插件失效；
+> 根因却是 ESM **静态导入**在加载期失败。
+> **排查捷径**：`logcat | grep "does not provide an export named"` —— 一眼定位缺失包。
+> **预防**：升级后立即比对 `src/node_modules/@deepseek-ai/` 与旧版清单的**包名差集**。
