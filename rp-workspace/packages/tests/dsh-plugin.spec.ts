@@ -6,7 +6,7 @@ import {
   hasDirectUserInput,
   processActivatedEntries, renderWorldInfoSnapshot, repairSessionSeqs, rewriteSessionHeaderCwd,
   rpSlugFromCwd, scanSurfaceHistory, searchLoreEntries, sessionContentMaxTime,
-  sessionCwdNeedsRepair, sessionHeaderCwd, spliceDepthInjections, truncateSessionJsonl,
+  sessionCwdNeedsRepair, sessionHeaderCwd, sessionRepairNeedsWrite, spliceDepthInjections, truncateSessionJsonl,
 } from '../src/dsh-plugin/index.ts'
 import { projectKey } from '../src/import/dsh-export.ts'
 import type { LoreEntry } from '../src/lore/entry.ts'
@@ -56,6 +56,26 @@ describe('dsht-rp-plugin: 会话目录身份不变量（assertStoredIdentity 前
     expect(accepted(projectKey(abs), abs)).toBe(true)
     // cwd 被改写而目录未搬 → 必须拒（否则会话在核心搬迁中丢失）
     expect(accepted(projectKey('rp/_start'), abs)).toBe(false)
+  })
+})
+
+describe('dsht-rp-plugin: 修复链落盘谓词（布尔/计数类型不得混比）', () => {
+  // 回归事故（实机 2026-09-11）：守卫写成 `norm.changed === 0 && v3.changed === 0`，
+  // 而 `repairSessionForV3().changed` 是 **boolean** → `false === 0` 恒 false
+  // → 谓词恒真 → 每次启动重写全部 79 个会话（~200MB 无效写入 + 79 个 .bak / 136MB 堆积）。
+  it('三步都没改动 → 不需要落盘（收敛判据）', () => {
+    expect(sessionRepairNeedsWrite(0, false, false)).toBe(false)
+  })
+
+  it('任一环节有改动 → 需要落盘', () => {
+    expect(sessionRepairNeedsWrite(0, true, false)).toBe(true) // 曾经的失效分支
+    expect(sessionRepairNeedsWrite(0, false, true)).toBe(true)
+    expect(sessionRepairNeedsWrite(3, false, false)).toBe(true)
+  })
+
+  it('类型契约：changed 是计数(number)，v3Changed / seqRepaired 是布尔(boolean)', () => {
+    const args: [number, boolean, boolean] = [0, false, false]
+    expect(sessionRepairNeedsWrite(...args)).toBe(false)
   })
 })
 

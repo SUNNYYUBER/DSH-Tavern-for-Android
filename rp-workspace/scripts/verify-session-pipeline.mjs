@@ -17,6 +17,7 @@
  *   2. 内容零丢失（原始文本集合 ⊄ 修复后文本集合 的差为空）
  *   3. 幂等（二次跑三步链零改动）
  *   4. 无回归（原本可迁移的不能被修坏）
+ *   6. 【2026-09-11 新增】**不会每次启动都重写**：二次跑必须 changed=false。
  *   5. 【2026-09-10 新增】**目录身份不变**：修复后 projectKey(header.cwd) 必须仍等于
  *      会话所在目录名（官方 persistence `assertStoredIdentity` 契约）。
  *      加这条的原因 = 实机事故：某次修复把 `dsht-welcome` 的相对 cwd `rp/_start`
@@ -25,7 +26,7 @@
  *
  * 用法：
  *   node verify-session-pipeline.mjs <会话树根目录> [--out <证据日志路径>]
- * 退出码：0 = 五项判据全过；1 = 有失败
+ * 退出码：0 = 六项判据全过；1 = 有失败
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -68,7 +69,7 @@ execFileSync(NODE, [ESB, `${PKG}/src/dsht-plugin-shared/session-surgery.ts`, '--
 execFileSync(NODE, [ESB, `${PKG}/src/dsht-plugin-shared/session-repair.ts`, '--bundle', '--format=esm',
   '--platform=node', `--outfile=${BUNDLE_REPAIR}`, '--external:@deepseek-ai/*', '--log-level=warning'],
 { cwd: PKG, stdio: 'inherit' })
-const { repairSessionSeqs, sessionHeaderCwd } = await import(pathToFileURL(BUNDLE).href)
+const { repairSessionSeqs, sessionHeaderCwd, sessionRepairNeedsWrite } = await import(pathToFileURL(BUNDLE).href)
 const { normalizeSnapshotMessageRoles } = await import(pathToFileURL(BUNDLE_SURGERY).href)
 const { repairSessionForV3 } = await import(pathToFileURL(BUNDLE_REPAIR).href)
 // projectKey 必须取**实现本身**（不重写）——目录身份判据的基准
@@ -96,6 +97,9 @@ function runtimePipeline(content) {
     // 【阶段3 2026-09-10】source 上摘下来的自定义键（thData/thSystem 等）——
     // 调用方负责落 sidecar；验证时并入「内容」集合，载体变了但数据没丢。
     salvaged: v3.salvaged ?? [],
+    // 判据 6 需要**原始字段**：要在离线复现运行时那条短路守卫的**字面表达式**，
+    // 才能查出「字段类型与守卫比较运算符不匹配」这类恒真/恒假缺陷。
+    raw: { normChanged: norm.changed, v3Changed: v3.changed, seqRepaired: seq.repaired },
   }
 }
 
@@ -192,7 +196,7 @@ const files = findSessions(treeRoot).sort()
 emit(`\n[pipeline] 会话树 ${treeRoot} → ${files.length} 个会话\n`)
 
 let beforeFail = 0, afterFail = 0, fixed = 0, regress = 0
-let nonIdempotent = 0, lossy = 0, keyDrift = 0, totalBytes = 0, salvagedTotal = 0, movedTotal = 0
+let nonIdempotent = 0, lossy = 0, keyDrift = 0, rewriteEveryBoot = 0, totalBytes = 0, salvagedTotal = 0, movedTotal = 0
 const failures = [], problems = [], noteCounts = new Map()
 const t0 = Date.now()
 
@@ -225,6 +229,26 @@ for (const f of files) {
   if (r2.content !== r.content) {
     nonIdempotent++
     problems.push({ rel, kind: '非幂等', detail: (r2.notes.join('；') || '(无说明)').slice(0, 120) })
+  }
+  // 判据 6：修复链必须**收敛**——跑完一遍后，运行时谓词 `sessionRepairNeedsWrite`
+  // 对结果再判时必须返回 false（= 不再落盘）。否则每次启动都重写全部会话。
+  // 【为什么必须用运行时那个谓词本身】历史缺陷正是**谓词写错**：
+  //   `norm.changed === 0 && v3.changed === 0` 里 `v3.changed` 是 boolean，
+  //   `false === 0` 恒 false → 谓词恒真 → 每次启动重写 79 个会话
+  //   （~200MB 无效写入 + 79 个 .bak / 136MB 堆积，抬高 torn-write 概率）。
+  // 「内容相等」（判据 3）抓不到它；只有用谓词本身对**收敛结果**再判才抓得到。
+  {
+    const raw = r2.raw ?? {}
+    const needsWrite = sessionRepairNeedsWrite(raw.normChanged, raw.v3Changed, raw.seqRepaired)
+    if (needsWrite) {
+      rewriteEveryBoot++
+      problems.push({
+        rel, kind: '修复链不收敛（每次启动都会重写）',
+        detail: `谓词仍判需落盘：norm.changed=${raw.normChanged}(${typeof raw.normChanged}) `
+          + `v3.changed=${raw.v3Changed}(${typeof raw.v3Changed}) `
+          + `seq.repaired=${raw.seqRepaired}(${typeof raw.seqRepaired})`,
+      })
+    }
   }
   // 内容无损：原文所有字符串叶子都应仍在（**会话文本内**，或**salvaged sidecar 载荷里**）
   const after = stringsOf(r.content)
@@ -269,6 +293,7 @@ emit(`被修坏（回归）      ${regress}`)
 emit(`内容丢失            ${lossy}`)
 emit(`非幂等              ${nonIdempotent}`)
 emit(`目录身份漂移        ${keyDrift}`)
+emit(`每次启动会重写      ${rewriteEveryBoot}`)
 emit(`source 扩展键迁移   ${salvagedTotal} 个楼层 / ${movedTotal} 段文本改载 sidecar（未丢失）`)
 emit(`总数据量            ${(totalBytes / 1048576).toFixed(1)}MB / 耗时 ${secs}s`)
 if (failures.length) {
@@ -282,8 +307,8 @@ if (problems.length) {
 emit(`\n--- 修复动作分布 ---`)
 for (const [k, n] of [...noteCounts].sort((a, b) => b[1] - a[1])) emit(`  ${String(n).padStart(4)}  ${k}`)
 
-const pass = afterFail === 0 && regress === 0 && lossy === 0 && nonIdempotent === 0 && keyDrift === 0
-emit(`\n[pipeline] ${pass ? '✅ 五项判据全过 —— 阶段 3 通过' : '❌ 存在未通过项 —— 阶段 3 不通过'}`)
+const pass = afterFail === 0 && regress === 0 && lossy === 0 && nonIdempotent === 0 && keyDrift === 0 && rewriteEveryBoot === 0
+emit(`\n[pipeline] ${pass ? '✅ 六项判据全过 —— 阶段 3 通过' : '❌ 存在未通过项 —— 阶段 3 不通过'}`)
 
 // 清理现场（不要把验证产物留在会被打包的 staging 目录）
 try { fs.rmSync(path.dirname(BUNDLE), { recursive: true, force: true }) } catch { /* 忽略 */ }

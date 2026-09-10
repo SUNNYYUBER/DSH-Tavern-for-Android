@@ -649,6 +649,26 @@ export function sessionHeaderCwd(content: string): string | null {
   return obj?.type === 'session' && typeof obj.cwd === 'string' ? obj.cwd : null
 }
 
+/**
+ * 三步修复链是否需要落盘（= 是否有真实改动）。
+ *
+ * 【为什么单独抽出来】历史事故：守卫写成 `... && v3.changed === 0`，
+ * 而 `v3.changed` 是 **boolean**（`repairSessionForV3` 返回布尔），`false === 0` 恒为 false
+ * → 守卫永不成立 → **每次启动重写全部 79 个会话**（实测每轮 ~200MB 无效写入，
+ * 并堆积 79 个 `.bak` / 136MB，显著抬高 torn-write 概率）。
+ *
+ * 抽成**带类型的谓词**后，这类「字段类型与比较运算符不匹配」的缺陷在编译期即被 tsc 拦下
+ * （`boolean === 0` 报 TS2367），不再依赖人眼审阅。参数类型即契约，勿改宽。
+ */
+export function sessionRepairNeedsWrite(
+  normChanged: number,
+  v3Changed: boolean,
+  seqRepaired: boolean,
+): boolean {
+  void normChanged
+  return seqRepaired || v3Changed || normChanged !== 0
+}
+
 // ---------------------------------------------------------------------------
 // seq 断号修复 / 会话回退（真机实测：agent 手写 session.jsonl seq 跳号 →
 // DSH 拒绝打开 "corrupt session log: seq gap in committed region"）
@@ -2037,7 +2057,11 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         const v3 = repairSessionForV3(norm.content)
         const r = repairSessionSeqs(v3.content)
         if (r.error) { errors.push(`${h.sessionId}: ${r.error}`); continue }
-        if (!r.repaired && norm.changed === 0 && v3.changed === 0) continue
+        // 【2026-09-11 修复】原守卫写作 `norm.changed === 0 && v3.changed === 0`，但
+        // `v3.changed` 是 **boolean** → `false === 0` 恒为 false → 守卫永不成立 →
+        // **每次启动重写全部 79 个会话**（~200MB 无效写入 + 79 个 .bak / 136MB 堆积）。
+        // 改走带类型谓词，类型不匹配时 tsc 直接报错（TS2367），不再靠人眼。
+        if (!sessionRepairNeedsWrite(norm.changed, v3.changed, r.repaired)) continue
         // 【2026-09-10 回归事故防呆闸】官方 persistence `assertStoredIdentity` 要求
         // 物理路径恒等于 logPath(root, cwd, id)，即**目录名必须 == projectKey(header.cwd)**。
         // 本函数只该改事件、不该改 header.cwd；一旦某次「顺手」的 header 改写把 cwd 换了
