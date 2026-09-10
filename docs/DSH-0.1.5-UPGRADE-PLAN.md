@@ -398,8 +398,10 @@ adb pull /data/local/tmp/dsht-backup.tar.gz "D:/DSH RolePlay/backup/dsht-0.1.2-p
 
 | 风险 | 概率 | 影响 | 缓解 |
 |---|---|---|---|
-| 会话迁移失败（封闭清单） | 中 | **高**（历史会话打不开） | 阶段 0 全量备份；阶段 3 用副本先验 |
-| 迁移耗时不可接受（分钟级） | 中 | 中 | 阶段 3 实测；不可忍则暂缓或分批迁移 |
+| 会话迁移失败（封闭清单） | 中 | **高**（历史会话打不开） | 阶段 0 全量备份；阶段 3 用副本先验 → 🔴 **已发生，见附录 E：41/80 被拒** |
+| 🔴 我方写入的 `source` 扩展键违反 v0/v3 冻结契约（E-1/E-2） | **已确认（高）** | **高** | 前向修复 + 后向 normalizer（附录 E.5） |
+| 🔴 ST 导入伪造 `sourceEventSeqs` 语义（E-3，21 例） | **已确认（高）** | **高** | 修 ST 导入：不该写 `sourceEventSeqs`，必须先写匹配的 chunk |
+| 迁移耗时不可接受（分钟级） | ~~中~~ **已排除** | ~~中~~ 无 | 实测 151MB / 1.7s（附录 E.2） |
 | 补丁正则失效 | **高** | 中 | 构建期 throw（非静默）；阶段 1 静态预检 |
 | `convert-chat` 产出被 v3 拒 | **高** | 中 | 阶段 3 专项；可能改走官方 API |
 | 我方解析器漏 `system/message` | 中 | 中 | 175 处逐个复核；单测覆盖 |
@@ -419,6 +421,9 @@ adb pull /data/local/tmp/dsht-backup.tar.gz "D:/DSH RolePlay/backup/dsht-0.1.2-p
 | **B** | 是否接受一次性会话迁移耗时 | ① 接受 ② 先只迁新会话，旧的留 v1 存档 | 待阶段 3 实测数据后再定 |
 | **C** | `in-history` 是否启用 | ① 升级后独立评估 ② 现在就规划切 `llm-deepseek` | **①** —— 不与升级绑定，避免变量叠加 |
 | **D** | D-6（31 个工具）是否随升级一并处理 | ① 一并 ② 分开 | **②** —— 升级已够大，一次只动一个变量 |
+| **D1** 🆕 | 是否继续 0.1.5 升级（**附录 E 发现 51% 会话被拒**） | ① 继续（做前向+后向修复）② 暂停，留在 0.1.2 ③ 继续但接受老会话不可用 | **②** —— 收益不确定、代价已量化；详见附录 E.6 |
+| **D2** 🆕 | 若继续：`thData/thSystem/ejsProcessed` 迁到哪 | ① 我方 `.dsh/rp/state/*.json` ② 自定义 content block ③ 丢弃 | **①** |
+| **D3** 🆕 | 是否允许一次性 normalizer 改写既有会话文件 | ① 允许（备份 + 副本验证）② 不允许 | **①**（回滚保险已四层） |
 
 ---
 
@@ -654,3 +659,94 @@ throwLastError  throwWin32  waitForProcessExit
 > 根因却是 ESM **静态导入**在加载期失败。
 > **排查捷径**：`logcat | grep "does not provide an export named"` —— 一眼定位缺失包。
 > **预防**：升级后立即比对 `src/node_modules/@deepseek-ai/` 与旧版清单的**包名差集**。
+
+---
+
+## 附录 E：🔴 阶段 3 全会话迁移扫射 —— 41/80 会话被 v3 拒绝（2026-09-10 心跳 42）
+
+**一句话结论：以现状升级到 0.1.5-rc.1，51% 的既有会话会打不开（被迁移链拒绝）。**
+这是本次升级发现的**比缺包更严重**的问题 —— 缺包影响"能不能启动"，本问题影响"老数据还在不在"。
+
+### E.1 方法（全部零副作用）
+
+| 工具 | 作用 | 新增/改动 |
+|---|---|---|
+| `rp-workspace/scripts/session-migrate-headless.mjs` | 用官方 catalog 把单份会话就地迁移到 v3（副本安全） | 🆕 |
+| `rp-workspace/scripts/session-migrate-sweep.mjs` | 对整棵会话树逐个体检，**dry-run 不写产物** | 🆕 |
+| `tools/verify-session-migration.py` | 新增 `deep` 命令：**形状无关**的字符串集合对比 | ✏️ 增强 |
+
+- 数据源：设备会话树快照 `stage3-device/pre-migration/sessions-before.tar`
+  （178MB / 108 条目 / `adb exec-out run-as ... tar -cf -` 直取，**取自设备真实字节**）
+- 迁移参数与运行时**逐字段对齐**：`dsh-session-persistence-jsonl/lib/index.js:2293`
+  用的是 `recovery:'recoverable'`（`:984` 的 `strict` 仅用于头部分类）。
+  **两种策略实测结果完全一致**（39 成功 / 41 失败）→ 说明是**语义拒绝**，不是可跳过的坏行。
+
+### E.2 结果
+
+| 指标 | 值 |
+|---|---|
+| 会话总数 | 80（去重后） |
+| **成功** | **39** |
+| **失败** | **41（51.3%）** |
+| 总数据量 | 151.0 MB |
+| **总耗时** | **1.7 s**（最大单会话 62.3MB → 710 ms） |
+
+> ✅ **顺带解除一项风险**：作战地图 §5 的「迁移耗时不可接受（分钟级）」**不成立** ——
+> 迁移是毫秒级，用户无感。假设 H4 结论：耗时可忽略。
+
+### E.3 五类根因（含 file:line 证据）
+
+| # | 失败类 | 次数 | 违规形状 | 写入方 | 契约证据 |
+|---|---|---|---|---|---|
+| **E-1** | `source has unexpected member "regeneratedFrom" / "rolledBackTo" / "editedFrom"` | **7** | `{kind:'plugin',plugin:'dsht-rp',regeneratedFrom:N}` | **我方** | `dsh-plugin/index.ts:4825,4826,4984`；`v0-to-v1/lib/index.js` `pluginSourceValue()` → 允许键**仅** `{kind,plugin,form,sections,summary}` |
+| **E-2** | `message source has unexpected member "plugin" / "ejsProcessed" / "thData" / "thSystem"` | 1（+潜在批量） | `{kind:'model',provider,model,plugin,ejsProcessed,thData,…}` | **我方** | `dsh-plugin/index.ts:6094-6110, 6237-6250`；契约 `assertReleasedV0Keys(source,["kind","provider","model"],["replayState"])` |
+| **E-3** | `assistant/message N chunk provenance is not one complete ordered attempt` | **21** | `assistant/message` 带 `sourceEventSeqs:[<上一条 assistant/message 的 seq>]`，而日志里**零** `assistant/chunk` | **我方（ST 导入）** | `v1-to-v2/lib/index.js:539`；样本 `rp-f2p61e--/st-jvohnp`：23 条 assistant/message / 0 条 chunk / seq5 → `sourceEventSeqs:[2]` |
+| **E-4** | `user/message N data lacks required member "id"` | **9** | `user/message` 事件缺 `id` | **我方** | `v0-to-v1/lib/index.js:224-229`（`role,id,content,source` **四项全必填**） |
+| **E-5** | 单例四宗 | **4** | `compaction/prune shadowedRange must match shadowedSeqs endpoints`（1）／`turn/start N does not open expected turn 2`（1）／`[v2→v3] turn/end has unexpected field source`（1）／`malformed: header cwd must be absolute`（1，`dsht-welcome`） | 待查 | 见 `.goal/upgrade-0.1.5/sweep-2026-09-10.log` |
+
+> ⚠️ **勘误（防止后人误判）**：`kind:'skill-catalog'`、`kind:'user'` 的 `entries`/`rpcId`/`clientTimeZone`
+> **不是**失败原因 —— 已在 `v0-to-v1/lib/index.js:860` 确认 `skill-catalog` 合法且允许 `{kind,form,entries,update}`。
+> 初次粗筛脚本的"违规"标记是误报。
+
+**E-2 的自我证伪**：`dsh-plugin/index.ts:6094` 的注释白纸黑字写着
+「thSystem/thData 作为 model source 的扩展键随行（**校验只查 kind/provider/model**）」——
+这个假设在 0.1.2 成立、在 0.1.5 的 `assertReleasedV0Keys` 下**已经不成立**。
+→ 印证 LEARNINGS L1 的反面：**"校验宽松"这种依赖不会在升级时抛错，只会静默变成拒绝**。
+
+### E.4 影响判定
+
+1. 升级到 0.1.5-rc.1 后 **51% 既有会话被拒绝**（表现：会话打不开，或打开后历史为空）。
+2. **新会话不受影响**（v3 原生写入）。
+3. 设备实测旁证：设备上 `session.v3.jsonl` **0 个**；当前 UI 已打开的会话
+   （`64e580f0`，适配器子代）其 `session.jsonl` mtime 仍是 `09-08 20:17` 未被改写
+   → 与"迁移未发生/被拒"一致（**注意：这是旁证，非定罪证据**，因为迁移可能只在 append 时落盘）。
+
+### E.5 修复路径（三选一或组合）
+
+| 路径 | 做法 | 工作量 | 风险 |
+|---|---|---|---|
+| **① 前向修复（写侧）** | 我方插件改用合法槽位：E-1 → `{kind:'plugin',plugin:'dsht-rp',form:'snapshot',sections:[{name:'dsht-rp:marker',text:JSON}]}` | 中（4~5 文件 + 全部读路径） | 低 |
+| **② 后向规范化（读前）** | 一次性 normalizer 改写既有 v0 文件；E-1/E-3/E-4 可机械修 | 中 | 中（改历史数据，需备份） |
+| **③ 不升级** | 留在 0.1.2 | 0 | 0（但放弃 D-4 的可能解） |
+
+> 🔴 **E-2 是硬骨头**：v0 契约下 `assistant/message` 的 `source` **必须** `kind==='model'`，
+> 而 model source 只允许 `replayState` 这个可选键；`message` 本身又是
+> `exactRecord(id, role, content, source)` —— **没有任何合法扩展槽位**。
+> → `thData` / `thSystem` / `ejsProcessed` **必须迁出 source**，改存我方自有
+> `.dsh/rp/state/*.json`（`getChatMessages` 回读路径同步改）。
+> 这已不是"加个字段"，而是**元数据持久化方式的架构调整**。
+
+### E.6 决策点（新增，并入 §6）
+
+| # | 决策 | 选项 | 我的建议 |
+|---|---|---|---|
+| **D1** | 是否继续 0.1.5 升级 | ① 继续（做完 ①+② 修复）② 暂停升级，留在 0.1.2 ③ 继续但接受"老会话不可用" | 见下方"建议" |
+| **D2** | 若继续：`thData` 等元数据迁到哪 | ① 我方 `.dsh/rp/state/*.json`（推荐）② 塞进 `content` 的自定义 block ③ 丢弃 | **①** |
+| **D3** | 是否允许写一次性 normalizer 改写既有会话文件 | ① 允许（先全量备份 + 副本验证）② 不允许 | **①**（回滚保险已四层） |
+
+**我的建议（供拍板）**：升级的**唯一动机**是"`in-history` 可能解开 D-4"，收益是**不确定的**；
+而代价已量化为"51% 老会话需修复 + 元数据持久化改造 + 4 宗未查清单例"。
+→ 倾向 **② 暂停升级**，先把 E-1/E-3/E-4 当作**独立缺陷**修掉（它们在 0.1.2 下也是错的：
+`sourceEventSeqs` 语义错用会污染任何依赖它的逻辑），等修复沉淀后再评估升级。
+**注意**：目前设备**零改动**（所有会话仍是 v0、无 v3 产物），因此"暂停"不需要回滚动作。
+

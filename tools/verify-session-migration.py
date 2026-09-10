@@ -251,6 +251,118 @@ def cmd_scan(args):
     return 0
 
 
+def collect_strings(obj, out, min_len=6):
+    """递归收集任意 JSON 结构里的字符串值（形状无关）。"""
+    if isinstance(obj, str):
+        if len(obj) >= min_len:
+            out.append(obj)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            collect_strings(v, out, min_len)
+    elif isinstance(obj, list):
+        for v in obj:
+            collect_strings(v, out, min_len)
+
+
+def strings_of(path, min_len=6):
+    """
+    返回 (内容字符串多重集 Counter, 内容字符串集合 set, 事件类型集合 set)。
+    「内容」= 事件 data 内递归抽取的字符串值，**不含**事件 type 判别式本身
+    —— 判别式改名（code-dispatch→ptc-dispatch）是结构演进而非内容丢失。
+    """
+    from collections import Counter
+    _h, events, _p = load_session(path)
+    acc = []
+    types = set()
+    for ev in events:
+        if isinstance(ev, dict) and ev.get("type"):
+            types.add(ev["type"])
+        collect_strings(ev.get("data"), acc, min_len)
+    return Counter(acc), set(acc), types
+
+
+# 已知的「结构判别式」——它们出现在被压缩/改名的事件信封里，不是用户内容。
+# 依据（2026-09-10 实证，tmp/big-session-v0→v3）：
+#   · v1→v2 把 assistant/chunk 流合并，chunk.type 判别式 text-delta /
+#     reasoning-delta / tool-call-delta 随之消失；其承载的文本与
+#     assistant/message 逐字重复（已验证 6/6 轮 完全相等），故为无损压缩。
+STRUCTURAL_LOST_ALLOWLIST = {
+    "text-delta",
+    "reasoning-delta",
+    "tool-call-delta",
+    "text-chunks",
+    "reasoning-chunks",
+    "tool-call-chunks",
+    "assistant/chunk",
+    "tool/code-dispatch",
+    "tool/code-dispatch-start",
+}
+
+
+def cmd_deep(args):
+    """
+    形状无关的内容保全检查：递归抽取所有字符串值，做多重集与集合对比。
+    判据：
+      · 「真丢失」= A 的字符串集合 - B 的字符串集合，应为空
+        （assistant/chunk 被丢弃是允许的，因为其文本与 assistant/message 逐字重复，
+          重复文本仍存在于 B 的集合中 → 不会出现在差集里）
+      · 「新增」= B - A，应只有系统提示词等已知新增内容
+    """
+    a_path, b_path = args[0], args[1]
+    ca, sa, ta = strings_of(a_path)
+    cb, sb, tb = strings_of(b_path)
+    print("=" * 68)
+    print("深度内容对比（形状无关）")
+    print("=" * 68)
+    print("  A = %s" % a_path)
+    print("  B = %s" % b_path)
+    print()
+    print("  A 内容字符串：%d 个 / %d 字符（去重后 %d 个）" %
+          (sum(ca.values()), sum(len(s) for s in ca.elements()), len(sa)))
+    print("  B 内容字符串：%d 个 / %d 字符（去重后 %d 个）" %
+          (sum(cb.values()), sum(len(s) for s in cb.elements()), len(sb)))
+    print()
+
+    # 结构演进：事件类型改名（不计入内容丢失）
+    print("  【结构演进】事件类型变化")
+    print("      移除类型：%s" % (", ".join(sorted(ta - tb)) or "（无）"))
+    print("      新增类型：%s" % (", ".join(sorted(tb - ta)) or "（无）"))
+    print()
+
+    lost = sa - sb
+    structural = {s for s in lost if s in STRUCTURAL_LOST_ALLOWLIST}
+    real_lost = lost - structural
+    print("  【真丢失】A 有而 B 无的**内容字符串**：%d 个" % len(lost))
+    for s in sorted(lost, key=lambda x: -len(x))[:15]:
+        tag = "  [结构判别式·已豁免]" if s in STRUCTURAL_LOST_ALLOWLIST else "  ⚠️ 未豁免"
+        print("      - (%5d 字符) %s%s" % (len(s), s[:60].replace("\n", "\\n"), tag))
+
+    added = sb - sa
+    print()
+    print("  新增内容字符串：%d 个" % len(added))
+    for s in sorted(added, key=lambda x: -len(x))[:5]:
+        print("      + (%5d 字符) %s" % (len(s), s[:70].replace("\n", "\\n")))
+
+    print()
+    checks = []
+    def chk(name, ok, detail):
+        checks.append((name, ok, detail))
+        print("  %s %-30s %s" % ("✓" if ok else "✗", name, detail))
+
+    lost_chars = sum(len(s) for s in lost)
+    chk("无内容真丢失", len(real_lost) == 0,
+        "未豁免丢失 %d 个 / %d 字符（结构判别式豁免 %d 个）"
+        % (len(real_lost), sum(len(s) for s in real_lost), len(structural)))
+
+    print()
+    failed = [c for c in checks if not c[1]]
+    if failed:
+        print("  ⚠️  %d 项未通过 —— 需人工判断丢失项是否可接受" % len(failed))
+        return 1
+    print("  ✓ 内容集合为超集 —— 迁移无内容丢失")
+    return 0
+
+
 def main():
     if len(sys.argv) < 3:
         print(__doc__)
@@ -264,6 +376,8 @@ def main():
         return cmd_compare(args)
     if cmd == "scan":
         return cmd_scan(args)
+    if cmd == "deep":
+        return cmd_deep(args)
     print("未知命令：%s" % cmd)
     print(__doc__)
     return 1
