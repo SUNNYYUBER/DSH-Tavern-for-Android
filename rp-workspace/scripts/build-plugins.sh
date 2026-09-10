@@ -16,7 +16,14 @@ NODE="C:/nvm4w/nodejs/node.exe"
 ESB="$WS/packages/node_modules/esbuild/bin/esbuild"
 PKG="$WS/packages"
 DST="${1:-dsh-runtime-android}"
-[ "${DST:0:1}" != "/" ] && DST="$WS/$DST"
+# 绝对路径判定必须含 Windows 盘符：`D:/...` 以 `D` 开头而非 `/`，
+# 原判据 `${DST:0:1} != "/"` 会把 Windows 绝对路径再拼一次 $WS →
+# `D:/.../rp-workspace/D:/.../rp-workspace/dsh-runtime-android`（实机构建直接失败）。
+# 该分支此前一直走不到（build-wb.sh 老版本永远「跳过构建」），修新鲜度戳后才暴露。
+case "$DST" in
+  /*|[A-Za-z]:[/\\]*) : ;;                # 已是绝对路径（POSIX 或 Windows 盘符）
+  *) DST="$WS/$DST" ;;
+esac
 NM="$DST/node_modules"
 
 say() { echo "[plugins] $*"; }
