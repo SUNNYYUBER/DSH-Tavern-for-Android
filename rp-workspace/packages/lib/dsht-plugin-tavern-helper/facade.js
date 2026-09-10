@@ -623,7 +623,7 @@ async function chatMessages(dshHome, body) {
     }
     if (!hit)
         return { status: 404, body: { error: `session not found: ${sessionId}` } };
-    const logPath = (0, node_path_1.join)(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl');
+    const logPath = hit.file;
     // 【轮询风暴根修】mtime+size 未变 → 直接回缓存（.stat ~µs 级 vs 全量重扫 ~6s）
     let cached;
     try {

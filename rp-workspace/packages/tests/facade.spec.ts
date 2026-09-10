@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   buildStPromptView, chatMessages, flushEntryPuts, loreEntryToSt, presetLoad, presetNames, presetPut,
-  regexesGet, regexesReplace, stEntryToLore, worldbookEntryPut, worldbookGet, worldbookList,
+  regexesGet, regexesReplace, stEntryToLore, variableSchemaRegister, worldbookEntryPut, worldbookGet, worldbookList,
 } from '../src/dsht-plugin-tavern-helper/facade.ts'
 import { emptyPreset, type RPPreset } from '../src/preset/schema.ts'
 import type { LoreBook } from '../src/lore/entry.ts'
@@ -374,5 +374,102 @@ describe('门面：chat/messages 基本映射', () => {
     ])
     const r404 = await chatMessages(home, { sessionId: 'ghost' })
     expect(r404.status).toBe(404)
+  })
+})
+
+/**
+ * 门面：variables/schema 注册（TH `registerVariableSchema(schema, {type})` 契约）
+ * ------------------------------------------------------------------
+ * 【实机缺陷 2026-09-11】旧 shim 把 TH 的 `(schema, option)` 读成 `(name, schema)`：
+ *   arg0（zod 对象）→ String() = "[object Object]"；arg1（作用域）当成 schema 存。
+ * 结果 rp/state/<sid>.json 里长出 `variableSchema.properties["[object Object]"] = {type:'message'}`，
+ * 卡脚本读 schema 即 "Data Error"（静默：不抛错、路由 200）。
+ *
+ * 权威契约：ST 扩展 JS-Slash-Runner `@types/function/variables.d.ts:203-206`
+ *   registerVariableSchema(schema: z.ZodType, option: {type:'global'|'preset'|'character'|'chat'|'message'})
+ * 修复后端：shim 传 `scope === 'message' ? '' : scope`（message 作用域 = 整树，无需嵌套）；
+ *          门面把未知/非白名单 name 一律规整为整树，并清理历史垃圾键。
+ */
+describe('门面：variables/schema 注册（TH registerVariableSchema 契约）', () => {
+  const SID = 'sid-sch'
+  /** 读回 rp/state/<sid>.json 的 variableSchema.properties */
+  async function propsOf(sid = SID): Promise<Record<string, unknown>> {
+    const f = await readJson(`rp/state/${sid}.json`)
+    return ((f.variableSchema as { properties?: Record<string, unknown> } | undefined)?.properties) ?? {}
+  }
+
+  it('合法作用域 → 收进 properties.<scope>，整树与 variables 不被覆盖', async () => {
+    await seedJson(`rp/state/${SID}.json`, {
+      variables: { 好感: 12 },
+      variableSchema: { type: 'object', properties: { chat: { type: 'object' } } },
+    })
+    const r = await variableSchemaRegister(home, {
+      sessionId: SID, name: 'global',
+      variableSchema: { type: 'object', properties: { 生命: { type: 'number' } } },
+    })
+    expect(r.status).toBe(200)
+    const props = await propsOf()
+    expect(Object.keys(props).sort()).toEqual(['chat', 'global'])
+    expect((props.global as { properties: { 生命: unknown } }).properties.生命).toEqual({ type: 'number' })
+    const f = await readJson(`rp/state/${SID}.json`)
+    expect(f.variables).toEqual({ 好感: 12 })
+  })
+
+  it('message 作用域（shim 规整为空串）→ 整树替换', async () => {
+    await seedJson(`rp/state/${SID}.json`, {
+      variableSchema: { type: 'object', properties: { global: { type: 'object' } } },
+    })
+    const r = await variableSchemaRegister(home, {
+      sessionId: SID, name: '',
+      variableSchema: { type: 'object', properties: { 场景: { type: 'string' } } },
+    })
+    expect(r.status).toBe(200)
+    const f = await readJson(`rp/state/${SID}.json`)
+    expect(f.variableSchema).toEqual({ type: 'object', properties: { 场景: { type: 'string' } } })
+  })
+
+  it('字面 "message" 也按整树处理（与空串同义，避免多出一个同名作用域键）', async () => {
+    const r = await variableSchemaRegister(home, {
+      sessionId: SID, name: 'message',
+      variableSchema: { type: 'object', properties: { a: { type: 'string' } } },
+    })
+    expect(r.status).toBe(200)
+    const f = await readJson(`rp/state/${SID}.json`)
+    expect(f.variableSchema).toEqual({ type: 'object', properties: { a: { type: 'string' } } })
+    expect(await propsOf()).toEqual({ a: { type: 'string' } })
+  })
+
+  it('历史垃圾键 "[object Object]" 在任意一次注册时被清理（卡脚本 Data Error 的根因）', async () => {
+    await seedJson(`rp/state/${SID}.json`, {
+      variableSchema: {
+        type: 'object',
+        properties: { '[object Object]': { type: 'message' }, chat: { type: 'object' } },
+      },
+    })
+    const r = await variableSchemaRegister(home, {
+      sessionId: SID, name: 'global', variableSchema: { type: 'object' },
+    })
+    expect(r.status).toBe(200)
+    const props = await propsOf()
+    expect(Object.prototype.hasOwnProperty.call(props, '[object Object]')).toBe(false)
+    expect(Object.keys(props)).toEqual(['chat', 'global'])
+  })
+
+  it('非白名单 name（老 shim 参数错位残形）→ 规整为整树，不当作用域键', async () => {
+    const r = await variableSchemaRegister(home, {
+      sessionId: SID, name: '{"type":"object"}',
+      variableSchema: { type: 'object', properties: { x: { type: 'string' } } },
+    })
+    expect(r.status).toBe(200)
+    const f = await readJson(`rp/state/${SID}.json`)
+    expect(f.variableSchema).toEqual({ type: 'object', properties: { x: { type: 'string' } } })
+  })
+
+  it('缺 sessionId / schema 非对象 → 400 且不落盘', async () => {
+    const noSid = await variableSchemaRegister(home, { variableSchema: { type: 'object' } })
+    expect(noSid.status).toBe(400)
+    const badSchema = await variableSchemaRegister(home, { sessionId: SID, variableSchema: 'nope' })
+    expect(badSchema.status).toBe(400)
+    await expect(readJson(`rp/state/${SID}.json`)).rejects.toThrow()
   })
 })

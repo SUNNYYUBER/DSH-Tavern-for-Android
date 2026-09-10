@@ -274,13 +274,33 @@ export declare function renderWorldInfoSnapshot(activated: Array<{
     char: string;
     user: string;
 }): string;
-/** header cwd 是否需要修复（仅处理 Android symlink 形态；相对路径/其他形态不动） */
+/**
+ * header cwd 是否需要规范化（两种形态）：
+ *  ① Android symlink 形态 `/data/user/0/…`（与 WorkspaceRegistry 的 realpath 规范形态不一致）
+ *  ② **非绝对路径**（v0 迁移器硬要求 `header cwd must be absolute`；历史引导会话
+ *     写的是 `rp/_start` 这种相对形态）——【阶段3 2026-09-10 新增】
+ * 绝对且已规范的路径不动。
+ */
 export declare function sessionCwdNeedsRepair(cwd: unknown): cwd is string;
 /**
  * 改写 session.jsonl 首行 header 的 cwd（只动首行；事件行不碰）。
  * 返回 null = 不是 session header / 无需改。
  */
 export declare function rewriteSessionHeaderCwd(line: string, canonicalCwd: string): string | null;
+/** 读一段会话文本首行的 header.cwd（非 session header / 非法 JSON → null）。 */
+export declare function sessionHeaderCwd(content: string): string | null;
+/**
+ * 三步修复链是否需要落盘（= 是否有真实改动）。
+ *
+ * 【为什么单独抽出来】历史事故：守卫写成 `... && v3.changed === 0`，
+ * 而 `v3.changed` 是 **boolean**（`repairSessionForV3` 返回布尔），`false === 0` 恒为 false
+ * → 守卫永不成立 → **每次启动重写全部 79 个会话**（实测每轮 ~200MB 无效写入，
+ * 并堆积 79 个 `.bak` / 136MB，显著抬高 torn-write 概率）。
+ *
+ * 抽成**带类型的谓词**后，这类「字段类型与比较运算符不匹配」的缺陷在编译期即被 tsc 拦下
+ * （`boolean === 0` 报 TS2367），不再依赖人眼审阅。参数类型即契约，勿改宽。
+ */
+export declare function sessionRepairNeedsWrite(normChanged: number, v3Changed: boolean, seqRepaired: boolean): boolean;
 export interface SessionSeqRepair {
     /** 是否发生了修复（false = seq 本就连续，幂等短路） */
     repaired: boolean;

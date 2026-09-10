@@ -55,6 +55,7 @@ exports.planAssistantRewrite = planAssistantRewrite;
 exports.markerSource = markerSource;
 exports.readMarker = readMarker;
 exports.readLegacySourceKeys = readLegacySourceKeys;
+exports.readSurgicalPayload = readSurgicalPayload;
 exports.readSurgicalAnchor = readSurgicalAnchor;
 exports.sanitizeEnvelope = sanitizeEnvelope;
 /** 从 surfaceOp 里读区间（兼容两代字段名） */
@@ -196,6 +197,38 @@ function readLegacySourceKeys(source) {
         out.thData = s.thData;
     return out;
 }
+/** 三路合并读手术标记载荷（缺失/非法一律忽略，不抛）。 */
+function readSurgicalPayload(source) {
+    const out = {};
+    const merge = (v) => {
+        if (v === null || typeof v !== 'object')
+            return;
+        const o = v;
+        if (typeof o.rolledBackTo === 'number')
+            out.rolledBackTo = o.rolledBackTo;
+        if (typeof o.regeneratedFrom === 'number')
+            out.regeneratedFrom = o.regeneratedFrom;
+        if (typeof o.editedFrom === 'number')
+            out.editedFrom = o.editedFrom;
+        if (typeof o.variantOf === 'number')
+            out.variantOf = o.variantOf;
+        if (Array.isArray(o.shadowedSeqs))
+            out.shadowedSeqs = o.shadowedSeqs.filter((n) => typeof n === 'number');
+    };
+    merge(readMarker(source, 'surgical'));
+    merge(readMarker(source, 'legacy'));
+    merge(readLegacySourceKeys(source)); // 顶层存量键（thSystem/thData 等被忽略）
+    // 顶层键里只有 rolledBackTo/regeneratedFrom/editedFrom 三个有意义；readLegacySourceKeys
+    // 的返回类型已覆盖它们，这里显式再取一次以兼容未被该函数覆盖的 variantOf。
+    if (source !== null && typeof source === 'object') {
+        const s = source;
+        if (typeof s.variantOf === 'number')
+            out.variantOf = s.variantOf;
+        if (Array.isArray(s.shadowedSeqs))
+            out.shadowedSeqs = s.shadowedSeqs.filter((n) => typeof n === 'number');
+    }
+    return out;
+}
 /**
  * 读历史标记锚点（新形态 + 存量形态统一读法）。
  * 返回「需要隐藏到哪一 seq」的锚点与标记自身 seq（UI 掩码用）。
@@ -204,17 +237,13 @@ function readSurgicalAnchor(ev) {
     const src = ev?.type === 'user/message' || ev?.type === 'assistant/message'
         ? (ev.data?.source ?? ev.data?.message?.source)
         : undefined;
-    const modern = readMarker(src, 'surgical');
-    const legacy = readLegacySourceKeys(src);
-    const rolled = modern?.rolledBackTo ?? legacy.rolledBackTo;
-    const regen = modern?.regeneratedFrom ?? legacy.regeneratedFrom;
-    const edited = modern?.editedFrom ?? legacy.editedFrom;
-    if (typeof rolled === 'number')
-        return { anchor: rolled };
-    if (typeof regen === 'number')
-        return { anchor: regen };
-    if (typeof edited === 'number')
-        return { anchor: edited - 1 };
+    const p = readSurgicalPayload(src);
+    if (typeof p.rolledBackTo === 'number')
+        return { anchor: p.rolledBackTo };
+    if (typeof p.regeneratedFrom === 'number')
+        return { anchor: p.regeneratedFrom };
+    if (typeof p.editedFrom === 'number')
+        return { anchor: p.editedFrom - 1 };
     return { anchor: null };
 }
 // ---------------------------------------------------------------- 事件信封

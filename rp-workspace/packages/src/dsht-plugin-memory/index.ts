@@ -55,7 +55,7 @@ import { scanSessionHeaders, type SessionHeaderHit } from '../dsht-plugin-shared
 import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
 // 【阶段3 2026-09-10】会话写入合法形态：surfaceOp 字段名自适应 + 合法标记载体
 // （0.1.5 起 start/end → startSeq/endSeq；source 顶层自定义键会被迁移器拒）
-import { markerSource, replaceRange, readMarker, appendReplace, type AppendableSession } from '../dsht-plugin-shared/session-write.ts'
+import { markerSource, replaceRange, readMarker, appendReplace, readSurgicalPayload, type AppendableSession } from '../dsht-plugin-shared/session-write.ts'
 // E1-E8/E11：表格系统（st-memory-enhancement 机制级移植）——纯逻辑层在本目录 tables.ts，
 // 这里只做数据面接线（/tables 读取 + step-summary/rebuild 两个 llm 路由）
 import {
@@ -205,12 +205,18 @@ export function extractFloorsFromEvents(events: SessionEventLike[]): { floors: F
   const skipRanges: Array<{ from: number; to: number }> = []
   for (const e of events) {
     if (!e || typeof e.type !== 'string' || e.type !== 'user/message' || typeof e.seq !== 'number') continue
-    const s = (e.data as { source?: { plugin?: unknown; rolledBackTo?: unknown; editedFrom?: unknown; regeneratedFrom?: unknown } | null } | undefined)?.source
+    const s = (e.data as { source?: { plugin?: unknown } | null } | undefined)?.source
     if (!s || s.plugin !== 'dsht-rp') continue
+    // 【阶段4 2026-09-11 修复 · 静默失败族】原实现只读 source 顶层的
+    // rolledBackTo/editedFrom/regeneratedFrom。0.1.5 起写侧改官方白名单形态
+    // （form:'snapshot' + sections[{name:'dsht:surgical', text}]，存量迁进 'dsht:legacy'），
+    // 顶层键恒 undefined → 掩码恒空 → 被回退的楼层继续进摘要（撤回的内容「复活」）。
+    // 统一走 readSurgicalPayload（新形态 + 存量形态 + 顶层键三路兜底）。
+    const payload = readSurgicalPayload(s)
     let hide = -1
-    if (typeof s.rolledBackTo === 'number') hide = s.rolledBackTo
-    if (typeof s.regeneratedFrom === 'number') hide = Math.max(hide, s.regeneratedFrom)
-    if (typeof s.editedFrom === 'number') hide = Math.max(hide, s.editedFrom - 1)
+    if (typeof payload.rolledBackTo === 'number') hide = payload.rolledBackTo
+    if (typeof payload.regeneratedFrom === 'number') hide = Math.max(hide, payload.regeneratedFrom)
+    if (typeof payload.editedFrom === 'number') hide = Math.max(hide, payload.editedFrom - 1)
     if (hide >= 0 && hide < e.seq) skipRanges.push({ from: hide + 1, to: e.seq - 1 })
   }
   const inSkipRange = (seq: number): boolean =>
@@ -1029,7 +1035,7 @@ export function apply(ctx: Ctx, _config: unknown): void {
     const header = (await refreshHeaders()).find(h => h.sessionId === sid)
     if (!header) return 0
     try {
-      const content = await readFile(join(dshHome, 'sessions', header.project, header.sdir, 'session.jsonl'), 'utf8')
+      const content = await readFile(header.file, 'utf8')
       let max = 0
       for (const m of content.matchAll(/第 1-(\d+) 楼原文已折叠/g)) max = Math.max(max, Number(m[1]))
       return max
@@ -1091,9 +1097,9 @@ export function apply(ctx: Ctx, _config: unknown): void {
   // 文件本体仍是标准世界书（skills/wb-memory-*/references/lore.json），世界书清单/TH
   // getWorldbooks 可见，用户可手查手改。
 
-  /** 读会话事件流（session.jsonl 全量解析；坏行跳过） */
+  /** 读会话事件流（当前世代日志全量解析；坏行跳过）。header.file 由 scanSessionHeaders 解析当前世代 */
   const readSessionEvents = async (header: SessionHeaderHit): Promise<SessionEventLike[]> => {
-    const sessionPath = join(dshHome, 'sessions', header.project, header.sdir, 'session.jsonl')
+    const sessionPath = header.file
     const content = await readFile(sessionPath, 'utf8')
     const events: SessionEventLike[] = []
     for (const line of content.split('\n')) {
@@ -1198,7 +1204,7 @@ export function apply(ctx: Ctx, _config: unknown): void {
         const prog = await loadProgress(sid)
         // turn 口径楼层总数（stat 缓存短路：文件未变直接用缓存，变化才全量解析）
         let floorCount = 0
-        try { floorCount = await floorCountOf(header, join(dshHome, 'sessions', header.project, header.sdir, 'session.jsonl')) } catch { continue }
+        try { floorCount = await floorCountOf(header, header.file) } catch { continue }
         // 回退：楼层总数落到 lastFloor 之前 → 裁记忆本 + 进度回退（不总结）
         if (floorCount < prog.lastFloor) {
           const book = await loadMemoryBook(slug)
@@ -1297,7 +1303,7 @@ export function apply(ctx: Ctx, _config: unknown): void {
       const st = JSON.parse(await readFile(join(dshHome, 'rp', 'state', `${sid}.json`), 'utf8').catch(() => '{}')) as { cursor?: unknown }
       const cursor = typeof st.cursor === 'number' ? st.cursor : 0
       let floors = 0
-      if (header) { try { floors = await floorCountOf(header, join(dshHome, 'sessions', header.project, header.sdir, 'session.jsonl')) } catch { /* 读失败按 0 */ } }
+      if (header) { try { floors = await floorCountOf(header, header.file) } catch { /* 读失败按 0 */ } }
       return sendJson(res, 200, {
         sessionId: sid,
         floors,

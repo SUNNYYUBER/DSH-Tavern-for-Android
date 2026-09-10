@@ -720,9 +720,10 @@ class SessionRuntime {
       await thApi('variables/merge', { sessionId: this.sessionId, variables: vars })
     },
     // C7 registerVariableSchema 数据面（成功提醒走 D8 开关）
+    // 注意 `name` 实为 TH 契约里的**作用域**（''/message = 本实现的整树存储）。
     varsSchemaPut: async (name, schema) => {
       await thApi('variables/schema', { sessionId: this.sessionId, name, variableSchema: schema })
-      this.notifyUser('success', `变量结构已注册${name ? `：${name}` : '（整树）'}`)
+      this.notifyUser('success', `变量结构已注册${name ? `（作用域：${name}）` : '（整树）'}`)
     },
     // C8 prompt 注入存储（消费接线归 dsh-plugin 主线程排程，宿主只落盘）
     injectsPut: async (injections) => {

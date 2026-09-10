@@ -72,10 +72,10 @@ export interface UndoResult {
   body: Record<string, unknown>
 }
 
-/** 按 header.id 定位会话文件（扫 sessions 全树 session.jsonl 首行） */
+/** 按 header.id 定位会话文件（扫 sessions 全树的当前世代日志首行） */
 async function locateSessionFile(dshHome: string, sessionId: string): Promise<string | null> {
   const hit = (await scanSessionHeaders(dshHome)).find(h => h.sessionId === sessionId)
-  return hit ? join(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl') : null
+  return hit ? hit.file : null
 }
 
 /**

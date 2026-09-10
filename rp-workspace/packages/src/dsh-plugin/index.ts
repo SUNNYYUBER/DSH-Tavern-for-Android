@@ -45,11 +45,11 @@ import { renderMessagesSandbox as ejsRenderMessagesSandboxVm } from '../dsht-plu
 import { expandTavernMacros, readVarPath, writeVarPath, registerMacro, unregisterMacro, listCustomMacros, hydrateCustomMacros } from '../dsht-plugin-shared/macros.ts'
 import { appendUndoEntries, makeUndoEntry, replayUndoLog } from '../dsht-plugin-shared/undo.ts'
 import { restoreSnapshotsAfter, snapshotBeforeWrite, snapshotRestoreBoundary } from '../dsht-plugin-shared/file-snapshots.ts'
-import { scanSessionHeaders as scanSessionHeadersShared, normalizeSnapshotMessageRoles, repairDuplicateTurnStarts } from '../dsht-plugin-shared/session-surgery.ts'
+import { scanSessionHeaders as scanSessionHeadersShared, normalizeSnapshotMessageRoles, repairDuplicateTurnStarts, currentSessionLogPath } from '../dsht-plugin-shared/session-surgery.ts'
 // 【阶段3 2026-09-10】会话写入合法形态层：surfaceOp 字段名自适应 + 合法标记载体
 // （0.1.5 把 start/end 改成 startSeq/endSeq，且禁止 assistant/message 做 replace 节点）
 import {
-  appendReplace, replaceRange, isReplaceOp, markerSource, readMarker, readLegacySourceKeys,
+  appendReplace, replaceRange, isReplaceOp, markerSource, readMarker, readLegacySourceKeys, readSurgicalAnchor,
   sanitizeEnvelope, planAssistantRewrite, type AppendableSession, type SurgicalMarkerPayload,
 } from '../dsht-plugin-shared/session-write.ts'
 // 【阶段3 2026-09-10】存量 v0 会话 → 0.1.5 可迁移形态（8 类不合规的纯函数重写器）
@@ -1233,6 +1233,30 @@ export function collectVariantGroups(events: Array<{ type: string; seq: number; 
     groups.set(anchor, g)
     groups.set(memberSeq, g)
   }
+  /**
+   * 把一组 **assistant 回复** 登记为变体组（阶段4 2026-09-11 新增）。
+   *
+   * 与 `addMember` 的区别：不假设「锚点本身就是一个成员」——回退/重生成标记的锚点
+   * 通常是 **user** seq（甚至插件注入 seq），`textOf` 对非 assistant 恒返回 ''，
+   * 于是 `addMember(hideAnchor, q, hideAnchor)` 会造出「首成员 text='' 且 active 就是它」
+   * 的假变体组：前端 `variantOverride` 取到该 active 后把整层正文渲染成空白
+   * （实机 floor #12 空白实证）。本函数只收 assistant seq，active 亦必为 assistant seq。
+   */
+  const addReplyGroup = (replySeqs: number[], active: number): void => {
+    const seqs = [...new Set([...replySeqs, active])].sort((a, b) => a - b)
+    if (seqs.length === 0) return
+    const first = seqs[0]
+    let g = groups.get(first)
+    if (g === undefined) {
+      g = { members: [{ seq: first, text: textOf(eventBySeq.get(first) ?? { type: '', seq: first }) }], activeSeq: active }
+      groups.set(first, g)
+    }
+    for (const q of seqs) {
+      if (!g.members.some(m => m.seq === q)) g.members.push({ seq: q, text: textOf(eventBySeq.get(q) ?? { type: '', seq: q }) })
+      groups.set(q, g)
+    }
+    g.activeSeq = active
+  }
 
   // ---- 形态 1（存量 0.1.2 会话）：assistant/message 自己做 replace 节点 + sourceEventSeqs 血缘 ----
   // 注：该形态在 0.1.5 已被官方禁止（见 session-write.ts），仅用于读旧会话。
@@ -1275,15 +1299,22 @@ export function collectVariantGroups(events: Array<{ type: string; seq: number; 
       addMember(anchor, next, next)
     }
     // 回退/重生成标记遮蔽的旧回复也纳入组（否则切回旧回复报 "target not in any variant group"）
+    // 【阶段4 2026-09-11 修复】原实现用 `addMember(hideAnchor, q, hideAnchor)`：hideAnchor
+    // 是回退**锚点**，通常是 user seq（乃至插件注入 seq），不是 assistant 楼层 →
+    // 首成员 text 恒 ''、active 也指向它 → 前端 variantOverride 把该层正文渲染成空白。
+    // 改为：成员只收 assistant 楼层；active = 标记之后的下一条 assistant（有 = 用户已
+    // 重新生成过，即新回复 = 新 active），没有则退回最后一条被遮蔽回复（此时组只剩 1 个
+    // 有效成员，前端归一化会整组丢弃——没有可切换的语义就不该渲染变体条）。
     const legacy = readLegacySourceKeys(src)
     const hideAnchor = marker?.regeneratedFrom ?? legacy.regeneratedFrom
       ?? marker?.rolledBackTo ?? legacy.rolledBackTo
     if (hideAnchor === undefined) continue
+    const shadowedReplies: number[] = []
     for (let q = range.start; q <= range.end; q++) {
-      const shadowed = eventBySeq.get(q)
-      if (shadowed?.type !== 'assistant/message') continue
-      addMember(hideAnchor, q, hideAnchor)
+      if (eventBySeq.get(q)?.type === 'assistant/message') shadowedReplies.push(q)
     }
+    if (shadowedReplies.length === 0) continue
+    addReplyGroup(shadowedReplies, next ?? shadowedReplies[shadowedReplies.length - 1])
   }
   return groups
 }
@@ -1911,7 +1942,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
     for (const h of await scanSessionHeaders()) {
       if (rpSlugFromCwd(h.cwd, dshHome) !== slug) continue
       try {
-        const m = (await stat(join(dshHome, 'sessions', h.project, h.sdir, 'session.jsonl'))).mtimeMs
+        const m = (await stat(h.file)).mtimeMs
         if (m > bestMtime) { best = h.sessionId; bestMtime = m }
       } catch { /* 无 session.jsonl */ }
     }
@@ -1925,7 +1956,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       const slug = rpSlugFromCwd(h.cwd, dshHome)
       if (slug === null || slug === '_start') continue
       try {
-        const m = (await stat(join(dshHome, 'sessions', h.project, h.sdir, 'session.jsonl'))).mtimeMs
+        const m = (await stat(h.file)).mtimeMs
         if (m > bestMtime) { best = h.sessionId; bestMtime = m }
       } catch { /* 无 session.jsonl */ }
     }
@@ -1941,7 +1972,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       const cwd = (h.cwd ?? '').replaceAll(sep, '/')
       if (!cwd.endsWith('rp-import/_adapter')) continue
       try {
-        const m = (await stat(join(dshHome, 'sessions', h.project, h.sdir, 'session.jsonl'))).mtimeMs
+        const m = (await stat(h.file)).mtimeMs
         if (m > bestMtime) { best = h.sessionId; bestMtime = m }
       } catch { /* 无 session.jsonl */ }
     }
@@ -2037,7 +2068,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         skipped.push({ sessionId: h.sessionId, reason: 'live（关闭会话后重跑）' })
         continue
       }
-      const file = join(dshHome, 'sessions', h.project, h.sdir, 'session.jsonl')
+      const file = h.file
       try {
         const st = await stat(file)
         if (st.size > REPAIR_MAX_FILE_BYTES) {
@@ -2936,7 +2967,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   void (async () => {
     let fixed = 0
     for (const h of await scanSessionHeaders()) {
-      const file = join(dshHome, 'sessions', h.project, h.sdir, 'session.jsonl')
+      const file = h.file
       try {
         const stat0 = await stat(file)
         if (stat0.size > 64 * 1024 * 1024) continue // 护栏与 repairAllSessionSeqs 同级
@@ -4663,7 +4694,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               for (const pk of await readdir(sessionsRoot).catch(() => [] as string[])) {
                 const pkDir = join(sessionsRoot, pk)
                 for (const sid of await readdir(pkDir).catch(() => [] as string[])) {
-                  const f = join(pkDir, sid, 'session.jsonl')
+                  const f = await currentSessionLogPath(dshHome, pk, sid)
                   let header: Record<string, unknown> = {}
                   let lines = 0
                   let lastTime: number | null = null
@@ -5001,7 +5032,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 }
                 const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId)
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` })
-                const file = join(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl')
+                const file = hit.file
                 const content = await readFile(file, 'utf8')
                 const r = truncateSessionJsonl(content, keepThroughSeq)
                 if (r.error) return send(400, { error: r.error })
@@ -5042,7 +5073,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 }
                 const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId)
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` })
-                const file = join(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl')
+                const file = hit.file
                 const content = await readFile(file, 'utf8')
                 const lines = content.split('\n')
                 let keep = -1
@@ -5160,7 +5191,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 }
                 const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId)
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` })
-                const file = join(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl')
+                const file = hit.file
                 const content = await readFile(file, 'utf8')
                 const events: Array<{ type: string; seq: number; data?: unknown }> = []
                 for (const line of content.split('\n').slice(1)) {
@@ -5206,7 +5237,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               let hide = 0
               const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId)
               if (hit) {
-                const file = join(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl')
+                const file = hit.file
                 const fm = await stat(file).then(s => ({ size: s.size, mtimeMs: s.mtimeMs })).catch(() => null)
                 const cached = rollbackMaskCache.get(file)
                 if (fm !== null && cached !== undefined && cached.size === fm.size && cached.mtimeMs === fm.mtimeMs) {
@@ -5215,16 +5246,24 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 const content = await readFile(file, 'utf8')
                 // 【⑨修复 2026-09-05】掩码只隐被 replace 的那段，不隐 marker 之后的新消息：
                 // 扫描时若 marker 之后已存在 source.kind === 'user' 的新消息，掩码失效
+                //
+                // 【阶段4 2026-09-11 修复 · 静默失败族】原实现**只读 source 顶层**的
+                // `rolledBackTo / editedFrom / regeneratedFrom`。0.1.5 迁移不再允许
+                // source 上的扩展键（`source has unexpected member` 整会话打不开），
+                // 写侧已改为官方白名单形态 `form:'snapshot' + sections[{name:'dsht:surgical',
+                // text: JSON.stringify(payload)}]`（0.1.2 存量会话被迁移器搬进
+                // `name:'dsht:legacy'` 段）。顶层键从此恒 undefined → hide 恒 0 →
+                // **回退/编辑/重新生成后 UI 永不隐藏被移除的楼层**（服务端已正确截断，
+                // 前端照旧显示，无任何报错——典型静默失败）。统一走 readSurgicalAnchor
+                // （新形态 + 存量形态 + 顶层键三路兜底，与写侧同一套语义）。
                 let markerSeq = -1
                 for (const line of content.split('\n')) {
-                  if (!line.includes('rolledBackTo') && !line.includes('editedFrom') && !line.includes('regeneratedFrom')) continue
+                  if (!line.includes('dsht:surgical') && !line.includes('dsht:legacy')
+                    && !line.includes('rolledBackTo') && !line.includes('editedFrom') && !line.includes('regeneratedFrom')) continue
                   try {
-                    const ev = JSON.parse(line) as { seq?: number; data?: { source?: { rolledBackTo?: unknown; editedFrom?: unknown; regeneratedFrom?: unknown } } }
-                    const s = ev.data?.source
-                    if (!s) continue
-                    if (typeof s.rolledBackTo === 'number') { hide = Math.max(hide, s.rolledBackTo); markerSeq = Math.max(markerSeq, ev.seq ?? -1) }
-                    if (typeof s.regeneratedFrom === 'number') { hide = Math.max(hide, s.regeneratedFrom); markerSeq = Math.max(markerSeq, ev.seq ?? -1) }
-                    if (typeof s.editedFrom === 'number') { hide = Math.max(hide, s.editedFrom - 1); markerSeq = Math.max(markerSeq, ev.seq ?? -1) }
+                    const ev = JSON.parse(line) as { type?: string; seq?: number; data?: unknown }
+                    const { anchor } = readSurgicalAnchor(ev)
+                    if (anchor !== null) { hide = Math.max(hide, anchor); markerSeq = Math.max(markerSeq, ev.seq ?? -1) }
                   } catch { /* 坏行跳过 */ }
                 }
                 // marker 之后的新用户消息 → 掩码失效（新消息 seq > markerSeq 且 source.kind === 'user'）

@@ -224,6 +224,60 @@ export function readLegacySourceKeys(source: unknown): LegacySourceKeys {
 }
 
 /**
+ * 手术类标记载荷（回退/编辑/重生成/变体）。
+ * 读侧统一入口：`readSurgicalPayload` 把 ① 新形态 `sections[name='dsht:surgical']`、
+ * ② 0.1.2 存量会话被迁移器搬进的 `sections[name='dsht:legacy']`、
+ * ③ 更早期直写 source 顶层的键 —— 三路合并成同一个形状。
+ *
+ * 【为什么必须有这个统一读法】0.1.5 起 source 只允许官方白名单键，写侧已迁到
+ * sections；任何**仍读顶层键**的消费方都会静默拿到 undefined（无报错、无日志），
+ * 表现为「回退后 UI 不隐藏」「记忆侧继续摘要已被撤回的内容」。已修的三处：
+ * dsh-plugin 的 /rp/rollback-mask、dsht-plugin-memory 的 extractFloorsFromEvents、
+ * dsht-rp-ui 的 hideAfterOf（后者已废弃恒 0，权威来源是前者路由）。
+ */
+export interface SurgicalPayload {
+  rolledBackTo?: number
+  regeneratedFrom?: number
+  editedFrom?: number
+  variantOf?: number
+  shadowedSeqs?: number[]
+}
+
+/**
+ * 三路合并读手术标记载荷（缺失/非法一律忽略，不抛）。
+ *
+ * 【合并语义：先到先得（fill-if-unset），不是后到覆盖】
+ *   三个来源物理上互斥（一个 source 只会是其中一种形态），但防御性兼容时可能共存。
+ *   优先级 = 调用顺序：**新形态 sections[dsht:surgical] > 存量 sections[dsht:legacy] > 顶层键**。
+ *   为什么必须"先到先得"：后到覆盖会让**旧形态**盖掉**新形态**——
+ *   例如新形态写 `rolledBackTo: 0`（"无回退"的有效表达），存量段里躺着 `rolledBackTo: 11`，
+ *   覆盖语义会解出 11 → UI 隐藏一段本应可见的楼层（静默错）。
+ *
+ * 【数组只在"非空数字数组"时落值】
+ *   空数组 `[]` 不是有效信息（写侧用字段缺失表达"无遮蔽"），若允许它落值，
+ *   一次 `merge` 就能把先前解出的 `[79,80,82]` 清成 `[]`，同样静默。
+ */
+export function readSurgicalPayload(source: unknown): SurgicalPayload {
+  const out: SurgicalPayload = {}
+  const merge = (v: unknown): void => {
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) return
+    const o = v as Record<string, unknown>
+    if (out.rolledBackTo === undefined && typeof o.rolledBackTo === 'number') out.rolledBackTo = o.rolledBackTo
+    if (out.regeneratedFrom === undefined && typeof o.regeneratedFrom === 'number') out.regeneratedFrom = o.regeneratedFrom
+    if (out.editedFrom === undefined && typeof o.editedFrom === 'number') out.editedFrom = o.editedFrom
+    if (out.variantOf === undefined && typeof o.variantOf === 'number') out.variantOf = o.variantOf
+    if (out.shadowedSeqs === undefined && Array.isArray(o.shadowedSeqs)) {
+      const nums = o.shadowedSeqs.filter((n): n is number => typeof n === 'number')
+      if (nums.length > 0) out.shadowedSeqs = nums
+    }
+  }
+  merge(readMarker<SurgicalPayload>(source, 'surgical')) // ① 0.1.5 写侧当前形态
+  merge(readMarker<SurgicalPayload>(source, 'legacy'))   // ② 0.1.2 存量被迁移器搬运后的形态
+  merge(source)                                          // ③ 更早期直写 source 顶层的键
+  return out
+}
+
+/**
  * 读历史标记锚点（新形态 + 存量形态统一读法）。
  * 返回「需要隐藏到哪一 seq」的锚点与标记自身 seq（UI 掩码用）。
  */
@@ -231,14 +285,10 @@ export function readSurgicalAnchor(ev: { seq?: unknown; type?: unknown; data?: u
   const src = ev?.type === 'user/message' || ev?.type === 'assistant/message'
     ? ((ev.data as { source?: unknown } | undefined)?.source ?? (ev.data as { message?: { source?: unknown } } | undefined)?.message?.source)
     : undefined
-  const modern = readMarker<{ rolledBackTo?: number; regeneratedFrom?: number; editedFrom?: number }>(src, 'surgical')
-  const legacy = readLegacySourceKeys(src)
-  const rolled = modern?.rolledBackTo ?? legacy.rolledBackTo
-  const regen = modern?.regeneratedFrom ?? legacy.regeneratedFrom
-  const edited = modern?.editedFrom ?? legacy.editedFrom
-  if (typeof rolled === 'number') return { anchor: rolled }
-  if (typeof regen === 'number') return { anchor: regen }
-  if (typeof edited === 'number') return { anchor: edited - 1 }
+  const p = readSurgicalPayload(src)
+  if (typeof p.rolledBackTo === 'number') return { anchor: p.rolledBackTo }
+  if (typeof p.regeneratedFrom === 'number') return { anchor: p.regeneratedFrom }
+  if (typeof p.editedFrom === 'number') return { anchor: p.editedFrom - 1 }
   return { anchor: null }
 }
 

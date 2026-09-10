@@ -39,6 +39,8 @@ exports.expandCoreMacros = expandCoreMacros;
 exports.renderWorldInfoSnapshot = renderWorldInfoSnapshot;
 exports.sessionCwdNeedsRepair = sessionCwdNeedsRepair;
 exports.rewriteSessionHeaderCwd = rewriteSessionHeaderCwd;
+exports.sessionHeaderCwd = sessionHeaderCwd;
+exports.sessionRepairNeedsWrite = sessionRepairNeedsWrite;
 exports.repairSessionSeqs = repairSessionSeqs;
 exports.extractPersonaTextFromAgentYml = extractPersonaTextFromAgentYml;
 exports.buildPersonaSnapshotMessage = buildPersonaSnapshotMessage;
@@ -623,9 +625,17 @@ function normAndroidPath(p) {
 // - jsonl 持久层 assertStoredIdentity 要求物理路径 == logPath(root, header.cwd, id)，
 //   所以修复必须同时改 header 并把会话目录搬到 projectKey(规范 cwd) 下。
 // ---------------------------------------------------------------------------
-/** header cwd 是否需要修复（仅处理 Android symlink 形态；相对路径/其他形态不动） */
+/**
+ * header cwd 是否需要规范化（两种形态）：
+ *  ① Android symlink 形态 `/data/user/0/…`（与 WorkspaceRegistry 的 realpath 规范形态不一致）
+ *  ② **非绝对路径**（v0 迁移器硬要求 `header cwd must be absolute`；历史引导会话
+ *     写的是 `rp/_start` 这种相对形态）——【阶段3 2026-09-10 新增】
+ * 绝对且已规范的路径不动。
+ */
 function sessionCwdNeedsRepair(cwd) {
-    return typeof cwd === 'string' && cwd.startsWith('/data/user/0/');
+    if (typeof cwd !== 'string')
+        return false;
+    return cwd.startsWith('/data/user/0/') || !(0, node_path_1.isAbsolute)(cwd);
 }
 /**
  * 改写 session.jsonl 首行 header 的 cwd（只动首行；事件行不碰）。
@@ -645,6 +655,34 @@ function rewriteSessionHeaderCwd(line, canonicalCwd) {
         return null;
     obj.cwd = canonicalCwd;
     return JSON.stringify(obj);
+}
+/** 读一段会话文本首行的 header.cwd（非 session header / 非法 JSON → null）。 */
+function sessionHeaderCwd(content) {
+    const nl = content.indexOf('\n');
+    const line = nl === -1 ? content : content.slice(0, nl);
+    let obj;
+    try {
+        obj = JSON.parse(line);
+    }
+    catch {
+        return null;
+    }
+    return obj?.type === 'session' && typeof obj.cwd === 'string' ? obj.cwd : null;
+}
+/**
+ * 三步修复链是否需要落盘（= 是否有真实改动）。
+ *
+ * 【为什么单独抽出来】历史事故：守卫写成 `... && v3.changed === 0`，
+ * 而 `v3.changed` 是 **boolean**（`repairSessionForV3` 返回布尔），`false === 0` 恒为 false
+ * → 守卫永不成立 → **每次启动重写全部 79 个会话**（实测每轮 ~200MB 无效写入，
+ * 并堆积 79 个 `.bak` / 136MB，显著抬高 torn-write 概率）。
+ *
+ * 抽成**带类型的谓词**后，这类「字段类型与比较运算符不匹配」的缺陷在编译期即被 tsc 拦下
+ * （`boolean === 0` 报 TS2367），不再依赖人眼审阅。参数类型即契约，勿改宽。
+ */
+function sessionRepairNeedsWrite(normChanged, v3Changed, seqRepaired) {
+    void normChanged;
+    return seqRepaired || v3Changed || normChanged !== 0;
 }
 /**
  * session.jsonl committed 区 seq 连续性校验 + 修复（纯函数，R18 按 decodeStorageRecord 语义重写）。
@@ -1846,7 +1884,7 @@ function apply(ctx, _config) {
             if (rpSlugFromCwd(h.cwd, dshHome) !== slug)
                 continue;
             try {
-                const m = (await (0, promises_1.stat)((0, node_path_1.join)(dshHome, 'sessions', h.project, h.sdir, 'session.jsonl'))).mtimeMs;
+                const m = (await (0, promises_1.stat)(h.file)).mtimeMs;
                 if (m > bestMtime) {
                     best = h.sessionId;
                     bestMtime = m;
@@ -1865,7 +1903,7 @@ function apply(ctx, _config) {
             if (slug === null || slug === '_start')
                 continue;
             try {
-                const m = (await (0, promises_1.stat)((0, node_path_1.join)(dshHome, 'sessions', h.project, h.sdir, 'session.jsonl'))).mtimeMs;
+                const m = (await (0, promises_1.stat)(h.file)).mtimeMs;
                 if (m > bestMtime) {
                     best = h.sessionId;
                     bestMtime = m;
@@ -1885,7 +1923,7 @@ function apply(ctx, _config) {
             if (!cwd.endsWith('rp-import/_adapter'))
                 continue;
             try {
-                const m = (await (0, promises_1.stat)((0, node_path_1.join)(dshHome, 'sessions', h.project, h.sdir, 'session.jsonl'))).mtimeMs;
+                const m = (await (0, promises_1.stat)(h.file)).mtimeMs;
                 if (m > bestMtime) {
                     best = h.sessionId;
                     bestMtime = m;
@@ -1896,7 +1934,9 @@ function apply(ctx, _config) {
         return best;
     };
     /**
-     * 存量 session cwd 修复（/data/user/0 symlink 形态 → realpath 规范形态）。
+     * 存量 session cwd 规范化（两种形态 → 绝对且 realpath 规范）。
+     *  ① `/data/user/0/…` symlink 形态 → realpath
+     *  ② 相对路径（如 `rp/_start`）→ 相对 $DSH_HOME 解析后 realpath
      * 幂等：只处理 sessionCwdNeedsRepair 命中的 header；live session 跳过（目录搬迁会
      * 拔掉它的落盘句柄）；projectKey 变化时先搬目录再改首行（assertStoredIdentity 契约）。
      */
@@ -1913,7 +1953,10 @@ function apply(ctx, _config) {
                 continue;
             }
             try {
-                const canonical = await (0, promises_1.realpath)(h.cwd);
+                // 相对 cwd 以 $DSH_HOME 为基准解析（历史引导会话写的 `rp/_start`）；
+                // 绝对形态直接 realpath（symlink → 规范）。realpath 失败（目录不存在）保留原值。
+                const resolved = (0, node_path_1.isAbsolute)(h.cwd) ? h.cwd : (0, node_path_1.resolve)(dshHome, h.cwd);
+                const canonical = await (0, promises_1.realpath)(resolved).catch(() => resolved);
                 if (canonical === h.cwd)
                     continue;
                 const newLine = rewriteSessionHeaderCwd(h.firstLine, canonical);
@@ -1987,7 +2030,7 @@ function apply(ctx, _config) {
                 skipped.push({ sessionId: h.sessionId, reason: 'live（关闭会话后重跑）' });
                 continue;
             }
-            const file = (0, node_path_1.join)(dshHome, 'sessions', h.project, h.sdir, 'session.jsonl');
+            const file = h.file;
             try {
                 const st = await (0, promises_1.stat)(file);
                 if (st.size > REPAIR_MAX_FILE_BYTES) {
@@ -2010,8 +2053,25 @@ function apply(ctx, _config) {
                     errors.push(`${h.sessionId}: ${r.error}`);
                     continue;
                 }
-                if (!r.repaired && norm.changed === 0 && v3.changed === 0)
+                // 【2026-09-11 修复】原守卫写作 `norm.changed === 0 && v3.changed === 0`，但
+                // `v3.changed` 是 **boolean** → `false === 0` 恒为 false → 守卫永不成立 →
+                // **每次启动重写全部 79 个会话**（~200MB 无效写入 + 79 个 .bak / 136MB 堆积）。
+                // 改走带类型谓词，类型不匹配时 tsc 直接报错（TS2367），不再靠人眼。
+                if (!sessionRepairNeedsWrite(norm.changed, v3.changed, r.repaired))
                     continue;
+                // 【2026-09-10 回归事故防呆闸】官方 persistence `assertStoredIdentity` 要求
+                // 物理路径恒等于 logPath(root, cwd, id)，即**目录名必须 == projectKey(header.cwd)**。
+                // 本函数只该改事件、不该改 header.cwd；一旦某次「顺手」的 header 改写把 cwd 换了
+                // （事故实证：相对 cwd `rp/_start` 被补成绝对路径，而目录仍叫 `--rp-_start--`），
+                // 会话就变成「目录名与 cwd 不符」的形态：DSH 下次列 header 即抛
+                // `corrupt session log ... header id ... and cwd identify ...`，整个 plugin tree
+                // 加载失败、node 退出码 1 无限重启；实测还伴随**会话文件在核心搬迁中丢失**。
+                // 故落盘前做最后一道闸：cwd 改变导致 projectKey 不匹配 → 拒绝写入并如实报错。
+                const outCwd = sessionHeaderCwd(r.content);
+                if (outCwd !== null && (0, dsh_export_ts_1.projectKey)(outCwd) !== h.project) {
+                    errors.push(`${h.sessionId}: 修复后 cwd 与目录身份不符（projectKey=${(0, dsh_export_ts_1.projectKey)(outCwd)} 目录=${h.project}），拒绝落盘（须走 repairSessionCwds 的搬迁路径）`);
+                    continue;
+                }
                 // I8-2：原子写 + I8-3：.bak 先耐久再发布正文件
                 await atomicWriteFile(`${file}.bak`, content);
                 await atomicWriteFile(file, r.content);
@@ -2737,8 +2797,14 @@ function apply(ctx, _config) {
                 '',
                 '有什么想调整的，直接在这个会话里留言即可——祝玩得开心！',
             ].join('\n');
+            // 【阶段3 2026-09-10 修正】header.cwd 必须是**绝对且 realpath 规范**形态：
+            // 历史实现写的 `rp/_start` 是相对路径，0.1.5 的 v0 迁移器硬要求
+            // `header cwd must be absolute`（dsh-session-format-v0-to-v1:1487），该会话
+            // 迁移即被拒。且 cwd 与所在目录名是一对强不变量（目录名 == projectKey(cwd)），
+            // 故此处用 realpath 求出的绝对路径同时决定两者，杜绝再次错配。
+            const wsCwd = normAndroidPath(await (0, promises_1.realpath)(startDir).catch(() => startDir));
             const lines = [
-                JSON.stringify({ type: 'session', version: 0, id: sessionId, createdAt, cwd: `rp/${WELCOME_SLUG}`, delegationDepth: 0 }),
+                JSON.stringify({ type: 'session', version: 0, id: sessionId, createdAt, cwd: wsCwd, delegationDepth: 0 }),
                 ev('turn/start', 0, { turn: 1 }),
                 ev('step/start', 1, { turn: 1, step: 1 }),
                 ev('assistant/message', 2, {
@@ -2753,7 +2819,9 @@ function apply(ctx, _config) {
                 ev('step/end', 3, { turn: 1, step: 1 }),
                 ev('turn/end', 4, { turn: 1, reason: { kind: 'completed' } }),
             ];
-            const sessionDir = (0, node_path_1.join)(dshHome, 'sessions', (0, dsh_export_ts_1.projectKey)(`rp/${WELCOME_SLUG}`), sessionId);
+            // 目录名必须 == projectKey(header.cwd)（官方 assertStoredIdentity 强不变量）——
+            // 与上面 header 用同一个 wsCwd 派生，两者不会再错配。
+            const sessionDir = (0, node_path_1.join)(dshHome, 'sessions', (0, dsh_export_ts_1.projectKey)(wsCwd), sessionId);
             await (0, promises_1.mkdir)(sessionDir, { recursive: true });
             // 【鲁棒轮收尾】原子发布（欢迎会话首建；半写文件会被幂等跳过——原子写消除该窗口）
             await atomicWriteFile((0, node_path_1.join)(sessionDir, 'session.jsonl'), lines.join('\n') + '\n');
@@ -2927,6 +2995,19 @@ function apply(ctx, _config) {
         if (n > 0)
             logLine(`启动即修：seq 断号修复 ${n} 个会话`);
     }).catch(e => console.log(`[dsht-rp] startup repair skipped: ${e.message}`));
+    // ---- 【阶段3 2026-09-10】session header cwd 规范化「启动即修」----
+    // 为什么必须在启动做：0.1.5 的 v0 迁移器硬要求 `header cwd must be absolute`
+    // （dsh-session-format-v0-to-v1:1487），历史引导会话写的是相对形态 `rp/_start`；
+    // 而 DSH 的 dsh-workspace 在**插件树加载期**就逐个校验 header 与所在目录的身份一致性
+    // （persistence assertStoredIdentity：目录名必须 == projectKey(header.cwd)）——
+    // 校验失败会让整个 plugin tree 加载失败、node 退出码 1 无限重启（实机 crash-loop 实证）。
+    // 故 cwd 修复必须在此窗口完成（只改 cwd 不搬目录 = 制造上述 crash-loop，本函数两者同做）。
+    void repairSessionCwds().then(r => {
+        const n = r.repaired.length;
+        const errs = r.errors.length;
+        if (n > 0 || errs > 0)
+            logLine(`启动即修：session cwd 规范化 ${n} 个（失败 ${errs}）`);
+    }).catch(e => console.log(`[dsht-rp] startup cwd repair skipped: ${e.message}`));
     // ---- R49：重复 turn/start「启动即修」----
     // 物化 turn 计数失同步（已修源头，phase 同步）留下的存量日志：重复 turn/start 让
     // 前端 ConversationNodeAssembler 全量重放崩溃（折叠行/会话流停摆）。此处磁盘手术
@@ -2934,7 +3015,7 @@ function apply(ctx, _config) {
     void (async () => {
         let fixed = 0;
         for (const h of await scanSessionHeaders()) {
-            const file = (0, node_path_1.join)(dshHome, 'sessions', h.project, h.sdir, 'session.jsonl');
+            const file = h.file;
             try {
                 const stat0 = await (0, promises_1.stat)(file);
                 if (stat0.size > 64 * 1024 * 1024)
@@ -4818,7 +4899,7 @@ function apply(ctx, _config) {
                             for (const pk of await (0, promises_1.readdir)(sessionsRoot).catch(() => [])) {
                                 const pkDir = (0, node_path_1.join)(sessionsRoot, pk);
                                 for (const sid of await (0, promises_1.readdir)(pkDir).catch(() => [])) {
-                                    const f = (0, node_path_1.join)(pkDir, sid, 'session.jsonl');
+                                    const f = await (0, session_surgery_ts_1.currentSessionLogPath)(dshHome, pk, sid);
                                     let header = {};
                                     let lines = 0;
                                     let lastTime = null;
@@ -5210,7 +5291,7 @@ function apply(ctx, _config) {
                                 const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId);
                                 if (!hit)
                                     return send(404, { error: `session not found: ${sessionId}` });
-                                const file = (0, node_path_1.join)(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl');
+                                const file = hit.file;
                                 const content = await (0, promises_1.readFile)(file, 'utf8');
                                 const r = (0, session_surgery_ts_3.truncateSessionJsonl)(content, keepThroughSeq);
                                 if (r.error)
@@ -5256,7 +5337,7 @@ function apply(ctx, _config) {
                                 const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId);
                                 if (!hit)
                                     return send(404, { error: `session not found: ${sessionId}` });
-                                const file = (0, node_path_1.join)(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl');
+                                const file = hit.file;
                                 const content = await (0, promises_1.readFile)(file, 'utf8');
                                 const lines = content.split('\n');
                                 let keep = -1;
@@ -5393,7 +5474,7 @@ function apply(ctx, _config) {
                                 const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId);
                                 if (!hit)
                                     return send(404, { error: `session not found: ${sessionId}` });
-                                const file = (0, node_path_1.join)(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl');
+                                const file = hit.file;
                                 const content = await (0, promises_1.readFile)(file, 'utf8');
                                 const events = [];
                                 for (const line of content.split('\n').slice(1)) {
@@ -5449,7 +5530,7 @@ function apply(ctx, _config) {
                             let hide = 0;
                             const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId);
                             if (hit) {
-                                const file = (0, node_path_1.join)(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl');
+                                const file = hit.file;
                                 const fm = await (0, promises_1.stat)(file).then(s => ({ size: s.size, mtimeMs: s.mtimeMs })).catch(() => null);
                                 const cached = rollbackMaskCache.get(file);
                                 if (fm !== null && cached !== undefined && cached.size === fm.size && cached.mtimeMs === fm.mtimeMs) {
@@ -5458,25 +5539,26 @@ function apply(ctx, _config) {
                                 const content = await (0, promises_1.readFile)(file, 'utf8');
                                 // 【⑨修复 2026-09-05】掩码只隐被 replace 的那段，不隐 marker 之后的新消息：
                                 // 扫描时若 marker 之后已存在 source.kind === 'user' 的新消息，掩码失效
+                                //
+                                // 【阶段4 2026-09-11 修复 · 静默失败族】原实现**只读 source 顶层**的
+                                // `rolledBackTo / editedFrom / regeneratedFrom`。0.1.5 迁移不再允许
+                                // source 上的扩展键（`source has unexpected member` 整会话打不开），
+                                // 写侧已改为官方白名单形态 `form:'snapshot' + sections[{name:'dsht:surgical',
+                                // text: JSON.stringify(payload)}]`（0.1.2 存量会话被迁移器搬进
+                                // `name:'dsht:legacy'` 段）。顶层键从此恒 undefined → hide 恒 0 →
+                                // **回退/编辑/重新生成后 UI 永不隐藏被移除的楼层**（服务端已正确截断，
+                                // 前端照旧显示，无任何报错——典型静默失败）。统一走 readSurgicalAnchor
+                                // （新形态 + 存量形态 + 顶层键三路兜底，与写侧同一套语义）。
                                 let markerSeq = -1;
                                 for (const line of content.split('\n')) {
-                                    if (!line.includes('rolledBackTo') && !line.includes('editedFrom') && !line.includes('regeneratedFrom'))
+                                    if (!line.includes('dsht:surgical') && !line.includes('dsht:legacy')
+                                        && !line.includes('rolledBackTo') && !line.includes('editedFrom') && !line.includes('regeneratedFrom'))
                                         continue;
                                     try {
                                         const ev = JSON.parse(line);
-                                        const s = ev.data?.source;
-                                        if (!s)
-                                            continue;
-                                        if (typeof s.rolledBackTo === 'number') {
-                                            hide = Math.max(hide, s.rolledBackTo);
-                                            markerSeq = Math.max(markerSeq, ev.seq ?? -1);
-                                        }
-                                        if (typeof s.regeneratedFrom === 'number') {
-                                            hide = Math.max(hide, s.regeneratedFrom);
-                                            markerSeq = Math.max(markerSeq, ev.seq ?? -1);
-                                        }
-                                        if (typeof s.editedFrom === 'number') {
-                                            hide = Math.max(hide, s.editedFrom - 1);
+                                        const { anchor } = (0, session_write_ts_1.readSurgicalAnchor)(ev);
+                                        if (anchor !== null) {
+                                            hide = Math.max(hide, anchor);
                                             markerSeq = Math.max(markerSeq, ev.seq ?? -1);
                                         }
                                     }

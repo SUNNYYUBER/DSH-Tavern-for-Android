@@ -137,6 +137,27 @@ export interface LegacySourceKeys {
 }
 export declare function readLegacySourceKeys(source: unknown): LegacySourceKeys;
 /**
+ * 手术类标记载荷（回退/编辑/重生成/变体）。
+ * 读侧统一入口：`readSurgicalPayload` 把 ① 新形态 `sections[name='dsht:surgical']`、
+ * ② 0.1.2 存量会话被迁移器搬进的 `sections[name='dsht:legacy']`、
+ * ③ 更早期直写 source 顶层的键 —— 三路合并成同一个形状。
+ *
+ * 【为什么必须有这个统一读法】0.1.5 起 source 只允许官方白名单键，写侧已迁到
+ * sections；任何**仍读顶层键**的消费方都会静默拿到 undefined（无报错、无日志），
+ * 表现为「回退后 UI 不隐藏」「记忆侧继续摘要已被撤回的内容」。已修的三处：
+ * dsh-plugin 的 /rp/rollback-mask、dsht-plugin-memory 的 extractFloorsFromEvents、
+ * dsht-rp-ui 的 hideAfterOf（后者已废弃恒 0，权威来源是前者路由）。
+ */
+export interface SurgicalPayload {
+    rolledBackTo?: number;
+    regeneratedFrom?: number;
+    editedFrom?: number;
+    variantOf?: number;
+    shadowedSeqs?: number[];
+}
+/** 三路合并读手术标记载荷（缺失/非法一律忽略，不抛）。 */
+export declare function readSurgicalPayload(source: unknown): SurgicalPayload;
+/**
  * 读历史标记锚点（新形态 + 存量形态统一读法）。
  * 返回「需要隐藏到哪一 seq」的锚点与标记自身 seq（UI 掩码用）。
  */

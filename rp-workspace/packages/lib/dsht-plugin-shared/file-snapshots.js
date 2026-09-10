@@ -91,12 +91,12 @@ async function readLatestTurn(sessionJsonlPath) {
         await handle?.close().catch(() => { });
     }
 }
-/** 按 sessionId 定位 session.jsonl 并读最新 turn 锚点（定位不到/无 turn → null） */
+/** 按 sessionId 定位**当前世代**会话日志并读最新 turn 锚点（定位不到/无 turn → null） */
 async function resolveSessionTurnAnchor(dshHome, sessionId) {
     const hit = (await (0, session_surgery_ts_1.scanSessionHeaders)(dshHome)).find(h => h.sessionId === sessionId);
     if (!hit)
         return null;
-    return readLatestTurn((0, node_path_1.join)(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl'));
+    return readLatestTurn(hit.file);
 }
 /**
  * 写前快照：对 relPaths 记录 before 状态到 <sessionId>/<turn>.json。

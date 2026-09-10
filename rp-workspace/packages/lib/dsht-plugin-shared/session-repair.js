@@ -45,7 +45,7 @@ const TOOL_SOURCE_KEYS = new Set(['kind', 'callId']);
  * 把一个 v0 会话重写为合法形态。
  *
  * 变换顺序（关键 —— 先修语义再重编号，否则引用会错位）：
- *  1. header：cwd 必须绝对路径
+ *  1. header：**不进本模块改**（cwd 与所在目录名强耦合，须 fs 搬迁；见 §1 注释）
  *  2. 逐事件：
  *     · 信封剥非法键
  *     · user/message：补 id；source 非法键搬进 sections；去 replace 的 assistant 化
@@ -74,13 +74,14 @@ function repairSessionForV3(content) {
     /** source 上摘下来的非法自定义键，重编号后解析成最终 sidecar 键 */
     const pendingSalvage = [];
     // ---- 1) header ----
+    // 【阶段3 2026-09-10 回归修复】**不在此处改 cwd**。header.cwd 与所在目录名是一对
+    // 强不变量（官方 persistence `assertStoredIdentity`：物理路径必须等于
+    // logPath(root, cwd, id)，即目录名必须 == projectKey(cwd)）。本模块是纯函数、不碰
+    // 磁盘，改了 cwd 却搬不了目录 → DSH 在 `dsh-workspace` 初始化列 header 时就抛
+    // `corrupt session log ... header id ... and cwd identify ...`，**整个 plugin tree 加载
+    // 失败、node 退出码 1 无限重启**（实机 crash-loop 实证）。
+    // cwd 规范化属「改写 + 搬迁」耦合操作，由 dsh-plugin 的 repairSessionCwds（带 fs）负责。
     const headerOut = { ...header };
-    if (typeof headerOut.cwd === 'string' && !isAbsolutePath(headerOut.cwd)) {
-        // 相对 cwd（如 `rp/_start`）→ 用 DSH 会话根下的约定位置兜底
-        headerOut.cwd = `/data/data/com.dshtavern.app/files/.dsh/${String(headerOut.cwd).replace(/^\/+/, '')}`;
-        notes.push('header.cwd 非绝对路径 → 补全为绝对路径');
-        changed = true;
-    }
     // ---- 2) 解析事件（聚合行就地展开成逐事件，使编号自洽） ----
     // 聚合行（text-chunks / reasoning-chunks / tool-call-chunks）是宿主的打包形态：
     // 一行代表 N 个 assistant/chunk 事件，并带 `seq0` 指明首个展开事件的序号。
@@ -662,9 +663,6 @@ function serialize(ev) {
     if (ev.ignorable === true)
         o.ignorable = true;
     return o;
-}
-function isAbsolutePath(p) {
-    return p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p);
 }
 /**
  * 展开一行宿主聚合数据（text-chunks / reasoning-chunks / tool-call-chunks）为逐事件。

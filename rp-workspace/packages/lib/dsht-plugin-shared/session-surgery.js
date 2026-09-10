@@ -9,7 +9,9 @@
  * - 回退/重新生成 = 原地截断事件流（绝不开新分支/新 session）：header 保留，
  *   事件只留 seq <= keepThroughSeq；被截事件参与的 replace 链随截断消失
  *   （后续事件的 replace 引用若指向被截 seq 属越界用法，由调用方保证锚点落在链尾）。
- * - 会话定位：扫 $DSH_HOME/sessions/<projectKey>/<sid>/session.jsonl 首行 header.id。
+ * - 会话定位：扫 $DSH_HOME/sessions/<projectKey>/<sid>/ 的**当前世代**日志首行 header.id
+ *   （0.1.5 起当前世代可能是 `session.vN.jsonl`，见 `pickCurrentSessionFilename`；
+ *   拿到 `SessionHeaderHit` 后一律读 `hit.file`，不要自己拼 `session.jsonl`）。
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.truncateSessionJsonl = truncateSessionJsonl;
@@ -17,6 +19,8 @@ exports.normalizeSnapshotMessageRoles = normalizeSnapshotMessageRoles;
 exports.findLastUserMessage = findLastUserMessage;
 exports.repairDuplicateTurnStarts = repairDuplicateTurnStarts;
 exports.readFirstLine = readFirstLine;
+exports.pickCurrentSessionFilename = pickCurrentSessionFilename;
+exports.currentSessionLogPath = currentSessionLogPath;
 exports.scanSessionHeaders = scanSessionHeaders;
 const promises_1 = require("node:fs/promises");
 const node_path_1 = require("node:path");
@@ -236,7 +240,34 @@ async function readFirstLine(path) {
         await handle?.close().catch(() => { });
     }
 }
-/** 扫 $DSH_HOME/sessions/<projectKey>/<sid>/session.jsonl 首行 header（只读首行，大日志无压力） */
+/** 目录内条目 → 当前世代会话日志文件名（纯函数，便于单测）。
+ *
+ *  规则（官方 `generationLogFilename`，dsh-session-persistence-jsonl/lib/index.js:753-760）：
+ *  v0 保留无版本后缀的 `session.jsonl`；v1+ 为 `session.v<version>.jsonl`。
+ *  取**最高版本号**的文件；一个都没有则回落到 `session.jsonl`。
+ */
+function pickCurrentSessionFilename(entries) {
+    let best = null;
+    let bestVersion = -1;
+    for (const name of entries) {
+        const m = /^session\.v(\d+)\.jsonl$/.exec(name);
+        if (m === null)
+            continue;
+        const v = Number(m[1]);
+        if (v > bestVersion) {
+            bestVersion = v;
+            best = name;
+        }
+    }
+    return best ?? 'session.jsonl';
+}
+/** 解析某个会话目录的当前世代日志路径（列表页/审计等拿不到 header 时用）。 */
+async function currentSessionLogPath(dshHome, project, sdir) {
+    const dir = (0, node_path_1.join)(dshHome, 'sessions', project, sdir);
+    const entries = await (0, promises_1.readdir)(dir).catch(() => []);
+    return (0, node_path_1.join)(dir, pickCurrentSessionFilename(entries));
+}
+/** 扫 $DSH_HOME/sessions/<projectKey>/<sid>/ 当前世代日志首行 header（只读首行，大日志无压力） */
 async function scanSessionHeaders(dshHome) {
     const root = (0, node_path_1.join)(dshHome, 'sessions');
     const out = [];
@@ -256,7 +287,18 @@ async function scanSessionHeaders(dshHome) {
             continue;
         }
         for (const sdir of sdirs) {
-            const firstLine = await readFirstLine((0, node_path_1.join)(root, project, sdir, 'session.jsonl'));
+            // 【0.1.5 世代】按目录内容选当前世代文件；旧实现硬编码 session.jsonl，
+            // 迁移过的会话从此读到冻结的 v0 世代（80 个真实会话里只有 1 个已迁移，
+            // 但那 1 个正是用户正在用的那个）。
+            let entries = [];
+            try {
+                entries = await (0, promises_1.readdir)((0, node_path_1.join)(root, project, sdir));
+            }
+            catch {
+                continue;
+            }
+            const file = (0, node_path_1.join)(root, project, sdir, pickCurrentSessionFilename(entries));
+            const firstLine = await readFirstLine(file);
             if (firstLine === null)
                 continue;
             try {
@@ -266,7 +308,7 @@ async function scanSessionHeaders(dshHome) {
                 out.push({
                     sessionId: header.id,
                     cwd: typeof header.cwd === 'string' ? header.cwd : undefined,
-                    project, sdir, firstLine,
+                    project, sdir, firstLine, file,
                 });
             }
             catch { /* 非 JSON 首行 */ }

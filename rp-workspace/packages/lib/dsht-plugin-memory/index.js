@@ -157,13 +157,19 @@ function extractFloorsFromEvents(events) {
         const s = e.data?.source;
         if (!s || s.plugin !== 'dsht-rp')
             continue;
+        // 【阶段4 2026-09-11 修复 · 静默失败族】原实现只读 source 顶层的
+        // rolledBackTo/editedFrom/regeneratedFrom。0.1.5 起写侧改官方白名单形态
+        // （form:'snapshot' + sections[{name:'dsht:surgical', text}]，存量迁进 'dsht:legacy'），
+        // 顶层键恒 undefined → 掩码恒空 → 被回退的楼层继续进摘要（撤回的内容「复活」）。
+        // 统一走 readSurgicalPayload（新形态 + 存量形态 + 顶层键三路兜底）。
+        const payload = (0, session_write_ts_1.readSurgicalPayload)(s);
         let hide = -1;
-        if (typeof s.rolledBackTo === 'number')
-            hide = s.rolledBackTo;
-        if (typeof s.regeneratedFrom === 'number')
-            hide = Math.max(hide, s.regeneratedFrom);
-        if (typeof s.editedFrom === 'number')
-            hide = Math.max(hide, s.editedFrom - 1);
+        if (typeof payload.rolledBackTo === 'number')
+            hide = payload.rolledBackTo;
+        if (typeof payload.regeneratedFrom === 'number')
+            hide = Math.max(hide, payload.regeneratedFrom);
+        if (typeof payload.editedFrom === 'number')
+            hide = Math.max(hide, payload.editedFrom - 1);
         if (hide >= 0 && hide < e.seq)
             skipRanges.push({ from: hide + 1, to: e.seq - 1 });
     }
@@ -950,7 +956,7 @@ function apply(ctx, _config) {
         if (!header)
             return 0;
         try {
-            const content = await (0, promises_1.readFile)((0, node_path_1.join)(dshHome, 'sessions', header.project, header.sdir, 'session.jsonl'), 'utf8');
+            const content = await (0, promises_1.readFile)(header.file, 'utf8');
             let max = 0;
             for (const m of content.matchAll(/第 1-(\d+) 楼原文已折叠/g))
                 max = Math.max(max, Number(m[1]));
@@ -1010,9 +1016,9 @@ function apply(ctx, _config) {
     // 世界书触发预算解耦）；登记反而会让条目进触发预算被 budgetCap 挤掉/重复注入。
     // 文件本体仍是标准世界书（skills/wb-memory-*/references/lore.json），世界书清单/TH
     // getWorldbooks 可见，用户可手查手改。
-    /** 读会话事件流（session.jsonl 全量解析；坏行跳过） */
+    /** 读会话事件流（当前世代日志全量解析；坏行跳过）。header.file 由 scanSessionHeaders 解析当前世代 */
     const readSessionEvents = async (header) => {
-        const sessionPath = (0, node_path_1.join)(dshHome, 'sessions', header.project, header.sdir, 'session.jsonl');
+        const sessionPath = header.file;
         const content = await (0, promises_1.readFile)(sessionPath, 'utf8');
         const events = [];
         for (const line of content.split('\n')) {
@@ -1141,7 +1147,7 @@ function apply(ctx, _config) {
                 // turn 口径楼层总数（stat 缓存短路：文件未变直接用缓存，变化才全量解析）
                 let floorCount = 0;
                 try {
-                    floorCount = await floorCountOf(header, (0, node_path_1.join)(dshHome, 'sessions', header.project, header.sdir, 'session.jsonl'));
+                    floorCount = await floorCountOf(header, header.file);
                 }
                 catch {
                     continue;
@@ -1264,7 +1270,7 @@ function apply(ctx, _config) {
             let floors = 0;
             if (header) {
                 try {
-                    floors = await floorCountOf(header, (0, node_path_1.join)(dshHome, 'sessions', header.project, header.sdir, 'session.jsonl'));
+                    floors = await floorCountOf(header, header.file);
                 }
                 catch { /* 读失败按 0 */ }
             }

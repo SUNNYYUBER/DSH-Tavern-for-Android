@@ -632,7 +632,7 @@ export async function chatMessages(dshHome: string, body: Record<string, unknown
     hit = fresh.find(h => h.sessionId === sessionId)
   }
   if (!hit) return { status: 404, body: { error: `session not found: ${sessionId}` } }
-  const logPath = join(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl')
+  const logPath = hit.file
   // 【轮询风暴根修】mtime+size 未变 → 直接回缓存（.stat ~µs 级 vs 全量重扫 ~6s）
   let cached: FacadeCacheEntry | undefined
   try {
@@ -1176,14 +1176,23 @@ export async function variablesMerge(dshHome: string, body: Record<string, unkno
  * 端点 15：POST /variables/schema {sessionId, name?, variableSchema} → C7 registerVariableSchema
  * 数据面：zod 风格 schema（shim 侧经 zod v4 toJSONSchema 转换后过桥）落 rp/state 的 variableSchema。
  * name 给出 = 逐名子 schema（合成 {type:'object', properties:{[name]:…}} 并入既有整树 schema，
- * 使 D7 对后续写入自然生效）；name 空 = 整树 schema 直接替换。注册即校验既有值（不匹配 422；
- * 该键尚未写入时不拦——允许先立 schema 后补值）。
+ * 使 D7 对后续写入自然生效）；name 空 / 'message' = 整树 schema 直接替换。注册即校验既有值
+ * （不匹配 422；该键尚未写入时不拦——允许先立 schema 后补值）。
+ *
+ * 【阶段4 2026-09-11 契约对质】`name` 的真身是 TH `registerVariableSchema(schema, {type})`
+ * 里的**作用域**，合法值只有 global/preset/character/chat/message（JS-Slash-Runner
+ * @types/function/variables.d.ts:203-206）。旧 shim 把 zod 对象当 name 传 → String() 化得
+ * `"[object Object]"`，在 properties 下造出垃圾键、值则是 {type:'message'} 选项（实机
+ * rp/state/<sid>.json 实证，卡脚本读该 schema 报 "Data Error"）。这里把非白名单值一律
+ * 归一为整树（message 作用域 = 本实现的唯一变量存储），并清理历史遗留的垃圾键。
  */
 export async function variableSchemaRegister(dshHome: string, body: Record<string, unknown>): Promise<FacadeResult> {
   const sessionId = String(body.sessionId ?? '')
   if (!sessionId) return { status: 400, body: { error: 'sessionId required' } }
   if (!isTree(body.variableSchema)) return { status: 400, body: { error: 'variableSchema object required' } }
-  const name = typeof body.name === 'string' ? body.name.trim() : ''
+  const rawName = typeof body.name === 'string' ? body.name.trim() : ''
+  const SCOPES = new Set(['global', 'preset', 'character', 'chat', 'message'])
+  const name = rawName === '' || rawName === 'message' || !SCOPES.has(rawName) ? '' : rawName
   const relPath = `rp/state/${sessionId}.json`
   const file = await loadSessionStateFile(dshHome, sessionId)
   const vars = isTree(file.variables) ? file.variables : {}
@@ -1199,6 +1208,14 @@ export async function variableSchemaRegister(dshHome: string, body: Record<strin
     file.variableSchema = { ...base, type: typeof base.type === 'string' ? base.type : 'object', properties: props }
   } else {
     file.variableSchema = body.variableSchema
+  }
+  // 历史遗留垃圾键清理（旧 shim 参数错位产物）——留着会让 schema 永远校验不过。
+  if (isTree(file.variableSchema) && isTree((file.variableSchema as Record<string, unknown>).properties)) {
+    const props = (file.variableSchema as { properties: Record<string, unknown> }).properties
+    if (Object.prototype.hasOwnProperty.call(props, '[object Object]')) {
+      delete props['[object Object]']
+      console.log(`[dsht-th] variables/schema: sid=${sessionId} 已清理历史垃圾键 "[object Object]"`)
+    }
   }
   await snapshotFor(dshHome, sessionId, [relPath])
   await mkdir(dirname(homePath(dshHome, relPath)), { recursive: true })

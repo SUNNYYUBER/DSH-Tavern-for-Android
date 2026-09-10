@@ -95,11 +95,11 @@ export async function readLatestTurn(sessionJsonlPath: string): Promise<number |
   }
 }
 
-/** 按 sessionId 定位 session.jsonl 并读最新 turn 锚点（定位不到/无 turn → null） */
+/** 按 sessionId 定位**当前世代**会话日志并读最新 turn 锚点（定位不到/无 turn → null） */
 export async function resolveSessionTurnAnchor(dshHome: string, sessionId: string): Promise<number | null> {
   const hit = (await scanSessionHeaders(dshHome)).find(h => h.sessionId === sessionId)
   if (!hit) return null
-  return readLatestTurn(join(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl'))
+  return readLatestTurn(hit.file)
 }
 
 export interface SnapshotWriteResult {

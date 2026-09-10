@@ -50,7 +50,7 @@ export declare function snapshotDir(dshHome: string, sessionId: string): string;
 export declare function isSnapshotEligible(relPath: string): boolean;
 /** 从 session.jsonl 尾部读最新 turn 号（只读尾块，大日志不整读；无 turn 信息返回 null） */
 export declare function readLatestTurn(sessionJsonlPath: string): Promise<number | null>;
-/** 按 sessionId 定位 session.jsonl 并读最新 turn 锚点（定位不到/无 turn → null） */
+/** 按 sessionId 定位**当前世代**会话日志并读最新 turn 锚点（定位不到/无 turn → null） */
 export declare function resolveSessionTurnAnchor(dshHome: string, sessionId: string): Promise<number | null>;
 export interface SnapshotWriteResult {
     /** 实际新进快照的文件数（同 turn 已有更早 before 状态的不重复计） */

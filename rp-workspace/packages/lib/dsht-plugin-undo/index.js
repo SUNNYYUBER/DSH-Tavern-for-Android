@@ -40,7 +40,6 @@ exports.regenerateSession = regenerateSession;
 exports.editUserMessage = editUserMessage;
 exports.apply = apply;
 const promises_1 = require("node:fs/promises");
-const node_path_1 = require("node:path");
 const http_ts_1 = require("../dsht-plugin-shared/http.ts");
 const session_surgery_ts_1 = require("../dsht-plugin-shared/session-surgery.ts");
 const file_snapshots_ts_1 = require("../dsht-plugin-shared/file-snapshots.ts");
@@ -50,10 +49,10 @@ exports.name = 'dsht-plugin-undo';
 // webServer：/dsht-undo/* 数据面；sessions：live 判定（内存态权威，live 拒绝截盘）
 // （pre-step 事件钩子是 cordis 核心生命周期面，不算服务，无需 inject 'agents'）
 exports.inject = ['webServer', 'sessions'];
-/** 按 header.id 定位会话文件（扫 sessions 全树 session.jsonl 首行） */
+/** 按 header.id 定位会话文件（扫 sessions 全树的当前世代日志首行） */
 async function locateSessionFile(dshHome, sessionId) {
     const hit = (await (0, session_surgery_ts_1.scanSessionHeaders)(dshHome)).find(h => h.sessionId === sessionId);
-    return hit ? (0, node_path_1.join)(dshHome, 'sessions', hit.project, hit.sdir, 'session.jsonl') : null;
+    return hit ? hit.file : null;
 }
 /**
  * 截断后的配套文件恢复（best-effort，不让文件恢复失败掀翻已完成的截断）：

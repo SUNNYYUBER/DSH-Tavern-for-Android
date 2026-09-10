@@ -8258,20 +8258,24 @@ function RpScriptButtonsBar(props) {
 
 // src/dsht-rp-ui/src/client/variant-groups.ts
 function normalizeVariantGroups(raw) {
-  return raw.map((g) => {
+  const out = [];
+  for (const g of raw) {
     const members = [];
     for (const m of g.members) {
+      if (typeof m.text !== "string" || m.text.trim() === "") continue;
       if (!members.some((x) => x.text === m.text)) members.push({ seq: m.seq, text: m.text });
     }
+    if (members.length < 2) continue;
     const activeText = g.members.find((m) => m.seq === g.activeSeq)?.text;
     const rep = activeText !== void 0 ? members.find((m) => m.text === activeText) : void 0;
     const activeRep = rep ?? members[members.length - 1];
-    return {
+    out.push({
       members,
       activeSeq: activeRep?.seq ?? g.activeSeq,
       memberSeqs: g.members.map((m) => m.seq)
-    };
-  });
+    });
+  }
+  return out;
 }
 function groupOf(groups, seq) {
   return groups.find((g) => g.memberSeqs.includes(seq) || g.activeSeq === seq);
@@ -8442,18 +8446,8 @@ function useMessageWindowing(sessionKey, nodeKey, forced) {
   }, [windowed, sessionKey, nodeKey]);
   return { shellRef, windowed, placeholderHeight: messagePlaceholderHeight(sessionKey, nodeKey) };
 }
-function hideAfterOf(snapshot) {
-  let hide = 0;
-  const chat = snapshot.chat;
-  if (!chat?.order || !chat.nodes) return 0;
-  for (const n of chat.nodes.values()) {
-    const src = n.data?.source;
-    if (!src || src.kind !== "plugin" || src.plugin !== "dsht-rp") continue;
-    if (typeof src.rolledBackTo === "number") hide = Math.max(hide, src.rolledBackTo);
-    if (typeof src.regeneratedFrom === "number") hide = Math.max(hide, src.regeneratedFrom);
-    if (typeof src.editedFrom === "number") hide = Math.max(hide, src.editedFrom - 1);
-  }
-  return hide;
+function hideAfterOf(_snapshot) {
+  return 0;
 }
 var floorIndexCache = /* @__PURE__ */ new WeakMap();
 var floorIndexCacheKey = /* @__PURE__ */ new WeakMap();

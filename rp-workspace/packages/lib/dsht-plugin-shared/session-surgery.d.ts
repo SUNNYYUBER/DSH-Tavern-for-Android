@@ -8,7 +8,9 @@
  * - 回退/重新生成 = 原地截断事件流（绝不开新分支/新 session）：header 保留，
  *   事件只留 seq <= keepThroughSeq；被截事件参与的 replace 链随截断消失
  *   （后续事件的 replace 引用若指向被截 seq 属越界用法，由调用方保证锚点落在链尾）。
- * - 会话定位：扫 $DSH_HOME/sessions/<projectKey>/<sid>/session.jsonl 首行 header.id。
+ * - 会话定位：扫 $DSH_HOME/sessions/<projectKey>/<sid>/ 的**当前世代**日志首行 header.id
+ *   （0.1.5 起当前世代可能是 `session.vN.jsonl`，见 `pickCurrentSessionFilename`；
+ *   拿到 `SessionHeaderHit` 后一律读 `hit.file`，不要自己拼 `session.jsonl`）。
  */
 /**
  * 会话回退（纯函数）：截断 session.jsonl 到 keepThroughSeq（含）——
@@ -81,6 +83,19 @@ export interface SessionHeaderHit {
     project: string;
     sdir: string;
     firstLine: string;
+    /** 【0.1.5 世代】当前世代的会话日志绝对路径（读侧一律用这个，不要自己拼 session.jsonl）。
+     *  v0 会话 = `…/session.jsonl`；已被核心迁移过的会话 = `…/session.vN.jsonl`（v0 文件
+     *  作为历史世代被冻结保留，继续读它 = 读到迁移那一刻的死数据）。 */
+    file: string;
 }
-/** 扫 $DSH_HOME/sessions/<projectKey>/<sid>/session.jsonl 首行 header（只读首行，大日志无压力） */
+/** 目录内条目 → 当前世代会话日志文件名（纯函数，便于单测）。
+ *
+ *  规则（官方 `generationLogFilename`，dsh-session-persistence-jsonl/lib/index.js:753-760）：
+ *  v0 保留无版本后缀的 `session.jsonl`；v1+ 为 `session.v<version>.jsonl`。
+ *  取**最高版本号**的文件；一个都没有则回落到 `session.jsonl`。
+ */
+export declare function pickCurrentSessionFilename(entries: readonly string[]): string;
+/** 解析某个会话目录的当前世代日志路径（列表页/审计等拿不到 header 时用）。 */
+export declare function currentSessionLogPath(dshHome: string, project: string, sdir: string): Promise<string>;
+/** 扫 $DSH_HOME/sessions/<projectKey>/<sid>/ 当前世代日志首行 header（只读首行，大日志无压力） */
 export declare function scanSessionHeaders(dshHome: string): Promise<SessionHeaderHit[]>;

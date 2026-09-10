@@ -52,7 +52,7 @@ export interface SessionRepairResult {
  * 把一个 v0 会话重写为合法形态。
  *
  * 变换顺序（关键 —— 先修语义再重编号，否则引用会错位）：
- *  1. header：cwd 必须绝对路径
+ *  1. header：**不进本模块改**（cwd 与所在目录名强耦合，须 fs 搬迁；见 §1 注释）
  *  2. 逐事件：
  *     · 信封剥非法键
  *     · user/message：补 id；source 非法键搬进 sections；去 replace 的 assistant 化

@@ -29,26 +29,35 @@ export interface VariantGroupInfo {
 }
 
 /**
- * 变体组归一化：按文本去重 + active 归位。
+ * 变体组归一化：按文本去重 + active 归位 + **空文本成员剔除**。
  * - 同文本成员合并到首次出现者；active 落在同文本代表上；
- * - active 文本不在 members（防御：后端数据残缺）时归位到最后一个成员。
+ * - active 文本不在 members（防御：后端数据残缺）时归位到最后一个成员；
+ * - **空文本成员一律剔除**：真实变体必定是 assistant 楼层回复，空文本只可能来自
+ *   被误当组员锚点的 user/插件注入 seq（阶段4 2026-09-11 实机实证：回退标记的锚点
+ *   是 user seq，后端把它当成员 → activeSeq 指向空文本 → variantOverride 把整层
+ *   正文渲染成空白）。剔除后不足 2 个成员的组**整组丢弃**（只有一个变体没有可切换
+ *   语义，前端不该渲染 ‹1/1›，更不该用它的 active 覆盖正文）。
  */
 export function normalizeVariantGroups(raw: RawVariantGroup[]): VariantGroupInfo[] {
-  return raw.map(g => {
+  const out: VariantGroupInfo[] = []
+  for (const g of raw) {
     const members: Array<{ seq: number; text: string }> = []
     for (const m of g.members) {
+      if (typeof m.text !== 'string' || m.text.trim() === '') continue
       if (!members.some(x => x.text === m.text)) members.push({ seq: m.seq, text: m.text })
     }
+    if (members.length < 2) continue
     const activeText = g.members.find(m => m.seq === g.activeSeq)?.text
     // 注意不能用 (cond && find()) ?? fallback：&& 短路产出 false，?? 只对 nullish 回退
     const rep = activeText !== undefined ? members.find(m => m.text === activeText) : undefined
     const activeRep = rep ?? members[members.length - 1]
-    return {
+    out.push({
       members,
       activeSeq: activeRep?.seq ?? g.activeSeq,
       memberSeqs: g.members.map(m => m.seq),
-    }
-  })
+    })
+  }
+  return out
 }
 
 /** 找包含 seq 的组（任一原始组员 seq 命中即归属——切换/去重事件都是组员） */

@@ -185,23 +185,18 @@ function useMessageWindowing(sessionKey, nodeKey, forced) {
  *  user 行），因此不能按 kind==='user' 过滤，须全节点扫 source 字段。
  *  edit 语义 = 锚消息本身也隐藏 → hideAfter = editedFrom − 1；rollback/regenerate
  *  = 锚消息保留 → hideAfter = 锚 seq。统一规则：真实消息 seq > hideAfter 即隐藏。 */
-function hideAfterOf(snapshot) {
-    let hide = 0;
-    const chat = snapshot.chat;
-    if (!chat?.order || !chat.nodes)
-        return 0;
-    for (const n of chat.nodes.values()) {
-        const src = n.data?.source;
-        if (!src || src.kind !== 'plugin' || src.plugin !== 'dsht-rp')
-            continue;
-        if (typeof src.rolledBackTo === 'number')
-            hide = Math.max(hide, src.rolledBackTo);
-        if (typeof src.regeneratedFrom === 'number')
-            hide = Math.max(hide, src.regeneratedFrom);
-        if (typeof src.editedFrom === 'number')
-            hide = Math.max(hide, src.editedFrom - 1);
-    }
-    return hide;
+/** 【已废弃 · 恒 0，勿依赖】曾经从会话投影的 `source.rolledBackTo/editedFrom/regeneratedFrom`
+ *  读回退掩码。两个原因让它必然失效：
+ *  ① 客户端投影**不透传** marker 的 `source` 字段（真机实证）→ 恒 undefined；
+ *  ② 即便透传，0.1.5 起写侧已把标记载荷搬进官方白名单形态
+ *     `form:'snapshot' + sections[{name:'dsht:surgical', text: JSON.stringify(payload)}]`
+ *     （见 dsh-plugin/index.ts 的 markerSource），顶层扩展键不再存在。
+ *  **权威来源 = host 路由 `/rp/rollback-mask`**（`useRollbackMask` 拉取后由调用方显式
+ *  传给 `floorIndexOf` / `floorIndexFromChat`，见 line 603 / 1193 / 1847）。
+ *  这里保留函数只为兜底签名，永远返回 0（不隐藏）。
+ */
+function hideAfterOf(_snapshot) {
+    return 0;
 }
 /** 会话快照 → 楼层索引（楼层号 + step/turn 耗时）。
  *  楼层判定：
