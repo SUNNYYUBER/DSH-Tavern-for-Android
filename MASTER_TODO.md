@@ -66,8 +66,8 @@
 
 > **进展度量**：`bash .goal/upgrade-0.1.5/evaluate.sh` → **5 / 5** ✅ **达成**（`.stage3-pass` + `.stage4-pass` 均已写入）
 >
-> **交付**：`DSH-Tavern-0.2.0-arm64-release.apk`（122.3MB，sentinel **v220**）
-> 　　`DSH-Tavern-0.2.0-x86_64-debug.apk`（187.6MB，sentinel **v219**）
+> **交付**：`DSH-Tavern-0.2.0-arm64-release.apk`（122.3MB，sentinel **v222**）
+> 　　`DSH-Tavern-0.2.0-x86_64-debug.apk`（187.6MB，sentinel **v221**）
 >
 > **回滚保险（四层，全部未消耗）**：`backup/dsh-runtime-android-0.1.2-staging`
 > 　　`rp-workspace/dsh-runtime-android/node_modules-0.1.2-old`

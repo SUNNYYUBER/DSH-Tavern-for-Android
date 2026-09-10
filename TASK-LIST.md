@@ -9,8 +9,8 @@
 
 | 事实 | 说明 |
 |---|---|
-| 源码 runtime | **0.1.5-rc.1**（sentinel v220，44 个心跳已推完阶段 0/1/2/3/4） |
-| 你手机上的包 | **arm64-release，9-11 04:19 构建 = 0.1.5-rc.1**（sentinel v220） |
+| 源码 runtime | **0.1.5-rc.1**（sentinel v222，45 个心跳已推完阶段 0/1/2/3/4） |
+| 你手机上的包 | **arm64-release，9-11 04:5x 构建 = 0.1.5-rc.1**（sentinel v222） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
 | 单测 | 796 项全绿（41 文件） |
 | 未提交改动 | 无（工作树干净） |
@@ -75,7 +75,7 @@
 | T-11 | D-4 用户输入绝对位置 | ✅ **重评完成**（2026-09-11，心跳 45） | 结论维持「**有条件可达**」（非当前可达）：`dsh-llm-deepseek/lib/index.js:1849` 声明 `systemPromptUpdate:"in-history"`，`dsh-llm-pi-ai` **无**该能力；我方走 pi-ai → 默认不生效。解锁 = 独立任务（切 `llm-deepseek` 路由 + 显式声明 models），**不叠加在升级窗口** |
 | T-12 | D-6 agent 层污染（31 tools / 24k 字说明书） | ⏳ 待拍板 | 见 T-08 |
 | T-13 | D-7 采样参数对照（TT 侧 `GENERATE_AFTER_COMBINE_PROMPTS` dump 未采） | ⏳ 低优先 | 补采集脚本 |
-| T-14 | golden 接收器迁入 `ctx.webServer`（摆脱宿主进程回收） | ⏳ 待办（低优先，测试脚手架） | `dsh-plugin/index.ts` webServer 段；现为独立 `golden-receiver.mjs`:31100，仅在采集对照时手动起，不影响产品链路 |
+| T-14 | golden 接收器迁入 `ctx.webServer`（摆脱宿主进程回收） | ✅ 评估后**决定不改**（2026-09-11，心跳 45） | 现为独立 `golden-receiver.mjs`:31100，**仅在手动采集 Golden Master 对照时启用**，不进产品链路；迁入 `ctx.webServer` 会让生产代码多背一个纯测试设施（且需处理路由命名空间冲突），**无功能收益**。若将来需要常驻采集再迁 |
 | T-15 | rp-plugin msg dump 口径修正（`raw.messages` → `decision.messages`） | ✅ 已修（2026-09-11，心跳 45） | 原落 `raw.messages`（RP 注入**前**的原始批）→ 与 TT 侧 `chat_completion_prompt_ready`（最终组装态）一比，差异全是假的。现改为在各出口落**最终态**（组装 + `dsht-rp/assemble` 钩子后）；`viaAssembleHook` 统一收口 |
 
 ---
