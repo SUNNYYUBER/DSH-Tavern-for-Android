@@ -59,6 +59,13 @@ async function resolveIdentity(dshHome, slug) {
 async function runMacroExpand(deps, input) {
     const slug = input.slug ?? '';
     const sessionId = input.sessionId ?? '';
+    // L1b：自定义宏水合（本插件 bundle 内联了独立引擎副本，注册表与 dsh-plugin 不同实例——
+    // 展开前从 rp/macros.json 同步，保证 substitudeMacros 预览与生成期求值一致）
+    try {
+        const disk = JSON.parse(await (0, promises_1.readFile)((0, node_path_1.join)(deps.dshHome, 'rp', 'macros.json'), 'utf8'));
+        (0, macros_ts_1.hydrateCustomMacros)(disk);
+    }
+    catch { /* 无自定义宏文件 = 正常 */ }
     const identity = await resolveIdentity(deps.dshHome, slug);
     const globalTree = await deps.loadScope('global', '', '');
     const characterTree = slug ? await deps.loadScope('character', slug, '') : {};

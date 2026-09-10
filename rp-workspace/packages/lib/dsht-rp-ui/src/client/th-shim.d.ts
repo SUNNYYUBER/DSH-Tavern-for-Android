@@ -104,7 +104,15 @@ export interface BridgeConsoleMsg {
     level: string;
     message: string;
 }
-export type BridgeIncoming = BridgeCallMsg | BridgeStatusMsg | BridgeMissingMsg | BridgeToastMsg | BridgeUiMsg | BridgeConsoleMsg;
+/** 脚本运行期错误（仅诊断记录，不翻转 phase——2026-09-07 根修） */
+export interface BridgeScriptErrorMsg {
+    [TH_MSG_TAG]: true;
+    secret: string;
+    scriptId: string;
+    th: 'script-error';
+    error: string;
+}
+export type BridgeIncoming = BridgeCallMsg | BridgeStatusMsg | BridgeMissingMsg | BridgeToastMsg | BridgeUiMsg | BridgeConsoleMsg | BridgeScriptErrorMsg;
 /** 预设 prompt（ST prompt_manager 形状子集） */
 export interface ThPresetPrompt {
     identifier?: string;
@@ -134,13 +142,14 @@ export interface ThPreset {
     prompt_order?: ThPromptOrder[];
     [key: string]: unknown;
 }
-/** 聊天消息（/chat/messages 投影；message_id 为楼层号） */
+/** 聊天消息（/chat/messages 投影；message_id 为楼层号；seq = 会话日志事件锚——写路径 update 用） */
 export interface ThChatMessage {
     message_id: number;
     name?: string;
     role?: string;
     message?: string;
     is_system?: boolean;
+    seq?: number;
     [key: string]: unknown;
 }
 /**
@@ -185,12 +194,12 @@ export declare const TAVERN_EVENTS: Record<string, string>;
  * 名值抄自真 TH iframe_events 导出） */
 export declare const IFRAME_EVENTS: Record<string, string>;
 /** shim 本地实现（不过桥）的 API */
-export declare const SHIM_LOCAL_APIS: readonly ["eventOn", "eventOnce", "eventEmit", "eventEmitAndWait", "eventRemoveListener", "eventClearEvent", "eventClearAll", "eventMakeFirst", "eventMakeLast", "eventOnButton", "getButtonEvent", "getVariables", "getAllVariables", "insertVariables", "insertOrAssignVariables", "updateVariablesWith", "replaceVariables", "deleteVariable", "getScriptButtons", "replaceScriptButtons", "updateScriptButtonsWith", "appendInexistentScriptButtons", "getTavernHelperVersion", "getTavernVersion", "getScriptId", "getScriptName", "getCurrentCharPrimaryLorebook", "getCharWorldbookNames", "getLastMessageId", "triggerSlash", "audio"];
+export declare const SHIM_LOCAL_APIS: readonly ["eventOn", "eventOnce", "eventEmit", "eventEmitAndWait", "eventRemoveListener", "eventClearEvent", "eventClearAll", "eventMakeFirst", "eventMakeLast", "eventClearListener", "eventOnButton", "getButtonEvent", "getVariables", "getAllVariables", "insertVariables", "insertOrAssignVariables", "updateVariablesWith", "replaceVariables", "deleteVariable", "getScriptButtons", "replaceScriptButtons", "updateScriptButtonsWith", "appendInexistentScriptButtons", "getTavernHelperVersion", "getTavernVersion", "getScriptId", "getScriptName", "getCurrentCharPrimaryLorebook", "getCharWorldbookNames", "getLastMessageId", "triggerSlash", "audio"];
 /**
  * 经桥实现的 API（iframe 内函数 → call('xxx') 走 host 数据面 /dsht-tavern-helper/*）。
  * 与 SHIM_LOCAL_APIS 一样挂为裸全局（真 TH predefine.js 行为）。
  */
-export declare const SHIM_BRIDGE_APIS: readonly ["getContext", "getPresetNames", "getPreset", "getLoadedPresetName", "presetExists", "createPreset", "createOrReplacePreset", "replacePreset", "setPreset", "deletePreset", "renamePreset", "loadPreset", "updatePresetWith", "isPresetNormalPrompt", "isPresetPlaceholderPrompt", "isPresetSystemPrompt", "getChatMessages", "getChatMessage", "getTavernRegexes", "replaceTavernRegexes", "getWorldbooks", "getLorebookEntries", "updateWorldbookWith", "registerVariableSchema", "injectPrompts", "uninjectPrompts", "generate", "generateRaw", "getChatHistoryBrief", "getChatHistoryDetail", "updateTavernRegexesWith", "formatAsTavernRegexedString", "isCharacterTavernRegexesEnabled", "getWorldbook", "replaceLorebookEntries", "rebindGlobalWorldbooks", "rebindCharWorldbooks", "getOrCreateChatWorldbook", "substitudeMacros"];
+export declare const SHIM_BRIDGE_APIS: readonly ["getContext", "getPresetNames", "getPreset", "getLoadedPresetName", "presetExists", "createPreset", "createOrReplacePreset", "replacePreset", "setPreset", "deletePreset", "renamePreset", "loadPreset", "updatePresetWith", "isPresetNormalPrompt", "isPresetPlaceholderPrompt", "isPresetSystemPrompt", "getChatMessages", "getChatMessage", "getTavernRegexes", "replaceTavernRegexes", "getWorldbooks", "getLorebookEntries", "updateWorldbookWith", "registerVariableSchema", "injectPrompts", "uninjectPrompts", "generate", "generateRaw", "createChatMessages", "setChatMessages", "getChatHistoryBrief", "getChatHistoryDetail", "updateTavernRegexesWith", "formatAsTavernRegexedString", "isCharacterTavernRegexesEnabled", "getWorldbook", "replaceLorebookEntries", "rebindGlobalWorldbooks", "rebindCharWorldbooks", "getOrCreateChatWorldbook", "substitudeMacros"];
 /**
  * 已知但不支持的 API（挂 stub：console.warn 记名 + Promise.reject）。
  * 都是深度钩 ST 内部组件或与宿主数据模型冲突的面（chat 写路径 / 扩展管理 / 世界书写路径）。
@@ -199,7 +208,7 @@ export declare const SHIM_BRIDGE_APIS: readonly ["getContext", "getPresetNames",
  * 控制（stop/模型清单/代理）仍记名拒绝；prompt 注入为存储面真实现（C8）；斜杠命令走
  * triggerSlash 最小映射（C18）；音频走 audio.bgm/ambient（C17）。
  */
-export declare const UNSUPPORTED_APIS: readonly ["stopAllGeneration", "stopGenerationById", "getModelList", "getProxyPresetNames", "setChatMessage", "setChatMessages", "createChatMessages", "deleteChatMessages", "rotateChatMessages", "formatAsDisplayedMessage", "retrieveDisplayedMessage", "refreshOneMessage", "getLorebooks", "getCharLorebooks", "getChatLorebook", "getOrCreateChatLorebook", "setChatLorebook", "createLorebook", "deleteLorebook", "getLorebookSettings", "setLorebookSettings", "setCurrentCharLorebooks", "createLorebookEntry", "createLorebookEntries", "deleteLorebookEntry", "deleteLorebookEntries", "setLorebookEntries", "updateLorebookEntriesWith", "getCharacterNames", "getCharacterIds", "getCharacter", "getCurrentCharacterId", "getCurrentCharacterName", "createCharacter", "createOrReplaceCharacter", "deleteCharacter", "replaceCharacter", "updateCharacterWith", "getPersonaNames", "getPersona", "createPersona", "createOrReplacePersona", "deletePersona", "replacePersona", "registerMacroLike", "unregisterMacroLike", "getAudioList", "appendAudioList", "replaceAudioList", "playAudio", "pauseAudio", "getCurrentAudio", "getAudioSettings", "setAudioSettings", "isAdmin", "installExtension", "uninstallExtension", "updateExtension", "reinstallExtension", "isInstalledExtension", "getExtensionType", "getExtensionInstallationInfo", "importRawCharacter", "importRawChat", "importRawPreset", "importRawTavernRegex", "importRawWorldbook", "getScriptTrees", "replaceScriptTrees", "updateScriptTreesWith", "getAllEnabledScriptButtons", "writeExtensionField", "updateTavernHelper"];
+export declare const UNSUPPORTED_APIS: readonly ["stopAllGeneration", "stopGenerationById", "getModelList", "getProxyPresetNames", "setChatMessage", "deleteChatMessages", "rotateChatMessages", "formatAsDisplayedMessage", "retrieveDisplayedMessage", "refreshOneMessage", "getLorebooks", "getCharLorebooks", "getChatLorebook", "getOrCreateChatLorebook", "setChatLorebook", "createLorebook", "deleteLorebook", "getLorebookSettings", "setLorebookSettings", "setCurrentCharLorebooks", "createLorebookEntry", "createLorebookEntries", "deleteLorebookEntry", "deleteLorebookEntries", "setLorebookEntries", "updateLorebookEntriesWith", "getCharacterNames", "getCharacterIds", "getCharacter", "getCurrentCharacterId", "getCurrentCharacterName", "createCharacter", "createOrReplaceCharacter", "deleteCharacter", "replaceCharacter", "updateCharacterWith", "getPersonaNames", "getPersona", "createPersona", "createOrReplacePersona", "deletePersona", "replacePersona", "registerMacroLike", "unregisterMacroLike", "getAudioList", "appendAudioList", "replaceAudioList", "playAudio", "pauseAudio", "getCurrentAudio", "getAudioSettings", "setAudioSettings", "isAdmin", "installExtension", "uninstallExtension", "updateExtension", "reinstallExtension", "isInstalledExtension", "getExtensionType", "getExtensionInstallationInfo", "importRawCharacter", "importRawChat", "importRawPreset", "importRawTavernRegex", "importRawWorldbook", "getScriptTrees", "replaceScriptTrees", "updateScriptTreesWith", "getAllEnabledScriptButtons", "writeExtensionField", "updateTavernHelper"];
 /**
  * 记名拒绝的逐 API 理由（shim stub 的错误消息引用；未列出的 API 用通用理由）。
  * 聊天消息写路径拒绝理由要点：DSH 会话日志是 append-only，写历史与宿主记录有损漂移。
@@ -221,8 +230,16 @@ export interface ShimOptions {
 export declare function buildShimSource(opts: ShimOptions): string;
 export declare function buildIframeDocument(opts: ShimOptions & {
     content: string;
+    initialVars?: unknown;
 }): string;
-export type VarScope = 'global' | 'preset' | 'character' | 'chat' | 'script';
+export declare function getVendorBlobUrl(): string;
+export declare function buildMessageFrameDocument(source: string, opts: ShimOptions & {
+    initialVars?: unknown;
+    initialContext?: unknown;
+    vendorUrl: string;
+    shimUrl: string;
+}): string;
+export type VarScope = 'global' | 'preset' | 'character' | 'chat' | 'script' | 'message';
 export interface VarOption {
     type?: string;
     script_id?: string;
@@ -247,6 +264,8 @@ export interface ThBridgeDeps {
         name: string;
         visible: boolean;
     }>) => void;
+    /** 【鲁棒轮】buttons:set 跨脚本目标存在性校验（replaceScriptButtons(buttons, script_id)） */
+    buttonsExists: (scriptId: string) => boolean;
     primaryLorebook: () => Promise<string | null>;
     /** 上下文快照（/context 响应；无 RP 上下文返回 null） */
     ctxGet: (sessionId: string, slug: string) => Promise<ThContextSnapshot | null>;
@@ -268,6 +287,27 @@ export interface ThBridgeDeps {
     chatMessages: (sessionId: string) => Promise<{
         messages: ThChatMessage[];
     }>;
+    /** 聊天写桥（P3a：createChatMessages——messages [{role,message,data?}]；insertBefore 仅 'end'） */
+    chatAppend: (messages: Array<{
+        role: string;
+        message: string;
+        data: Record<string, unknown> | null;
+    }>, options: {
+        insertBefore: 'end' | number;
+    }) => Promise<{
+        ok?: boolean;
+        messageIds?: number[];
+    }>;
+    /** 聊天写桥（P3a：setChatMessages——targets [{message_id,seq?,message?,data?}]，replace 原语） */
+    chatUpdate: (targets: Array<{
+        message_id: number;
+        seq?: number;
+        message?: string;
+        data?: unknown;
+    }>) => Promise<{
+        ok?: boolean;
+        updated?: number;
+    }>;
     regexesGet: (slug: string, sessionId: string) => Promise<{
         regexes: Record<string, unknown>[];
         presetId?: string | null;
@@ -275,6 +315,9 @@ export interface ThBridgeDeps {
     }>;
     /** 正则整表替换（scope: global / character(slug) / preset(presetId)） */
     regexesReplace: (regexes: Record<string, unknown>[], scope: 'global' | 'character' | 'preset', slug: string, sessionId: string) => Promise<void>;
+    /** 【Kemini 适配 2026-09-08】显示面失效+重渲染（builtin.reloadAndRenderChatWithoutEvents /
+     *  正则·预设变更后宿主 RP 聊天重跑 display 管线——displayRegexCache 失效 + epoch bump） */
+    displayReload: () => Promise<void>;
     wbList: () => Promise<{
         books: Array<{
             name: string;
@@ -291,6 +334,14 @@ export interface ThBridgeDeps {
     /** 运行期宏展开（substitudeMacros：/macros/expand → {result, writes, unknownMacros}） */
     macrosExpand: (text: string) => Promise<{
         result?: string;
+    }>;
+    /** L1b：自定义宏注册/注销（ST MacroRegistry.registerMacro 对应物；落 rp/macros.json，生成期/显示期同源） */
+    macrosRegister: (name: string, value: string) => Promise<{
+        ok?: boolean;
+        macros?: Record<string, string>;
+    }>;
+    macrosUnregister: (name: string) => Promise<{
+        ok?: boolean;
     }>;
     /** 世界书条目整表替换（replaceLorebookEntries；ST entry 形状数组） */
     wbReplaceEntries: (name: string, entries: Record<string, unknown>[]) => Promise<void>;
@@ -312,6 +363,11 @@ export interface ThBridgeDeps {
     injectsRemove: (keys: string[]) => Promise<void>;
     /** 一次性补全（C9：/generate loopback → /dsht-rp/llm/classify） */
     generate: (system: string, prompt: string) => Promise<{
+        ok?: boolean;
+        text?: string;
+    }>;
+    /** generateRaw 真语义：完整 payload（ordered_prompts 等）→ 宿主 /generate-raw 装配 */
+    generateRawRaw: (payload: unknown) => Promise<{
         ok?: boolean;
         text?: string;
     }>;

@@ -38,8 +38,9 @@
  * 打包：esbuild 内联（dsh-plugin bundle 时编入）。
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
 
 // ---------------------------------------------------------------------------
 // E1：数据模型
@@ -198,12 +199,31 @@ export async function loadSheets(dshHome: string, sessionId: string): Promise<Lo
   return { whole, sheets, history, migrated }
 }
 
-/** 写会话表格（薄 IO，建目录；调用方负责历史栈） */
+/** 写会话表格（薄 IO，建目录；调用方负责历史栈）。
+ *  【鲁棒轮 2026-09-09】字段级 merge 写——rp/state/<sid>.json 是多写方共享文件
+ *  （MVU variables/state、dsh-plugin cursor/presetId、loreTimed…）。原实现把
+ *  load 时读到的 whole 整树原样写回：/tables/step-summary 与 /tables/rebuild 在
+ *  load 与 save 之间隔着秒级 LLM 调用，期间其他写方（每轮 pre-step 的 cursor/
+ *  state、MVU patch）落盘的变更会被旧 whole 静默回滚（cursor 倒退/变量丢失）。
+ *  现改为保存前重读最新盘面、只覆写 sheets/sheetHistory/tablesMigrated 三键，
+ *  其余键保留最新值；写盘换 atomicWriteText（与项目发布口径一致）。 */
 export async function saveSheets(dshHome: string, sessionId: string, whole: Record<string, unknown>): Promise<void> {
   if (!isValidTablesSessionId(sessionId)) throw new Error('invalid sessionId')
   const path = sheetsStatePath(dshHome, sessionId)
   await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, JSON.stringify(whole), 'utf8')
+  let merged: Record<string, unknown> = whole
+  try {
+    const latest = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+    if (latest && typeof latest === 'object' && !Array.isArray(latest)) {
+      merged = {
+        ...latest,
+        sheets: whole.sheets,
+        sheetHistory: whole.sheetHistory,
+        ...(whole.tablesMigrated === true ? { tablesMigrated: true } : {}),
+      }
+    }
+  } catch { /* 盘面不可读（首写/撕裂）→ 退化为整树写 */ }
+  await atomicWriteText(path, JSON.stringify(merged))
 }
 
 /** 历史栈入栈（纯函数）：深快照 sheets，栈深 20（超出丢最旧） */

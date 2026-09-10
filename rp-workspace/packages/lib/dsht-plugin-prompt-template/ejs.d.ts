@@ -111,6 +111,9 @@ export interface RenderMessagesOptions {
 /**
  * 批量渲染历史消息：is_ejs_processed 的跳过（保留原 mes），未处理的按
  * template 渲染（context 叠加 {message} 供模板引用当前消息字段），并打上已处理标记。
+ * 【鲁棒轮 2026-09-09】per-message 隔离：单条消息含未闭合 {{/<%（楼层原文脏数据常态）
+ * 时原实现异常穿透 → 整批 400（含已渲染消息）。失败消息保留原 mes + ejsError 标记，
+ * 不阻塞整批（与 sandbox 引擎 fail-soft 对齐）。
  */
 export declare function renderMessages(template: string, context: Record<string, unknown>, messages: LikeStMessage[], options?: RenderMessagesOptions): {
     messages: LikeStMessage[];

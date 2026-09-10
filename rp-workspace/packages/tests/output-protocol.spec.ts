@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   PROTO_DEFAULT, applyOutputProtocol, applyOutputProtocolSegments, parseJsonPatches, parseStateUpdateBlock,
-  parseStatusBarRows, parseVariableJson, slugFromCwd, splitStatusbarBlocks, withDefaults,
+  parseStatusBarRows, parseVariableJson, sanitizeDisplayHtml, slugFromCwd, splitStatusbarBlocks, withDefaults,
 } from '../src/dsht-rp-ui/src/client/output-protocol.ts'
 
 describe('输出协议三组件纯逻辑（T2.5a：自 rp-chat 迁移，语义不变）', () => {
@@ -257,5 +257,33 @@ describe('T2.10 结构解析器', () => {
     ])
     expect(parseJsonPatches('不是 JSON')).toBeNull()
     expect(parseJsonPatches('{"op":"x"}')).toBeNull() // 非数组
+  })
+})
+
+describe('sanitizeDisplayHtml 引号/标签/样式白名单（2026-09-09 Kemini 适配修复回归）', () => {
+  it('单引号属性：class/style 不再丢失（旧实现只认双引号 → 布局崩坏）', () => {
+    expect(sanitizeDisplayHtml("<div class='card' style='color: red; text-align: center'>文</div>"))
+      .toBe('<div class="card" style="color: red; text-align: center">文</div>')
+  })
+  it('无引号属性：裸值形态保留 class/style', () => {
+    expect(sanitizeDisplayHtml('<div class=card style=color:red>文</div>'))
+      .toBe('<div class="card" style="color: red">文</div>')
+  })
+  it('details/summary 白名单：Kemini 思维链折叠产物内联渲染（不再强制转 iframe）', () => {
+    const html = '<details><summary>思维链</summary><div style="color: gray">内心独白</div></details>'
+    expect(sanitizeDisplayHtml(html)).toBe(html)
+  })
+  it('布局样式白名单扩充：flex/width/border/padding 保留（两栏布局不再崩坏）', () => {
+    const html = '<div style="display: flex; width: 100%; gap: 8px; padding: 4px; border: 1px solid #fff"><div style="flex: 0 0 24px">侧</div><div>主</div></div>'
+    expect(sanitizeDisplayHtml(html)).not.toBeNull()
+    expect(sanitizeDisplayHtml(html)).toContain('display: flex')
+  })
+  it('position 仍拒绝（悬浮球 fixed 走 iframe 舞台的 P0-2 场景不受影响）', () => {
+    expect(sanitizeDisplayHtml('<div style="position: fixed">球</div>')).toBeNull()
+  })
+  it('危险内容仍拒绝：事件属性丢弃、url() 值丢弃声明（原语义：标签保留）、白名单外标签 null', () => {
+    expect(sanitizeDisplayHtml('<div onclick="x()">文</div>')).not.toContain('onclick')
+    expect(sanitizeDisplayHtml('<div style="background: url(http://x)">文</div>')).toBe('<div>文</div>')
+    expect(sanitizeDisplayHtml('<section>文</section>')).toBeNull()
   })
 })

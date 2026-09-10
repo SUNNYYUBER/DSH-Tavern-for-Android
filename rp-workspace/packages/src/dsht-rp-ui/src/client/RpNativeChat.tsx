@@ -31,7 +31,7 @@ import {
 } from './output-protocol.ts'
 import {
   FRAME_HEIGHT_MESSAGE_TYPE, FRAME_MAX_HEIGHT, buildDisplayFrameDocument, clampFrameHeight,
-  compileDisplaySegments, enhancePreBlocks, expandDisplayMacros, loadDisplayRenderCtx,
+  compileDisplaySegments, enhancePreBlocks, expandDisplayMacros, invalidateDisplayDataCache, loadDisplayRenderCtx,
   loadEjsDisplaySettings, loadRenderEntries, loadThRenderSettings, reportPermanentRender,
   runDisplayScripts, unwrapForeignTags, type DisplayMacroCtx, type EjsDisplaySettings,
   type RenderEntries, type ThRenderSettings,
@@ -108,6 +108,30 @@ export function invalidateWsCache(): void {
   wsCache = null
   rpSessionCache = null
   displayRegexCache.clear()
+  invalidateDisplayDataCache()
+}
+
+// ---------------------------------------------------------------------------
+// 【Kemini 适配 2026-09-08】display epoch——TH 脚本改正则/预设后的显示面失效+重渲染。
+// 根因：脚本经 replaceTavernRegexes / updatePresetWith 改了 display 正则状态，
+// displayRegexCache 不失效、消息楼层不重渲染 →「切了思维链开关画面没反应」。
+// notifyDisplayMutation：清缓存 + bump epoch；楼层组件订阅 epoch 重跑 processed
+// （含 displayScripts 重取）。真 TH 的 builtin.reloadAndRenderChatWithoutEvents 走本通道。
+// ---------------------------------------------------------------------------
+let displayEpoch = 0
+const displayEpochListeners = new Set<() => void>()
+
+export function notifyDisplayMutation(): void {
+  invalidateWsCache()
+  displayEpoch += 1
+  for (const l of displayEpochListeners) l()
+}
+
+function useDisplayEpoch(): number {
+  return useSyncExternalStore(
+    cb => { displayEpochListeners.add(cb); return () => displayEpochListeners.delete(cb) },
+    () => displayEpoch,
+  )
 }
 
 function fetchWorkspaces(): Promise<RpWorkspaceInfo[]> {
@@ -162,12 +186,13 @@ function fetchDisplayRegexes(slug: string, sessionId: string): Promise<RegexScri
 
 function useDisplayRegexes(slug: string | null, sessionId: string): RegexScript[] {
   const [scripts, setScripts] = useState<RegexScript[]>([])
+  const epoch = useDisplayEpoch() // 【Kemini 适配】正则/预设变更（epoch bump）后重取
   useEffect(() => {
     let alive = true
     if (slug === null || !sessionId) { setScripts([]); return }
     void fetchDisplayRegexes(slug, sessionId).then(s => { if (alive) setScripts(s) })
     return () => { alive = false }
-  }, [slug, sessionId])
+  }, [slug, sessionId, epoch])
   return scripts
 }
 
@@ -192,6 +217,10 @@ const PIPELINE_UNLOADED: DisplayPipelineData = { ctx: null, entries: EMPTY_PIPEL
 
 function useDisplayPipeline(slug: string | null, sessionId: string): DisplayPipelineData {
   const [data, setData] = useState<DisplayPipelineData>(PIPELINE_UNLOADED)
+  // 【鲁棒轮 2026-09-09】订阅 display epoch：Kemini 开关（regexes:replace/preset:put/
+  // display:reload → notifyDisplayMutation）后已挂载楼层的宏上下文/[RENDER] 条目必须重取，
+  // 否则楼层永远用挂载时刻的 ctx（变量树）展开 {{getvar}}。数据面 5s TTL 缓存兜住成本。
+  const epoch = useDisplayEpoch()
   useEffect(() => {
     let alive = true
     void Promise.all([
@@ -203,7 +232,7 @@ function useDisplayPipeline(slug: string | null, sessionId: string): DisplayPipe
       if (alive) setData({ ctx, entries, ejs, th })
     })
     return () => { alive = false }
-  }, [slug, sessionId])
+  }, [slug, sessionId, epoch])
   return data
 }
 
@@ -384,6 +413,9 @@ function floorIndexOf(snapshot: unknown, hideAfter = hideAfterOf(snapshot as Lik
   const core = floorIndexOfChat((snapshot as LikeChatSnapshot).chat, hideAfter)
   const index: FloorIndex = { ...core, hideAfter: hideAfterOf(snapshot as LikeChatSnapshot) }
   floorIndexCache.set(snap, index)
+  // 【鲁棒轮 2026-09-09】漏写 cacheKey → rollbackMask 异步到达后的重算恒 miss
+  // （O(N²) 每帧重算 + mask 回退时陈旧命中），与 floorIndexFromChat 对齐。
+  floorIndexCacheKey.set(snap, hideAfter)
   return index
 }
 
@@ -1329,7 +1361,9 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
     if (!depthOk) return
     enhancePreBlocks(el, { collapse: th.collapseCodeBlock !== 'none', hljs: th.optimizeHljs })
     // processed 变化（流式重排/窗口化回渲）时 React 可能重建 pre 节点 → 重跑补齐（幂等）
-  }, [pipeline.th, streaming, processed, messageDepth, hiddenNewerCount])
+    // 【鲁棒轮 2026-09-09】windowed 翻转会卸载/重挂 body div（deps 同引用不重跑 → 新 DOM
+    // 永不增强），windowed 必须入 deps。
+  }, [pipeline.th, streaming, processed, messageDepth, hiddenNewerCount, windowed])
 
   // ---- ST 台词着色（SillyTavern messageFormatting 的 <q> 包裹等价；settled 楼层 DOM 过一遍）----
   // MarkdownText（宿主 micromark 渲染器）把 raw HTML 当文本渲染 → 源码注入 <q> 会字面露出，
@@ -1338,7 +1372,8 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
     const el = bodyRef.current
     if (el === null || streaming) return
     wrapStQuotes(el)
-  }, [streaming, processed])
+    // 【鲁棒轮 2026-09-09】windowed 入 deps：窗口化往返后 body div 重挂，新 DOM 需重新上色
+  }, [streaming, processed, windowed])
   // 【2026-09-07 竞态根修】MarkdownText 异步填充（宿主组件内部 effect/懒解析）——
   // layout effect 跑时 body 可能还是空壳，deps 稳定后不再重跑 → 楼层永久无 <q>
   //（长聊天实测：61 对引号 0 包裹，手动复刻包裹则全部命中）。MutationObserver +
@@ -1361,7 +1396,8 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
     mo.observe(el, { childList: true, subtree: true, characterData: true })
     wrapStQuotes(el)
     return () => { mo.disconnect(); if (scheduled) { scheduled = false } }
-  }, [streaming])
+    // 【鲁棒轮 2026-09-09】windowed 入 deps：翻转重挂 body 后 observer 要挂到新节点
+  }, [streaming, windowed])
 
   /** T2.5b：行动选项点击 → 原生 composer 提交通道（setDraft + submit，不自绘输入栏） */
   const sendAction = useCallback((text: string) => {
@@ -1465,17 +1501,18 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
 const groupsCache = new Map<string, VariantGroupInfo[]>()
 const groupsListeners = new Map<string, Set<() => void>>()
 
-async function fetchVariantGroups(sessionId: string): Promise<VariantGroupInfo[]> {
+async function fetchVariantGroups(sessionId: string): Promise<VariantGroupInfo[] | null> {
   try {
     const r = await rpApi<{ groups: RawVariantGroup[] }>('variant/groups', { sessionId })
     return normalizeVariantGroups(r.groups ?? [])
   } catch {
-    return []
+    return null // 【鲁棒轮 2026-09-09】失败不写缓存——写 [] 会让 cache-miss 守卫永远跳过重试
   }
 }
 
 async function refreshVariantGroups(sessionId: string): Promise<void> {
-  groupsCache.set(sessionId, await fetchVariantGroups(sessionId))
+  const next = await fetchVariantGroups(sessionId)
+  if (next !== null) groupsCache.set(sessionId, next)
   for (const fn of groupsListeners.get(sessionId) ?? []) fn()
 }
 
@@ -1483,18 +1520,24 @@ async function refreshVariantGroups(sessionId: string): Promise<void> {
  * 变体组订阅 hook：挂载取缓存（无则拉取）、监听切换事件刷新。
  * nodeCount 由调用方传入（useSession 的选择器读 chat.order 长度——重 roll 入组
  * 会增节点；replace 事件不增节点，靠切换通知刷新）。
+ * 【鲁棒轮 2026-09-09】nodeCount 增长时无条件刷新（原 cache-miss 守卫让它成为死代码：
+ * 重新生成/新消息入列后新 seq 不在任何组里 → 变体条 ‹n/m› 永不出现，直到手动切换）。
  */
 function useVariantGroups(sessionId: string, nodeCount: number): VariantGroupInfo[] {
   const [version, setVersion] = useState(0)
+  const prevCountRef = useRef(-1)
   useEffect(() => {
     const bump = (): void => { setVersion(v => v + 1) }
     const listeners = groupsListeners.get(sessionId) ?? new Set()
     listeners.add(bump)
     groupsListeners.set(sessionId, listeners)
-    if (!groupsCache.has(sessionId)) void refreshVariantGroups(sessionId)
+    const grew = nodeCount > prevCountRef.current && prevCountRef.current >= 0
+    prevCountRef.current = nodeCount
+    if (!groupsCache.has(sessionId) || grew) void refreshVariantGroups(sessionId)
     return () => { listeners.delete(bump) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, nodeCount])
+  void version
   return groupsCache.get(sessionId) ?? EMPTY_GROUPS
 }
 
@@ -1666,6 +1709,8 @@ interface UserNodeViewProps {
   cwd?: string | undefined
   renderMessageImages: (owner: { images: ReadonlyArray<{ attachment: unknown }>; align: 'start' | 'end' }) => ReactNode
   sessionId?: string | undefined
+  /** 原生 composer 提交通道（assistant 席位同款；回退后原文回输入框用） */
+  inputActions?: { setDraft: (text: string) => void; submit: () => void } | undefined
   /** 标准件（session 域席位）：会话快照选择器 */
   useSession?: (<T>(selector: (snapshot: unknown) => T) => T) | undefined
   /** Chat 本体快照选择器（楼层头数据源；owner props 直供） */
@@ -1674,16 +1719,22 @@ interface UserNodeViewProps {
 
 /** user 气泡的「↩ 回退到此处」+「✎ 编辑」（**所有会话**——适配 agent/普通会话同样
  *  可回退；2026-09-04 真机反馈：原先仅 RP 工作区会话显示，用户在适配会话里找不到）。
- *  回退 = 逻辑回退到这条消息（/rp/session-rollback）；编辑 = 截断到这条消息**之前**
- *  并以新文本重新发送（/rp/session-edit + session.prompt，「编辑并重发」语义）。 */
+ *  回退 = 逻辑回退到这条消息（/rp/session-rollback；【2026-09-08 用户语义】includeAnchor
+ *  = 连锚消息一起移出上下文，原文放回 composer 输入框——ST「回退」同语义，用户可改后
+ *  重发）；编辑 = 截断到这条消息**之前** 并以新文本重新发送（/rp/session-edit +
+ *  session.prompt，「编辑并重发」语义）。 */
 export const RpUserNodeView = memo(function RpUserNodeView({
-  node, cwd, renderMessageImages, sessionId, useSession, useChat,
+  node, cwd, renderMessageImages, inputActions, sessionId, useSession, useChat,
 }: UserNodeViewProps) {
   const data = node.data
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const seq = typeof data.seq === 'number' ? data.seq : undefined
+  // 【2026-09-08 鲁棒性】running 守卫（重新生成按钮同款）：turn 运行中回退/编辑会与
+  // 生成期 append 互踩（live replace 的 claim/mark 窗口被生成 append 插入——数据面已把
+  // undo 回放挪出该窗口，这里再禁掉入口），按钮置灰防误触。
+  const running = useSession === undefined ? false : useSession((snapshot) => (snapshot as { running?: boolean }).running === true)
   // 【hook 移植 L1a】TH 事件桥：message_sent（mount 新鲜度门——开聊重放历史不投递）
   useEffect(() => {
     if (sessionId === undefined || sessionId === null || !isFreshMessage(data)) return
@@ -1706,15 +1757,19 @@ export const RpUserNodeView = memo(function RpUserNodeView({
   }, [data.content])
 
   const rollback = useCallback(async () => {
-    if (busy || seq === undefined || !sessionId) return
-    if (!window.confirm('回退到这条消息？其后的对话将从上下文移除（事件仍保留在日志；状态/变量一并回滚）。')) return
+    if (busy || running || seq === undefined || !sessionId) return
+    if (!window.confirm('回退到这条消息？该消息与其后的对话将从上下文移除，原文放回输入框（事件仍保留在日志；状态/变量一并回滚）。')) return
     setBusy(true)
     try {
       // POST /dsht-rp/rp/session-rollback：live → 官方 replace 原语逻辑回退（投影
       // 立即生效，无需刷新）；非 live → 文件截断 + .bak（需要整页重载重建投影）
-      const r = await rpApi<{ logical?: boolean }>('rp/session-rollback', { sessionId, keepThroughSeq: seq })
+      // 【2026-09-08 用户语义】includeAnchor: true = 锚消息一起移除 + 文本回输入框
+      const r = await rpApi<{ logical?: boolean }>('rp/session-rollback', { sessionId, keepThroughSeq: seq, includeAnchor: true })
       // TH 事件桥：回退 = 其后楼层移除语义 → message_deleted（ST MESSAGE_DELETED 对应）
       dispatchThEvent(sessionId, 'message_deleted')
+      // 【2026-09-08 用户语义】原文放回 composer 输入框（ST 回退同款；inputActions 缺席
+      // 的挂载形态静默跳过——回退本身已完成）
+      inputActions?.setDraft(parts.text)
       if (r.logical === true) {
         // 【⑨修复 2026-09-05】live 回退后不整页重载——原生 composer 草稿不持久化，
         // reload 即清空。改为 live 同款逻辑回退（掩码更新 + 会话重开）
@@ -1732,10 +1787,10 @@ export const RpUserNodeView = memo(function RpUserNodeView({
       window.alert(`回退失败：${(e as Error).message}`)
       setBusy(false)
     }
-  }, [busy, seq, sessionId])
+  }, [busy, running, seq, sessionId, inputActions, parts.text])
 
   const saveEdit = useCallback(async () => {
-    if (busy || seq === undefined || !sessionId) return
+    if (busy || running || seq === undefined || !sessionId) return
     const text = draft.trim()
     if (!text) return
     setBusy(true)
@@ -1785,7 +1840,7 @@ export const RpUserNodeView = memo(function RpUserNodeView({
       window.alert(`编辑失败：${(e as Error).message}`)
       setBusy(false)
     }
-  }, [busy, draft, seq, sessionId, node.key])
+  }, [busy, running, draft, seq, sessionId, node.key])
 
   // 逻辑回退掩码：本消息 seq 已被编辑/回退移出上下文 → 不渲染（编辑重发的新消息
   // seq 更大，正常显示）
@@ -1828,13 +1883,13 @@ export const RpUserNodeView = memo(function RpUserNodeView({
         <>
           {busy && <span className="dsht-rp-note">回退完成，正在刷新会话…</span>}
           <div className="dsht-rp-user-actions">
-            <button type="button" className="dsht-rp-rollback-btn" data-testid="dsht-rp-rollback" disabled={busy}
-              title="回退到这条消息（移除其后的对话）"
+            <button type="button" className="dsht-rp-rollback-btn" data-testid="dsht-rp-rollback" disabled={busy || running}
+              title={running ? '生成运行中，等待本轮结束再回退' : '回退到这条消息（该消息与其后的对话移出上下文，原文放回输入框供修改重发）'}
               onClick={() => { void rollback() }}>
               {busy ? '回退中…' : '↩ 回退到此处'}
             </button>
-            <button type="button" className="dsht-rp-rollback-btn" data-testid="dsht-rp-edit" disabled={busy}
-              title="编辑这条已发送的消息（就地截断后以新文本重新发送）"
+            <button type="button" className="dsht-rp-rollback-btn" data-testid="dsht-rp-edit" disabled={busy || running}
+              title={running ? '生成运行中，等待本轮结束再编辑' : '编辑这条已发送的消息（就地截断后以新文本重新发送）'}
               onClick={() => { setDraft(parts.text); setEditing(true) }}>
               ✎ 编辑
             </button>

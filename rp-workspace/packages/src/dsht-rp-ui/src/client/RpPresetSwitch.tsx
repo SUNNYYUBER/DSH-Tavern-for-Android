@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import { rpApi } from './rpc.ts'
+import { notifyDisplayMutation } from './RpNativeChat.tsx'
 
 interface PresetLite { id: string; displayName: string }
 
@@ -53,8 +54,11 @@ export function RpPresetSwitch({ useSession, sessionId }: HeaderActionProps): JS
     try {
       await rpApi('preset/select', { sessionId, presetId: presetId || null })
       setCurrent(presetId)
-      // 预设 display 正则随预设切换而变 → 渲染链脚本清单缓存失效（下条消息重拉）
-      invalidateWsCache()
+      // 【2026-09-08 鲁棒性】display epoch 必须随预设切换 bump（旧代码只 invalidateWsCache
+      // 清缓存——useDisplayRegexes 的 effect 依赖 [slug, sessionId, epoch]，epoch 不变则
+      // 已挂载楼层永不重取预设作用域 display 正则，切换后显示面滞留旧正则直到重开会话）。
+      // notifyDisplayMutation = 清缓存 + bump epoch + 订阅者重渲染（TH 脚本 preset:put 同款语义）。
+      notifyDisplayMutation()
     } catch { /* 失败回显旧值：下次渲染纠正 */ }
     finally { setSwitching(false) }
   }

@@ -43,10 +43,15 @@ export interface StPromptOrder {
 /** ST 聊天消息（getChatMessages 形态） */
 export interface StMessage {
     message_id: number;
+    /** L1a：事件 seq（TH 事件桥楼层解析锚 + P3a setChatMessages replace 目标定位；可选——老版本导出没有） */
+    seq?: number;
     name: string;
-    role: 'user' | 'assistant';
+    /** P3a：TH 写桥系统楼层（source.thSystem）导出为 'system' */
+    role: 'user' | 'assistant' | 'system';
     message: string;
     is_system: boolean;
+    /** P3a：楼层附加数据（source.thData）——卡脚本回读（飞讯 is_feixun_record 等靠它定位） */
+    data?: unknown;
 }
 /** 世界书清单条目 */
 export interface WorldbookListItem {
@@ -121,8 +126,13 @@ export declare function presetLoad(dshHome: string, body: Record<string, unknown
 /**
  * 会话消息 → StMessage[]（只读）：
  * scanSessionHeaders 定位 session.jsonl → readline 流式逐行（大日志不整读），
- * 只解析 user/message / assistant/message 事件（data 形状见 session-surgery findLastUserMessage：
- * user = Message 本体，assistant = {turn, step, message}）；快照注入与空文本不进导出。
+ * 解析 user/message / assistant/message 事件（data 形状见 session-surgery findLastUserMessage：
+ * user = Message 本体，assistant = {turn, step, message}）；快照注入不进导出。
+ * 【P3a 2026-09-07】TH 写桥消息：source.thSystem → role:'system'/is_system:true/name:'System'
+ * （ST createChatMessages 系统楼层同形）；source.thData → data 字段（卡脚本回读楼层附加数据，
+ * 飞讯统合记录靠它定位 is_feixun_record）。thSystem 空文本保留（isHide 隐藏楼层数据仍需回读）；
+ * 非 thSystem 空文本跳过。编号与 dsh-plugin /rp/chat/update 的 message_id→seq 映射同构（两处
+ * 过滤规则必须一致，改动需同步）。
  */
 export declare function chatMessages(dshHome: string, body: Record<string, unknown>): Promise<FacadeResult>;
 /** POST /regexes/get {slug?, sessionId?} → 三源合并 { regexes, presetId, slug }（global → character → preset） */
@@ -135,17 +145,13 @@ export declare function regexesGet(dshHome: string, body: Record<string, unknown
 export declare function regexesReplace(dshHome: string, body: Record<string, unknown>): Promise<FacadeResult>;
 /** 扫 skills 下 wb-* 目录的 references/lore.json + rp/global-books.json（lorePath 去重） */
 export declare function worldbookList(dshHome: string, _body: Record<string, unknown>): Promise<FacadeResult>;
-/** LoreEntry → ST World Info entry 形状（uid = 数组下标，entry-put 锚定用） */
+/** LoreEntry → ST World Info entry 形状（uid = 数组下标，entry-put 锚定用）。
+ * 附带 TH LorebookEntry 别名：name（= comment，卡脚本读 e.name 找 [initvar]/[opening]）、
+ * enabled（TH 读面字段）；key/keysecondary 恒为数组（源文件可能缺 keys 字段）。 */
 export declare function loreEntryToSt(entry: LoreEntry, uid: number): Record<string, unknown>;
-/** ST World Info entry → LoreEntry（反转换；字段缺省走 importLoreBook 同款默认） */
 export declare function stEntryToLore(st: Record<string, unknown>, bookName: string, id: string): LoreEntry;
-/** POST /worldbook/get {name} → 按 name（目录名或 lore.json 的 name 字段）读 lore.json → ST entry 形状 */
 export declare function worldbookGet(dshHome: string, body: Record<string, unknown>): Promise<FacadeResult>;
-/**
- * POST /worldbook/entry-put {name, entry, sessionId?} → uid 或 comment 锚定合并回 lore.json。
- * uid（= 数组下标）命中 → 原位替换（保留原 id）；uid 越界/新条目 → comment 兜底；都没中 → 追加
- * （新 id = lore-<书名>-<下标>）。ST 形状反转换 LoreEntry（stEntryToLore）。
- */
+export declare function flushEntryPuts(dshHome: string, lorePath: string): Promise<void>;
 export declare function worldbookEntryPut(dshHome: string, body: Record<string, unknown>): Promise<FacadeResult>;
 /**
  * 端点 14：POST /variables/merge {sessionId, variables} → 变量深合并写入（C7：
@@ -185,3 +191,25 @@ export declare function worldbookRebindChar(dshHome: string, body: Record<string
  * 幂等：已存在直接返回 {name, created:false}。
  */
 export declare function worldbookChatGetOrCreate(dshHome: string, body: Record<string, unknown>): Promise<FacadeResult>;
+/** 世界书激活（ST 简化语义）：enabled +（constant 蓝灯 OR keys 扫描命中）。
+ * 扫描文本 = 近段聊天 + user_input；条目 scanDepth 覆盖扫描窗（ST scan_depth 语义）。
+ * 返回 before（position=BEFORE）与 after（其余位置）两段，条内按 insertionOrder 降序。 */
+export declare function activateWorldInfo(entries: LoreEntry[], historyText: string, userInput: string): {
+    before: string[];
+    after: string[];
+};
+/**
+ * generateRaw 装配：ordered_prompts 条目 → 段落文本（ST story string 语义，'\n' 连接）。
+ * - 字符串标识符：world_info_before / persona_description / char_description /
+ *   char_personality / scenario / world_info_after / dialogue_examples / chat_history /
+ *   user_input（未知标识跳过——诚实缺失，不投毒 prompt）
+ * - {role, content} 字面块：content 原样
+ * - injects [{role?, content, depth?}]：按 depth 插入聊天历史行（depth 从历史尾部计，
+ *   0 = 历史末尾；缺省 4，ST injection depth 语义）
+ * - max_chat_history：历史条数上限（缺省全量）
+ */
+export declare function assembleGenerateRawPrompt(dshHome: string, body: Record<string, unknown>): Promise<{
+    system: string;
+    prompt: string;
+    missing: string[];
+}>;

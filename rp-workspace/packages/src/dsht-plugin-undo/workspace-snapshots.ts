@@ -27,6 +27,7 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { lstat, mkdir, readdir, readFile, readlink, realpath, rm, writeFile } from 'node:fs/promises'
+import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
 import { dirname, isAbsolute, join } from 'node:path'
 
 // ---------------------------------------------------------------------------
@@ -319,7 +320,9 @@ export async function captureWorkspaceSnapshot(options: {
   }
   const file = manifestPath(config, sessionId, turn)
   await mkdir(dirname(file), { recursive: true })
-  await writeFile(file, JSON.stringify(snapshot), 'utf8')
+  // 【2026-09-08 鲁棒性】快照清单原子写（撕裂 = 该 turn 恢复失效）；blob 本体是
+  // 'wx' 内容寻址去重写，天然幂等，保留原样。
+  await atomicWriteText(file, JSON.stringify(snapshot))
   await pruneSessionSnapshots(config, sessionId)
   return { root, turn, fileCount: snapshot.fileCount, totalBytes: tree.totalBytes, skipped: false }
 }

@@ -52,6 +52,8 @@ exports.readConfig = readConfig;
 exports.extractFloorsFromEvents = extractFloorsFromEvents;
 exports.nextChunk = nextChunk;
 exports.parseMemoryRange = parseMemoryRange;
+exports.sessionEventAt = sessionEventAt;
+exports.sessionEventsSnapshot = sessionEventsSnapshot;
 exports.planShadowOps = planShadowOps;
 exports.buildMemoryEntry = buildMemoryEntry;
 exports.rollbackMemoryBook = rollbackMemoryBook;
@@ -69,6 +71,7 @@ const schemastery_1 = __importDefault(require("@deepseek-ai/schemastery"));
 const entry_ts_1 = require("../lore/entry.ts");
 const http_ts_1 = require("../dsht-plugin-shared/http.ts");
 const session_surgery_ts_1 = require("../dsht-plugin-shared/session-surgery.ts");
+const atomic_fs_ts_1 = require("../dsht-plugin-shared/atomic-fs.ts");
 // E1-E8/E11：表格系统（st-memory-enhancement 机制级移植）——纯逻辑层在本目录 tables.ts，
 // 这里只做数据面接线（/tables 读取 + step-summary/rebuild 两个 llm 路由）
 const tables_ts_1 = require("./tables.ts");
@@ -129,17 +132,48 @@ function eventText(data) {
  * - assistant/message 按 data.turn（迁移格式 data.message.turn）分组：同 turn 的
  *   后续消息并入当前楼（文本 '\n\n' 拼接）；turn 缺失时每条计 1 楼（旧口径退化）。
  * 楼层从 1 起。返回全量楼层文本 + 楼层总数 cursor（turn 口径，作为总结进度游标）。
+ *
+ * 【2026-09-08 鲁棒性】逻辑回退掩码感知：扫描 dsht-rp 的回退/编辑/重新生成 marker
+ * （source.rolledBackTo / editedFrom / regeneratedFrom + 事件自身 seq），真实消息 seq
+ * 落在 (hideAfter, markerSeq) replace 区间内的**整条跳过**（不计数、不进摘要）——
+ * 旧实现从全量日志数楼层：被回退的内容会被后续 chunk 重新摘要进记忆本（用户明确
+ * 撤回的内容「复活」进上下文），且楼层号与 UI（掩码后重排）错位。marker 无 seq 或
+ * 事件无 seq（老数据）时退化为旧口径。注意与 UI 掩码失效语义**有意不同**：UI 在
+ * marker 之后出现新真用户消息时整体失效（回看全量）；记忆侧区间永久跳过（回退的
+ * 上下文永远不该经记忆回流）。
  */
 function extractFloorsFromEvents(events) {
     const floors = [];
     let cursor = 0;
     let lastAssistantTurn = null;
+    // 回退掩码预扫：marker → 跳过区间 (hideAfter, markerSeq)
+    const skipRanges = [];
+    for (const e of events) {
+        if (!e || typeof e.type !== 'string' || e.type !== 'user/message' || typeof e.seq !== 'number')
+            continue;
+        const s = e.data?.source;
+        if (!s || s.plugin !== 'dsht-rp')
+            continue;
+        let hide = -1;
+        if (typeof s.rolledBackTo === 'number')
+            hide = s.rolledBackTo;
+        if (typeof s.regeneratedFrom === 'number')
+            hide = Math.max(hide, s.regeneratedFrom);
+        if (typeof s.editedFrom === 'number')
+            hide = Math.max(hide, s.editedFrom - 1);
+        if (hide >= 0 && hide < e.seq)
+            skipRanges.push({ from: hide + 1, to: e.seq - 1 });
+    }
+    const inSkipRange = (seq) => skipRanges.some(r => seq >= r.from && seq <= r.to);
     for (const e of events) {
         if (!e || typeof e.type !== 'string')
             continue;
+        const eSeq = typeof e.seq === 'number' ? e.seq : null;
         if (e.type === 'user/message') {
             const source = e.data?.source;
             if (source?.kind !== 'user')
+                continue;
+            if (eSeq !== null && inSkipRange(eSeq))
                 continue;
             cursor++;
             lastAssistantTurn = null;
@@ -156,6 +190,10 @@ function extractFloorsFromEvents(events) {
                     if (t)
                         cur.text = cur.text ? `${cur.text}\n\n${t}` : t;
                 }
+                continue;
+            }
+            if (eSeq !== null && inSkipRange(eSeq)) {
+                lastAssistantTurn = typeof turn === 'number' ? turn : lastAssistantTurn;
                 continue;
             }
             cursor++;
@@ -181,6 +219,51 @@ function parseMemoryRange(comment) {
     const m = /^记忆#(\d+)-(\d+)$/.exec(String(comment ?? '').trim());
     return m ? { start: Number(m[1]), end: Number(m[2]) } : null;
 }
+// ---------------------------------------------------------------------------
+// 上下文瘦身（§2.2）——surface 影子化（纯函数规划 + 官方 replace 原语执行）
+// ---------------------------------------------------------------------------
+/** pre-step decision.messages 里只有 claimed 新消息 + 钩子注入（核心契约：
+ * agent-loop preStep 的 messages = inbox.claim() 结果，历史在 systemPrompt.assemble
+ * 的 assembly 里从 surface 重组）——所以**批次级折叠够不到请求的大头**（turn 44
+ * 873k tokens 实证）。真正的瘦身对象是 surface：注入快照按契约每轮持久化进
+ * surface（每轮 +20 万字符），请求从 surface 重组时全量带上。
+ * 影子化 = session.append('user/message', marker, { surfaceOp: { op: 'replace',
+ * start, end } })——官方原语（types.d.ts："any surface-replacing producer may
+ * use it"，compaction 同款）：被影子化的事件**留在日志里**（聊天数据零丢失），
+ * 只是模型视图不再投影它们。 */
+// ---------------------------------------------------------------------------
+// @adapt contract:session-api.eventAt / session-api.events-snapshot
+// 0.1.2 坑 #22（W32 实机取证）：Session 的 `.events` getter 已从公开面**移除**
+// （dsh-session 0.1.2-rc.1 的 lib 里 `get events` 出现 0 次），替代物是
+// `snapshotEvents(from, to)` 方法与 `eventAt(seq)`。本插件此前直读 `session.events`
+// → undefined → `events?.[seq]` 全 undefined → nodes 恒空 → estTokens 恒 0 →
+// shadowSurface 静默 early-return。**症状：上下文瘦身从未生效（零 replace op），
+// 每次请求把 6 份快照原样重发（427k 字符 / 120k est tokens）。**
+// 下面两个适配器与 dsh-plugin 的 sessionEventAt / sessionEventsSnapshot 同语义，
+// 本插件自包含（不引 @deepseek-ai 运行时依赖），故各自持有一份。
+// ---------------------------------------------------------------------------
+/** 读一个 seq 的事件：0.1.2 用 eventAt(seq)，旧对象回落 .events[seq]。 */
+function sessionEventAt(session, seq) {
+    const s = session;
+    if (typeof s.eventAt === 'function')
+        return s.eventAt(seq);
+    if (Array.isArray(s.events))
+        return s.events[seq];
+    return s.events?.[seq];
+}
+/** 全量事件快照：0.1.2 用 snapshotEvents()，旧对象回落 .events（数组或字典）。 */
+function sessionEventsSnapshot(session) {
+    const s = session;
+    if (typeof s.snapshotEvents === 'function') {
+        return s.snapshotEvents();
+    }
+    if (Array.isArray(s.events))
+        return s.events;
+    if (s.events && typeof s.events === 'object') {
+        return Object.values(s.events);
+    }
+    return [];
+}
 /**
  * 影子化规划（纯函数）：
  * 1) 老历史前缀——从末尾数楼层，保留 min(近 M 楼, 字符预算) 的窗口，窗口之前的全部
@@ -195,6 +278,10 @@ function parseMemoryRange(comment) {
  */
 function planShadowOps(nodes, opts) {
     const { keepNearFloors, charBudget, memoryMaxFloor, foldFloors, cursor, freshSigs, windowKeepSeq } = opts;
+    // 历史前缀折叠开关（2026-09-10 心跳 33）：有信息损失（原文被摘要顶替），
+    // 故仍受体积阈值门控（调用方按 est > 80k 传入）。默认 true 保持既有语义/单测兼容；
+    // 快照去重不受此开关影响——那是零信息损失的纯去重，任何体积下都该做。
+    const foldHistory = opts.foldHistory !== false;
     const charsBefore = nodes.reduce((s, n) => s + n.chars, 0);
     const ops = [];
     if (nodes.length === 0)
@@ -256,7 +343,7 @@ function planShadowOps(nodes, opts) {
         else
             break;
     }
-    const prefixEndJ = foldFloors ? Math.min(boundaryJ, keptFromJ - 1) : -1;
+    const prefixEndJ = (foldFloors && foldHistory) ? Math.min(boundaryJ, keptFromJ - 1) : -1;
     let prefixEndIdx = -1;
     if (prefixEndJ >= 0) {
         prefixEndIdx = floorGroups[prefixEndJ].endIdx;
@@ -481,7 +568,7 @@ function apply(ctx, _config) {
             const floorsCache = { v: null };
             const floorsOfSession = () => {
                 if (floorsCache.v === null) {
-                    floorsCache.v = extractFloorsFromEvents(Object.values(session.events ?? {}));
+                    floorsCache.v = extractFloorsFromEvents(sessionEventsSnapshot(session));
                 }
                 return floorsCache.v.floors;
             };
@@ -625,8 +712,18 @@ function apply(ctx, _config) {
     // ---- surface 影子化执行（§2.2 上下文瘦身；planShadowOps 为纯函数可单测）----
     /** est tokens ≈ 字符 × 0.31（DeepSeek 中文口径粗估；触发判断用，宁早勿晚） */
     const TOKENS_PER_CHAR = 0.31;
-    /** 触发阈值：模型视图 est > 80k tokens 才影子化（上游 ~79k 实测稳、873k 必炸） */
+    /** 触发阈值：模型视图 est > 80k tokens 才做**历史前缀**折叠（上游 ~79k 实测稳、873k 必炸）。
+     *  ⚠️ 该阈值**只管前缀折叠**（有信息损失，需摘要兜底，故从严）——
+     *  快照去重（零信息损失的纯去重）另走 SHADOW_MIN_SNAPSHOT_DUP 判据，不受此阈值门控。 */
     const SHADOW_TRIGGER_TOKENS = 80_000;
+    /** 快照去重触发判据（2026-09-10 心跳 33 新增）：不设 tokens 门槛，改为
+     *  「视图内存在同签名多副本」即折叠。
+     *  理由（实测教训）：80k 阈值原按 500k 上下文模型标定；contextWindow 修正为 1M 后，
+     *  中等会话（实测 57.5k est / 185k 字符）远低于阈值 → 影子化整体被短路 →
+     *  13 条快照（160k 字符，占 payload 87%）持续堆叠重复副本。
+     *  快照去重是纯增量收益（日志保留全部数据、模型视图仅去掉冗余副本），
+     *  无需等体积压力，故与此阈值解耦。 */
+    const SHADOW_MIN_SNAPSHOT_DUP = 2;
     /** 核心估价器精确复刻（dsh-token-meter/estimate：4 字符/token + 块开销 4 + role 开销 4）——
      *  shadowedTokenCount 必须与核心同口径，否则 meter 总量漂移（shadow-price 协议契约）。 */
     const estimateCoreTokens = (content) => {
@@ -642,16 +739,20 @@ function apply(ctx, _config) {
         }
         return tokens;
     };
+    /** 诊断探针（W32）：把 shadowSurface 的每个 early-return 点落盘，用于实机定位
+     *  「阈值已达但零 op」的静默失败。写 rp/memory-progress/<sid>.probe.json。 */
     const shadowSurface = async (session, sid, cfg, maxFloor, freshSigs, windowKeepSeq) => {
         const surface = session.surface;
-        const events = session.events;
+        // 0.1.2 坑 #22：`session.events` 已移除——用 snapshotEvents() 快照 + eventAt(seq) 单读。
+        // 旧代码直读 `.events` 得 undefined → nodes 恒空 → estTokens=0 → 影子化静默失效
+        // （实测 120k tokens > 80k 阈值仍 0 个 replace / 0 个 compaction/prune）。
         const viewSeqs = surface?.nodes ?? [];
         if (viewSeqs.length === 0)
             return '';
         // 只把消息事件建模为节点（tool/result 等不参与楼层/快照判定，但属于 replace 射程）
         const nodes = [];
         for (const seq of viewSeqs) {
-            const ev = events?.[seq];
+            const ev = sessionEventAt(session, seq);
             if (!ev || (ev.type !== 'user/message' && ev.type !== 'assistant/message'))
                 continue;
             const m = (ev.data ?? {});
@@ -676,17 +777,36 @@ function apply(ctx, _config) {
             });
         }
         const estTokens = Math.round(nodes.reduce((s, n) => s + n.chars, 0) * TOKENS_PER_CHAR);
-        if (estTokens <= SHADOW_TRIGGER_TOKENS)
+        // 双判据（2026-09-10 心跳 33）：前缀折叠（有损）按体积阈值门控；
+        // 快照去重（无损）只要存在同签名多副本即触发——不再被体积阈值整体短路。
+        const overThreshold = estTokens > SHADOW_TRIGGER_TOKENS;
+        const dupSigs = (() => {
+            const seen = new Map();
+            for (const n of nodes)
+                if (n.isSnapshot)
+                    seen.set(n.sig, (seen.get(n.sig) ?? 0) + 1);
+            let d = 0;
+            for (const v of seen.values())
+                if (v >= SHADOW_MIN_SNAPSHOT_DUP)
+                    d += 1;
+            return d;
+        })();
+        const foldHistory = overThreshold;
+        if (!overThreshold && dupSigs === 0)
             return '';
         // 楼层总数（turn 口径：一轮用户输入/一轮 AI 回答 = 1 楼）——与记忆条目「记忆#N-M」
         // 同口径；不再消费 dsh-plugin 的消息条数游标（两套数字会错位）
-        const cursor = extractFloorsFromEvents(Object.values(events ?? {})).cursor;
+        const cursor = extractFloorsFromEvents(sessionEventsSnapshot(session)).cursor;
         const plan = planShadowOps(nodes, {
             keepNearFloors: cfg.keepNearFloors, charBudget: cfg.charBudget,
             memoryMaxFloor: maxFloor, foldFloors: cfg.foldOldFloors, cursor, freshSigs, windowKeepSeq,
+            foldHistory,
         });
         if (plan.ops.length === 0)
             return '';
+        console.log(`[dsht-memory] surface 影子化判定: est=${(estTokens / 1000).toFixed(1)}k tokens `
+            + `(阈值 ${(SHADOW_TRIGGER_TOKENS / 1000).toFixed(0)}k, ${overThreshold ? '超' : '未超'}→前缀${foldHistory ? '折叠' : '保留'})，`
+            + `重复快照签名 ${dupSigs} 组 → 去重${dupSigs > 0 ? '启用' : '无需'}`);
         for (const op of plan.ops) {
             // 射程内的**真实 surface seqs**（含 tool/result 等非消息节点——replace 覆盖整个区间）
             const inRange = viewSeqs.filter(seq => seq >= op.start && seq <= op.end);
@@ -695,7 +815,7 @@ function apply(ctx, _config) {
             // 影子价格：核心估价器逐节点求和（shadow-price 协议——replace 必须携带紧邻 claim，
             // 否则投影/meter 保持旧总量，assembly 看到的还是旧内容：turn 47 实测 514k tokens）
             const shadowedTokens = inRange.reduce((s, seq) => {
-                const m = (events?.[seq]?.data ?? {});
+                const m = (sessionEventAt(session, seq)?.data ?? {});
                 return s + estimateCoreTokens(m.content) + 4;
             }, 0);
             // 1) 紧邻计量事件（武装 claim——toolResultPruner 同款形态）
@@ -761,11 +881,10 @@ function apply(ctx, _config) {
         if (persisted > 0)
             return persisted;
         if (session !== undefined) {
-            const events = session.events;
             const surface = session.surface;
             let max = 0;
             for (const seq of surface?.nodes ?? []) {
-                const ev = events?.[seq];
+                const ev = sessionEventAt(session, seq);
                 if (ev?.type !== 'user/message')
                     continue;
                 const d = ev.data;
@@ -789,10 +908,9 @@ function apply(ctx, _config) {
     /** 活会话 surface 上的窗口注回副本（[{seq, range}]，seq 升序） */
     const scanWindowCopies = (session) => {
         const out = [];
-        const events = session.events;
         const surface = session.surface;
         for (const seq of surface?.nodes ?? []) {
-            const ev = events?.[seq];
+            const ev = sessionEventAt(session, seq);
             if (ev?.type !== 'user/message')
                 continue;
             const src = ev.data?.source;
@@ -877,7 +995,10 @@ function apply(ctx, _config) {
     const saveMemoryBook = async (slug, book) => {
         const abs = (0, node_path_1.join)(dshHome, memoryLorePath(slug));
         await (0, promises_1.mkdir)((0, node_path_1.dirname)(abs), { recursive: true });
-        await (0, promises_1.writeFile)(abs, JSON.stringify({ name: book.name, entries: book.entries, importWarnings: book.importWarnings }, null, 1), 'utf8');
+        // 【2026-09-08 鲁棒性】原子写：记忆本与 dsh-plugin 世界书 entry-put 写合并队列
+        // 并发写同一 lore.json 时裸写撕裂（「新文档+旧文档尾部」恒 parse 失败——项目实锤
+        // 教训同款； TH 桥 target 本书或 reset 重导并发时同样成立）。
+        await (0, atomic_fs_ts_1.atomicWriteText)(abs, JSON.stringify({ name: book.name, entries: book.entries, importWarnings: book.importWarnings }, null, 1));
     };
     // 记忆本**不登记**进工作区 rp.json.books：注入走上面的自有 pre-step 快照（与
     // 世界书触发预算解耦）；登记反而会让条目进触发预算被 budgetCap 挤掉/重复注入。
@@ -919,7 +1040,7 @@ function apply(ctx, _config) {
         return cursor;
     };
     /** 单会话总结：提取楼层原文 → LLM → 追加记忆条目（返回摘要字数） */
-    const summarizeSession = async (sid, slug, header, from, to) => {
+    const summarizeSession = async (sid, slug, header, from, to, isStale) => {
         const sel = ctx.agentDefaultModel?.currentSelection?.();
         if (!sel?.provider || !sel?.model)
             throw new Error('no default model configured（先在导入中心/API 设置配置模型）');
@@ -942,7 +1063,18 @@ function apply(ctx, _config) {
         }
         if (!text.trim())
             throw new Error('empty summary（模型返回空）');
+        // 【鲁棒轮 2026-09-09】reset 竞态守卫：LLM 秒级流式窗口内 /reset 清空记忆本后，
+        // 本函数的 load→push→save 会把重置前区间的条目复活（tick 再把 lastFloor 覆写为
+        // chunk.to）。stale 回调由调用方提供（捕获 reset 代数），save 前两次校验。
+        if (isStale?.() === true) {
+            console.log(`[dsht-memory] 总结完成但会话已被 reset（${sid} #${from}-${to}），丢弃结果`);
+            return -1;
+        }
         const book = await loadMemoryBook(slug);
+        if (isStale?.() === true) {
+            console.log(`[dsht-memory] 总结落盘前发现 reset（${sid}），丢弃结果`);
+            return -1;
+        }
         book.entries.push(buildMemoryEntry(memoryBookName, from, to, text));
         await saveMemoryBook(slug, book);
         console.log(`[dsht-memory] summarized ${sid} (#${from}-${to}) → ${text.length}ch（记忆本 ${book.entries.length} 条，工作区 ${slug}）`);
@@ -952,8 +1084,17 @@ function apply(ctx, _config) {
     // 楼层进度游标 = turn 口径楼层总数（extractFloorsFromEvents(events).cursor，与 UI
     // 楼层/记忆锚一致）。rp/state 的 cursor（dsh-plugin 消息条数游标）只作**变化信号**：
     // 未变化 → 跳过（免 20s 全量重读大楼层文件）；变化 → 读事件流重算 turn 楼层。
+    // 【鲁棒轮 2026-09-09】per-sid reset 代数——/reset 递增；tick 的总结链路捕获代数，
+    // LLM 窗口内被 reset 则丢弃结果（防止旧区间条目复活 + lastFloor 被覆写）。
+    const resetGens = new Map();
     let busy = false;
     const lastSeenCursor = new Map();
+    // 【鲁棒轮 2026-09-09】per-sid 失败退避：同 chunk 连续失败无上限 = 内容过滤/断网期
+    // 每 20s 重烧一次 LLM（每次 60k 字符楼层原文）。退避阶梯 20s→2min→10min 封顶，
+    // 成功或游标变化（新 chunk）即复位。
+    const failStreak = new Map();
+    const lastFailAt = new Map();
+    const FAIL_BACKOFF_MS = [0, 120_000, 600_000, 600_000];
     const tick = async (forceSids) => {
         if (busy)
             return;
@@ -1017,16 +1158,30 @@ function apply(ctx, _config) {
                     : nextChunk(prog.lastFloor, floorCount, cfg.everyN);
                 if (!chunk)
                     continue;
+                // 退避门禁：退避窗口内跳过本 tick（不推进游标，窗口过后自动重试）
+                const streak = failStreak.get(sid) ?? 0;
+                const lastFail = lastFailAt.get(sid) ?? 0;
+                const backoff = FAIL_BACKOFF_MS[Math.min(streak, FAIL_BACKOFF_MS.length - 1)] ?? 0;
+                if (!force && backoff > 0 && Date.now() - lastFail < backoff)
+                    continue;
                 try {
-                    const chars = await summarizeSession(sid, slug, header, chunk.from, chunk.to);
+                    // 【鲁棒轮 2026-09-09】reset 代数守卫：LLM 窗口内 /reset → 丢弃结果不 saveProgress
+                    const genAtStart = resetGens.get(sid) ?? 0;
+                    const chars = await summarizeSession(sid, slug, header, chunk.from, chunk.to, () => (resetGens.get(sid) ?? 0) !== genAtStart);
                     if (chars > 0) {
+                        failStreak.delete(sid);
+                        lastFailAt.delete(sid);
+                        if ((resetGens.get(sid) ?? 0) !== genAtStart)
+                            continue; // reset 竞态：进度不推进
                         await saveProgress(sid, chunk.to);
                         budget--;
                     }
                 }
                 catch (e) {
-                    // 失败不推进游标——下一轮重试；不阻塞主 turn（总结在插件侧异步跑）
-                    console.warn(`[dsht-memory] 总结失败（${sid} #${chunk.from}-${chunk.to}）：${e.message}`);
+                    // 失败不推进游标——按退避阶梯延迟重试；不阻塞主 turn（总结在插件侧异步跑）
+                    failStreak.set(sid, streak + 1);
+                    lastFailAt.set(sid, Date.now());
+                    console.warn(`[dsht-memory] 总结失败（${sid} #${chunk.from}-${chunk.to}，连续第 ${streak + 1} 次，退避 ${Math.round(backoff / 1000)}s）：${e.message}`);
                 }
                 if (budget <= 0)
                     return;
@@ -1170,6 +1325,9 @@ function apply(ctx, _config) {
                 return (0, http_ts_1.sendJson)(res, 400, { error: 'sessionId required' });
             const header = (await refreshHeaders()).find(h => h.sessionId === sid);
             const slug = header ? await slugFromCwd(header.cwd) : null;
+            // 【鲁棒轮 2026-09-09】先递增代数再清数据——进行中的总结在 save 前会发现代数
+            // 变化而丢弃（LLM 窗口竞态守卫，见 tick / summarizeSession）
+            resetGens.set(sid, (resetGens.get(sid) ?? 0) + 1);
             let dropped = 0;
             if (slug) {
                 const book = await loadMemoryBook(slug);

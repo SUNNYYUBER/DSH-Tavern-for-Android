@@ -514,6 +514,9 @@ export interface RenderMessagesOptions { protectPre?: boolean }
 /**
  * 批量渲染历史消息：is_ejs_processed 的跳过（保留原 mes），未处理的按
  * template 渲染（context 叠加 {message} 供模板引用当前消息字段），并打上已处理标记。
+ * 【鲁棒轮 2026-09-09】per-message 隔离：单条消息含未闭合 {{/<%（楼层原文脏数据常态）
+ * 时原实现异常穿透 → 整批 400（含已渲染消息）。失败消息保留原 mes + ejsError 标记，
+ * 不阻塞整批（与 sandbox 引擎 fail-soft 对齐）。
  */
 export function renderMessages(
   template: string,
@@ -532,7 +535,14 @@ export function renderMessages(
       mes = p.text
       preBlocks = p.blocks
     }
-    const next = restorePreBlocks(renderEjsSubset(template || mes, { ...context, message: msg }), preBlocks)
+    let next: string
+    try {
+      next = restorePreBlocks(renderEjsSubset(template || mes, { ...context, message: msg }), preBlocks)
+    } catch (e) {
+      try { console.warn('[dsht-ejs] renderMessages 单条渲染失败（保留原文）:', (e as Error)?.message) } catch { /* noop */ }
+      skipped++
+      return { ...msg, ejsError: true }
+    }
     rendered++
     return { ...msg, mes: next, is_ejs_processed: true }
   })

@@ -24,7 +24,9 @@ export interface StatePatch {
     from?: string;
     value?: unknown;
 }
-/** 从文本提取 JSONPatch 数组（宽松解析：坏 JSON 返回 [] 不崩） */
+/** 从文本提取 JSONPatch 数组（宽松解析：坏 JSON 返回 [] 不崩）。
+ *  【鲁棒轮 2026-09-09】matchAll 合并全部块——原实现 match 单次匹配，单块内/块外多个
+ *  <JSONPatch> 只解析第一个，其余静默丢失（MVU 变量更新不生效且无日志）。 */
 export declare function parseJsonPatches(text: string): StatePatch[];
 /**
  * 【实机审计修复 2026-09-05】从 assistant 消息全文提取全部 UpdateVariable 补丁

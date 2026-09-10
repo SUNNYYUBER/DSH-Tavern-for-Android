@@ -59,7 +59,7 @@ ST 数据格式细节（tEXt 块、chat_metadata、prompt_order、extension_sett
 | 全局书单 | 全局触发配置 | `rp/global-books.json` `{books:[{name,lorePath}]}`（settings.json `world_info_settings.world_info.globalSelect`） |
 | MVU 设置 | 插件配置 | `dsht-mvu settings`（PUT `{settings}`，extension_settings.mvu_settings 原样）+ `statusbar`（PUT `{config}`） |
 | 酒馆助手变量/脚本 | 插件数据 | `dsht-tavern-helper variables`（global/character/chat 三级）与 `scripts`（PUT） |
-| EJS 模板 | 渲染验证 | `dsht-prompt-template render {template, context}` 验证模板可渲染；已处理消息（is_ejs_processed）保持原样 |
+| EJS 模板 | 渲染验证 | `dsht-prompt-template render {template, context}` 验证模板可渲染；批渲染 `{messages:[...]}` 也可用（v183 起单条坏消息 fail-soft 标记 ejsError 不阻塞整批）；已处理消息（is_ejs_processed）保持原样 |
 
 slug / projectKey / sessionId 规则见 references/slug-rules.md——必须严格复现同一套算法，
 否则运行时插件找不到文件。
@@ -73,6 +73,8 @@ slug / projectKey / sessionId 规则见 references/slug-rules.md——必须严�
 - 枚举批次目录树：一律走 `dsht-rp rp/import-ls`（见下）。
 - 读文件：工作区内用文件工具 read；写 `$DSH_HOME` 目标文件走 `write-files`（绕过逐条审批）。
 - 大文件（数 MB 的聊天 .jsonl）分段读；PNG 二进制不要直接读内容，tEXt 提取方法见 references/st-format.md。
+- **POST body 必须是 JSON 对象**：`null`/数组会被路由拒 400（`body must be an object`）——
+  `dsht_bridge` 的 payload 别传裸数组，要包一层键（如 `{entries: [...]}`）。
 
 ### dsht_bridge（首选）：调 DSHT 数据面路由
 
@@ -87,11 +89,11 @@ slug / projectKey / sessionId 规则见 references/slug-rules.md——必须严�
 - `dsht-rp rp/import-api-config` `{batchId}` → `{provider, baseURL, model, keyNames, method, restarted}`。method=rpc 即 live 生效；file 则需重启。
 - `dsht-rp preset/import-st` `{json, name}` → `{presetId, slots, regex, skipped}`。
 - `dsht-rp rp/register-workspaces` `{}` → `{mode, workspaces:[{slug,name,created,renamed?,adopted}], repair, seqRepair}`。迁移收尾一次性注册（见处理顺序第 7 步；会先自动跑 seq 断号修复再归组）。
-- `dsht-rp rp/repair-session-cwd` `{}` → `{scanned, repaired, skipped, errors}`。存量 session header cwd 规范化（/data/user/0 → realpath；含 projectKey 目录搬迁，幂等）。
-- `dsht-rp rp/convert-chat` **文件模式（首选）** `{filePath, sessionId, cwd, createdAt?}` → `{written:true, path, turns, skipped, variantGroups, firstUserText, overwritten}`。服务端直读 `rp-import/` 下的 .jsonl、转换后**直接落盘**目标 session（已存在备份 .bak2）——零大 payload 往返，真机长会话必用。**文本模式（兼容，仅 <1MB 小会话）** `{jsonlText, sessionId, cwd?, createdAt?}` → `{content, turns, ...}`，agent 自行 write-files。**聊天转换的唯一合法通道**（确定性转换：seq 严格连续、swipes 变体链内建）。sessionId 用 `st-<hash36(角色名/文件名)>`（见 slug-rules.md）；cwd = 目标工作区 realpath 绝对路径。
+- `dsht-rp rp/repair-session-cwd` `{}` → `{scanned, repaired, skipped, errors}`。存量 session header cwd 规范化（/data/user/0 → realpath；含 projectKey 目录搬迁，幂等；修复前自动备份 .bak + 原子发布）。
+- `dsht-rp rp/convert-chat` **文件模式（首选）** `{filePath, sessionId, cwd, createdAt?}` → `{written:true, path, turns, skipped, variantGroups, firstUserText, overwritten}`。服务端直读 `rp-import/` 下的 .jsonl、转换后**直接落盘**目标 session（已存在备份 .bak2 + 原子发布）——零大 payload 往返，真机长会话必用。**文本模式（兼容，仅 <1MB 小会话）** `{jsonlText, sessionId, cwd?, createdAt?}` → `{content, turns, ...}`，agent 自行 write-files。**聊天转换的唯一合法通道**（确定性转换：seq 严格连续、swipes 变体链内建）。sessionId 用 `st-<hash36(角色名/文件名)>`（见 slug-rules.md）；cwd = 目标工作区 realpath 绝对路径。
 - `dsht-rp rp/repair-sessions` `{}` → `{scanned, repaired, skipped, errors}`。存量 session.jsonl 的 seq 断号重编号修复（幂等；live 会话跳过）。
-- `dsht-rp rp/session-rollback` `{sessionId, keepThroughSeq}` → `{kept, dropped, variablesRestored}`。会话回退（截断到指定 seq；live 会话拒绝）；截断后自动回放 undo 日志，把该会话的变量状态回滚到截断点之前（三作用域联动）。
-- `dsht-rp rp/session-regenerate` `{sessionId}` → `{truncated, lastUserText, variablesRestored}`。截到最后一条 user/message（其后的 assistant 事件全部截掉 + 变量联动回滚）——前端拿 lastUserText 重新发送即"重新生成"。live 会话拒绝。
+- `dsht-rp rp/session-rollback` `{sessionId, keepThroughSeq, includeAnchor?}`。**双路径**（v183 语义）：会话在 DSH 里打开中（live）→ 官方 replace 原语**逻辑回退**，立即生效无需重开，响应 `{logical:true, replaced, variablesRestored, truncatedTo?}`；否则文件截断（自动 .bak 备份 + 原子发布），响应 `{kept, dropped, variablesRestored, fileSnapshots}`。`includeAnchor:true` = 连锚消息一起移出上下文（ST「回退到此处」同语义，原文由前端放回输入框）。两路径都自动回放 undo 日志回滚该截断点之后的变量写（三作用域联动）。
+- `dsht-rp rp/session-regenerate` `{sessionId}`。双路径同上：live → `{logical:true, replaced, lastUserText, variablesRestored}`（逻辑移除最后一轮回复，保留原用户消息）；非 live → `{truncated, lastUserText, variablesRestored}`（截到最后一条例外真用户消息 + 变量联动回滚）。前端拿 lastUserText 重新发送即「重新生成」。锚点排除插件注入的 marker 消息（只认真用户输入）。
 - `dsht-rp rp/import-batches`（GET）→ 批次清单。
 - `memory_save` 工具：把需要跨轮长期记住的事实（用户偏好、重要设定变动、承诺）存入会话记忆（路由同义 `dsht-rp memory/save`）。
 - `memory_query` 工具：检索本会话的长期记忆（此前固化的用户偏好/设定/承诺），生成回复前可先查询（路由同义 `dsht-rp memory/query`）。
@@ -158,10 +160,24 @@ host 侧一次性扫 `rp/` 全部工作区做 `workspace.create` + `rename(卡�
 
 落盘时按**用途分类**在报告里标注（决定它们在这边的生效方式）：
 - **prompt 时机**（改发给模型的内容，如思维链引导/草稿标记）：placement 含 2 → 组装层自动消费，无需额外处理。
-- **display 时机**（改气泡显示，如思维链美化/草稿折叠/剧情选项美化）：placement 含 1/3 → 前端渲染层消费。**注意**：为 ST 前端写的 DOM 美化正则（悬浮球注入、ST 特有 CSS 类操作）在 DSHTavern 未必有对应挂点——照存照列，在报告「遗留事项」里注明"该正则的显示效果可能需要 harness 侧另行适配"，不要假装它们已生效。
+- **display 时机**（改气泡显示，如思维链美化/草稿折叠/剧情选项美化）：placement 含 1/3 → 前端渲染层消费。**v183 起渲染能力对齐**：`<details>/<summary>` 折叠类美化正则（思维链折叠）原生内联渲染；带样式的卡片布局正则（flex/width/padding/border 等 + 单引号/无引号属性）正常内联渲染。仍需 harness 侧另行适配的只剩 **position:fixed/absolute 类悬浮部件**（走沙箱 iframe 舞台，能力保留但挂点不同）——这类照存照列，在报告「遗留事项」里注明，不要假装它们已生效。
 - **混合/不确定**：照存，报告里标注存疑。
 
 校验回执：卡正则数量 = rp.json regex 数组长度逐卡对得上；预设正则数量 = regex.json scripts 长度对得上；全局正则落盘。
+
+## 酒馆助手脚本与按钮面（含「框架类脚本」时必读）
+
+迁移 tavern-helper 脚本后，**扫一遍脚本源码**：出现 `replaceScriptButtons` /
+`updateScriptButtonsWith` / `appendInexistentScriptButtons` / `getScriptButtons`
+任一调用（即「框架类按钮管理脚本」）→ 按 `references/th-buttons.md` 的通用契约处理：
+
+- 按钮面是运行时契约（sentinel v183+ shim 已按真 TH 语义支持跨脚本管理）——迁移只落数据
+  （脚本清单含 buttons 数组原样落盘），不改脚本源码里的按钮调用；
+- 重点检查两点并写进报告：①跨脚本目标 id 是写死还是带按名 fallback（ST 导出往返后
+  id 会重铸，写死的进遗留事项）；②按钮管理调用是否在就绪事件回调内（裸顶层调用可能
+  先于目标脚本启动）；
+- `getAllEnabledScriptButtons()` 等记名 stub 调用要在报告列出（首次运行后脚本面板
+  missing 列表应与之对得上——失败必须出声）。
 
 **确定性兜底（必做）**：全部卡/预设处理完后调 `dsht-rp rp/backfill-assets`（无入参）——host 侧
 幂等补齐：rp.json.regex 为空的卡从 card.json 的 embeddedRegex 直接回填；卡与预设的

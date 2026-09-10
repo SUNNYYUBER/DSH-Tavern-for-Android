@@ -115,7 +115,9 @@ export function RpStateFloat(props) {
     const sessionId = s.sessionId ?? s.id ?? '';
     const cwd = s.header?.cwd ?? s.cwd;
     const { slug } = useRpSlug(cwd, sessionId);
-    const msgCount = s.chat?.order?.length ?? s.surface?.nodes?.length ?? 0;
+    // 【2026-09-06 实证修复】同 RpGreetingDock：chat 字段不存在，msgCount 恒 0 → 浮球从不显示。
+    // blank===false 即已有消息 → 显示；true=空会话不显示。
+    const blank = s.blank === true;
     const [pos, setPos] = useState(() => loadPos(posKeyOf(sessionId)));
     const [open, setOpen] = useState(false);
     const [state, setState] = useState(null);
@@ -127,6 +129,7 @@ export function RpStateFloat(props) {
     // E6：「剧情表格」只读面板由本面板头部按钮拉起（与「查看状态」同款式）
     const [tablesOpen, setTablesOpen] = useState(false);
     const dragRef = useRef(null);
+    const clickHandledRef = useRef(false);
     // 面板打开时拉取 + 4s 轮询（生成中变量变化即见）
     useEffect(() => {
         if (!open || !sessionId)
@@ -155,7 +158,7 @@ export function RpStateFloat(props) {
         window.addEventListener('resize', onResize);
         return () => { window.removeEventListener('resize', onResize); };
     }, []);
-    if (!slug || !sessionId || msgCount === 0)
+    if (!slug || !sessionId || blank)
         return null; // 非 RP / 空白会话不显示
     const onPointerDown = (e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -185,12 +188,22 @@ export function RpStateFloat(props) {
             savePos(posKeyOf(sessionId), snapped);
         }
         else {
+            clickHandledRef.current = true; // 真触摸/鼠标：pointerup 已处理，随后的 click 抑制（防双翻）
             setOpen(o => !o);
         }
         e.currentTarget.releasePointerCapture(e.pointerId);
     };
+    // 【审计 D 类修复 2026-09-08】合成点击/无障碍服务只发 click 不发 pointer 序列——
+    // 此前 click 无绑定，浮球被误判「点了没反应」。真触摸的 click 被 pointerup 标记抑制。
+    const onClick = () => {
+        if (clickHandledRef.current) {
+            clickHandledRef.current = false;
+            return;
+        }
+        setOpen(o => !o);
+    };
     return (<>
-      <button type="button" className="dsht-rp-statefloat-ball" style={{ left: `${pos.x * 100}vw`, top: `${pos.y * 100}vh` }} title="当前状态（MVU 变量）" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>🌌</button>
+      <button type="button" className="dsht-rp-statefloat-ball" style={{ left: `${pos.x * 100}vw`, top: `${pos.y * 100}vh` }} title="当前状态（MVU 变量）" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onClick={onClick}>🌌</button>
       {open && (<div className="dsht-rp-statefloat-panel" role="dialog" aria-label="当前状态">
           <div className="sf-head">
             <span>🌌 当前状态</span>

@@ -28,22 +28,11 @@ import { DEFAULT_MAX_CONTEXT, estimateTokens, formatTokens, meterLevel, meterPer
 /** 真实 usage 口径（§2.2 附带项收口）：会话快照里最后一条 assistant 消息的
  *  provider usage——总请求 prompt = inputTokens（未缓存）+ cacheRead + cacheWrite
  *  （dsh-token-meter ContextPressureProjection.pressureTokens 同口径）。
- *  usage 缺席（尚无回复/旧会话）→ null，回落字符量估算。 */
-function lastRequestTokens(session) {
-    const nodes = session.chat?.nodes;
-    if (!nodes)
-        return null;
-    let usage;
-    for (const n of nodes.values()) {
-        if (n.kind === 'assistant-step')
-            usage = n.data?.usage;
-    }
-    if (!usage || typeof usage !== 'object')
-        return null;
-    const parts = [usage.inputTokens, usage.cacheReadTokens, usage.cacheWriteTokens];
-    if (!parts.some(p => typeof p === 'number' && Number.isFinite(p)))
-        return null;
-    return parts.reduce((s, p) => s + (typeof p === 'number' && Number.isFinite(p) ? p : 0), 0);
+ *  usage 缺席（尚无回复/旧会话）→ null，回落字符量估算。
+ *  【2026-09-06】宿主 SessionSnapshot 无 chat 投影（fiber 实证）→ 快照 usage 面恒 null，
+ *  恒走字符量估算（「估算值」标签）；chat/messages RPC 不回 usage，真实口径等宿主补投影。 */
+function lastRequestTokens(_session) {
+    return null;
 }
 /** 轮询间隔（ms）：30s 足够"进度条随对话推进"，又不会让大日志常被整扫 */
 const POLL_MS = 30_000;
@@ -81,14 +70,15 @@ export function RpTokenMeter(props) {
     const sessionId = s.sessionId ?? s.id ?? '';
     const cwd = s.header?.cwd ?? s.cwd;
     const { slug } = useRpSlug(cwd, sessionId);
-    const msgCount = s.chat?.order?.length ?? s.surface?.nodes?.length ?? 0;
+    // 【2026-09-06 实证修复】同 RpStateFloat：chat 字段不存在 → blank 判空（false=有消息才显示）
+    const blank = s.blank !== false;
     const [chars, setChars] = useState(0);
     const [budget, setBudget] = useState(DEFAULT_MAX_CONTEXT);
     const [panelOpen, setPanelOpen] = useState(false);
     // 会话切换：拉预算（缓存）+ 拉一次文本总量；之后 30s 轮询文本增长。
     // 失败静默保持上次值（估算口径下不闪错；悬浮球面板已承担错误提示职责）。
     useEffect(() => {
-        if (!slug || !sessionId || msgCount === 0)
+        if (!slug || !sessionId || blank)
             return;
         let alive = true;
         void fetchBudget(sessionId).then(b => { if (alive)
@@ -104,8 +94,8 @@ export function RpTokenMeter(props) {
         void pull();
         const timer = setInterval(() => { void pull(); }, POLL_MS);
         return () => { alive = false; clearInterval(timer); };
-    }, [slug, sessionId, msgCount]);
-    if (!slug || !sessionId || msgCount === 0)
+    }, [slug, sessionId, blank]);
+    if (!slug || !sessionId || blank)
         return null; // 非 RP / 空白会话不显示
     const tokens = estimateTokens(chars);
     const real = lastRequestTokens(s);

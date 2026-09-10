@@ -450,6 +450,14 @@ describe('dsht-rp-plugin: 会话重新生成定位（任务 4）', () => {
     expect(findLastUserMessage(events)).toEqual({ seq: 3, text: '第二句' })
     expect(findLastUserMessage([ev('turn/start', 0)])).toBeNull()
   })
+  it('【鲁棒轮回归】plugin marker 不作锚（回退/重新生成 marker 文案不被当输入重发）；无 source 的旧数据仍兼容', () => {
+    const marker = { type: 'user/message', seq: 7, data: { role: 'user', content: [{ type: 'text', text: '[已回退] 该消息及其后的对话已从上下文移除' }], source: { kind: 'plugin', plugin: 'dsht-rp', rolledBackTo: 5 } } }
+    const legacy = { type: 'user/message', seq: 3, data: { role: 'user', content: [{ type: 'text', text: '真用户消息（旧数据无 source）' }] } }
+    // marker 在后 → 跳过它，锚回更早的真用户消息
+    expect(findLastUserMessage([legacy, marker])).toEqual({ seq: 3, text: '真用户消息（旧数据无 source）' })
+    // 只有 marker → 无锚
+    expect(findLastUserMessage([marker])).toBeNull()
+  })
   it('sessionContentMaxTime 取截断内容的最后事件时间（undo 回放截断点）', () => {
     const content = [
       JSON.stringify({ type: 'session', id: 's' }),

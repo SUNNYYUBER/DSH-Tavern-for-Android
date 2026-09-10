@@ -23,6 +23,7 @@ exports.replayUndoLog = replayUndoLog;
 const promises_1 = require("node:fs/promises");
 const node_path_1 = require("node:path");
 const macros_ts_1 = require("./macros.ts");
+const atomic_fs_ts_1 = require("./atomic-fs.ts");
 /** 撤销日志文件路径 */
 function undoLogPath(dshHome, sessionId) {
     return (0, node_path_1.join)(dshHome, 'rp', 'state', `${sessionId}.undo.jsonl`);
@@ -137,11 +138,13 @@ async function saveScopeTree(dshHome, scope, slug, sessionId, tree) {
         catch { /* 新会话状态文件 */ }
         whole.variables = tree;
         await (0, promises_1.mkdir)((0, node_path_1.dirname)(file), { recursive: true });
-        await (0, promises_1.writeFile)(file, JSON.stringify(whole), 'utf8');
+        // 【2026-09-08 鲁棒性】rp/state/<sid>.json 是 MVU 变量树权威落点，undo 回放 ×
+        // MVU register × 脚本变量写并发裸写 = 文件撕裂（项目实锤教训）；原子写发布。
+        await (0, atomic_fs_ts_1.atomicWriteText)(file, JSON.stringify(whole));
         return;
     }
     await (0, promises_1.mkdir)((0, node_path_1.dirname)(file), { recursive: true });
-    await (0, promises_1.writeFile)(file, JSON.stringify(tree), 'utf8');
+    await (0, atomic_fs_ts_1.atomicWriteText)(file, JSON.stringify(tree));
 }
 /**
  * 回放 undo 日志：把 ts > cutoffTs 的写入按时间倒序恢复旧值（同一路径多次写入时，
@@ -174,12 +177,13 @@ async function replayUndoLog(dshHome, sessionId, cutoffTs = Number.NEGATIVE_INFI
         if (bucket.dirty)
             await saveScopeTree(dshHome, bucket.scope, bucket.slug, sessionId, bucket.tree);
     }
-    // 截断日志：只留 ts <= cutoffTs 的条目
+    // 截断日志：只留 ts <= cutoffTs 的条目（原子写——截断与并发 appendUndoEntries 竞态
+    // 时裸 writeFile 可把日志写成撕裂尾，后续 readUndoLog 坏行跳过会静默丢撤销条目）
     const kept = entries.filter(e => e.ts <= cutoffTs);
     const file = undoLogPath(dshHome, sessionId);
     if (kept.length === 0)
         await (0, promises_1.rm)(file, { force: true });
     else
-        await (0, promises_1.writeFile)(file, kept.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf8');
+        await (0, atomic_fs_ts_1.atomicWriteText)(file, kept.map(e => JSON.stringify(e)).join('\n') + '\n');
     return { restored: toReplay.length };
 }

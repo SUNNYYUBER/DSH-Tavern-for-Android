@@ -29,6 +29,7 @@ export function MigrationStatusPanel(): JSX.Element {
   const [batch, setBatch] = useState<StatusBatch | null>(null)
   const [api, setApi] = useState<{ provider: string; model: string } | null>(null)
   const [probeResults, setProbeResults] = useState<ProbeState[] | null>(null)
+  const [buildInfo, setBuildInfo] = useState<{ sentinel: string | null; dshVersion: string | null } | null>(null)
   const [loadError, setLoadError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -42,6 +43,10 @@ export function MigrationStatusPanel(): JSX.Element {
     } catch (e) {
       setLoadError(`状态读取失败：${(e as Error).message}`)
     }
+    // 构建版本（2026-09-08）：sentinel = APK 解压哨兵（.installed-v176），一眼对出新旧包
+    void rpApi<{ sentinel: string | null; dshVersion: string | null }>('rp/build-info')
+      .then(b => setBuildInfo(b))
+      .catch(() => setBuildInfo(null))
     // 插件自检独立结算，单个失败不影响其它（三态：ping 挂=未响应；ping 活但
     // 功能断言失败=在线但功能异常；功能断言过=功能正常）
     const results = await Promise.all(PROBES.map(async (p): Promise<ProbeState> => {
@@ -67,11 +72,12 @@ export function MigrationStatusPanel(): JSX.Element {
     if (typeof m.presets === 'number' && m.presets > 0) manifestBits.push(`预设 ${m.presets}`)
   }
 
-  // 摘要行（折叠时可见）：四态计数 + API 状态 —— 一眼看出有没有异常
+  // 摘要行（折叠时可见）：四态计数 + API 状态 + 构建哨兵 —— 一眼看出有没有异常/新旧包
   const okCount = probeResults?.filter(r => r === 'ok').length ?? 0
   const badCount = probeResults?.filter(r => r !== 'ok').length ?? null
   const summaryBits: string[] = []
   summaryBits.push(api === null ? 'API 未配置' : `API ✓`)
+  if (buildInfo?.sentinel) summaryBits.push(buildInfo.sentinel.replace('.installed-', '构建 '))
   if (probeResults !== null) summaryBits.push(`插件 ${okCount}/${PROBES.length} 正常${badCount !== null && badCount > 0 ? `（${badCount} 项异常）` : ''}`)
 
   // 折叠用 React 受控状态而非 <details>：部分 WebView（卓易通真机）details 原生

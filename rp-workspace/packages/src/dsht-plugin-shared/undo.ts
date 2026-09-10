@@ -12,9 +12,10 @@
  * 打包：esbuild 内联（dsht-mvu / dsht-tavern-helper / dsh-plugin 各自 bundle 时编入）。
  */
 
-import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { readVarPath, writeVarPath, toPointer } from './macros.ts'
+import { atomicWriteText } from './atomic-fs.ts'
 
 export type UndoScope = 'global' | 'character' | 'chat'
 
@@ -156,11 +157,13 @@ async function saveScopeTree(dshHome: string, scope: UndoScope, slug: string, se
     } catch { /* 新会话状态文件 */ }
     whole.variables = tree
     await mkdir(dirname(file), { recursive: true })
-    await writeFile(file, JSON.stringify(whole), 'utf8')
+    // 【2026-09-08 鲁棒性】rp/state/<sid>.json 是 MVU 变量树权威落点，undo 回放 ×
+    // MVU register × 脚本变量写并发裸写 = 文件撕裂（项目实锤教训）；原子写发布。
+    await atomicWriteText(file, JSON.stringify(whole))
     return
   }
   await mkdir(dirname(file), { recursive: true })
-  await writeFile(file, JSON.stringify(tree), 'utf8')
+  await atomicWriteText(file, JSON.stringify(tree))
 }
 
 /**
@@ -197,10 +200,11 @@ export async function replayUndoLog(
   for (const bucket of trees.values()) {
     if (bucket.dirty) await saveScopeTree(dshHome, bucket.scope, bucket.slug, sessionId, bucket.tree)
   }
-  // 截断日志：只留 ts <= cutoffTs 的条目
+  // 截断日志：只留 ts <= cutoffTs 的条目（原子写——截断与并发 appendUndoEntries 竞态
+  // 时裸 writeFile 可把日志写成撕裂尾，后续 readUndoLog 坏行跳过会静默丢撤销条目）
   const kept = entries.filter(e => e.ts <= cutoffTs)
   const file = undoLogPath(dshHome, sessionId)
   if (kept.length === 0) await rm(file, { force: true })
-  else await writeFile(file, kept.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf8')
+  else await atomicWriteText(file, kept.map(e => JSON.stringify(e)).join('\n') + '\n')
   return { restored: toReplay.length }
 }

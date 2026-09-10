@@ -40,8 +40,11 @@ export declare function normalizeSnapshotMessageRoles(content: string): {
     changed: number;
 };
 /**
- * 会话重新生成定位（纯函数）：最后一条 user/message 的 seq 与其文本。
+ * 会话重新生成定位（纯函数）：最后一条**真用户** user/message 的 seq 与其文本。
  * 找不到返回 null。事件形态：user/message 的 data = {role, content}（LikeMessage 直存）。
+ * 【鲁棒轮 2026-09-09】排除 source.kind === 'plugin'（live 回退/重新生成后的 marker
+ * 「[已回退] …」原实现会被当锚 → lastUserText = marker 文案 → 前端把系统文案当输入重发；
+ * live 路径同口径）。kind 缺失（存量旧数据）视为真用户消息——不破坏旧会话兼容。
  */
 export declare function findLastUserMessage(events: Array<{
     type: string;
@@ -51,6 +54,25 @@ export declare function findLastUserMessage(events: Array<{
     seq: number;
     text: string;
 } | null;
+/**
+ * 重复 turn/start 检测与修复（纯函数，R49 存量数据修复）。
+ *
+ * 根因（实机实证，turn 序列 1,1,2..18）：open-chat 物化直写 turn/start 事件不刷新
+ * 内核 agent 构造时缓存的 phase.lastTurn → 内核下一条 prompt 重开同一 turn →
+ * session.jsonl 出现两条 data.turn 相同的 turn/start → 前端 ConversationNodeAssembler
+ * 全量重放抛「received more than one start Match」→ event feed subscriber 死亡，
+ * 折叠行（turn-process 节点）/会话流停摆。
+ *
+ * 修复策略：第二次出现的 turn/start（其 turn 已闭合过）连同其配对 turn/end 的
+ * 整段，把段内所有 data.turn === 旧编号的事件重编号为 maxTurn+1。保留首段
+ * （物化开场白 = 楼层 1 语义）；重编号段的时间顺序在楼层分组里按 seq 排，无影响。
+ * 事件 seq 与行结构不动；坏行原样保留（与 normalizeSnapshotMessageRoles 同策略）。
+ */
+export declare function repairDuplicateTurnStarts(content: string): {
+    content: string;
+    renumberedTurns: number;
+    eventsRewritten: number;
+};
 /** 读文件首行（session.jsonl header；大聊天日志不整读） */
 export declare function readFirstLine(path: string): Promise<string | null>;
 export interface SessionHeaderHit {

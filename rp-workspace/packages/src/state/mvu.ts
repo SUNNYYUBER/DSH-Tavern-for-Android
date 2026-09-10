@@ -27,33 +27,48 @@ export interface StatePatch {
   value?: unknown
 }
 
-/** 从文本提取 JSONPatch 数组（宽松解析：坏 JSON 返回 [] 不崩） */
+/** 合法 op 白名单（StatePatchOp 全集）——【鲁棒轮 2026-09-09】未知 op（如标准 JSON Patch
+ *  的 "test"、模型拼错的 "apend"）静默落入 applyStatePatches 兜底赋值分支 = 校验型 op 变
+ *  真实写（实测 "test" 把好感度置 null）。白名单外丢弃。 */
+const STATE_PATCH_OPS: ReadonlySet<string> = new Set([
+  'add', 'replace', 'remove', 'delta', 'move', 'copy', 'insert',
+])
+
+/** 从文本提取 JSONPatch 数组（宽松解析：坏 JSON 返回 [] 不崩）。
+ *  【鲁棒轮 2026-09-09】matchAll 合并全部块——原实现 match 单次匹配，单块内/块外多个
+ *  <JSONPatch> 只解析第一个，其余静默丢失（MVU 变量更新不生效且无日志）。 */
 export function parseJsonPatches(text: string): StatePatch[] {
-  const m = text.match(/<JSONPatch>\s*([\s\S]*?)\s*<\/JSONPatch>/i)
-  if (!m) return []
-  try {
-    const arr = JSON.parse(m[1])
-    if (!Array.isArray(arr)) return []
-    return arr
-      .filter((p: unknown) => p && typeof p === 'object')
-      .map((p: Record<string, unknown>) => {
-        const op = String(p.op ?? 'add').toLowerCase() as StatePatchOp
+  const blocks: string[] = []
+  for (const m of text.matchAll(/<JSONPatch>\s*([\s\S]*?)\s*<\/JSONPatch>/gi)) blocks.push(m[1])
+  if (blocks.length === 0) return []
+  const out: StatePatch[] = []
+  for (const body of blocks) {
+    try {
+      const arr = JSON.parse(body)
+      if (!Array.isArray(arr)) continue
+      for (const raw of arr) {
+        if (!raw || typeof raw !== 'object') continue
+        const p = raw as Record<string, unknown>
+        const opRaw = p.op === undefined ? 'add' : String(p.op).toLowerCase()
+        if (!STATE_PATCH_OPS.has(opRaw)) continue
+        const op = opRaw as StatePatchOp
         let path = String(p.path ?? '')
         // 【实机审计修复 2026-09-05】insert=数组按 index 插入：index 字段并入 path（/list + index 1 → /list/1）
         if (op === 'insert' && typeof p.index === 'number' && Number.isInteger(p.index) && !/\/\d+$/.test(path)) {
           path = `${path.replace(/\/+$/, '')}/${p.index}`
         }
-        return {
+        out.push({
           op,
           path,
           ...(p.from !== undefined ? { from: String(p.from) } : {}),
           ...(p.value !== undefined ? { value: p.value } : {}),
-        }
-      })
-      .filter(p => p.path.length > 0)
-  } catch {
-    return []
+        })
+      }
+    } catch {
+      /* 坏 JSON 块跳过（宽松语义不变），继续解析其余块 */
+    }
   }
+  return out.filter(p => p.path.length > 0)
 }
 
 /**
@@ -384,7 +399,19 @@ export function applyStatePatches(state: Record<string, unknown>, patches: State
         ;(parent as Record<string, unknown>)[last] = p.value // 非数组目标退化为赋值
       }
     } else {
-      ;(parent as Record<string, unknown>)[last] = p.value
+      // 【鲁棒轮 2026-09-09】数组父容器钳制下标——原实现 arr[5]='x' 直写越界产生稀疏
+      // 空洞（JSON 落盘变 null 槽位，状态树污染、flattenState 喂 null 给模型）。
+      // add/replace 对数组：越界 replace 跳过；越界 add 追加尾部（JSON Patch 语义宽松化）。
+      if (Array.isArray(parent) && /^\d+$/.test(last)) {
+        const i = Number(last)
+        if (i >= parent.length) {
+          if (p.op === 'add') parent.push(p.value)
+          continue
+        }
+        parent[i] = p.value
+      } else {
+        ;(parent as Record<string, unknown>)[last] = p.value
+      }
     }
   }
   return next

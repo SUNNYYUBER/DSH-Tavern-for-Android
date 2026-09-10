@@ -18,7 +18,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/index.tsx
+// packages/src/dsht-plugin-mobile/client/index.tsx
 var index_exports = {};
 __export(index_exports, {
   apply: () => apply,
@@ -26,7 +26,7 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/anchors.ts
+// packages/src/dsht-plugin-mobile/client/anchors.ts
 var ANCHOR_ATTR = "data-dsht-mobile";
 var ANCHOR_DEFS = [
   { anchor: "app-frame", strategy: "overlay-parent", selectors: [".pI_x6G_frame"] },
@@ -104,7 +104,7 @@ function installAnchors(doc) {
   };
 }
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/style.ts
+// packages/src/dsht-plugin-mobile/client/style.ts
 var MOBILE_STYLE_ID = "dsht-plugin-mobile-style";
 function ensureMobileStyle() {
   if (typeof document === "undefined" || document.getElementById(MOBILE_STYLE_ID)) return;
@@ -124,6 +124,16 @@ var MOBILE_CSS = `
 
 /* \u89E6\u5C4F\u65E0 hover\uFF1A\u89D2\u8272\u5361\u8BBE\u7F6E\u89D2\u6807\u5E38\u663E\uFF08\u4ECE dsht-rp-ui/style.ts \u62BD\u79BB\u7684\u89E6\u5C4F\u89C4\u5219\uFF09 */
 @media (hover: none) { .dsht-rp-card-gear { opacity: 1; } }
+
+/* \u{1F4CE} \u9644\u4EF6\u4E0A\u4F20\u6309\u94AE\uFF08conversation.input.left \u5E2D\u4F4D\uFF09\uFF1A\u5BF9\u9F50\u539F\u751F\u56FE\u6807\u94AE\u7684\u89E6\u63A7\u5C3A\u5BF8\u4E0E\u6697\u8272\u89C2\u611F */
+.dsht-mobile-attach {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 34px; height: 34px; padding: 0 6px;
+  border: none; border-radius: 8px; background: transparent;
+  font-size: 17px; line-height: 1; cursor: pointer; user-select: none;
+  color: var(--dsw-alias-label-secondary, inherit);
+}
+.dsht-mobile-attach:active { background: var(--dsw-specific-bg-layer-hover, rgba(128, 128, 128, 0.18)); }
 
 @media (max-width: 700px) {
   /* \u2460 \u52A8\u6001\u89C6\u53E3\uFF1A\u907F\u514D\u79FB\u52A8\u6D4F\u89C8\u5668\u5DE5\u5177\u680F\u906E\u6321\u5E95\u90E8\u8F93\u5165\u533A */
@@ -314,7 +324,7 @@ var MOBILE_CSS = `
 }
 `;
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/file-preview.ts
+// packages/src/dsht-plugin-mobile/client/file-preview.ts
 var PREVIEW_Z = 2200;
 var FETCH_CAP = 256 * 1024;
 function findPreviewTarget(el) {
@@ -440,7 +450,7 @@ function installFilePreview(doc) {
   };
 }
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/index.tsx
+// packages/src/dsht-plugin-mobile/client/index.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
 var booted = false;
 function boot() {
@@ -479,9 +489,33 @@ function MobileNav({ toggle }) {
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "dsht-mobile-scrim", onClick: () => toggle?.() })
   ] });
 }
+function MobileAttach() {
+  const onClick = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = "image/*";
+    input.onchange = () => {
+      const files = Array.from(input.files ?? []);
+      if (files.length === 0) return;
+      try {
+        const dt = new DataTransfer();
+        for (const f of files) dt.items.add(f);
+        document.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+      } catch {
+      }
+    };
+    input.click();
+  };
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "dsht-mobile-attach", "aria-label": "\u6DFB\u52A0\u56FE\u7247", onClick, children: "\u{1F4CE}" });
+}
 var inject = ["slots", "layout"];
 function apply(ctx) {
   boot();
+  ctx.effect(() => ctx.slots.inject("conversation.input.left", () => ctx.slots.register(
+    { name: "conversation.input.left", id: "dsht-mobile-attach", order: 10 },
+    MobileAttach
+  )), "dsht-plugin-mobile: attach button");
   if (typeof ctx.layout?.toggleSidebar !== "function") return;
   const toggle = () => ctx.layout?.toggleSidebar?.();
   ctx.effect(() => ctx.slots.inject("shell.overlay", () => ctx.slots.register(

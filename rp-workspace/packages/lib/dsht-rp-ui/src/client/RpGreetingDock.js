@@ -21,8 +21,10 @@ export function RpGreetingDock(props) {
     const cwd = s.header?.cwd ?? s.cwd;
     // dock 席位 props 不带 cwd（在宿主 useSessions().byId）——缺失时向 host 补取
     const { slug } = useRpSlug(cwd, sessionId);
-    const msgCount = s.chat?.order?.length ?? s.surface?.nodes?.length ?? 0;
-    if (!slug || !sessionId || msgCount > 0 || dismissed.has(sessionId) || done)
+    // 【2026-09-06 实证修复】宿主 SessionSnapshot 没有 chat/surface 字段（fiber 实测 keys 全集），
+    // 旧 msgCount 恒 0 → 长聊天会话里也弹「空白会话」横幅（真机实拍抓到）。改用快照自带的
+    // blank 字段：true=空会话（弹窗），false=已有消息（隐藏）。
+    if (!slug || !sessionId || s.blank !== true || dismissed.has(sessionId) || done)
         return null;
     const withGreeting = async () => {
         if (busy)

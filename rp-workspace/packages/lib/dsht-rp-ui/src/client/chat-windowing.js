@@ -102,7 +102,13 @@ const heightMemo = new Map();
 const HEIGHT_MEMO_LIMIT = 5000;
 /** React useSyncExternalStore 订阅面（windowed 状态翻转时通知） */
 const listeners = new Set();
-/** 待执行的锚点补偿任务（一批翻转最多一份，执行即清） */
+/** 待执行的锚点补偿任务（一批翻转最多一份，执行即清）。
+ *  【2026-09-08 鲁棒性】过期熔断 + 存活性校验：回执（reportWindowCommit）依赖翻转条目
+ *  的 useLayoutEffect；条目在同一 commit 中被卸载/掩码隐藏（return null）时回执丢失，
+ *  旧实现下该任务会挂到之后**任意一次**翻转批上应用——跨会话切换后锚点元素已 detach
+ *  （rect 全 0），delta = 0 + 当前scrollTop − 旧 anchorDocTop → 视口随机跳（「画面跳来
+ *  跳去」的候选向量之一）。翻转批的 commit 恒在同帧落地（useSyncExternalStore 同步
+ *  lane），350ms 过期窗口对正常路径零影响，只熔断丢失回执的陈旧任务。 */
 let pendingCompensation = null;
 let rafId = null;
 let listening = false;
@@ -140,7 +146,7 @@ export function registerMessageWindowing(reg) {
     }
     let entry = entries.get(nodeKey);
     if (entry === undefined) {
-        entry = { sessionKey, nodeKey, el, forced, windowed: false, height: heightMemo.get(memoKey) ?? null };
+        entry = { sessionKey, nodeKey, el, forced, windowed: false, height: heightMemo.get(memoKey) ?? null, flipAt: 0 };
         entries.set(nodeKey, entry);
     }
     else {
@@ -151,6 +157,9 @@ export function registerMessageWindowing(reg) {
     elToEntry.set(el, entry);
     const ro = ensureResizeObserver();
     ro?.observe(el);
+    // 【2026-09-07】新条目注册即视为活动：重置扩张带并布防空闲计时（首屏加载后
+    // 无滚动事件也要能渐进物化全页——不然历史区永远 160px 占位虚空）
+    markScrollActivity();
     scheduleRecompute();
     return () => {
         if (entry.height !== null && entry.height > 0) {
@@ -182,10 +191,17 @@ export function reportWindowCommit() {
         pendingCompensation = null;
         if (task === null)
             return;
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        // 过期/元素已失联 → 丢弃（陈旧补偿绝不应用；见 pendingCompensation 注记）
+        if (now > task.expiresAt || !task.anchorEl.isConnected || !task.container.isConnected) {
+            scheduleRecompute();
+            return;
+        }
         const top = task.anchorEl.getBoundingClientRect().top;
         const delta = anchorDelta(top, task.container.scrollTop, task.anchorDocTop);
         if (delta !== 0) {
             // 只做位置还原（占位↔实测高度差的抵消），不做任何寻址滚动
+            suppressNextScrollActivity();
             task.container.scrollTop += delta;
         }
         // 补偿改变了滚动位置 → 下一帧重新评估可视带
@@ -194,7 +210,87 @@ export function reportWindowCommit() {
 }
 // ---- 内部：滚动监听 / ResizeObserver / recompute ---------------------------
 function onScrollCaptured() {
+    markScrollActivity();
     scheduleRecompute();
+}
+// ---------------------------------------------------------------------------
+// 【2026-09-07 空白虚空根修】空闲渐进物化（idle progressive materialization）
+// ---------------------------------------------------------------------------
+// 上滑浏览历史时，可视带外的楼层全是占位——未实测的楼层占 160px 默认高、曾实测的
+// 占真实高度（巨型状态栏楼层可达 1 万 px）。用户停在历史区时视口若落在占位带里，
+// 看到的是几千~上万 px 的「空白虚空」+ 滚动条长度反复跳变（ST 全量渲染无此问题）。
+// 对策：滚动停止 ~700ms 后进入空闲态，可视带每 400ms 向外扩张一档（渐进渲染，
+// 不一次性全量挂载卡帧），直到整页渲染完（≈ST 静态观感）或用户再次滚动（立即
+// 归零回正常的窗口化带宽，保住滚动期的内存/帧率收益）。
+const IDLE_SETTLE_MS = 700;
+const IDLE_STEP_MS = 400;
+/** 空闲扩张上限：实测（示例游戏迁移会话）底部真实楼层单层可达 4k~10k px（B8 渲染
+ * 后的巨型状态栏），13 层就占 52k 文档高，占位区被推到 45k+ px 外——上限必须
+ * 足够大才能把整页收进扩张带（真机实测 40000 不够用）。120000 ≈ 137 屏。 */
+const IDLE_BOOST_MAX_PX = 120000;
+/** 每个滚动事件对扩张量的扣减（见 markScrollActivity 衰减式收缩注记） */
+const IDLE_BOOST_SCROLL_DECAY_PX = 1500;
+let idleBoostPx = 0;
+let lastActivityAt = 0;
+let idleTimer = null;
+/** 程序化 scrollTop 写入（补偿）会触发 scroll 事件——该事件不算用户活动，
+ * 否则空闲扩张被「翻转→补偿→归零」振荡杀死（真机实测 real 恒 3 不增长）。
+ * 用计数器配对（写 N 次 → 抵消 N 个 scroll 事件）；慢设备上事件派发可延迟
+ * 超过任意固定时间窗，仅加 1s 过期兜底防泄漏。 */
+let suppressScrollCount = 0;
+let lastSuppressAt = 0;
+function markScrollActivity() {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (suppressScrollCount > 0) {
+        if (now - lastSuppressAt < 1000) {
+            suppressScrollCount--;
+            return;
+        } // 补偿写入的 scroll，非用户活动
+        suppressScrollCount = 0; // 过期计数清零（coalesce 丢事件时不永久抑制）
+    }
+    lastActivityAt = now;
+    // 【衰减式收缩】滚动事件按次扣减扩张量（不硬清零）：DSH 宿主自身的滚动锚定
+    // 会随布局变化周期性写 scrollTop（非我方补偿、无法抑制）——硬清零会让空闲扩张
+    // 永远到不了位（真机实测 b 反复 0↔6000）。用户真实连滑时事件密集（~10/s），
+    // 扣减速率远超扩张速率（+5000/s），boost 仍在秒级归零 → 滚动期窗口化保住。
+    idleBoostPx = Math.max(0, idleBoostPx - IDLE_BOOST_SCROLL_DECAY_PX);
+    if (idleTimer !== null) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+    }
+    // 空闲计时只在有注册条目时延续（registry 空时 teardown，无需空转）
+    if (registry.size > 0)
+        idleTimer = setTimeout(idleExpandTick, IDLE_SETTLE_MS);
+}
+/** 程序化 scrollTop 写入前调用（补偿路径），抵消紧随的 scroll 活动标记 */
+function suppressNextScrollActivity() {
+    suppressScrollCount++;
+    lastSuppressAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+function idleExpandTick() {
+    idleTimer = null;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (now - lastActivityAt < IDLE_SETTLE_MS)
+        return; // 期间有滚动 → 不扩张
+    if (registry.size === 0)
+        return;
+    const vh = typeof window !== 'undefined' && Number.isFinite(window.innerHeight) && window.innerHeight > 0 ? window.innerHeight : 800;
+    idleBoostPx = Math.min(idleBoostPx + Math.max(vh * OVERSCAN_VIEWPORT_RATIO, MIN_OVERSCAN_PX), IDLE_BOOST_MAX_PX);
+    scheduleRecompute();
+    // 已达上限且无新翻转 → 不再排程（恒渲染页）；否则继续下一档
+    if (idleBoostPx < IDLE_BOOST_MAX_PX)
+        idleTimer = setTimeout(idleExpandTick, IDLE_STEP_MS);
+}
+/** 【临时调试钩子】验证后移除：暴露空闲扩张内部状态 */
+if (typeof window !== 'undefined') {
+    window.__dshtWinDebug = {
+        get boostPx() { return idleBoostPx; },
+        get lastActivityAgo() { return (typeof performance !== 'undefined' ? performance.now() : Date.now()) - lastActivityAt; },
+        get registered() { let n = 0; for (const m of registry.values())
+            n += m.size; return n; },
+        get suppressMs() { return Math.max(0, 1000 - ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - lastSuppressAt)); },
+        forceTick() { idleExpandTick(); },
+    };
 }
 /** 惰性安装：scroll 用 capture 捕获任意滚动容器（scroll 不冒泡）+ passive + resize */
 function ensureListening() {
@@ -212,8 +308,38 @@ function teardown() {
     window.removeEventListener('resize', onScrollCaptured);
     resizeObserver?.disconnect();
     resizeObserver = null;
+    // 【2026-09-07】空闲物化计时一并熄灭（registry 清空后无扩张对象）
+    idleBoostPx = 0;
+    if (idleTimer !== null) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+    }
 }
-/** 共享 ResizeObserver：实测外壳高度 → entry.height（不通知 React，零重渲染） */
+/** 共享 ResizeObserver：实测外壳高度 → entry.height（不通知 React，零重渲染）。
+ * 【2026-09-06 匀速滑动修复】视口上方条目高度变化（iframe 渐进上报增高、图片/字体
+ * 加载、占位估算校准）会把视口内容往下推——原生 overflow-anchor 已禁用（本协调器
+ * 全权补偿），但旧补偿只覆盖「翻转批次」（占位↔实测切换），不覆盖已渲染条目的
+ * 内容渐变 → 表现为文字向下匀速滑动露出上方内容（真机两轮报告）。此处对完全在
+ * 视口上方（rect.bottom <= 0）的条目按高度差实时补偿 scrollTop，视觉位置静止。
+ * 【2026-09-07 双重补偿根除（真机取证）】probe 实测 30s 内 42 次 scrollTop 写入、
+ * 视口在相邻大楼层（~5900px）间震荡 ±3000~5900px：占位翻转时「翻转批次锚点补偿」
+ * 和本 RO 回调（rect.bottom<=0 分支）对同一次 5900→160 的高度变化各补偿一次 →
+ * 过冲 5740px → 视口跳进上一楼层 → 重新翻转 → 循环。本回调现跳过 windowed 条目
+ * （翻转高度差由 reportWindowCommit 锚点补偿独家负责），只补真实内容（windowed=
+ * false）的渐进增高/收缩。 */
+const aboveDeltaByContainer = new Map();
+let aboveFlushQueued = false;
+function flushAboveDeltas() {
+    aboveFlushQueued = false;
+    for (const [container, delta] of aboveDeltaByContainer) {
+        aboveDeltaByContainer.delete(container);
+        if (delta === 0)
+            continue;
+        suppressNextScrollActivity();
+        container.scrollTop += delta;
+    }
+    scheduleRecompute();
+}
 function ensureResizeObserver() {
     if (resizeObserver !== null)
         return resizeObserver;
@@ -226,8 +352,38 @@ function ensureResizeObserver() {
                 continue;
             const box = item.borderBoxSize?.[0];
             const size = box?.blockSize;
-            if (typeof size === 'number' && Number.isFinite(size) && size > 0)
-                entry.height = size;
+            if (typeof size !== 'number' || !Number.isFinite(size) || size <= 0)
+                continue;
+            const prev = entry.height;
+            entry.height = size;
+            if (prev !== null && Math.abs(size - prev) >= 1 && item.target.isConnected) {
+                // 【双重补偿根除】翻转（占位↔实测）的高度变化由翻转批次锚点补偿独家负责：
+                // 跳过 windowed 条目 + 翻转后 250ms 内的 RO 事件（RO 回调异步到达，
+                // 两条路径同帧叠加 ±5740px 曾造成视口在大楼层间震荡——真机取证）。
+                if (entry.windowed)
+                    continue;
+                const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+                if (now - entry.flipAt < 250)
+                    continue;
+                const rect = item.target.getBoundingClientRect();
+                // 【2026-09-07 匀速滑动根除（残段）】补偿条件放宽到 top<0：部分可见楼层
+                // （rect.top<0 且 bottom>0）渐进增高时，其 top 边不动、bottom 向下生长——
+                // 视口下半的内容被持续往下推，正是「文字向下匀速滑动」的残余形态（旧条件
+                // rect.bottom<=0 只覆盖完全离场条目）。top<0 的任何增高都等价于「锚点上方的
+                // 内容长了 delta」→ scrollTop += delta 后该条目 top 边以下全部视觉静止；
+                // 条目自身新长出的内容在其底部自然展开（ST 浏览器滚动锚定同语义）。
+                if (rect.top < 0) {
+                    // 视口上方（含部分可见）：高度变化纯推挤，不做锚点判别，直接按差补偿
+                    const container = findScrollAncestor(item.target);
+                    if (container !== null) {
+                        aboveDeltaByContainer.set(container, (aboveDeltaByContainer.get(container) ?? 0) + (size - prev));
+                        if (!aboveFlushQueued) {
+                            aboveFlushQueued = true;
+                            queueMicrotask(flushAboveDeltas);
+                        }
+                    }
+                }
+            }
         }
     });
     return resizeObserver;
@@ -250,8 +406,11 @@ function recompute() {
     const vh = typeof window !== 'undefined' && Number.isFinite(window.innerHeight) && window.innerHeight > 0
         ? window.innerHeight
         : 800;
-    const enterPx = enterOverscanPx(vh);
-    const exitPx = exitOverscanPx(vh);
+    // 【2026-09-07 空闲渐进物化】两带同时加 boost：占位→实测恢复判定用的是 exitPx
+    // （滞回带，恒 1.6×enterPx——不扩张则占位永不物化，真机实测 boost 只涨 real 不涨）；
+    // 实测→占位判定用 enterPx。两带同加同量 → 滞回差 0.6×enterPx 恒保持，无振荡带。
+    const enterPx = enterOverscanPx(vh) + idleBoostPx;
+    const exitPx = exitOverscanPx(vh) + idleBoostPx;
     let changed = false;
     for (const entries of registry.values()) {
         // ≤ 阈值：该会话不启用窗口化，全部复位为真实渲染
@@ -292,14 +451,19 @@ function recompute() {
             const nextWindowed = nextWindowedState(entry.windowed, entry.forced, near);
             if (nextWindowed !== entry.windowed) {
                 entry.windowed = nextWindowed;
+                // RO 补偿的翻转守卫时间戳（见 WindowEntry.flipAt 注记）
+                entry.flipAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
                 flipped = true;
                 changed = true;
             }
         }
         // 4) 有翻转 → 布置锚点补偿任务（锚点本批未翻转时才有效）
         if (flipped && anchor !== null) {
-            // 锚点本批被占位化：换视口内未翻转的次级可见条目当锚（旧实现直接放弃
-            // 补偿 → 快速滚动时视觉位置漂移）
+            // 锚点本批被翻转：优先换视口内未翻转的次级可见条目当锚；没有也**仍用已翻转
+            // 锚**——外壳元素跨翻转持续存在（ref 同一 div），其 top 只受「上方内容净高度
+            // 变化」影响、与自身高度无关（占位↔实测互换不动 top）→ 补偿公式依然成立。
+            // 旧实现在「视口内全是翻转条目」（空闲物化/快速滚动落点）时直接放弃补偿 →
+            // 上方内容暴涨后视口内容被整体推走（空白虚空期的视觉漂移根因之一）。
             if (anchor.entry.windowed) {
                 let alt = null;
                 for (const [entry, rect] of rects) {
@@ -311,7 +475,7 @@ function recompute() {
                 if (alt !== null)
                     anchor = alt;
             }
-            if (!anchor.entry.windowed) {
+            {
                 const container = findScrollAncestor(anchor.entry.el);
                 if (container !== null) {
                     // 禁用浏览器原生滚动锚定（2026-09-04 用户报告"会话缓慢自动上滑"）：
@@ -321,10 +485,12 @@ function recompute() {
                     // 而"消失"。二者只能留一个：翻转高度差由本协调器全权补偿。
                     if (container.style.overflowAnchor !== 'none')
                         container.style.overflowAnchor = 'none';
+                    const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
                     pendingCompensation = {
                         container,
                         anchorEl: anchor.entry.el,
                         anchorDocTop: anchor.top + container.scrollTop,
+                        expiresAt: nowMs + 350, // 回执窗口（同帧落地恒命中；丢失回执的陈旧任务熔断）
                     };
                 }
             }

@@ -44,6 +44,7 @@ const node_path_1 = require("node:path");
 const http_ts_1 = require("../dsht-plugin-shared/http.ts");
 const session_surgery_ts_1 = require("../dsht-plugin-shared/session-surgery.ts");
 const file_snapshots_ts_1 = require("../dsht-plugin-shared/file-snapshots.ts");
+const atomic_fs_ts_1 = require("../dsht-plugin-shared/atomic-fs.ts");
 const workspace_snapshots_ts_1 = require("./workspace-snapshots.ts");
 exports.name = 'dsht-plugin-undo';
 // webServer：/dsht-undo/* 数据面；sessions：live 判定（内存态权威，live 拒绝截盘）
@@ -100,8 +101,8 @@ async function rollbackSession(deps, payload) {
         return { code: 400, body: { error: r.error } };
     if (r.dropped === 0)
         return { code: 200, body: { kept: r.kept, dropped: 0, truncatedTo: keepThroughSeq, note: 'no-op（没有更靠后的事件）' } };
-    await (0, promises_1.writeFile)(`${file}.bak`, content, 'utf8'); // 截断前备份
-    await (0, promises_1.writeFile)(file, r.content, 'utf8');
+    await (0, atomic_fs_ts_1.atomicWriteText)(`${file}.bak`, content); // 截断前备份（原子写——进程被杀在写中途 = 备份/正件撕裂）
+    await (0, atomic_fs_ts_1.atomicWriteText)(file, r.content);
     const fsnap = await restoreFilesAfterTruncation(deps, sessionId, content, keepThroughSeq);
     console.log(`[dsht-plugin-undo] rollback: ${sessionId} → kept=${r.kept} dropped=${r.dropped} snapshotTurns=${fsnap?.restoredTurns.join(',') ?? '(off)'}`);
     return {
@@ -146,8 +147,8 @@ async function regenerateSession(deps, payload) {
     if (r.dropped === 0) {
         return { code: 200, body: { truncatedTo: lastUser.seq, truncated: 0, lastUserText: lastUser.text, note: 'no-op（最后一条用户消息之后没有事件）' } };
     }
-    await (0, promises_1.writeFile)(`${file}.bak`, content, 'utf8'); // 截断前备份
-    await (0, promises_1.writeFile)(file, r.content, 'utf8');
+    await (0, atomic_fs_ts_1.atomicWriteText)(`${file}.bak`, content); // 截断前备份（原子写——进程被杀在写中途 = 备份/正件撕裂）
+    await (0, atomic_fs_ts_1.atomicWriteText)(file, r.content);
     // 截到最后用户消息 = 腰斩该 turn → includeBoundary，该 turn 内的文件改动一并回退
     const fsnap = await restoreFilesAfterTruncation(deps, sessionId, content, lastUser.seq);
     console.log(`[dsht-plugin-undo] regenerate: ${sessionId} → anchor=${lastUser.seq} truncated=${r.dropped} snapshotTurns=${fsnap?.restoredTurns.join(',') ?? '(off)'}`);
@@ -214,8 +215,8 @@ async function editUserMessage(deps, payload) {
         return { code: 400, body: { error: r.error } };
     if (r.dropped === 0)
         return { code: 200, body: { truncatedTo: keepThroughSeq, truncated: 0, note: 'no-op（该消息之后没有事件）' } };
-    await (0, promises_1.writeFile)(`${file}.bak`, content, 'utf8'); // 截断前备份
-    await (0, promises_1.writeFile)(file, r.content, 'utf8');
+    await (0, atomic_fs_ts_1.atomicWriteText)(`${file}.bak`, content); // 截断前备份（原子写——进程被杀在写中途 = 备份/正件撕裂）
+    await (0, atomic_fs_ts_1.atomicWriteText)(file, r.content);
     // 腰斩该 turn → includeBoundary，该 turn 内的文件改动一并回退（重发后重新执行）
     const fsnap = await restoreFilesAfterTruncation(deps, sessionId, content, keepThroughSeq);
     console.log(`[dsht-plugin-undo] edit: ${sessionId} seq=${seq} → keep=${keepThroughSeq} truncated=${r.dropped} snapshotTurns=${fsnap?.restoredTurns.join(',') ?? '(off)'}`);

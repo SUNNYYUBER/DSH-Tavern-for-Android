@@ -37,7 +37,7 @@ function run(): unknown {
     }
     return r
   }
-  return renderMessages(p.template, p.context, messages, { protectPre: p.protectPre === true })
+  return { ok: true as const, ...renderMessages(p.template, p.context, messages, { protectPre: p.protectPre === true }) }
 }
 
 try {

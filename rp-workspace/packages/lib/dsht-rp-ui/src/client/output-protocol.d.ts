@@ -140,7 +140,11 @@ export type StatusRow = [string, string];
 export declare function parseStatusBarRows(content: string): StatusRow[];
 /** cwd（会话工作区根，如 …/.dsh/rp/<slug>，Windows 反斜杠兼容）→ 工作区 slug */
 export declare function slugFromCwd(cwd: string | undefined): string | null;
-/** 旧 rp.json 协议配置缺字段时默认值补齐（T2.10 新字段对旧工作区向后兼容） */
+/** 旧 rp.json 协议配置缺字段时默认值补齐（T2.10 新字段对旧工作区向后兼容）
+ * 【ST 对齐 2026-09-07】全部标签族取并集：卡显式配置只做「追加」不做「替换」——
+ * 适配skill导出的 outputProtocol 是卡实际用到的子集（示例游戏卡 actionTags 只写了
+ * ['a','selection']），替换语义让 ST 生态默认标签（<selection> 选项等）落进未知
+ * 标签兜底 → 折叠标题裸显「<selection>」字样（真机实证）。 */
 export declare function withDefaults(p: Partial<OutputProtocol> | undefined): OutputProtocol;
 /**
  * MVU 裸 JSON 变量块（VariableInsert/VariableUpdate）前端解析：

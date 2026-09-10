@@ -565,12 +565,18 @@ function apply(ctx, _config) {
                     if (!raw || typeof raw !== 'object' || Array.isArray(raw))
                         continue;
                     const rec = raw;
-                    const key = typeof rec.key === 'string' ? rec.key.trim() : '';
+                    // 【2026-09-07 真 TH 形状兼容】真 TH injectPrompts 条目是 {id, content}（剧本逻辑
+                    // 等卡脚本实传）；此前只认 {key, prompt} → 全部丢弃 400（1260 次/小时失败桥）。
+                    // 双形状都收：key = key ?? id；prompt = prompt ?? content。
+                    const key = typeof rec.key === 'string' && rec.key.trim() ? rec.key.trim()
+                        : typeof rec.id === 'string' && rec.id.trim() ? rec.id.trim() : '';
                     if (!key)
-                        continue; // key 是锚（uninject/同 key 覆盖）；无 key 条目丢弃
+                        continue; // key/id 是锚（uninject/同 key 覆盖）；无锚条目丢弃
+                    const prompt = typeof rec.prompt === 'string' ? rec.prompt
+                        : typeof rec.content === 'string' ? rec.content : '';
                     incoming.push({
                         key,
-                        prompt: typeof rec.prompt === 'string' ? rec.prompt : '',
+                        prompt,
                         order: typeof rec.order === 'number' && Number.isFinite(rec.order) ? rec.order : 100,
                         depth: typeof rec.depth === 'number' && Number.isFinite(rec.depth) ? rec.depth : 4,
                         position: typeof rec.position === 'number' && Number.isFinite(rec.position) ? rec.position : 0,
@@ -631,6 +637,67 @@ function apply(ctx, _config) {
             }
             catch (e) {
                 return (0, http_ts_1.sendJson)(res, 502, { error: `llm 通道转发失败：${e.message}` });
+            }
+        }
+        // ---- 【2026-09-07 generateRaw 真语义】ordered_prompts 装配（世界书激活/人设/角色卡/
+        // 聊天历史/injects 深度插入）→ loopback llm/classify。旧 shim 只发 {system,prompt} 空
+        // 串导致飞讯 safeGenerate 三连败（似其形不明其义根修）。
+        if (sub === '/generate-raw') {
+            if (method !== 'POST')
+                return (0, http_ts_1.sendJson)(res, 405, { error: 'POST only' });
+            const body = await (0, http_ts_1.readJsonBody)(req);
+            if (!body)
+                return (0, http_ts_1.sendJson)(res, 400, { error: 'bad json' });
+            const assembled = await facade.assembleGenerateRawPrompt(dshHome, body);
+            if (!assembled.prompt.trim())
+                return (0, http_ts_1.sendJson)(res, 400, { error: 'empty prompt（装配后无内容）', missing: assembled.missing });
+            // 【2026-09-07】system 缺省不能落到底层 classify 的"分类器"人设（会把角色扮演回复
+            // 变成 JSON 分类产物）——generateRaw 无 system 时给中性扮演指令
+            const system = assembled.system.trim() || '你正在进行 SillyTavern 式角色扮演。请完全代入当前场景中的角色，依据上文对话自然地以角色身份回复。直接输出回复内容，不要输出 JSON、分类标签或任何元信息。';
+            const host = String(req.headers.host ?? '').trim() || '127.0.0.1';
+            try {
+                const resp = await fetch(`http://${host}/dsht-rp/llm/classify`, {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ system, prompt: assembled.prompt }),
+                });
+                const data = await resp.json().catch(() => ({ error: `upstream HTTP ${resp.status}` }));
+                if (!resp.ok)
+                    return (0, http_ts_1.sendJson)(res, resp.status === 503 ? 503 : 502, data);
+                const replyHead = String(data.text ?? '').replace(/\s+/g, ' ').slice(0, 80);
+                console.log(`[dsht-th] generate-raw: ${assembled.prompt.length}ch prompt → ${String(data.text ?? '').length}ch「${replyHead}」（missing=${assembled.missing.length}）`);
+                return (0, http_ts_1.sendJson)(res, 200, { ok: true, text: String(data.text ?? ''), missing: assembled.missing });
+            }
+            catch (e) {
+                return (0, http_ts_1.sendJson)(res, 502, { error: `llm 通道转发失败：${e.message}` });
+            }
+        }
+        // ---- 【P3a 2026-09-07】聊天写路径桥（createChatMessages / setChatMessages 数据面）——
+        // 本插件无 ctx.sessions，loopback 转发 dsh-plugin 的 /dsht-rp/chat/append|update
+        //（live session 官方 append / compaction+replace 原语在 dsh-plugin 进程侧）。
+        // Host 头信任栅栏放行逻辑与 /generate 同款。
+        if (sub === '/chat/append' || sub === '/chat/update') {
+            if (method !== 'POST')
+                return (0, http_ts_1.sendJson)(res, 405, { error: 'POST only' });
+            const body = await (0, http_ts_1.readJsonBody)(req);
+            if (!body)
+                return (0, http_ts_1.sendJson)(res, 400, { error: 'bad json' });
+            const host = String(req.headers.host ?? '').trim() || '127.0.0.1';
+            try {
+                const target = sub === '/chat/append' ? '/dsht-rp/rp/chat/append' : '/dsht-rp/rp/chat/update';
+                const resp = await fetch(`http://${host}${target}`, {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await resp.json().catch(() => ({ error: `upstream HTTP ${resp.status}` }));
+                if (!resp.ok)
+                    return (0, http_ts_1.sendJson)(res, resp.status === 503 ? 503 : 502, data);
+                console.log(`[dsht-th] ${sub === '/chat/append' ? 'chat/append' : 'chat/update'}: ok（loopback ${target}）`);
+                return (0, http_ts_1.sendJson)(res, 200, data);
+            }
+            catch (e) {
+                return (0, http_ts_1.sendJson)(res, 502, { error: `会话写桥转发失败：${e.message}` });
             }
         }
         // ---- 门面端点（facade.ts 纯函数族，显式收 dshHome）——ST 酒馆助手 API 的服务端数据面 ----

@@ -67,6 +67,15 @@ export interface TavernMacroResult {
     /** 未识别宏原文（已原样保留在 text 里） */
     unknownMacros: string[];
 }
+export type CustomMacroHandler = (args: string, ctx: TavernMacroContext) => string;
+/** 注册自定义宏（内置名/非法名抛错；同名覆盖——ST registerMacro 同语义） */
+export declare function registerMacro(name: string, value: string | CustomMacroHandler): void;
+/** 注销自定义宏（返回是否存在过） */
+export declare function unregisterMacro(name: string): boolean;
+/** 字符串模板类自定义宏清单（持久化/跨端同步用；函数类不可序列化，不列出） */
+export declare function listCustomMacros(): Record<string, string>;
+/** 水合（启动/拉取时合并持久化条目；不影响函数类注册） */
+export declare function hydrateCustomMacros(entries: Record<string, string>): void;
 /** 嵌套展开上限（宏求值产物再含 {{…}} 时迭代；防 setvar/getvar 自引用死循环） */
 export declare const MACRO_MAX_ROUNDS = 10;
 /**

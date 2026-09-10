@@ -33,6 +33,8 @@ export type DisplaySegment = {
     readonly kind: 'inline-html';
     readonly source: string;
 };
+/** 折叠体内文的未知标签解包（仅渲染前预处理，不改会话原文） */
+export declare function unwrapForeignTags(text: string): string;
 /**
  * 把 display 正则替换后的文本切成有序三段（参考源码 compileCharacterDisplay）：
  * - ```html 围栏 / 含 doctype·html·head·body 的完整文档 → {kind:'html'}（进 iframe）；
@@ -63,9 +65,14 @@ export interface DisplayRunResult {
  * 防空白守卫：替换后整轮为空则回退原文（dsh-tavern L136-147 思路）。
  */
 export declare function runDisplayScripts(scripts: readonly RegexScript[], source: string, depth: number | null): DisplayRunResult;
-export declare const FRAME_MAX_HEIGHT = 12000;
+export declare const FRAME_MAX_HEIGHT = 3000;
 export declare const FRAME_MIN_HEIGHT = 48;
-/** 参考源码 clampTavernFrameHeight */
+/** 参考源码 clampTavernFrameHeight。
+ *  【2026-09-09 抖动修复】MAX 12000 是桌面参考值——手机视口 ~850px 时 12000 ≈ 14 屏，
+ *  且帧内文档若用 vh/百分比布局，高度上报会形成反馈循环（iframe 变高 → vh 值变 →
+ *  内容变高 → 再上报）一路爬到 12000 顶格，表现为「画面跳来跳去」。降到 3000（≈3.5
+ *  屏）封顶后循环快速收敛到 mount 容器内部滚动（height≥MAX 时 overflow:auto），
+ *  正常内容（状态栏 ~500px、思维链折叠 ~200px）不受影响；超长文档帧内部滚动可接受。 */
 export declare function clampFrameHeight(value: number): number;
 /** iframe 消息类型常量（宿主侧 message 校验用） */
 export declare const FRAME_HEIGHT_MESSAGE_TYPE = "dsht-rp-frame-height";
@@ -78,6 +85,10 @@ export declare const FRAME_HEIGHT_MESSAGE_TYPE = "dsht-rp-frame-height";
 export declare function buildDisplayFrameDocument(source: string, token: string): string;
 export { expandDisplayMacros };
 export type { DisplayMacroCtx };
+/** 【鲁棒轮 2026-09-09】display 数据面缓存清除（Kemini 开关链）：脚本 replaceTavernRegexes/
+ *  updatePresetWith 后 notifyDisplayMutation 调用——不清的话 epoch 重跑在 5s TTL 窗口内
+ *  仍拿旧 ctx/entries，「切了没反应」在窗口期内复发。 */
+export declare function invalidateDisplayDataCache(): void;
 /** 加载显示期宏上下文（identity + variables 并行；任一失败 → null = 原文透传） */
 export declare function loadDisplayRenderCtx(slug: string, sessionId: string): Promise<DisplayMacroCtx | null>;
 export interface RenderEntries {

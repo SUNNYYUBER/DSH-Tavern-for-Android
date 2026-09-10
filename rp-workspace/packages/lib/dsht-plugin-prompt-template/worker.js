@@ -29,7 +29,7 @@ function run() {
         }
         return r;
     }
-    return (0, ejs_ts_1.renderMessages)(p.template, p.context, messages, { protectPre: p.protectPre === true });
+    return { ok: true, ...(0, ejs_ts_1.renderMessages)(p.template, p.context, messages, { protectPre: p.protectPre === true }) };
 }
 try {
     node_worker_threads_1.parentPort?.postMessage(run());

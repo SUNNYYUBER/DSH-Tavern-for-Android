@@ -33,6 +33,7 @@ exports.restoreWorkspaceSnapshots = restoreWorkspaceSnapshots;
 const node_child_process_1 = require("node:child_process");
 const node_crypto_1 = require("node:crypto");
 const promises_1 = require("node:fs/promises");
+const atomic_fs_ts_1 = require("../dsht-plugin-shared/atomic-fs.ts");
 const node_path_1 = require("node:path");
 function positiveInt(value, fallback) {
     return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
@@ -221,7 +222,9 @@ async function captureWorkspaceSnapshot(options) {
     };
     const file = manifestPath(config, sessionId, turn);
     await (0, promises_1.mkdir)((0, node_path_1.dirname)(file), { recursive: true });
-    await (0, promises_1.writeFile)(file, JSON.stringify(snapshot), 'utf8');
+    // 【2026-09-08 鲁棒性】快照清单原子写（撕裂 = 该 turn 恢复失效）；blob 本体是
+    // 'wx' 内容寻址去重写，天然幂等，保留原样。
+    await (0, atomic_fs_ts_1.atomicWriteText)(file, JSON.stringify(snapshot));
     await pruneSessionSnapshots(config, sessionId);
     return { root, turn, fileCount: snapshot.fileCount, totalBytes: tree.totalBytes, skipped: false };
 }

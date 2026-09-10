@@ -32,6 +32,7 @@ const macros_ts_1 = require("../dsht-plugin-shared/macros.ts");
 const schema_ts_1 = require("../dsht-plugin-shared/schema.ts");
 const undo_ts_1 = require("../dsht-plugin-shared/undo.ts");
 const file_snapshots_ts_1 = require("../dsht-plugin-shared/file-snapshots.ts");
+const atomic_fs_ts_1 = require("../dsht-plugin-shared/atomic-fs.ts");
 const http_ts_1 = require("../dsht-plugin-shared/http.ts");
 const settings_ns_ts_1 = require("../dsht-plugin-shared/settings-ns.ts");
 exports.name = 'dsht-plugin-mvu';
@@ -148,6 +149,14 @@ function renderDefaultStatusbarHtml(lookup, tree) {
 // ---------------------------------------------------------------------------
 function apply(ctx, _config) {
     const dshHome = (0, http_ts_1.resolveDshHome)();
+    // L1b：自定义宏启动水合（本插件内联独立引擎副本；状态栏模板里的自定义宏与生成期一致）
+    void (async () => {
+        try {
+            const disk = JSON.parse(await (0, promises_1.readFile)((0, node_path_1.join)(dshHome, 'rp', 'macros.json'), 'utf8'));
+            (0, macros_ts_1.hydrateCustomMacros)(disk);
+        }
+        catch { /* 无自定义宏文件 = 正常 */ }
+    })();
     // 任务 C2：设置→插件「可配置」可见性锚点（失败不影响本体）
     (0, settings_ns_ts_1.registerSettingsNamespace)(ctx, 'dsht-plugin-mvu', 'dsht-mvu');
     const settingsPath = (0, node_path_1.join)(dshHome, 'rp', 'mvu-settings.json');
@@ -163,7 +172,9 @@ function apply(ctx, _config) {
     };
     const saveSettings = async (settings) => {
         await (0, promises_1.mkdir)((0, node_path_1.dirname)(settingsPath), { recursive: true });
-        await (0, promises_1.writeFile)(settingsPath, JSON.stringify(settings, null, 1), 'utf8');
+        // 【2026-09-08 鲁棒性】MVU 设置/状态文件并发写（脚本 × MVU × undo 回放）裸写撕裂
+        // 风险——统一原子写（temp+fsync+rename，同 dsht-plugin-shared/atomic-fs）。
+        await (0, atomic_fs_ts_1.atomicWriteText)(settingsPath, JSON.stringify(settings, null, 1));
     };
     const loadStateFile = async (sessionId) => {
         try {
@@ -176,7 +187,9 @@ function apply(ctx, _config) {
     };
     const saveStateFile = async (sessionId, file) => {
         await (0, promises_1.mkdir)(stateDir, { recursive: true });
-        await (0, promises_1.writeFile)((0, node_path_1.join)(stateDir, `${sessionId}.json`), JSON.stringify(file), 'utf8');
+        // 【2026-09-08 鲁棒性】rp/state/<sid>.json 是 MVU 变量树权威落点——撕裂 = 整树丢失，
+        // 原子写发布（undo 回放侧已同步换用 shared/atomic-fs）。
+        await (0, atomic_fs_ts_1.atomicWriteText)((0, node_path_1.join)(stateDir, `${sessionId}.json`), JSON.stringify(file));
     };
     /** 任务 1：写前文件快照（会话级状态文件；锚点解析不到则跳过，失败不阻塞写） */
     const snapshotStateFile = async (sessionId) => {
@@ -243,8 +256,9 @@ function apply(ctx, _config) {
                 .find((v) => typeof v === 'string' && v.trim().length > 0);
             const file = await loadStateFile(sessionId);
             const root = file;
-            const lookup = (path) => (0, macros_ts_1.readVarPath)((file.variables ?? {}), path)
-                ?? (0, macros_ts_1.readVarPath)((file.state ?? {}), path)
+            // 运行期优先：state（UpdateVariable 落点）→ variables（initvar 落点）→ 文件根
+            const lookup = (path) => (0, macros_ts_1.readVarPath)((file.state ?? {}), path)
+                ?? (0, macros_ts_1.readVarPath)((file.variables ?? {}), path)
                 ?? (0, macros_ts_1.readVarPath)(root, path);
             if (!template) {
                 // 无配置 → 默认两栏（时间/地点/好感度，只渲染变量树里存在的键）
@@ -260,12 +274,14 @@ function apply(ctx, _config) {
         // 【实机修复 2026-09-05】合并视图：state（运行期 UpdateVariable/D4 落点）叠
         // variables（initvar 落点）——只回 variables 会让 TH shim 的 Mvu.getMvuData 与
         // 诊断面在"回复含更新块"场景下假空（R7 双树一致的读侧收口）。
+        // 【2026-09-07】深合并 + 运行期优先：浅 spread 会让 variables.stat_data 整键盖掉
+        // state.stat_data 的运行期增量（楼层数值回退到迁移初值）；深合并 state 赢。
         if (sub === '/variables') {
             const sessionId = String((0, http_ts_1.queryOf)(req.url).get('sessionId') ?? '');
             if (!sessionId)
                 return (0, http_ts_1.sendJson)(res, 400, { error: 'sessionId required' });
             const file = await loadStateFile(sessionId);
-            const merged = { ...(file.state ?? {}), ...(file.variables ?? {}) };
+            const merged = deepMerge((file.variables ?? {}), (file.state ?? {}));
             return (0, http_ts_1.sendJson)(res, 200, { variables: merged, state: file.state ?? {}, variableSchema: file.variableSchema ?? null });
         }
         // ---- 变量 schema 注册（迁移 skill 写入 chat_metadata.variables）----

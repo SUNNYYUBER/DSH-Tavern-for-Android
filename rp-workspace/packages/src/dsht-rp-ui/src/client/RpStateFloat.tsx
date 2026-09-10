@@ -16,6 +16,7 @@ import { slugFromCwd } from './output-protocol.ts'
 import { RpStateView } from './RpStateView.tsx'
 import { RpSearchPanel } from './RpSearchPanel.tsx'
 import { RpTablesView } from './RpTablesView.tsx'
+import { requestFloatCollisionResolve, registerOwnFloatResolver } from './script-ui-guard.ts'
 
 interface DockProps {
   session?: unknown
@@ -174,6 +175,21 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
     return () => { window.removeEventListener('resize', onResize) }
   }, [])
 
+  // 【2026-09-10 心跳 35】跨浮窗避让回写通道：浮球位置由 React 状态（vw/vh）拥有，
+  // guard 直接写内联 left/top 会被下一次渲染冲掉。这里把「换算后的比例坐标」注册给
+  // guard——它算出目标 px 后回调本函数转成比例写回 state，位置变更才真正持久。
+  useEffect(() => {
+    const unregister = registerOwnFloatResolver('.dsht-rp-statefloat-ball', (el, pxLeft, pxTop) => {
+      const w = window.innerWidth
+      const h = window.innerHeight
+      if (w <= 0 || h <= 0) return
+      const next = clampPos({ x: (pxLeft + el.offsetWidth / 2) / w, y: (pxTop + el.offsetHeight / 2) / h })
+      setPos(next)
+      savePos(posKeyOf(sessionId), next)
+    })
+    return unregister
+  }, [sessionId])
+
   if (!slug || !sessionId || blank) return null // 非 RP / 空白会话不显示
 
   const onPointerDown = (e: ReactPointerEvent<HTMLButtonElement>): void => {
@@ -199,6 +215,10 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
       const snapped = clampPos({ x: pos.x < 0.5 ? 0.06 : 0.92, y: pos.y })
       setPos(snapped)
       savePos(posKeyOf(sessionId), snapped)
+      // 【2026-09-10 心跳 35】拖到脚本浮窗上时立即让位（不等 3s 轮询）——
+      // 用户诉求「悬浮窗互不遮挡」：贴边吸附后与 fx-floating-ball 等重叠即错开。
+      // 延后一帧等内联 left/top 落地，否则读到的是吸附前 rect。
+      requestAnimationFrame(() => { requestFloatCollisionResolve() })
     } else {
       clickHandledRef.current = true // 真触摸/鼠标：pointerup 已处理，随后的 click 抑制（防双翻）
       setOpen(o => !o)

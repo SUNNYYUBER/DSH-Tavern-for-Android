@@ -172,3 +172,37 @@ _.set('stat_data.地点', '教室')
     expect(st).toEqual({ 背景: '学院', stat_data: { 好感度: 1, 地点: '教室' } })
   })
 })
+
+describe('【鲁棒轮回归 2026-09-09】多 JSONPatch 块 / op 白名单 / 数组钳制', () => {
+  it('单个 UpdateVariable 块内多个 JSONPatch 子块全部解析（原实现只取第一个）', () => {
+    const text = `<UpdateVariable>
+<JSONPatch>[{"op":"delta","path":"/好感度","value":1}]</JSONPatch>
+<JSONPatch>[{"op":"delta","path":"/金币","value":50}]</JSONPatch>
+</UpdateVariable>`
+    const patches = parseUpdateVariable(text)
+    expect(patches).toHaveLength(2)
+    expect(patches.map(p => p.path)).toEqual(['/好感度', '/金币'])
+  })
+
+  it('未知 op（标准 test / 拼错 apend）被丢弃而非落入兜底赋值', () => {
+    const patches = parseJsonPatches('<JSONPatch>[{"op":"test","path":"/好感度","value":null},{"op":"apend","path":"/x","value":1},{"op":"add","path":"/y","value":2}]</JSONPatch>')
+    expect(patches).toHaveLength(1)
+    expect(patches[0].path).toBe('/y')
+  })
+
+  it('数组越界 add 追加尾部、replace 跳过（不再产生稀疏 null 槽）', () => {
+    const state = { list: ['a', 'b'] }
+    const next = applyStatePatches(state, [
+      { op: 'add', path: '/list/5', value: 'x' },
+      { op: 'replace', path: '/list/9', value: 'z' },
+    ])
+    expect(JSON.parse(JSON.stringify(next))).toEqual({ list: ['a', 'b', 'x'] })
+  })
+
+  it('坏 JSON 的第一个块不影响后续块解析', () => {
+    const text = '<JSONPatch>[broken json</JSONPatch> <JSONPatch>[{"op":"add","path":"/ok","value":1}]</JSONPatch>'
+    const patches = parseJsonPatches(text)
+    expect(patches).toHaveLength(1)
+    expect(patches[0].path).toBe('/ok')
+  })
+})

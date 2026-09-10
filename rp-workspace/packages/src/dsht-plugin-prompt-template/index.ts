@@ -351,11 +351,19 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
       }
       const evalOne = (content: string): string => {
         const stripped = content.replace(/\[\s*RENDER\s*[:：]?[^\]]*\]/gi, '').trim()
-        if (cfg.sandbox === true) {
-          const r = renderEjsSandbox(stripped, context)
-          return r.ok ? r.text : ''
+        try {
+          if (cfg.sandbox === true) {
+            const r = renderEjsSandbox(stripped, context)
+            return r.ok ? r.text : ''
+          }
+          return renderEjsSubset(stripped, context)
+        } catch (e) {
+          // 【鲁棒轮 2026-09-09】单条坏条目（未闭合 {{/<% 的世界书原文常态）不再炸整个
+          // /render-entries 端点（原 subset 分支无守护 → 全部 before/after 丢失 500）。
+          // fail-soft 与 sandbox 分支对齐；warn 带 comment 便于定位坏条目。
+          try { console.warn('[dsht-ejs] render-entries 条目渲染失败（跳过）:', (e as Error)?.message) } catch { /* noop */ }
+          return ''
         }
-        return renderEjsSubset(stripped, context)
       }
       const parts = { before: [] as string[], after: [] as string[] }
       for (const e of targets) {

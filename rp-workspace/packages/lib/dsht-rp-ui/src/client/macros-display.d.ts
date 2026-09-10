@@ -27,6 +27,8 @@ export interface DisplayMacroCtx {
     readonly persona?: string;
     /** MVU 变量树（/dsht-mvu/variables 的 variables 字段） */
     readonly variables: Readonly<Record<string, unknown>>;
+    /** L1b：自定义宏（字符串模板；GET /dsht-rp/macros/list 水合，与服务端注册表同源） */
+    readonly customMacros?: Readonly<Record<string, string>>;
 }
 /**
  * 展开 display 期宏。ctx 为 null（identity/variables 拉取失败或未就绪）时原文透传；

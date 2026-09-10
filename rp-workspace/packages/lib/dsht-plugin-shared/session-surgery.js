@@ -15,6 +15,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.truncateSessionJsonl = truncateSessionJsonl;
 exports.normalizeSnapshotMessageRoles = normalizeSnapshotMessageRoles;
 exports.findLastUserMessage = findLastUserMessage;
+exports.repairDuplicateTurnStarts = repairDuplicateTurnStarts;
 exports.readFirstLine = readFirstLine;
 exports.scanSessionHeaders = scanSessionHeaders;
 const promises_1 = require("node:fs/promises");
@@ -122,8 +123,11 @@ function normalizeSnapshotMessageRoles(content) {
     return { content: lines.join('\n'), changed };
 }
 /**
- * 会话重新生成定位（纯函数）：最后一条 user/message 的 seq 与其文本。
+ * 会话重新生成定位（纯函数）：最后一条**真用户** user/message 的 seq 与其文本。
  * 找不到返回 null。事件形态：user/message 的 data = {role, content}（LikeMessage 直存）。
+ * 【鲁棒轮 2026-09-09】排除 source.kind === 'plugin'（live 回退/重新生成后的 marker
+ * 「[已回退] …」原实现会被当锚 → lastUserText = marker 文案 → 前端把系统文案当输入重发；
+ * live 路径同口径）。kind 缺失（存量旧数据）视为真用户消息——不破坏旧会话兼容。
  */
 function findLastUserMessage(events) {
     for (let i = events.length - 1; i >= 0; i--) {
@@ -131,10 +135,86 @@ function findLastUserMessage(events) {
         if (ev?.type !== 'user/message')
             continue;
         const d = ev.data;
+        if (d?.source?.kind === 'plugin')
+            continue;
         const text = (d?.content ?? []).filter(b => b.type === 'text').map(b => b.text ?? '').join('\n');
         return { seq: ev.seq, text };
     }
     return null;
+}
+/**
+ * 重复 turn/start 检测与修复（纯函数，R49 存量数据修复）。
+ *
+ * 根因（实机实证，turn 序列 1,1,2..18）：open-chat 物化直写 turn/start 事件不刷新
+ * 内核 agent 构造时缓存的 phase.lastTurn → 内核下一条 prompt 重开同一 turn →
+ * session.jsonl 出现两条 data.turn 相同的 turn/start → 前端 ConversationNodeAssembler
+ * 全量重放抛「received more than one start Match」→ event feed subscriber 死亡，
+ * 折叠行（turn-process 节点）/会话流停摆。
+ *
+ * 修复策略：第二次出现的 turn/start（其 turn 已闭合过）连同其配对 turn/end 的
+ * 整段，把段内所有 data.turn === 旧编号的事件重编号为 maxTurn+1。保留首段
+ * （物化开场白 = 楼层 1 语义）；重编号段的时间顺序在楼层分组里按 seq 排，无影响。
+ * 事件 seq 与行结构不动；坏行原样保留（与 normalizeSnapshotMessageRoles 同策略）。
+ */
+function repairDuplicateTurnStarts(content) {
+    const lines = content.split('\n');
+    const events = lines.map(l => {
+        try {
+            const ev = JSON.parse(l);
+            if (typeof ev?.type !== 'string')
+                return null;
+            const turn = typeof ev.data?.turn === 'number' ? ev.data.turn : undefined;
+            return { type: ev.type, turn };
+        }
+        catch {
+            return null;
+        }
+    });
+    const closed = new Set();
+    let maxTurn = 0;
+    let renumberedTurns = 0;
+    let eventsRewritten = 0;
+    // 先扫一遍确定 maxTurn（重编号目标 = max+1）
+    for (const ev of events) {
+        if (ev?.type === 'turn/start' && typeof ev.turn === 'number')
+            maxTurn = Math.max(maxTurn, ev.turn);
+    }
+    // 逐事件状态机：closed 里已有的 turn 又开 start → 该段重编号
+    for (let i = 0; i < events.length; i++) {
+        const ev = events[i];
+        if (ev?.type !== 'turn/start' || typeof ev.turn !== 'number')
+            continue;
+        if (!closed.has(ev.turn)) {
+            closed.add(ev.turn);
+            continue;
+        }
+        // 重复段：从本行到配对 turn/end（data.turn 相同）
+        const oldTurn = ev.turn;
+        const newTurn = ++maxTurn;
+        renumberedTurns++;
+        for (let j = i; j < events.length; j++) {
+            const line = lines[j];
+            if (!line.includes('"turn"') || !line.trim())
+                continue;
+            try {
+                const parsed = JSON.parse(line);
+                if (parsed?.data?.turn === oldTurn) {
+                    parsed.data.turn = newTurn;
+                    lines[j] = JSON.stringify(parsed);
+                    events[j] = { type: events[j]?.type ?? '', turn: newTurn };
+                    eventsRewritten++;
+                    if (events[j]?.type === 'turn/end')
+                        break;
+                }
+            }
+            catch { /* 坏行不动 */ }
+        }
+        // 重编号后的 turn 视为闭合（继续扫后续）
+        closed.add(newTurn);
+    }
+    if (eventsRewritten === 0)
+        return { content, renumberedTurns: 0, eventsRewritten: 0 };
+    return { content: lines.join('\n'), renumberedTurns, eventsRewritten };
 }
 /** 读文件首行（session.jsonl header；大聊天日志不整读） */
 async function readFirstLine(path) {

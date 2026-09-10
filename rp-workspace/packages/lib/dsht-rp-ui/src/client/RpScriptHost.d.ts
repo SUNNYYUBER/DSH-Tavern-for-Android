@@ -26,11 +26,30 @@
  *   （rp/mvu-settings.json 的 mvu_notification_failure/success 类键，缺省静默）。
  */
 import { type JSX } from 'react';
+import { type ThContextSnapshot } from './th-shim.ts';
+declare const SHIM_VERSION = "4.8.5";
+export { SHIM_VERSION };
 /** 【实机审计修复 2026-09-05】RpNativeChat 成功回调 → TH 事件桥（message_swiped/message_edited）：
  * 变体切换 / 会话编辑成功处 dispatch 的 window CustomEvent 名（detail: {sessionId, eventType, messageId}） */
 export declare const TH_HOST_EVENT = "dsht-rp-ui:th-host-event";
+/** 预约楼层 guest 桥（无运行时则创建但不 start——脚本装载仍归 dock 管） */
+export declare function reserveMessageFrame(sessionId: string, slug: string): {
+    sessionId: string;
+    scriptId: string;
+    secret: string;
+} | null;
+export declare function attachMessageFrame(sessionId: string, scriptId: string, iframe: HTMLIFrameElement): void;
+export declare function releaseMessageFrame(sessionId: string, scriptId: string): void;
+/** 【P3a 2026-09-07】楼层帧 context 引导源：取该会话运行时的最新上下文快照。
+ * 楼层 iframe 文档构建时内嵌为 window.__dshtInitialContext（卡脚本运行前就位，
+ * 消除 postMessage 竞态——卡内 detectEnvironment 首读 getContext 不再落 pending 空壳） */
+export declare function getRpContextSnapshot(sessionId: string): ThContextSnapshot | null;
+export declare function fetchFrameVars(sessionId: string, slug: string): Promise<Record<string, unknown>>;
 interface DockProps {
     session?: unknown;
 }
 export declare function RpScriptHost(props: DockProps): JSX.Element | null;
-export {};
+/** 【2026-09-07 ST 按钮条对齐（基准 1/316）】脚本按钮常驻悬浮条——ST 里 TH 脚本按钮
+ *  以胶囊按钮浮在输入框上方（Kemini / 重试额外模型解析 / 剧情控制台 / ExampleGame 世界书控制…），
+ *  不藏进管理面板。dock 席位挂载，读会话运行时的按钮清单，点击回投按钮事件。 */
+export declare function RpScriptButtonsBar(props: DockProps): JSX.Element | null;

@@ -24,6 +24,75 @@ export const HOST_VENDOR_GLOBALS = ['_', '$', 'jQuery', 'z', 'Zod', 'YAML'];
 export function missingHostGlobals(host) {
     return HOST_VENDOR_GLOBALS.filter(k => host[k] === undefined);
 }
+// ---------------------------------------------------------------------------
+// 宿主 FontAwesome（TH 脚本宿主注入 UI 的图标依赖）
+// ---------------------------------------------------------------------------
+/** 与脚本 iframe 同源 CDN（buildIframeDocument 的 FA link 同款 URL） */
+export const HOST_FONTAWESOME_URL = 'https://testingcf.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css';
+const HOST_FA_LINK_ID = 'dsht-host-fa-css';
+/**
+ * 宿主注入 FontAwesome（幂等）：真 TH 脚本的常态不是在自己 iframe 里画 UI，而是拿
+ * window.parent.$ 把 UI append 进宿主 body（「飞讯 0703」的悬浮球/手机面板即此形态，
+ * 实机实证：158 个 fx-* 元素全在宿主 document，球内 <i class="fa-solid fa-comment-dots">
+ * 因宿主无 FA 样式 → 图标字符渲染成空白 = 用户看到的「悬浮球图标不加载」）。
+ * iframe 侧 FA（buildIframeDocument）覆盖不了宿主 document——两份文档两套样式表。
+ */
+export function installHostFontAwesome(doc = document) {
+    if (typeof doc.getElementById !== 'function')
+        return;
+    if (doc.getElementById(HOST_FA_LINK_ID) !== null)
+        return;
+    const head = doc.head;
+    if (head === null)
+        return;
+    const link = doc.createElement('link');
+    link.id = HOST_FA_LINK_ID;
+    link.rel = 'stylesheet';
+    link.href = HOST_FONTAWESOME_URL;
+    head.append(link);
+}
+const TOASTR_COLORS = {
+    success: '#49a25f',
+    error: '#d9534f',
+    info: '#5bc0de',
+    warning: '#f0ad4e',
+};
+/** 极简 toastr：ST 同位（顶部居中堆叠）、4s 自动消失、点击即关——覆盖脚本常用面
+ * （toastr.success/error/info/warning + options.timeOut）。样式内联免依赖。 */
+export function installHostToastr(host = globalThis) {
+    if (typeof document === 'undefined')
+        return;
+    if (host.toastr !== undefined)
+        return; // 宿主已有（ST 同款）绝不覆盖
+    if (document.body === null) {
+        // client init 早于 body（DSH 壳挂载点）——DOMContentLoaded 后重试一次
+        document.addEventListener('DOMContentLoaded', () => installHostToastr(host), { once: true });
+        return;
+    }
+    const container = document.createElement('div');
+    container.id = 'dsht-toastr-container';
+    container.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483646;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;max-width:92vw';
+    document.body.append(container);
+    const show = (level, message, title) => {
+        const el = document.createElement('div');
+        el.style.cssText = `pointer-events:auto;cursor:pointer;background:rgba(28,30,34,.94);color:#eee;border-left:4px solid ${TOASTR_COLORS[level]};border-radius:6px;padding:10px 14px;font-size:13px;line-height:1.5;box-shadow:0 6px 18px rgba(0,0,0,.35);max-width:92vw;word-break:break-word`;
+        const titleHtml = title ? `<div style="font-weight:600;margin-bottom:2px">${String(title).replace(/[<>&]/g, '')}</div>` : '';
+        el.innerHTML = `${titleHtml}<div>${String(message).replace(/[<>&]/g, (s) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[s] ?? s))}</div>`;
+        el.addEventListener('click', () => el.remove());
+        container.append(el);
+        while (container.children.length > 5)
+            container.firstElementChild?.remove();
+        setTimeout(() => el.remove(), 4000);
+        return el;
+    };
+    host.toastr = {
+        success: (m, t) => show('success', m, t),
+        error: (m, t) => show('error', m, t),
+        info: (m, t) => show('info', m, t),
+        warning: (m, t) => show('warning', m, t),
+        options: { timeOut: 4000, extendedTimeOut: 2000, positionClass: 'toast-top-center' },
+    };
+}
 let installAttempted = false;
 /**
  * client 启动时在宿主 window 补挂缺失全局（幂等）。

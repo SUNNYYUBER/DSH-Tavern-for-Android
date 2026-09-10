@@ -609,6 +609,72 @@ TT 的「用户输入夹在 system 块中 + system 收尾」结构在当前 DSH 
 除非核心开放 messages 投影点。**已停止对其继续投入**（避免无底洞）。
 
 
+### 2.2c 悬浮窗互不遮挡（用户直接投诉项，2026-09-10 心跳 35 修复 ✅）
+
+**用户原话**：「你做的脚本悬浮窗自动避让的弹出窗口到处乱窜…TT 也没有这个东西也不碍着人家
+能保证悬浮窗互不遮挡」。
+
+**CDP 实机取证（真凶是几何重叠，不是"乱窜"的观感）**：
+
+| z | 位置 | 元素 | 归属 |
+|---|---|---|---|
+| 10050 | `[351,109,36,36]` | `.dsht-rp-scriptball` 🧩 | 我方 |
+| **9999** | `[313,100,52,52]` | **`#fx-floating-ball`** | **卡脚本注入** |
+| 60 | 用户可拖（默认 92vw） | `.dsht-rp-statefloat-ball` 🌌 | 我方 |
+
+🧩 球与 `fx-floating-ball` **矩形重叠 18×36 px**。根因：`script-ui-guard.ts` 的
+`PROTECTED_ANCHORS` 只含**宿主 chrome**（`[role="tablist"]` / `[data-composer-input]`），
+**从不检测「脚本浮窗 ↔ 我方浮球」之间的碰撞** —— 于是两球长期叠在一起。
+
+**修复（`dsht-rp-ui/src/client/script-ui-guard.ts` + `RpStateFloat.tsx`）**：
+- 新增 `OWN_FLOAT_SELECTOR` = `.dsht-rp-statefloat-ball,.dsht-rp-scriptball`；
+- 新增 `resolveOwnFloatCollisions()`：**我方浮球主动让位**（脚本浮窗归第三方所有，
+  改它会被脚本复位抖动），规则 = **保边滑动** —— 保持球当前所在左/右半边，
+  优先沿垂直方向滑出重叠区，垂直无处可去才水平错开；
+- `requestFloatCollisionResolve()` 供拖拽落定后立即触发（不等 3s 轮询）；
+- resize / orientationchange 也触发；诊断探针 `floatCollisionSnapshot()`。
+
+**两个自身缺陷（实机抓到并修复）**：
+1. **未定位坐标冻结**：React 首帧 `style.left` 还是初始值（`left:92vw` 尚未应用），
+   `getBoundingClientRect()` 返回 `(-16,-16)`；旧逻辑把它当合法位置参与避让，
+   结果把这个坏坐标**冻成内联 px** → 🌌 球被钉死在左上角 `(6,6)`（实机 `data-dsht-nudged="1"
+   style="left: 6px; top: 6px"` 铁证）。修：`visibleOwnFloats` 增加「必须完整落在视口内」判据。
+2. **推出方向会落到死角**：原「最小位移推出」会把球推进屏幕角落。
+   改为「保边滑动 + 候选落点碰撞预检 + 视口边界约束」。
+   另加 `healFrozenOwnFloats()` 自愈旧版冻结坐标（识别 `left<=12 && top<=12` 的坏形态）。
+
+**回滚**：`requestFloatCollisionResolve` 是纯增量调用；移除 `OWN_FLOAT_SELECTOR` 相关
+代码即回到原行为。全量单测 **700/700 绿**；实机 `window.__dshtGuard.scans` 持续递增（守卫在跑）。
+
+**v200 最终交付与实机复验（2026-09-10 心跳 35 收尾）**：
+
+| 项 | 值 |
+|---|---|
+| `client.js` md5 | `e7dc784abe7b98e28191428e6931cad6`（源 / `dsh-runtime-android` / `pc-verify-home` 三方一致 + zip 内一致） |
+| `index.js` md5 | `84593004cad79dbe37da2fcaa1e2487d`（D-3 版本） |
+| sentinel | `.installed-v200`（实机 `run-as ... ls files/dsh-runtime/` 已确认） |
+| x86_64 debug APK | `D:/DSH RolePlay/DSH-Tavern-0.2.0-x86_64-debug.apk`（196,970,708 B，md5 `e05f43f422b2cdcabcf4f080b13517bd`） |
+| arm64 release APK | `D:/DSH RolePlay/DSH-Tavern-0.2.0-arm64-release.apk`（127,506,599 B，md5 `4b7b9ff7cbb96d6d53ab793cf0e21a47`） |
+
+**装到模拟器后的 CDP 探针（决定性证据）**：
+
+```
+{ installed: true, scans: 152,
+  snap: { own: 2, others: 1, overlapping: 0, resolvers: 2 },
+  balls: [ 🧩 dsht-rp-scriptball  nudged:"1"  rect:[347,160,36,36],
+           🌌 dsht-rp-statefloat-ball nudged:"" rect:[ 2,284,44,44] ],
+  others: [ #fx-floating-ball rect:[313,100,52,52] ],   // 真浮窗只剩 1 个
+  floatingTabs: 5 }
+稳定性 3 次采样：🧩:347,160 🌌:2,284 —— 位置去重数 = 1（零漂移），overlapping 恒 0，resolvers 恒 2
+```
+
+关键判据三项全绿：**① 🌌 `nudged:""`** —— 自愈生效，不再被钉在 `(6,6)`；
+**② `others: 1`** —— 全屏宿主层 `pI_x6G_overlayLayer` / `sidebarCol` 已被 `isCompactFloat()` 正确排除；
+**③ 三次采样位置完全一致** —— 「到处乱窜」已消除。
+
+截图复核：**左侧坚条（✕⬅😊☰ 压正文）消失、正文完整、🌌 在左中 / 🧩 在右上各就各位**。
+
+
 ### 2.3 已拍板的五件事（②收益最大先做，其余互相独立可穿插）
 
 **① 角色卡人设迁回工作区【✅ 已完成并验证（2026-09-03，选 B）】**

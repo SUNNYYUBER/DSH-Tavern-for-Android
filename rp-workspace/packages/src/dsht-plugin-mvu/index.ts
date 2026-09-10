@@ -18,13 +18,14 @@
  * 路由前缀 /dsht-mvu（避开 /dsht-rp）。
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { applyStatePatches, type StatePatch } from '../state/mvu.ts'
 import { expandTavernMacros, readVarPath, hydrateCustomMacros } from '../dsht-plugin-shared/macros.ts'
 import { validateSchemaSubset } from '../dsht-plugin-shared/schema.ts'
 import { appendUndoEntries, diffUndoEntries, makeUndoEntry } from '../dsht-plugin-shared/undo.ts'
 import { snapshotBeforeWrite } from '../dsht-plugin-shared/file-snapshots.ts'
+import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
 import {
   queryOf, readJsonBody, registerPrefix, resolveDshHome, sendJson,
   type LikePluginContext,
@@ -177,7 +178,9 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
   }
   const saveSettings = async (settings: Record<string, unknown>): Promise<void> => {
     await mkdir(dirname(settingsPath), { recursive: true })
-    await writeFile(settingsPath, JSON.stringify(settings, null, 1), 'utf8')
+    // 【2026-09-08 鲁棒性】MVU 设置/状态文件并发写（脚本 × MVU × undo 回放）裸写撕裂
+    // 风险——统一原子写（temp+fsync+rename，同 dsht-plugin-shared/atomic-fs）。
+    await atomicWriteText(settingsPath, JSON.stringify(settings, null, 1))
   }
   const loadStateFile = async (sessionId: string): Promise<SessionRpStateFile> => {
     try {
@@ -189,7 +192,9 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
   }
   const saveStateFile = async (sessionId: string, file: SessionRpStateFile): Promise<void> => {
     await mkdir(stateDir, { recursive: true })
-    await writeFile(join(stateDir, `${sessionId}.json`), JSON.stringify(file), 'utf8')
+    // 【2026-09-08 鲁棒性】rp/state/<sid>.json 是 MVU 变量树权威落点——撕裂 = 整树丢失，
+    // 原子写发布（undo 回放侧已同步换用 shared/atomic-fs）。
+    await atomicWriteText(join(stateDir, `${sessionId}.json`), JSON.stringify(file))
   }
   /** 任务 1：写前文件快照（会话级状态文件；锚点解析不到则跳过，失败不阻塞写） */
   const snapshotStateFile = async (sessionId: string): Promise<void> => {

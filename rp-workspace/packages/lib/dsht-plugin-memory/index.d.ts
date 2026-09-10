@@ -113,6 +113,15 @@ export interface FloorText {
  * - assistant/message 按 data.turn（迁移格式 data.message.turn）分组：同 turn 的
  *   后续消息并入当前楼（文本 '\n\n' 拼接）；turn 缺失时每条计 1 楼（旧口径退化）。
  * 楼层从 1 起。返回全量楼层文本 + 楼层总数 cursor（turn 口径，作为总结进度游标）。
+ *
+ * 【2026-09-08 鲁棒性】逻辑回退掩码感知：扫描 dsht-rp 的回退/编辑/重新生成 marker
+ * （source.rolledBackTo / editedFrom / regeneratedFrom + 事件自身 seq），真实消息 seq
+ * 落在 (hideAfter, markerSeq) replace 区间内的**整条跳过**（不计数、不进摘要）——
+ * 旧实现从全量日志数楼层：被回退的内容会被后续 chunk 重新摘要进记忆本（用户明确
+ * 撤回的内容「复活」进上下文），且楼层号与 UI（掩码后重排）错位。marker 无 seq 或
+ * 事件无 seq（老数据）时退化为旧口径。注意与 UI 掩码失效语义**有意不同**：UI 在
+ * marker 之后出现新真用户消息时整体失效（回看全量）；记忆侧区间永久跳过（回退的
+ * 上下文永远不该经记忆回流）。
  */
 export declare function extractFloorsFromEvents(events: SessionEventLike[]): {
     floors: FloorText[];
@@ -137,7 +146,21 @@ export declare function parseMemoryRange(comment: string): {
  * start, end } })——官方原语（types.d.ts："any surface-replacing producer may
  * use it"，compaction 同款）：被影子化的事件**留在日志里**（聊天数据零丢失），
  * 只是模型视图不再投影它们。 */
-/** surface 节点信息（钩子从 session.surface.nodes + session.events[seq] 派生） */
+/** 读一个 seq 的事件：0.1.2 用 eventAt(seq)，旧对象回落 .events[seq]。 */
+export declare function sessionEventAt(session: unknown, seq: number): {
+    type?: unknown;
+    data?: unknown;
+    time?: unknown;
+    seq?: unknown;
+} | undefined;
+/** 全量事件快照：0.1.2 用 snapshotEvents()，旧对象回落 .events（数组或字典）。 */
+export declare function sessionEventsSnapshot(session: unknown): Array<{
+    type?: unknown;
+    data?: unknown;
+    time?: unknown;
+    seq?: unknown;
+}>;
+/** surface 节点信息（钩子从 session.surface.nodes + sessionEventAt(session, seq) 派生） */
 export interface SurfaceNodeInfo {
     seq: number;
     /** 真实楼层消息：assistant 或 source.kind==='user' 的 user（口径 = turn 楼层） */
@@ -185,6 +208,7 @@ export declare function planShadowOps(nodes: SurfaceNodeInfo[], opts: {
     cursor: number;
     freshSigs?: ReadonlySet<string>;
     windowKeepSeq?: number | null;
+    foldHistory?: boolean;
 }): ShadowPlan;
 /** 记忆条目工厂（constant 常驻——注入复用 dsh-plugin pre-step 的触发引擎） */
 export declare function buildMemoryEntry(bookName: string, from: number, to: number, summary: string): LoreEntry;

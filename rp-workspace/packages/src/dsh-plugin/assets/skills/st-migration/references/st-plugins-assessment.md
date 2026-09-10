@@ -34,11 +34,14 @@
   （getContext、eventSource、slash command registry）、Vue 面板注入。
 - **迁移价值：高（已适配）**。
 - **建议落点**：**已落地为 dsht-plugin-tavern-helper**（/dsht-tavern-helper/*：
-  variables 三级作用域 + scripts 仓库/执行）。迁移动作：`extension_settings.tavern_helper`
-  的变量数据按 scope 分流 PUT `/variables`；脚本仓库 PUT `/scripts`。
-  卡内/聊天内的脚本引用保持原样（session.jsonl 不动）。
-  ⚠️ 脚本执行沙箱语义与 ST iframe 不同（无 DOM），依赖 DOM 注入的脚本不会自动生效——
-  报告中列出受影响脚本。
+  variables 三级作用域 + message 合并视图 + scripts 仓库/执行 + 正则三源 + 预设 CRUD +
+  世界书读写 + 事件桥 + 聊天写桥 createChatMessages/setChatMessages + generateRaw 真装配）。
+  迁移动作：`extension_settings.tavern_helper` 的变量数据按 scope 分流 PUT `/variables`；
+  脚本仓库 PUT `/scripts`。卡内/聊天内的脚本引用保持原样（session.jsonl 不动）。
+  ✅ **脚本执行形态与真 TH 同源**（v183+：每脚本一 iframe，allow-same-origin + 宿主注入
+  $/_/z/YAML/jQuery UI/FontAwesome + TavernHelper API shim 完全体 + confirm/alert 模态桥 +
+  按钮 API 四件套支持跨脚本管理——依赖 DOM 注入的悬浮球/fixed 部件类脚本可正常运行，
+  见 references/th-buttons.md）。个别未覆盖 API 会在脚本面板 missing 列表记名（不静默）。
 
 ## LittleWhiteBox（小白盒 v3.0.4）
 

@@ -101,14 +101,18 @@ export function normalizeSnapshotMessageRoles(content: string): { content: strin
 }
 
 /**
- * 会话重新生成定位（纯函数）：最后一条 user/message 的 seq 与其文本。
+ * 会话重新生成定位（纯函数）：最后一条**真用户** user/message 的 seq 与其文本。
  * 找不到返回 null。事件形态：user/message 的 data = {role, content}（LikeMessage 直存）。
+ * 【鲁棒轮 2026-09-09】排除 source.kind === 'plugin'（live 回退/重新生成后的 marker
+ * 「[已回退] …」原实现会被当锚 → lastUserText = marker 文案 → 前端把系统文案当输入重发；
+ * live 路径同口径）。kind 缺失（存量旧数据）视为真用户消息——不破坏旧会话兼容。
  */
 export function findLastUserMessage(events: Array<{ type: string; seq: number; data?: unknown }>): { seq: number; text: string } | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i]
     if (ev?.type !== 'user/message') continue
-    const d = ev.data as { content?: Array<{ type: string; text?: string }> } | undefined
+    const d = ev.data as { content?: Array<{ type: string; text?: string }>; source?: { kind?: unknown } } | undefined
+    if (d?.source?.kind === 'plugin') continue
     const text = (d?.content ?? []).filter(b => b.type === 'text').map(b => b.text ?? '').join('\n')
     return { seq: ev.seq, text }
   }

@@ -350,6 +350,7 @@ export const IFRAME_EVENTS: Record<string, string> = {
 export const SHIM_LOCAL_APIS = [
   'eventOn', 'eventOnce', 'eventEmit', 'eventEmitAndWait', 'eventRemoveListener',
   'eventClearEvent', 'eventClearAll', 'eventMakeFirst', 'eventMakeLast',
+  'eventClearListener',
   'eventOnButton', 'getButtonEvent',
   'getVariables', 'getAllVariables', 'insertVariables', 'insertOrAssignVariables',
   'updateVariablesWith', 'replaceVariables', 'deleteVariable',
@@ -525,6 +526,10 @@ function call(api, args) {
   // 帧未接线）时此前 Promise 永久挂起——卡脚本 await 冻死（示例游戏 story-version 卡在
   // 「正在读取全局剧情数据」实证，同卡其余 3 实例正常）。20s 首超时自动重试一次，
   // 再超时则 reject（错误进 script-error 信标可见），卡自身的 catch 路径能走。
+  // 【鲁棒轮 2026-09-09】非幂等写 API 超时不重试：重试 = 换 callId 再 post 一条且不撤回
+  // 第一条——宿主只是慢（物化渲染期主线程饱和）时 call#1 照常执行完毕，call#2 再执行
+  // 一遍 → createChatMessages 重复追加整组消息（飞讯统合记录场景）。幂等读保留重试。
+  var NON_IDEMPOTENT = /^(chat:append|injects:put|injects:remove|mvu:replace|buttons:set|wb:entryPut)/;
   function attempt(triesLeft) {
     return new Promise(function (resolve, reject) {
       var callId = ++seq;
@@ -539,11 +544,12 @@ function call(api, args) {
       timer = setTimeout(function () {
         if (settled) return;
         pending.delete(callId);
-        if (triesLeft > 0) {
+        if (triesLeft > 0 && !NON_IDEMPOTENT.test(api)) {
           try { console.warn('[TavernHelper shim] ' + api + ' 桥接超时，自动重试一次'); } catch (e) {}
           attempt(triesLeft - 1).then(resolve, reject);
         } else {
-          var err = new Error(api + ' 桥接超时（宿主 20s 未回包，已重试 1 次）');
+          var why = NON_IDEMPOTENT.test(api) ? '非幂等写调用不重试（防重复执行）' : '已重试 1 次';
+          var err = new Error(api + ' 桥接超时（宿主 20s 未回包，' + why + '）');
           try { console.warn('[TavernHelper shim] ' + err.message); post({ th: 'script-error', error: err.message }); } catch (e) {}
           reject(err);
         }
@@ -584,18 +590,42 @@ function dispatch(evt, args) {
     }
   }
 }
+// 【鲁棒轮 2026-09-09】真 TH 语义：eventOn/eventOnce 对已在监听的同一 fn 幂等（重复注册
+// 不新增）；eventMakeFirst/Last 是「移动」不是「新增」。shim 原实现无条件 push → 初始化
+// 函数被 CHAT_CHANGED 再次调用时监听器执行 N 次副作用成倍放大（按钮/变量写双发）。
 function eventOn(evt, fn) {
-  listenerList(String(evt)).push({ fn: fn, once: false, ord: ++lseq });
-  return { stop: function () { removeListener(String(evt), fn); } };
+  evt = String(evt)
+  var list = listenerList(evt)
+  for (var i = 0; i < list.length; i++) { if (list[i].fn === fn) return { stop: function () { removeListener(evt, fn); } } }
+  list.push({ fn: fn, once: false, ord: ++lseq });
+  return { stop: function () { removeListener(evt, fn); } };
 }
 function eventOnce(evt, fn) {
-  listenerList(String(evt)).push({ fn: fn, once: true, ord: ++lseq });
-  return { stop: function () { removeListener(String(evt), fn); } };
+  evt = String(evt)
+  var list = listenerList(evt)
+  for (var i = 0; i < list.length; i++) { if (list[i].fn === fn) return { stop: function () { removeListener(evt, fn); } } }
+  list.push({ fn: fn, once: true, ord: ++lseq });
+  return { stop: function () { removeListener(evt, fn); } };
 }
-function eventMakeLast(evt, fn) { return eventOn(evt, fn); }
+function eventMakeLast(evt, fn) {
+  evt = String(evt)
+  removeListener(evt, fn) // 移动语义：先摘旧位再插尾部
+  listenerList(evt).push({ fn: fn, once: false, ord: ++lseq });
+  return { stop: function () { removeListener(evt, fn); } };
+}
 function eventMakeFirst(evt, fn) {
-  listenerList(String(evt)).unshift({ fn: fn, once: false, ord: ++lseq });
-  return { stop: function () { removeListener(String(evt), fn); } };
+  evt = String(evt)
+  removeListener(evt, fn)
+  listenerList(evt).unshift({ fn: fn, once: false, ord: ++lseq });
+  return { stop: function () { removeListener(evt, fn); } };
+}
+// 【鲁棒轮 2026-09-09】补真 TH 公开 API eventClearListener(listener)：按函数引用跨事件清监听。
+function eventClearListener(fn) {
+  var removed = 0
+  listeners.forEach(function (list) {
+    for (var i = list.length - 1; i >= 0; i--) { if (list[i] && list[i].fn === fn) { list.splice(i, 1); removed++ } }
+  })
+  return removed
 }
 function eventRemoveListener(evt, fn) { removeListener(String(evt), fn); }
 function eventClearEvent(evt) { listeners.delete(String(evt)); }
@@ -681,23 +711,35 @@ function hashString(s) {
 }
 function getButtonEvent(name) { return SCRIPT_ID + '_' + hashString(String(name)); }
 function eventOnButton(name, fn) { eventOn(getButtonEvent(name), fn); }
-function getScriptButtons() { return call('buttons:get', []); }
-function replaceScriptButtons(buttons, script_id) { return call('buttons:set', [buttons]); }
-function updateScriptButtonsWith(updater) {
-  return getScriptButtons().then(function (buttons) {
+// 【指南版 2026-09-09】按钮四件套全量支持目标脚本（真 TH 跨脚本管理语义）：
+// getScriptButtons(script_id?) / replaceScriptButtons(buttons, script_id?) /
+// updateScriptButtonsWith(updater, script_id?)（updater 收到**目标**脚本按钮）/
+// appendInexistentScriptButtons(script_id?, buttons)。script_id 缺省 = 调用方自身；
+// 显式指定时 host 校验目标已装载（不存在显式报错，不再静默改错对象）。
+function getScriptButtons(script_id) {
+  return call('buttons:get', [script_id == null ? null : String(script_id)]);
+}
+function replaceScriptButtons(buttons, script_id) {
+  return call('buttons:set', [buttons, script_id == null ? null : String(script_id)]);
+}
+function updateScriptButtonsWith(updater, script_id) {
+  var target = script_id == null ? null : String(script_id);
+  return getScriptButtons(target).then(function (buttons) {
     return Promise.resolve(updater(buttons));
   }).then(function (next) {
-    return replaceScriptButtons(next).then(function () { return next; });
+    return replaceScriptButtons(next, target).then(function () { return next; });
   });
 }
 function appendInexistentScriptButtons(a, b) {
+  // 真 TH 双形态：appendInexistentScriptButtons(script_id, buttons) 或 (buttons)（自身）
+  var target = typeof a === 'string' ? a : null;
   var newButtons = typeof a === 'string' ? b : a;
   return updateScriptButtonsWith(function (buttons) {
     var add = (newButtons || []).filter(function (nb) {
       return !buttons.some(function (x) { return x.name === nb.name; });
     });
     return buttons.concat(add);
-  });
+  }, target);
 }
 
 // ---- 上下文快照（host 主动推送 {th:'context', context}；getContext 同步读、不过桥）----
@@ -862,11 +904,13 @@ function dshtStringToRange(input, min, max) {
 // 真 TH ChatMessage 形状：{message_id, name, role, is_hidden, message, data}；
 // data = 数据面记录里规范字段之外的全部附加键（脚本按 ST 惯例在 data 上读写楼层附加数据）。
 // seq = 会话日志事件锚（本移植扩展）：setChatMessages 写回时定位楼层用，不进 data。
+// 【鲁棒轮 2026-09-09】补真 TH 兼容字段 extra/swipe_id/swipes（ST 每楼必有 extra；
+// 卡脚本读 msg.extra.token_count / msg.swipe_id 直接 TypeError 的预防）+ data 语义注释。
 function dshtMessageView(m) {
   if (!m || typeof m !== 'object') return m;
   var data = {};
   for (var k in m) {
-    if (k === 'message_id' || k === 'name' || k === 'role' || k === 'message' || k === 'is_system' || k === 'is_hidden' || k === 'data' || k === 'seq') continue;
+    if (k === 'message_id' || k === 'name' || k === 'role' || k === 'message' || k === 'is_system' || k === 'is_hidden' || k === 'data' || k === 'seq' || k === 'extra' || k === 'swipe_id' || k === 'swipes') continue;
     data[k] = m[k];
   }
   var view = {
@@ -876,6 +920,10 @@ function dshtMessageView(m) {
     is_hidden: m.is_hidden === true || m.is_system === true,
     message: m.message,
     data: (m.data && typeof m.data === 'object') ? m.data : data,
+    // 兼容面：快照无 swipe 数据 → 恒单页形状（extra 空对象兜底 token_count 类读取不炸）
+    extra: (m.extra && typeof m.extra === 'object') ? m.extra : {},
+    swipe_id: typeof m.swipe_id === 'number' ? m.swipe_id : 0,
+    swipes: Array.isArray(m.swipes) ? m.swipes : [m.message],
   };
   if (typeof m.seq === 'number') view.seq = m.seq;
   return view;
@@ -910,7 +958,24 @@ function dshtSyncChatList() {
   }
   return list;
 }
-function getChatMessages(range) {
+// 【鲁棒轮 2026-09-09】补第二参数 option（真 TH 签名 getChatMessages(range, {role, hide_state,
+// include_swipes})）——shim 原实现整个丢弃 option，统计/拼接类脚本拿到未过滤数据静默出错。
+// role: 'all'|'user'|'assistant'|'system'；hide_state: 'all'|'hidden'|'unhidden'。
+function dshtMessageFilter(m, option) {
+  if (!option || typeof option !== 'object') return true
+  var role = option.role
+  if (role && role !== 'all') {
+    if (role === 'system') { if (m.is_system !== true) return false }
+    else if (m.role !== role) return false
+  }
+  var hs = option.hide_state
+  if (hs && hs !== 'all') {
+    if (hs === 'hidden' && m.is_hidden !== true) return false
+    if (hs === 'unhidden' && m.is_hidden === true) return false
+  }
+  return true
+}
+function getChatMessages(range, option) {
   var raw = dshtSyncMacroRange(range == null ? '' : String(range));
   if (raw === null) return [];
   var list = dshtSyncChatList();
@@ -919,7 +984,7 @@ function getChatMessages(range) {
   var out = [];
   for (var i = rn.start; i <= rn.end; i++) {
     var m = list[i];
-    if (m && typeof m === 'object') out.push(m);
+    if (m && typeof m === 'object' && dshtMessageFilter(m, option)) out.push(m);
   }
   return out;
 }
@@ -1015,8 +1080,10 @@ function formatAsTavernRegexedString(text, source, destination) {
       if (typeof s.findRegex !== 'string' || s.findRegex === '') continue;
       try {
         var re = new RegExp(s.findRegex, 'g');
-        // '{{match}}' → '$&'（$$& 转义出字面 $&，再由外层 replace 解释为原匹配文本）
-        var rep = typeof s.replaceString === 'string' ? s.replaceString.replace('{{match}}', '$$&') : '';
+        // '{{match}}' → '$&'（$$& 转义出字面 $&，再由外层 replace 解释为原匹配文本）。
+        // 【鲁棒轮 2026-09-09】对齐 ST 引擎：全局 + 大小写不敏感（/gi）——字符串单次 replace
+        // 只换第一处且漏 {{Match}} 变体，第二个占位符按字面文本进输出。
+        var rep = typeof s.replaceString === 'string' ? s.replaceString.replace(/{{match}}/gi, '$$&') : '';
         result = result.replace(re, rep);
       } catch (e) { /* 坏正则跳过（与 ST 引擎容错一致） */ }
     }
@@ -1152,6 +1219,11 @@ function buildStContextFacade() {
     : undefined;
   return {
     chatCompletionSettings: settings,
+    // 【卡自检 2026-09-08】真 ST 的 getContext() 含 extensionSettings（= extension_settings
+    // 引用）——缺了它 Sol-3 系卡自检走 SillyTavern.getContext().extensionSettings.EjsTemplate
+    // 直接 TypeError →「提示词模板 未检测到」。
+    extensionSettings: __dshtExtSettings,
+    extension_settings: __dshtExtSettings,
     promptManager: {
       activePreset: ctx.presetName != null ? ctx.presetName : undefined,
       getPromptOrderForCharacter: function () {
@@ -1328,16 +1400,32 @@ function createChatMessages(messages, options) {
 // getChatMessages 视图透传，host 走 compaction/prune + replace 单节点官方原语
 // （模型视图与前端投影立即生效；事件留日志零丢失）。
 function setChatMessages(messages, options) {
+  void options;
   var list = Array.isArray(messages) ? messages : (messages ? [messages] : []);
   var targets = [];
+  var unsupported = '';
   for (var i = 0; i < list.length; i++) {
     var m = list[i];
     if (!m || typeof m !== 'object' || typeof m.message_id !== 'number') continue;
+    // 【鲁棒轮 2026-09-09】is_hidden/swipe 字段原被静默丢弃 → 「批量隐藏楼层」（真 TH
+    // 官方文档示例）假成功（targets 只剩 message_id，host 空改动返回 ok）。DSH 无楼层
+    // 隐藏投影——诚实失败（记名 + __thExpected reject）优于假成功，文本/数据字段照常可用。
+    if (unsupported === '') {
+      if (m.is_hidden !== undefined) unsupported = 'is_hidden';
+      else if (m.swipe_id !== undefined) unsupported = 'swipe_id';
+      else if (m.swipes !== undefined) unsupported = 'swipes';
+    }
     var t = { message_id: m.message_id };
     if (typeof m.seq === 'number') t.seq = m.seq;
     if (m.message !== undefined) t.message = String(m.message == null ? '' : m.message);
     if (m.data !== undefined) t.data = (m.data && typeof m.data === 'object') ? m.data : null;
     targets.push(t);
+  }
+  if (unsupported !== '') {
+    reportMissing('setChatMessages:' + unsupported);
+    var err = new Error('setChatMessages: 字段 ' + unsupported + ' 不受支持（DSH 无楼层隐藏/swipe 投影）——移除该字段后重试；文本与 data 字段照常可写');
+    err.__thExpected = true;
+    return Promise.reject(err);
   }
   if (targets.length === 0) return Promise.resolve(false);
   return call('chat:update', [targets]).then(function (r) { return !!(r && r.ok); });
@@ -1481,6 +1569,7 @@ var TH = {
   eventOn: eventOn, eventOnce: eventOnce, eventEmit: eventEmit, eventEmitAndWait: eventEmitAndWait,
   eventRemoveListener: eventRemoveListener, eventClearEvent: eventClearEvent, eventClearAll: eventClearAll,
   eventMakeFirst: eventMakeFirst, eventMakeLast: eventMakeLast,
+  eventClearListener: eventClearListener,
   eventOnButton: eventOnButton, getButtonEvent: getButtonEvent,
   getVariables: getVariables, getAllVariables: getAllVariables, insertVariables: insertVariables,
   insertOrAssignVariables: insertOrAssignVariables, updateVariablesWith: updateVariablesWith,
@@ -1555,6 +1644,22 @@ window.waitGlobalInitialized = function (name, timeoutMs) {
   });
 };
 
+// ---- 【Kemini 适配 2026-09-08】builtin 门面（JS-Slash-Runner 的 globalThis.builtin 等价物）----
+// Kemini Dramatron 等预设脚本在「切换正则/预设后」调
+// builtin.reloadAndRenderChatWithoutEvents() 重渲染已上屏消息（缺它 → 切了开关画面没反应，
+// 用户以为适配坏了）。实现：桥到宿主 displayReload（invalidateWsCache + display epoch bump，
+// 消息楼层重跑 display 正则管线）。reloadIframe 真语义是重载脚本自身 iframe——沙箱内按
+// location.reload 等价处理（srcdoc 帧自重载）；waitGlobalInitialized 已有同名全局。
+window.builtin = {
+  reloadAndRenderChatWithoutEvents: function () {
+    return call('display:reload', []).then(function () { return true; }).catch(function () { return false; });
+  },
+  reloadIframe: function () {
+    try { window.location.reload(); } catch (e) { /* srcdoc 帧 reload 受限即 no-op */ }
+    return Promise.resolve(true);
+  },
+};
+
 // 裸全局（真 TH predefine.js 同款行为：脚本写 getVariables(...) 不带 TavernHelper. 前缀）
 var bareGlobals = ${bareGlobalsJs};
 for (var li = 0; li < bareGlobals.length; li++) {
@@ -1578,9 +1683,27 @@ window.audio = audio; // C17：对象型 API 不在函数型裸全局循环里�
 var __dshtExtBase = {};
 try { __dshtExtBase = JSON.parse(localStorage.getItem('__dsht_extension_settings') || '{}') || {}; } catch (e) { __dshtExtBase = {}; }
 var __dshtExtSettings = new Proxy(__dshtExtBase, {
-  set: function (t, k, v) { t[k] = v; try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(t)); } catch (e) { /* 配额满等：内存保留 */ } return true; },
-  deleteProperty: function (t, k) { delete t[k]; try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(t)); } catch (e) { } return true; },
-});
+  set: function (t, k, v) { t[k] = v; try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(t)) } catch (e) { /* 配额满等：内存保留 */ } return true },
+  deleteProperty: function (t, k) { delete t[k]; try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(t)) } catch (e) { } return true },
+})
+// 【卡自检 2026-09-08】ST-Prompt-Template（提示词模板扩展）把设置落在
+// extension_settings.EjsTemplate（真扩展 ui.ts loadSettings 的键名与 ST 默认值 1:1）。
+// 卡自检（Sol-3 系「提示词模板 未检测到」）探测的就是这个键 + globalThis.EjsTemplate
+// 全局——两者缺一即「未检测到」。这里用扩展真默认值预种（engine 功能面归宿主
+// /dsht-prompt-template/* 数据面，见下方 EjsTemplate 门面）。
+if (!__dshtExtBase['EjsTemplate'] || typeof __dshtExtBase['EjsTemplate'] !== 'object') {
+  __dshtExtBase['EjsTemplate'] = {
+    enabled: true, generate_enabled: true, generate_loader_enabled: true,
+    render_enabled: true, render_loader_enabled: true, with_context_disabled: false,
+    debug_enabled: false, autosave_enabled: false, preload_worldinfo_enabled: true,
+    code_blocks_enabled: false, raw_message_evaluation_enabled: true,
+    filter_message_enabled: true, cache_enabled: 0, cache_size: 64,
+    cache_hasher: 'h32ToString', inject_loader_enabled: false, invert_enabled: true,
+    depth_limit: -1, compile_workers: false, sandbox: false, code_editor: false,
+    preload_only: true,
+  }
+  try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(__dshtExtBase)) } catch (e) { }
+}
 // ST 原始 chat 消息投影（{mes, swipe_id, swipes, variables}）——MVU 读 message.variables[swipe_id]。
 // 注意：投影对象上的变量写入不回写宿主（会话变量持久化走 vars 桥 get/insertVariables）。
 function __dshtStChat() {
@@ -1648,6 +1771,74 @@ Object.defineProperty(window, 'SillyTavern', {
   configurable: true,
 });
 window.extension_settings = __dshtExtSettings;
+
+// ---- EjsTemplate 全局门面（ST-Prompt-Template 扩展的 globalThis.EjsTemplate 等价物）----
+// 【卡自检 2026-09-08】Sol-3 系卡自检「提示词模板」探测 globalThis.EjsTemplate /
+// extension_settings.EjsTemplate（真扩展 exports.ts init 挂的全局 + ui.ts 的设置键）。
+// 功能面：evalTemplate/getFeatures/setFeatures/resetFeatures/compileTemplate 走宿主
+// /dsht-prompt-template/* 数据面（iframe 与宿主同源，fetch 可达）；allVariables 走变量桥；
+// 其余扩展内部面（prepareContext/refreshWorldInfo/finalization 等）诚实 no-op + console 记名。
+var __dshtEjsFetch = function (method, sub, body) {
+  // 【鲁棒轮 2026-09-09】加 20s 超时（与 call() 桥对齐）——裸 fetch 无超时，宿主路由挂死
+  // （连接池耗尽/渲染 worker 卡死）时 await evalTemplate 永久 pending（示例游戏「读取剧情数据」同病）。
+  return fetch('/dsht-prompt-template/' + sub, {
+    method: method,
+    headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(20000) : undefined,
+  }).then(function (r) { return r.json().catch(function () { return {} }) })
+}
+var __dshtEjsMissing = function (name) {
+  return function () {
+    try { console.warn('[EjsTemplate shim] ' + name + ' 沙箱未实现（扩展内部面），返回 null') } catch (e) { }
+    return Promise.resolve(null)
+  }
+}
+var EjsTemplateFacade = {
+  evalTemplate: function (code, context, options) {
+    return __dshtEjsFetch('POST', 'render', { template: String(code == null ? '' : code), context: context ?? {}, options: options ?? {} })
+      .then(function (j) {
+        if (j && typeof j.result === 'string') return j.result
+        throw new Error(String((j && j.error) || 'EjsTemplate.evalTemplate 渲染失败'))
+      })
+  },
+  getSyntaxErrorInfo: function () { return null },
+  setFeatures: function (features) {
+    if (features && typeof features === 'object') {
+      try {
+        var cur = __dshtExtBase['EjsTemplate'] || {}
+        __dshtExtBase['EjsTemplate'] = Object.assign({}, cur, features)
+        try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(__dshtExtBase)) } catch (e) { }
+      } catch (e) { }
+    }
+    return Promise.resolve()
+  },
+  getFeatures: function () {
+    var cur = __dshtExtBase['EjsTemplate']
+    return Promise.resolve(cur && typeof cur === 'object' ? Object.assign({}, cur) : {})
+  },
+  resetFeatures: function () {
+    delete __dshtExtBase['EjsTemplate'] // 下个脚本帧启动时按 ST 默认值重种
+    try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(__dshtExtBase)) } catch (e) { }
+    return Promise.resolve()
+  },
+  allVariables: function () {
+    return getVariables({ type: 'global' }).catch(function () { return {} })
+  },
+  saveVariables: __dshtEjsMissing('saveVariables'),
+  prepareContext: __dshtEjsMissing('prepareContext'),
+  refreshWorldInfo: __dshtEjsMissing('refreshWorldInfo'),
+  parseJSON: function (text) {
+    try { return JSON.parse(String(text)) } catch (e) { return null }
+  },
+  jsonPatch: __dshtEjsMissing('jsonPatch'),
+  compileTemplate: __dshtEjsMissing('compileTemplate'),
+  finalization: __dshtEjsMissing('finalization'),
+}
+Object.defineProperty(window, 'EjsTemplate', {
+  get: function () { return EjsTemplateFacade },
+  configurable: true,
+})
 
 // ---- 桥回包 / 事件投递 ----
 window.addEventListener('message', function (e) {
@@ -1965,6 +2156,8 @@ export interface ThBridgeDeps {
   varsAll: (scriptId: string) => Promise<Record<string, unknown>>
   buttonsGet: (scriptId: string) => Array<{ name: string; visible: boolean }>
   buttonsSet: (scriptId: string, buttons: Array<{ name: string; visible: boolean }>) => void
+  /** 【鲁棒轮】buttons:set 跨脚本目标存在性校验（replaceScriptButtons(buttons, script_id)） */
+  buttonsExists: (scriptId: string) => boolean
   primaryLorebook: () => Promise<string | null>
   // ---- 以下为本次迁移的真实现 deps（/dsht-tavern-helper/* 新路由；sessionId/slug 空串 = 运行时会话/工作区）----
   /** 上下文快照（/context 响应；无 RP 上下文返回 null） */
@@ -1988,6 +2181,9 @@ export interface ThBridgeDeps {
   regexesGet: (slug: string, sessionId: string) => Promise<{ regexes: Record<string, unknown>[]; presetId?: string | null; slug?: string | null }>
   /** 正则整表替换（scope: global / character(slug) / preset(presetId)） */
   regexesReplace: (regexes: Record<string, unknown>[], scope: 'global' | 'character' | 'preset', slug: string, sessionId: string) => Promise<void>
+  /** 【Kemini 适配 2026-09-08】显示面失效+重渲染（builtin.reloadAndRenderChatWithoutEvents /
+   *  正则·预设变更后宿主 RP 聊天重跑 display 管线——displayRegexCache 失效 + epoch bump） */
+  displayReload: () => Promise<void>
   wbList: () => Promise<{ books: Array<{ name: string; lorePath?: string | null }> }>
   wbGet: (name: string) => Promise<{ book: { name?: string; entries?: Record<string, unknown>[] } | null }>
   wbEntryPut: (name: string, entry: Record<string, unknown>) => Promise<void>
@@ -2136,11 +2332,24 @@ export async function handleBridgeCall(
       await deps.mvuReplace(data as Record<string, unknown>)
       return null
     }
-    case 'buttons:get':
-      return deps.buttonsGet(scriptId)
+    case 'buttons:get': {
+      // 【指南版】args[0] = 目标脚本 id（缺省 = 调用方自身）；跨脚本读同样校验目标存在
+      const targetId = typeof args[0] === 'string' && args[0] ? args[0] : scriptId
+      if (targetId !== scriptId && !deps.buttonsExists(targetId)) {
+        throw new Error(`getScriptButtons: 目标脚本不存在: ${targetId}`)
+      }
+      return deps.buttonsGet(targetId)
+    }
     case 'buttons:set': {
       const buttons = Array.isArray(args[0]) ? args[0] as Array<{ name: string; visible: boolean }> : []
-      deps.buttonsSet(scriptId, buttons)
+      // 【鲁棒轮 2026-09-09】args[1] = 目标脚本 id（真 TH replaceScriptButtons(buttons, script_id?)——
+      // 框架类脚本管理其他脚本按钮的合法用法）。缺省 = 调用方自身；显式指定时校验目标
+      // 存在（不存在显式报错，不再静默改错对象）。
+      const targetId = typeof args[1] === 'string' && args[1] ? args[1] : scriptId
+      if (targetId !== scriptId && !deps.buttonsExists(targetId)) {
+        throw new Error(`replaceScriptButtons: 目标脚本不存在: ${targetId}`)
+      }
+      deps.buttonsSet(targetId, buttons)
       return null
     }
     case 'lorebook:primary':
@@ -2227,6 +2436,10 @@ export async function handleBridgeCall(
     }
     case 'wb:chatGetOrCreate':
       return deps.wbChatGetOrCreate()
+    // ---- 【Kemini 适配 2026-09-08】显示面失效+重渲染（window.builtin.reloadAndRenderChatWithoutEvents）----
+    case 'display:reload':
+      await deps.displayReload()
+      return null
     default:
       throw new Error(`unknown bridge api: ${api}`)
   }

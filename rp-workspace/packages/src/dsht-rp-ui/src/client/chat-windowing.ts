@@ -144,11 +144,18 @@ const HEIGHT_MEMO_LIMIT = 5000
 /** React useSyncExternalStore 订阅面（windowed 状态翻转时通知） */
 const listeners = new Set<() => void>()
 
-/** 待执行的锚点补偿任务（一批翻转最多一份，执行即清） */
+/** 待执行的锚点补偿任务（一批翻转最多一份，执行即清）。
+ *  【2026-09-08 鲁棒性】过期熔断 + 存活性校验：回执（reportWindowCommit）依赖翻转条目
+ *  的 useLayoutEffect；条目在同一 commit 中被卸载/掩码隐藏（return null）时回执丢失，
+ *  旧实现下该任务会挂到之后**任意一次**翻转批上应用——跨会话切换后锚点元素已 detach
+ *  （rect 全 0），delta = 0 + 当前scrollTop − 旧 anchorDocTop → 视口随机跳（「画面跳来
+ *  跳去」的候选向量之一）。翻转批的 commit 恒在同帧落地（useSyncExternalStore 同步
+ *  lane），350ms 过期窗口对正常路径零影响，只熔断丢失回执的陈旧任务。 */
 let pendingCompensation: {
   container: HTMLElement
   anchorEl: HTMLElement
   anchorDocTop: number
+  expiresAt: number
 } | null = null
 
 let rafId: number | null = null
@@ -236,6 +243,12 @@ export function reportWindowCommit(): void {
     const task = pendingCompensation
     pendingCompensation = null
     if (task === null) return
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
+    // 过期/元素已失联 → 丢弃（陈旧补偿绝不应用；见 pendingCompensation 注记）
+    if (now > task.expiresAt || !task.anchorEl.isConnected || !task.container.isConnected) {
+      scheduleRecompute()
+      return
+    }
     const top = task.anchorEl.getBoundingClientRect().top
     const delta = anchorDelta(top, task.container.scrollTop, task.anchorDocTop)
     if (delta !== 0) {
@@ -512,10 +525,12 @@ function recompute(): void {
           // ledger 记账）表现为会话缓慢自动上漂、强滑到底后因官方吸底逻辑掩盖
           // 而"消失"。二者只能留一个：翻转高度差由本协调器全权补偿。
           if (container.style.overflowAnchor !== 'none') container.style.overflowAnchor = 'none'
+          const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now()
           pendingCompensation = {
             container,
             anchorEl: anchor.entry.el,
             anchorDocTop: anchor.top + container.scrollTop,
+            expiresAt: nowMs + 350, // 回执窗口（同帧落地恒命中；丢失回执的陈旧任务熔断）
           }
         }
       }

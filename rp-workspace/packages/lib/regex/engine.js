@@ -93,9 +93,30 @@ function runRegexScripts(scripts, text, timing, placement, ctx = { depth: null }
             continue;
         let replaced = current.replace(regex, (...args) => {
             const match = args[0];
+            // 捕获组：args[1..n-3]（末两位为 offset 与整体 string）
+            const captures = args.slice(1, Math.max(1, args.length - 2)).map(a => (typeof a === 'string' ? a : ''));
             let replacement = script.replaceString;
-            // 捕获组引用：$1..$9（JS 原生 replace 已处理 $N；这里处理 {{match}} 与命名引用 $<name>）
+            // {{match}} 宏
             replacement = replacement.replace(/\{\{match\}\}/g, match);
+            // 【TT 对照修复 2026-09-09】$N 捕获组引用：函数形式 replace 的返回值不做 JS 的 $N
+            // 特殊替换（原注释假设"JS 原生已处理"不成立）——$1 字面残留会把用户消息毁成
+            // <interactive_input>$1</interactive_input>（wuwa 实测）。手动处理 $1..$99：
+            replacement = replacement.replace(/\$(\d{1,2})/gu, (token, digits) => {
+                const index = Number(digits);
+                if (index >= 1 && index <= captures.length)
+                    return captures[index - 1];
+                if (index === 0)
+                    return match;
+                if (digits.length === 2) {
+                    const fallback = Number(digits[0]);
+                    if (fallback >= 1 && fallback <= captures.length)
+                        return captures[fallback - 1] + digits[1];
+                }
+                // 无捕获组时 $N = 整个 match（ST/TT 行为）
+                if (captures.length === 0)
+                    return match;
+                return token;
+            });
             // trimStrings：从替换结果中移除指定片段
             for (const t of script.trimStrings)
                 replacement = replacement.split(t).join('');

@@ -138,8 +138,21 @@ const css = `
 .dsht-rp-note { color: var(--dsw-alias-label-secondary); font-size: 11px; line-height: 16px; }
 
 /* ---- T2.5a 输出协议三组件（原生会话流内，assistant-step shadowing 渲染器）---- */
-.dsht-rp-assistant { display: flex; flex-direction: column; gap: 8px; position: relative; }
-.dsht-rp-assistant-body { display: flex; flex-direction: column; gap: 4px; }
+/* 【2026-09-07 楼层头二次对齐（用户拍板，对照 ST 基准）】assistant 楼层改为纵向：
+ * 楼层头（头像+名字+#N+耗时+时间）横排在楼层顶部一行，正文全宽在其下。
+ * 弃用 88px 左列——左列在整个楼层高度常驻，长楼层滚动阅读时文字被整体挤右（真机反馈）。
+ * sticky top 保留：长楼层下滑时楼层头钉在滚动视口顶（「往下滑它留在上面」），
+ * 实底背景防止正文从头部下方穿透。 */
+.dsht-rp-assistant { display: flex; flex-direction: column; gap: 6px; position: relative; }
+/* actions 行在纵向布局下天然独占整行（column 不存在 wrap 挤压问题） */
+.dsht-rp-actions { flex: 0 0 auto; }
+.dsht-rp-floor-head-assistant {
+  position: sticky; top: 0; z-index: 3; align-self: stretch;
+  min-height: 40px; padding: 4px 0;
+  background: var(--dsw-alias-bg-base);
+}
+.dsht-rp-floor-head-assistant .dsht-rp-floor-meta { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.dsht-rp-assistant-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 
 /* ---- §2.3 ③ 楼层号徽章（#N 0 起始，与 ST 观感一致；插件设置「楼层号显示」可关）---- */
 .dsht-rp-floor {
@@ -150,6 +163,42 @@ const css = `
 }
 .dsht-rp-floor-assistant { position: absolute; top: -2px; right: 0; z-index: 2; }
 .dsht-rp-floor-user { align-self: flex-end; }
+
+/* ---- ST 同款楼层头（2026-09-06 视觉验收，对照基准 316）----
+ * assistant：头像圆 36px + 名字（白粗）+ 元信息灰行（#N · 耗时 · 时间）；
+ * user：整行右对齐（ST 用户楼靠右）。头像缺失时 img onError 自隐。 */
+.dsht-rp-floor-head { display: flex; align-items: center; gap: 8px; min-height: 36px; }
+.dsht-rp-floor-head-user { flex-direction: row-reverse; }
+.dsht-rp-avatar {
+  width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
+  background: var(--dsw-alias-bg-layer-2);
+}
+.dsht-rp-floor-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dsht-rp-floor-head-user .dsht-rp-floor-meta { align-items: flex-end; }
+.dsht-rp-floor-name { font-size: 13px; line-height: 17px; font-weight: 600; color: rgba(220, 220, 210, 0.95); }
+.dsht-rp-floor-sub { font-size: 11px; line-height: 15px; color: var(--dsw-alias-label-tertiary); font-family: ui-monospace, monospace; }
+
+/* ---- RP 会话隐藏宿主 turn-process「Thought for a while」行（纯思考折叠）----
+ * 宿主行是英文 UI 且与 RP 楼层内的思考胶囊双份（真机实拍）；RP 活跃时由
+ * body[data-dsht-rp-active] 标记（RpFloorHeader 挂载计数），仅限
+ * 0 消息/0 工具调用的纯思考行——带内容的 turn-process（工具折叠行）保留。 */
+body[data-dsht-rp-active] [data-chat-flow-kind="turn-process"]:has(button[data-turn-process-messages="0"][data-turn-process-tool-calls="0"][data-turn-process-subagents="0"]) { display: none; }
+/* turn-tail「Ran for 0s + 时间戳」行：与楼层头元信息（#N · 耗时 · 时间）重复，
+ * ST 基准无此行 → RP 会话隐藏（楼层头已带同款信息）。 */
+body[data-dsht-rp-active] [data-chat-flow-kind="turn-tail"] { display: none; }
+/* 【审计 F 类 2026-09-08】宿主抽屉搜索框 computed pointer-events:none（宿主 bundle
+ * 自身缺陷）→ 触摸无法聚焦。作用域覆盖（hash 类名随宿主升级可能漂移——失效即无害，
+ * 修复机制见 docs/ST-COMPAT-PACT.md 附录 A 类/F 类登记）。 */
+body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important; }
+/* 【审计 B 类 2026-09-08】hover-only 楼层动作（Good/Bad response 等）触屏揭示：
+ * 这些按钮的载体就是 turn-tail 行（真机 probe 实证：按钮在 flowItem[data-chat-flow-kind=
+ * turn-tail] 内，宿主自己把按钮定为 28×28）——上面那条 display:none 把按钮连人带藏。
+ * 触屏没有 hover：coarse 指针下显示该行，只藏与楼层头重复的文本 span（用时/时间戳），
+ * 保留动作按钮（ST 移动端动作常驻同语义）。桌面（fine pointer）维持原隐藏。 */
+@media (pointer: coarse) {
+  body[data-dsht-rp-active] [data-chat-flow-kind="turn-tail"] { display: flex !important; }
+  body[data-dsht-rp-active] [data-chat-flow-kind="turn-tail"] span { display: none !important; }
+}
 
 .dsht-rp-stopped {
   font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary);
@@ -189,20 +238,34 @@ const css = `
 .dsht-rp-action-btn:disabled { opacity: 0.5; cursor: default; }
 .dsht-rp-action-btn .tag { color: var(--dsw-alias-state-business-primary); flex-shrink: 0; font-size: 11px; }
 
-/* reasoning 折叠行（T2.5d 差值补齐：shadowing 后自带的最小等效实现） */
+/* ---- ST 文本色对齐（用户 ST settings.json power_user 实测值，2026-09-06）----
+ * .mes_text q  { color: var(--SmartThemeQuoteColor) }   quote_text_color = rgba(225,138,36,1)
+ * .mes_text em { color: var(--SmartThemeEmColor) }      italics_text_color = rgba(145,145,145,1)
+ * 台词 <q> 由渲染层 st-quotes.ts DOM 包裹产出（MarkdownText 不透传 raw HTML） */
+.dsht-rp-assistant-body q { color: rgba(225, 138, 36, 1); font-style: inherit; }
+.dsht-rp-assistant-body q em, .dsht-rp-assistant-body q i { color: inherit; }
+.dsht-rp-assistant-body em, .dsht-rp-assistant-body i { color: rgba(145, 145, 145, 1); }
+
+/* reasoning 折叠行（T2.5d；2026-09-06 视觉对齐 ST .mes_reasoning_header 胶囊：
+ * bg rgb(75,75,75) 圆角5、右置箭头、正文 border-left 2px 灰（style.css L424-466/L508-520）） */
 .dsht-rp-reasoning { max-width: 480px; }
 .dsht-rp-reasoning summary {
-  cursor: pointer; user-select: none; font-size: 12px; line-height: 18px;
-  color: var(--dsw-alias-label-secondary); list-style: none;
-  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer; user-select: none; font-size: 13px; line-height: 18px;
+  color: rgba(220, 220, 210, 0.92); list-style: none;
+  display: flex; align-items: center; position: relative;
+  margin: 6px 2px; padding: 7px 14px; padding-right: calc(0.7em + 14px);
+  border-radius: 5px; background-color: rgb(75, 75, 75);
 }
-.dsht-rp-reasoning summary::before { content: '▸'; font-size: 10px; transition: transform var(--ds-transition-duration-fast) var(--ds-ease-in-out); }
-.dsht-rp-reasoning[open] summary::before { transform: rotate(90deg); }
+.dsht-rp-reasoning summary::after {
+  content: '▾'; position: absolute; top: 50%; right: 7px; transform: translateY(-50%);
+  font-size: 13px; transition: transform var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+.dsht-rp-reasoning[open] summary::after { transform: translateY(-50%) rotate(180deg); }
 .dsht-rp-reasoning[data-running] summary { color: var(--dsw-alias-label-primary); }
 .dsht-rp-reasoning .rp-reasoning-body {
-  margin: 6px 0 0 12px; padding-left: 10px;
-  border-left: 2px solid var(--dsw-alias-border-l2);
-  font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary);
+  margin: 4px 2px 6px 2px; padding: 5px 5px 5px 14px;
+  border-left: 2px solid rgba(145, 145, 145, 0.55); border-radius: 2px;
+  font-size: 13px; line-height: 19px; color: rgba(145, 145, 145, 1);
   white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow-y: auto;
 }
 
@@ -386,16 +449,34 @@ const css = `
 .dsht-rp-statefloat-panel .sf-error { color: var(--dsw-alias-state-error, #e5534b); }
 
 /* 酒馆助手脚本运行时（RpScriptHost）：🧩 浮球 + 脚本管理面板（按钮 / 状态 / 缺 API 清单） */
+/* ---- P4（2026-09-07）酒馆助手入口改 ST 原生形态：悬浮球 → 顶栏右上扩展图标 ----
+ * ST 里酒馆助手是顶栏扩展菜单里的拼图图标（点击展开下拉：脚本按钮 + 管理），
+ * 不是悬浮球。图标锚定会话顶栏正下方右上角，下拉面板同源锚定。 */
 .dsht-rp-scriptball {
-  position: fixed; right: 4vw; bottom: 22vh; z-index: 60; width: 44px; height: 44px;
-  border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1);
+  position: fixed; right: 10px; top: calc(env(safe-area-inset-top, 0px) + 62px);
+  /* 【审计 A 类 2026-09-08】z 60 → 10050：脚本注入悬浮 UI 惯用 10000+（wb-float-monitor
+   * z=10001、fx 球装饰环等曾盖住本球中心 55% 触摸区）。核心 chrome 仲裁在脚本层之上。
+   * 脚本功能 UI 与本球重叠时球优先（36px 角落锚定，冲突面积极小）。 */
+  z-index: 10050;
+  width: 36px; height: 36px;
+  border-radius: 10px; border: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-elevated, rgba(30,30,40,.85));
-  color: var(--dsw-alias-label-primary); font-size: 20px; line-height: 1;
+  color: var(--dsw-alias-label-primary); font-size: 18px; line-height: 1;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 2px 10px rgba(0,0,0,.35); cursor: pointer;
-  opacity: .85; transition: opacity .15s;
+  box-shadow: 0 1px 6px rgba(0,0,0,.3); cursor: pointer;
+  opacity: .9; transition: opacity .15s;
 }
 .dsht-rp-scriptball:hover { opacity: 1; }
+/* 【2026-09-07 ST 按钮条对齐（基准 1/316）】脚本按钮常驻胶囊条（输入框上方，ST 同位） */
+.dsht-rp-script-pillbar { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 10px 6px; }
+.dsht-rp-script-pill {
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 16px;
+  background: var(--dsw-alias-bg-elevated, rgba(40, 40, 48, .92));
+  color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 18px;
+  padding: 5px 12px; cursor: pointer; max-width: 60vw;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dsht-rp-script-pill:active { opacity: .65; }
 .dsht-rp-script-panel {
   position: fixed; z-index: 61; width: min(420px, 92vw);
   max-height: 60vh; display: flex; flex-direction: column;
@@ -591,6 +672,9 @@ const css = `
 .dsht-rp-html { font-size: inherit; line-height: inherit; }
 /* P0-2：完整 HTML 文档段的沙箱 iframe（高度由 iframe 内 postMessage 上报驱动） */
 .dsht-rp-message-frame { width: 100%; border: 0; display: block; background: transparent; }
+/* 【审计 E 类 2026-09-08】帧停车场改造：iframe 由命令式创建、宿主 div 只负责占高。
+ * 卸载时 iframe 移入隐藏停车场保活（文档不重执行、卡状态不丢），重挂载原样移回。 */
+.dsht-rp-message-frame-mount { width: 100%; }
 .dsht-rp-regen-btn {
   height: 22px; padding: 0 8px; border: none; border-radius: 6px; background: transparent;
   color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px;

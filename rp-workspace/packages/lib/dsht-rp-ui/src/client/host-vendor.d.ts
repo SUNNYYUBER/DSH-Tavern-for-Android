@@ -20,6 +20,19 @@ export declare const HOST_VENDOR_GLOBALS: readonly ["_", "$", "jQuery", "z", "Zo
  * 判据 = 宿主 window 上该键 === undefined；null / 已有值一律视为已存在，绝不覆盖。
  */
 export declare function missingHostGlobals(host: Record<string, unknown>): Array<(typeof HOST_VENDOR_GLOBALS)[number]>;
+/** 与脚本 iframe 同源 CDN（buildIframeDocument 的 FA link 同款 URL） */
+export declare const HOST_FONTAWESOME_URL = "https://testingcf.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css";
+/**
+ * 宿主注入 FontAwesome（幂等）：真 TH 脚本的常态不是在自己 iframe 里画 UI，而是拿
+ * window.parent.$ 把 UI append 进宿主 body（「飞讯 0703」的悬浮球/手机面板即此形态，
+ * 实机实证：158 个 fx-* 元素全在宿主 document，球内 <i class="fa-solid fa-comment-dots">
+ * 因宿主无 FA 样式 → 图标字符渲染成空白 = 用户看到的「悬浮球图标不加载」）。
+ * iframe 侧 FA（buildIframeDocument）覆盖不了宿主 document——两份文档两套样式表。
+ */
+export declare function installHostFontAwesome(doc?: Document): void;
+/** 极简 toastr：ST 同位（顶部居中堆叠）、4s 自动消失、点击即关——覆盖脚本常用面
+ * （toastr.success/error/info/warning + options.timeOut）。样式内联免依赖。 */
+export declare function installHostToastr(host?: Record<string, unknown>): void;
 /**
  * client 启动时在宿主 window 补挂缺失全局（幂等）。
  * - 模块级一次性守卫 + iife 内 ??= 语义双保险：绝不覆盖宿主已有全局；

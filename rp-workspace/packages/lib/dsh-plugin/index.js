@@ -62,11 +62,14 @@ exports.pickSecret = pickSecret;
 exports.parseStApiConfig = parseStApiConfig;
 exports.apply = apply;
 const node_child_process_1 = require("node:child_process");
-const promises_1 = require("node:fs/promises");
 const node_fs_1 = require("node:fs");
+const promises_1 = require("node:fs/promises");
+const node_fs_2 = require("node:fs");
 const node_os_1 = require("node:os");
 const node_path_1 = require("node:path");
+const node_readline_1 = require("node:readline");
 const node_crypto_1 = require("node:crypto");
+const atomic_fs_ts_1 = require("../dsht-plugin-shared/atomic-fs.ts");
 const schemastery_1 = __importDefault(require("@deepseek-ai/schemastery"));
 const jszip_1 = __importDefault(require("jszip"));
 const trigger_ts_1 = require("../lore/trigger.ts");
@@ -87,6 +90,8 @@ const macros_ts_1 = require("../dsht-plugin-shared/macros.ts");
 const undo_ts_1 = require("../dsht-plugin-shared/undo.ts");
 const file_snapshots_ts_1 = require("../dsht-plugin-shared/file-snapshots.ts");
 const session_surgery_ts_1 = require("../dsht-plugin-shared/session-surgery.ts");
+// D-3：system 槽位路由（TT 对齐投影；合法通道 = system-prompt/assemble 的 assembly.sections）
+const tt_projection_ts_1 = require("../dsht-plugin-shared/tt-projection.ts");
 // T3.2：会话长期记忆（rp-memory 最小闭环）——核心逻辑纯函数化便于单测，这里只做接线
 const memory_ts_1 = require("./memory.ts");
 // §4.16.1/§4.6 导入 diff 预览 + 断点续跑 checkpoint（纯逻辑层；findStDataRoot 移入该文件）
@@ -134,8 +139,11 @@ const rollbackMaskCache = new Map();
 // - sessions：变体操作读取 session（events/append）
 // - llm/agentDefaultModel：/llm/classify 端点（导入管线 AI 语义分类，走已配置凭据）
 // - webServer：/dsht-rp/* 同源数据面（T2.5f；web profile 必备）
+// - agents：open-chat 物化后同步内核 agent 的 turn 计数（R49——直写 turn/start 事件
+//   不刷新 agent 构造时缓存的 phase.lastTurn，内核下一条 prompt 重开同一 turn →
+//   前端 assembler「more than one start Match」崩溃，折叠行/会话流停摆）
 // @adapt contract:loader.services
-exports.inject = ['tools', 'systemPrompt', 'sessions', 'llm', 'agentDefaultModel', 'webServer', 'settings', 'credentials', 'connection'];
+exports.inject = ['tools', 'systemPrompt', 'sessions', 'llm', 'agentDefaultModel', 'webServer', 'settings', 'credentials', 'connection', 'agents'];
 // 无配置插件：不导出 Config（Cordis loader 期待 Config 是 Schema——裸 {} 会炸 validate）
 // ---------------------------------------------------------------------------
 // 纯逻辑（可单测）
@@ -455,8 +463,25 @@ function filterTemplateStatements(messages) {
 /** I8-2（移动端鲁棒性）：原子写文件——temp 独占创建 + fsync + rename 发布 + 父目录 fsync。
  * 0.1.2 的 dsh-atomic-write rename 前不 fsync（官方 TODO），我们自己补齐：
  * 手机端进程被杀在任意时刻都不能留下半写文件（torn tail 可修复，但覆盖型半写=静默丢尾部）。 */
+/** 同毫秒并发写同路径的 tmp 名去重（L1b 宏注册爆发实机抓到的 EEXIST 冲突） */
+let atomicWriteSeq = 0;
+/** /macros/register|unregister 读改写串行链（并发注册防丢更新；catch 兜底保证链永不拒绝） */
+let macroWriteChain = Promise.resolve({ status: 200, body: {} });
+/** 【鲁棒轮 2026-09-09】live 会话手术（rollback/edit/regenerate）per-session 串行链——
+ *  三个路由的 live 路径都要「捕获视图 → await replayUndoLog（文件 IO 让出事件循环）→
+ *  append replace」；并发请求 B 在 A 的 await 窗口里捕获同一视图 → B 的 replace 指向已被
+ *  A 顶替的旧 seq 区间（错位 marker + meter 双记）。非 live 路径有 withSessionLock +
+ *  内容比对，live 路径此前完全裸奔。链兜底 catch 保证永拒绝。 */
+const liveSurgeryChains = new Map();
+function withLiveSurgery(sessionId, fn) {
+    const prev = liveSurgeryChains.get(sessionId) ?? Promise.resolve();
+    const next = prev.then(fn, fn); // 前序失败不阻塞后续手术
+    liveSurgeryChains.set(sessionId, next.then(() => undefined, () => undefined));
+    void liveSurgeryChains.get(sessionId); // 触发 catch 规避 unhandledrejection
+    return next;
+}
 async function atomicWriteFile(path, content) {
-    const tmp = `${path}.${Date.now()}.tmp`;
+    const tmp = `${path}.${Date.now()}.${atomicWriteSeq++}.${Math.random().toString(36).slice(2, 8)}.tmp`;
     const handle = await (0, promises_1.open)(tmp, 'wx');
     try {
         await handle.writeFile(content, 'utf8');
@@ -1523,7 +1548,7 @@ function apply(ctx, _config) {
     /** 嵌入版导入中心静态资产（插件安装目录 assets/；index.js 在 lib/ 下 → ../assets/） */
     const readAsset = (name) => {
         try {
-            return (0, node_fs_1.readFileSync)(new URL(`../assets/${name}`, import.meta.url), 'utf8');
+            return (0, node_fs_2.readFileSync)(new URL(`../assets/${name}`, import.meta.url), 'utf8');
         }
         catch {
             return null;
@@ -1841,10 +1866,14 @@ function apply(ctx, _config) {
                     await (0, promises_1.rename)((0, node_path_1.join)(root, h.project, h.sdir), targetDir);
                     moved = true;
                 }
-                // 整读单文件只发生在命中的少数待修复会话上；首行替换，事件行原样保留
-                const full = await (0, promises_1.readFile)((0, node_path_1.join)(root, targetProject, h.sdir, 'session.jsonl'), 'utf8');
+                // 整读单文件只发生在命中的少数待修复会话上；首行替换，事件行原样保留。
+                // 【鲁棒轮收尾】原子发布 + .bak 备份（repairAllSessionSeqs 同款规范）——原裸
+                // writeFile 中途被杀 = torn session.jsonl 会话打不开。
+                const sessionPath = (0, node_path_1.join)(root, targetProject, h.sdir, 'session.jsonl');
+                const full = await (0, promises_1.readFile)(sessionPath, 'utf8');
                 const nl = full.indexOf('\n');
-                await (0, promises_1.writeFile)((0, node_path_1.join)(root, targetProject, h.sdir, 'session.jsonl'), newLine + (nl === -1 ? '' : full.slice(nl)), 'utf8');
+                await atomicWriteFile(`${sessionPath}.bak`, full);
+                await atomicWriteFile(sessionPath, newLine + (nl === -1 ? '' : full.slice(nl)));
                 repaired.push({ sessionId: h.sessionId, from: h.cwd, to: canonical, moved });
             }
             catch (e) {
@@ -1991,7 +2020,7 @@ function apply(ctx, _config) {
         try {
             signal.throwIfAborted();
             // 同步读（首启一次）：小文件；失败静默空集
-            const text = (0, node_fs_1.readFileSync)((0, node_path_1.join)(dshHome, 'rp', 'regex', 'global.json'), 'utf8');
+            const text = (0, node_fs_2.readFileSync)((0, node_path_1.join)(dshHome, 'rp', 'regex', 'global.json'), 'utf8');
             const parsed = JSON.parse(text);
             globalRegexCache = Array.isArray(parsed.scripts) ? parsed.scripts : [];
         }
@@ -2145,7 +2174,21 @@ function apply(ctx, _config) {
     };
     const saveSessionState = async (sessionId, state) => {
         await (0, promises_1.mkdir)((0, node_path_1.join)(dshHome, 'rp', 'state'), { recursive: true });
-        await (0, promises_1.writeFile)((0, node_path_1.join)(dshHome, 'rp', 'state', `${sessionId}.json`), JSON.stringify(state), 'utf8');
+        // 【鲁棒轮 2026-09-09】字段级 merge 写——rp/state/<sid>.json 多写方共享（本插件 cursor/
+        // presetId/loreTimed、dsht-plugin-memory sheets、MVU variables/state）。原实现整文件
+        // 覆写：pre-step 在 t0 读入 → 用户 t1 切预设（写 presetId）→ pre-step t2 用 t0 旧树
+        // 整文件写回 → presetId 静默丢失（下一轮回落默认预设）。改为保存前重读最新盘面合并
+        // （本次写入的键优先），其余键保留最新值；原子写防撕裂。
+        const path = (0, node_path_1.join)(dshHome, 'rp', 'state', `${sessionId}.json`);
+        let merged = state;
+        try {
+            const latest = JSON.parse(await (0, promises_1.readFile)(path, 'utf8'));
+            if (latest && typeof latest === 'object' && !Array.isArray(latest)) {
+                merged = { ...latest, ...state };
+            }
+        }
+        catch { /* 首写/读失败 → 整树写 */ }
+        await (0, atomic_fs_ts_1.atomicWriteText)(path, JSON.stringify(merged));
     };
     /**
      * ⑧（2026-09-06 预设机制完整移植）：预设内容不再拍平成尾部 user 快照 blob。
@@ -2177,7 +2220,7 @@ function apply(ctx, _config) {
             const source = agentPreset && typeof presets?.read === 'function'
                 ? await presets.read(agentPreset)
                 : undefined;
-            if (source !== undefined && isDshtRpAgentComposition(source)) {
+            if (source !== undefined && (0, compiler_ts_1.isDshtRpAgentComposition)(source)) {
                 console.log(`[dsht-rp] P1#6 双轴：内容轴「${preset.displayName}」× 能力轴 agent preset「${agentPreset}」组合生效（preset-* 技能块可调用）`);
                 return;
             }
@@ -2225,6 +2268,25 @@ function apply(ctx, _config) {
     };
     /** E3：表格快照去重（同 retainedMemory 样例） */
     const retainedTables = new WeakMap();
+    // ---- D-3：system 槽位发布器（pre-step 写、assemble 读）----
+    // 为什么需要跨 hook 传递：`agent.ts:230` assemble 先于 `agent.ts:233` pre-step 执行，
+    // 而角色卡/世界书/记忆/状态树的内容都在 pre-step 里算（那里能拿到会话态与快照去重）。
+    // 因此 pre-step 把"本轮该进 system 的正文"发布到本表，assemble 下一 step 读走。
+    // 时序无害：内容在 turn 内是常量快照（同 retainedState 系列的去重语义），
+    // 首个 step 用上一轮的同内容副本，等价；turn 内任何 step 的 system 都一致。
+    const slotPublished = new WeakMap();
+    /**
+     * D-3 开关：把系统级 RP 内容从 `user` 席位迁到 `system` 槽位。
+     * 默认开（对齐 TT）；`$DSH_HOME/rp/slot-routing-OFF` 存在时关闭（回滚通道，
+     * 用于 A/B 对照与线上排障——不依赖改代码即可回到旧行为）。
+     */
+    const SLOT_ROUTING = !(0, node_fs_2.existsSync)((0, node_path_1.join)(dshHome, 'rp', 'slot-routing-OFF'));
+    /** 发布本轮 system 槽位内容（pre-step 调用） */
+    const publishSlots = (agent, sections) => {
+        if (!SLOT_ROUTING)
+            return;
+        slotPublished.set(agent, { sections });
+    };
     // ---- 任务 1：快照宏展开（真运行期语义，替代"全角化了事"）----
     // 与 preset/compiler.ts neutralizePromptVariables 的职责分工见 dsht-plugin-shared/macros.ts 头注：
     // 中性化只管"写进 DSH persona 插件的文本"（防爆 turn）；这里的 {{…}} 由宏引擎真求值。
@@ -2363,7 +2425,19 @@ function apply(ctx, _config) {
             signal.throwIfAborted();
             const text = await (0, promises_1.readFile)((0, node_path_1.join)(dshHome, lorePath), 'utf8');
             const parsed = JSON.parse(text);
-            return { entries: Array.isArray(parsed?.entries) ? parsed.entries : [] };
+            // 规范化最小集（实机抓到：手写/ST 原样落盘的书用 disable 字段且无 enabled，
+            // triggerWorldInfo 的 `!entry.enabled → continue` 把整本书静默跳过——关键词
+            // 触发对非导入管线产出的书整体失效）。导入管线产出的书已带 enabled，不受影响。
+            const entries = (Array.isArray(parsed?.entries) ? parsed.entries : []).map((e) => ({
+                ...e,
+                enabled: typeof e.enabled === 'boolean' ? e.enabled : !(e.disable === true || e.disabled === true),
+                keys: Array.isArray(e.keys) ? e.keys : (typeof e.key === 'string' && e.key !== '' ? [e.key] : []),
+                secondaryKeys: Array.isArray(e.secondaryKeys) ? e.secondaryKeys : (Array.isArray(e.keysecondary) ? e.keysecondary : []),
+                // 预算排序键：raw 书缺 insertionOrder → NaN 排最末必被预算裁掉（实机 droppedByBudget=357 抓到）
+                insertionOrder: typeof e.insertionOrder === 'number' ? e.insertionOrder : (typeof e.order === 'number' ? e.order : 100),
+                constant: e.constant === true,
+            }));
+            return { entries: entries };
         }
         catch {
             return null;
@@ -2429,7 +2503,8 @@ function apply(ctx, _config) {
             ];
             const sessionDir = (0, node_path_1.join)(dshHome, 'sessions', (0, dsh_export_ts_1.projectKey)(`rp/${WELCOME_SLUG}`), sessionId);
             await (0, promises_1.mkdir)(sessionDir, { recursive: true });
-            await (0, promises_1.writeFile)((0, node_path_1.join)(sessionDir, 'session.jsonl'), lines.join('\n') + '\n', 'utf8');
+            // 【鲁棒轮收尾】原子发布（欢迎会话首建；半写文件会被幂等跳过——原子写消除该窗口）
+            await atomicWriteFile((0, node_path_1.join)(sessionDir, 'session.jsonl'), lines.join('\n') + '\n');
             console.log('[dsht-rp] welcome workspace created (rp/_start + guide session)');
         }
         catch (e) {
@@ -2460,7 +2535,7 @@ function apply(ctx, _config) {
                     continue;
                 }
                 try {
-                    const content = (0, node_fs_1.readFileSync)(new URL(e.name, srcUrl), 'utf8');
+                    const content = (0, node_fs_2.readFileSync)(new URL(e.name, srcUrl), 'utf8');
                     const abs = (0, node_path_1.join)(dstDir, ...childRel.split('/'));
                     let same = false;
                     try {
@@ -2554,7 +2629,7 @@ function apply(ctx, _config) {
                     try {
                         const yml = await (0, promises_1.readFile)((0, node_path_1.join)(dshHome, '.agent-presets', dirId, 'agent.cordis.yml'), 'utf8');
                         // agent 型预设的旧形态（无 preset-capability 组）→ 落到补编译分支升级
-                        if (preset.path === 'agent' && !isDshtRpAgentComposition(yml)) {
+                        if (preset.path === 'agent' && !(0, compiler_ts_1.isDshtRpAgentComposition)(yml)) {
                             throw new Error('stale capability axis');
                         }
                         // §2.3 ②：缺紧凑 persona 标记 = 两套规则重复的旧形态（所有路径）→ 升级
@@ -2580,6 +2655,17 @@ function apply(ctx, _config) {
     // 任务 2：启动时执行卡 preset 存量迁移（幂等）——.agent-presets/rp-* 的 persona 正文
     // 回填 rp.json.promptPersona 后删除目录（有会话引用的保留），agent 预设界面只留真预设
     void migrateCardAgentPresets();
+    // ---- L1b：自定义宏启动水合（rp/macros.json → 引擎注册表；注册路由见 /macros/*）----
+    void (async () => {
+        try {
+            const disk = JSON.parse(await (0, promises_1.readFile)((0, node_path_1.join)(dshHome, 'rp', 'macros.json'), 'utf8'));
+            (0, macros_ts_1.hydrateCustomMacros)(disk);
+            const n = Object.keys(disk).length;
+            if (n > 0)
+                console.log(`[dsht-rp] custom macros hydrated: ${n} 个（${Object.keys(disk).join(', ')}）`);
+        }
+        catch { /* 无自定义宏文件 = 正常 */ }
+    })();
     // ---- P0 顺手项：repairAllSessionSeqs「启动即修窗口」----
     // host 刚起、尚无 live 会话：此刻全量 seq 修复不会因 live 跳过留下窗口
     //（/rp/repair-sessions 与 register-workspaces 对 live 会话跳过——断号会话若一直
@@ -2589,6 +2675,32 @@ function apply(ctx, _config) {
         if (n > 0)
             logLine(`启动即修：seq 断号修复 ${n} 个会话`);
     }).catch(e => console.log(`[dsht-rp] startup repair skipped: ${e.message}`));
+    // ---- R49：重复 turn/start「启动即修」----
+    // 物化 turn 计数失同步（已修源头，phase 同步）留下的存量日志：重复 turn/start 让
+    // 前端 ConversationNodeAssembler 全量重放崩溃（折叠行/会话流停摆）。此处磁盘手术
+    // 重编号重复段（正在 live 的会话下次重开生效——启动窗口 live 集为空，与本窗口同理）。
+    void (async () => {
+        let fixed = 0;
+        for (const h of await scanSessionHeaders()) {
+            const file = (0, node_path_1.join)(dshHome, 'sessions', h.project, h.sdir, 'session.jsonl');
+            try {
+                const stat0 = await (0, promises_1.stat)(file);
+                if (stat0.size > 64 * 1024 * 1024)
+                    continue; // 护栏与 repairAllSessionSeqs 同级
+                const content = await (0, promises_1.readFile)(file, 'utf8');
+                const r = (0, session_surgery_ts_1.repairDuplicateTurnStarts)(content);
+                if (r.renumberedTurns === 0)
+                    continue;
+                await atomicWriteFile(`${file}.bak`, content);
+                await atomicWriteFile(file, r.content.endsWith('\n') ? r.content : r.content + '\n');
+                fixed++;
+                logLine(`启动即修：重复 turn/start 重编号 ${r.renumberedTurns} 段（${r.eventsRewritten} 事件）→ ${h.sessionId}`);
+            }
+            catch { /* 单会话失败不阻塞其余 */ }
+        }
+        if (fixed > 0)
+            console.log(`[dsht-rp] duplicate turn/start repaired: ${fixed} sessions`);
+    })().catch(e => console.log(`[dsht-rp] turn repair skipped: ${e.message}`));
     // ---- R15：deepseek 目录模型补齐（启动时幂等）----
     // pi-ai 内建 deepseek 目录只有 deepseek-v4-flash / deepseek-v4-pro
     // （@earendil-works/pi-ai providers/data/deepseek.json），缺 vision 实验模型。
@@ -2878,12 +2990,28 @@ function apply(ctx, _config) {
     // restore 校验 role 必须 user）。每 step assemble 时现算——会话内切预设下一 step 即生效；
     // 预设不变则 system 文本不变，不触发 request/header 重写。
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
-        const assembly = (await next());
+        let assembly = (await next());
         try {
             const agent = context.agent
                 ?? context.scope;
             if (!agent || !assembly || !Array.isArray(assembly.sections))
                 return assembly;
+            // ---- D-3：把 pre-step 发布的系统级 RP 内容并入 system 槽位 ----
+            // 唯一合法通道取证：`agent.ts:337` `const system = renderPrompt(assembly)` →
+            // `agent.ts:339` `buildRequest(..., system, session.deriveMessages(), ...)`。
+            // `assembleContextFor`（`agent/src/dispatch.ts:173`）把 live Agent 放进 context.agent。
+            // 内容保序由 SLOT_ORDERS 统一裁定（同 TT dump-008 的语义拼接序）。
+            const published = slotPublished.get(agent);
+            if (published && published.sections.length > 0) {
+                const extra = (0, tt_projection_ts_1.planSlotSections)(published, neutralizeResidualMacros);
+                if (extra.length > 0) {
+                    assembly = {
+                        ...assembly,
+                        sections: [...assembly.sections, ...extra],
+                    };
+                    console.log(`[dsht-rp] D-3 system 槽位注入：${extra.length} 段 / ${extra.reduce((n, s) => n + s.text.length, 0)}ch（${extra.map(s => s.name).join(', ')}）`);
+                }
+            }
             const resolved = await resolveAgentPreset(agent);
             if (!resolved)
                 return assembly;
@@ -2927,6 +3055,44 @@ function apply(ctx, _config) {
     // ST 预设的 temperature/max_tokens/stop/reasoning_effort 随预设走。宿主适配器
     // （dsh-llm-deepseek）仅透传 temperature/max_tokens/stop 三键 + 配置管线 reasoningEffort；
     // topP/topK/minP/topA/penalties/seed/logitBias 宿主不支持（AUDIT_TASKLIST 标注为宿主限制）。
+    // ---- Golden Master 对照（DSHT 侧 dump#3，2026-09-09）：provider 层 fetch 拦截 ----
+    // pre-step 的 messages 只是本轮增量；"发给 LLM 的最终完整 payload"在 provider 出站请求里。
+    // ENABLED 开关存在时 patch globalThis.fetch（只读透传不改请求），把 LLM chat 请求体落盘
+    // golden/dsht/llm-NNN.json，与 TT 侧 chat_completion_prompt_ready（25 条完整组装）配对 diff。
+    try {
+        if ((0, node_fs_2.existsSync)((0, node_path_1.join)(dshHome, 'rp', 'golden', 'dsht-ENABLED')) && !globalThis.__dshtGoldenFetchPatched) {
+            ;
+            globalThis.__dshtGoldenFetchPatched = true;
+            const gdir0 = (0, node_path_1.join)(dshHome, 'rp', 'golden', 'dsht');
+            (0, node_fs_2.mkdirSync)(gdir0, { recursive: true });
+            const seqFile0 = (0, node_path_1.join)(gdir0, 'llm-seq.txt');
+            const gFetch = globalThis.fetch.bind(globalThis);
+            globalThis.fetch = (async (input, init) => {
+                try {
+                    const url = typeof input === 'string' ? input : input?.url ?? String(input);
+                    const body = typeof init === 'object' && init !== null ? init.body : undefined;
+                    if (typeof body === 'string' && body.length > 200 && /chat\/completions|\/v1\/messages|provider\/v1/i.test(url)) {
+                        let seq = 0;
+                        try {
+                            seq = parseInt(((0, node_fs_2.readFileSync)(seqFile0, 'utf8')).trim() || '0', 10) || 0;
+                        }
+                        catch { /* 首次 */ }
+                        seq += 1;
+                        (0, node_fs_2.writeFileSync)((0, node_path_1.join)(gdir0, `llm-${String(seq).padStart(3, '0')}.json`), JSON.stringify({
+                            tag: 'provider_llm_request', seq, env: 'dshtavern', ts: new Date().toISOString(),
+                            url: url.slice(0, 200),
+                            data: { body: JSON.parse(body) },
+                        }, null, 1));
+                        (0, node_fs_2.writeFileSync)(seqFile0, String(seq));
+                    }
+                }
+                catch { /* golden dump 失败不影响请求 */ }
+                return gFetch(input, init);
+            });
+            console.log('[dsht-rp] golden: provider fetch 拦截已启用（llm dump → rp/golden/dsht/）');
+        }
+    }
+    catch { /* patch 失败不阻塞插件 */ }
     ctx.on('agent/request', async (payload, next) => {
         const config = (await next());
         try {
@@ -2944,13 +3110,71 @@ function apply(ctx, _config) {
                 out.maxTokens = s.maxTokens;
             if (Array.isArray(s.stopSequences) && s.stopSequences.length > 0)
                 out.stop = s.stopSequences;
-            if (typeof s.reasoningEffort === 'string' && s.reasoningEffort)
+            // 【TT 对照修复 2026-09-09】reasoning_effort 值域映射：ST/TT 预设的 'auto' 等"由 provider
+            // 自行决定"语义，在 DSH provider 侧不被支持（实测报 does not support reasoning effort "auto"，
+            // 发送直接失败）。TT 的行为 = 不支持的值不发该字段。此处仅透传 DSH 支持的档位。
+            const REASONING_EFFORT_SUPPORTED = new Set(['minimal', 'low', 'medium', 'high']);
+            if (typeof s.reasoningEffort === 'string' && REASONING_EFFORT_SUPPORTED.has(s.reasoningEffort)) {
                 out.reasoningEffort = s.reasoningEffort;
+            }
+            else {
+                // 'auto' / 未知值：TT 语义 = 不发该字段（provider 自行决定）。显式删除，
+                // 避免 DSH config 默认残留 'auto' 触发 provider 校验拒绝（实测报错）。
+                delete out.reasoningEffort;
+            }
+            // ---- Golden Master 对照（DSHT 侧 dump，2026-09-09）：rp/golden/dsht-ENABLED 存在时落盘最终请求配置 ----
+            // 与 ST/TauriTavern 侧 golden-master 采集器（CHAT_COMPLETION_PROMPT_READY 挂点）配对，
+            // 同卡同输入产出两侧 dump 后逐项 diff。失败绝不影响主链路。
+            try {
+                if ((0, node_fs_2.existsSync)((0, node_path_1.join)(dshHome, 'rp', 'golden', 'dsht-ENABLED'))) {
+                    const gdir = (0, node_path_1.join)(dshHome, 'rp', 'golden', 'dsht');
+                    await (0, promises_1.mkdir)(gdir, { recursive: true });
+                    const seqFile = (0, node_path_1.join)(gdir, 'seq.txt');
+                    let seq = 0;
+                    try {
+                        seq = parseInt((await (0, promises_1.readFile)(seqFile, 'utf8')).trim() || '0', 10) || 0;
+                    }
+                    catch { /* 首次 */ }
+                    seq += 1;
+                    await (0, promises_1.writeFile)((0, node_path_1.join)(gdir, `dump-${String(seq).padStart(3, '0')}.json`), JSON.stringify({
+                        tag: 'agent_request_config', seq, env: 'dshtavern', ts: new Date().toISOString(),
+                        cwd: agent.session?.header?.cwd ?? null,
+                        data: { config: out },
+                    }, null, 1));
+                    await (0, promises_1.writeFile)(seqFile, String(seq));
+                }
+            }
+            catch { /* golden dump 失败不影响请求 */ }
             return out;
         }
         catch {
             return config;
         }
+    });
+    // ---- D-3/D-4 投影层探针（2026-09-10 心跳 33）：llm/stream 是官方唯一的"最终请求"
+    //      投影点（TT 侧的 GENERATE_AFTER_COMBINE_PROMPTS 等价物）。此处只观测不改写，
+    //      用于确认 ① 钩子可达 ② messages/system 的最终形状 ③ 与 deriveMessages 的关系。
+    //      排序依据：agent-loop 的不变式用 { prepend: true } 注册（invariant.ts:56），
+    //      本监听器不带 prepend → 在其 next() 之后执行，安全。
+    ctx.on('llm/stream', (options, next) => {
+        try {
+            const o = options;
+            const msgs = Array.isArray(o.messages) ? o.messages : [];
+            const head = msgs.slice(0, 3).map((m) => {
+                const mm = m;
+                const c = typeof mm.content === 'string' ? mm.content : JSON.stringify(mm.content ?? '');
+                return `${String(mm.role ?? '?')}:${c.length}ch`;
+            });
+            console.log(`[dsht-rp] llm/stream 观测: provider=${String(o.provider ?? '')} model=${String(o.model ?? '')} `
+                + `messages=${msgs.length} system=${typeof o.system === 'string' ? o.system.length + 'ch' : '(none)'} `
+                + `tools=${Array.isArray(o.tools) ? o.tools.length : 0} maxTokens=${String(o.maxTokens ?? '')} `
+                + `temp=${String(o.temperature ?? '')} purpose=${String(o.purpose ?? '')} sessionId=${String(o.sessionId ?? '')} `
+                + `| 首3条: ${head.join(' ')}`);
+        }
+        catch (e) {
+            console.log(`[dsht-rp] llm/stream 观测失败: ${e.message}`);
+        }
+        return next();
     });
     ctx.on('agent/pre-step', async (raw, next) => {
         const decision = (await next());
@@ -2959,6 +3183,30 @@ function apply(ctx, _config) {
         const { agent, messages, signal } = raw;
         const slug = rpSlugFromCwd(agent.session.header.cwd, dshHome);
         console.log(`[dsht-rp] pre-step: cwd=${agent.session.header.cwd ?? '(none)'} slug=${slug ?? '(not-rp)'} turn=${raw.turn}`);
+        // ---- Golden Master 对照（DSHT 侧 dump#2，2026-09-09）：messages 全文落盘 ----
+        // agent/request 瀑布只有采样参数；真正发给 LLM 的消息序列在此（pre-step）。
+        // rp/golden/dsht-ENABLED 存在时落盘，与 TT/ST 侧 chat_completion_prompt_ready 配对 diff。
+        try {
+            if ((0, node_fs_2.existsSync)((0, node_path_1.join)(dshHome, 'rp', 'golden', 'dsht-ENABLED'))) {
+                const gdir = (0, node_path_1.join)(dshHome, 'rp', 'golden', 'dsht');
+                await (0, promises_1.mkdir)(gdir, { recursive: true });
+                const seqFile = (0, node_path_1.join)(gdir, 'msg-seq.txt');
+                let seq = 0;
+                try {
+                    seq = parseInt((await (0, promises_1.readFile)(seqFile, 'utf8')).trim() || '0', 10) || 0;
+                }
+                catch { /* 首次 */ }
+                seq += 1;
+                await (0, promises_1.writeFile)((0, node_path_1.join)(gdir, `msg-${String(seq).padStart(3, '0')}.json`), JSON.stringify({
+                    tag: 'agent_prestep_messages', seq, env: 'dshtavern', ts: new Date().toISOString(),
+                    cwd: agent.session.header.cwd ?? null,
+                    turn: raw.turn ?? null,
+                    data: { messages },
+                }, null, 1));
+                await (0, promises_1.writeFile)(seqFile, String(seq));
+            }
+        }
+        catch { /* golden dump 失败不影响主链路 */ }
         if (slug === null)
             return decision;
         try {
@@ -2970,6 +3218,12 @@ function apply(ctx, _config) {
             const traceKey = String(agent.session.id ?? slug);
             // I8-6：登记 live 会话（flush-all 通道的 flush 对象清单）
             registerLiveSession(traceKey, agent.session);
+            // I4/I5 + R26 + R33：userName 单一事实源（persona active 优先）——EJS 生成期 ctx、
+            // WI 宏上下文 macroCtx、withPresetLayer finalize 三处共用（此前各算各的：EJS 用
+            // rp.macros.user 不含 persona、macroCtx 引用悬空——R33 实机炸过全注入链）
+            globalUserProfile = await loadUserProfileCached(dshHome);
+            const persona = await (0, macros_ts_2.loadActivePersona)(dshHome);
+            const userName = persona?.name || globalUserProfile?.name || rp.macros.user || '用户';
             /**
              * T2.7：预设快照包装——本 handler 全部返回路径统一过这里（session 内随时
              * 切换预设：状态文件变了，下一轮即注入新预设内容，历史零搁浅）。
@@ -2977,12 +3231,7 @@ function apply(ctx, _config) {
              * 变量树变化才注入，与预设/WI 快照并列去重）。
              */
             const withPresetLayer = async (d) => {
-                // I4/I5：全局用户档案（{{user}} 宏值来源；rp/user-profile.json，进程级缓存）
-                // 【wuwa 终验修复 2026-09-05】persona active 优先（与显示期 /rp/identity 一致），
-                // 防止切换 persona 后物化开场白/pre-step 的 {{user}} 固化成旧值
-                globalUserProfile = await loadUserProfileCached(dshHome);
-                const persona = await (0, macros_ts_2.loadActivePersona)(dshHome);
-                const userName = persona?.name || globalUserProfile?.name || rp.macros.user || '用户';
+                // userName/persona/globalUserProfile 已在上方统一计算（persona active 优先）
                 const userDesc = persona?.description || globalUserProfile?.description || '';
                 void userDesc; // persona 描述暂不进 prompt（persona 槽位由 withPersonaSnapshot 承担）
                 // I4（ST 宏系统）：最终消息统一过核心宏（{{user}}/{{char}}/{{time}} 等——
@@ -3025,13 +3274,21 @@ function apply(ctx, _config) {
                     if (!sid)
                         return finalize(d);
                     const st = await loadSessionState(sid);
+                    // D-3：本轮系统级内容收集区（`SLOT_ROUTING` 开启时走 system 槽位而非 user 席位）。
+                    // 每条内容在**原位**同时决定去重与去向，避免两套逻辑分叉。
+                    const slotSections = [];
                     // ---- T2.3 状态摘要注入（先于预设；文本不变跳过）。§2.2 修正：影子化豁免每个
                     // 签名的最新副本（planShadowOps），所以 retained 跳过安全——请求恒为一份副本，
                     // 不会像 turn 43 那样双份（always-inject 会让请求多扛一份上轮副本 ~17 万 token）----
                     const summary = (0, mvu_ts_1.renderStateSummary)(st.state ?? st.variables ?? {});
                     if (summary && retainedState.get(agent) !== summary) {
                         retainedState.set(agent, summary);
-                        d = withStateSnapshot(d, summary);
+                        if (SLOT_ROUTING) {
+                            slotSections.push({ name: 'dsht-rp:slot:state', order: tt_projection_ts_1.SLOT_ORDERS.stateTree, text: summary });
+                        }
+                        else {
+                            d = withStateSnapshot(d, summary);
+                        }
                     }
                     // ---- 任务 2：promptPersona 卡设定快照（retained 跳过——影子化豁免最新副本）----
                     const personaRaw = (rp.promptPersona ?? '').trim();
@@ -3040,7 +3297,13 @@ function apply(ctx, _config) {
                         const personaText = await expandSnapshotMacros(personaRaw, rp, slug, sid);
                         if (personaText && retainedPersona.get(agent) !== personaText) {
                             retainedPersona.set(agent, personaText);
-                            d = withPersonaSnapshot(d, personaText);
+                            if (SLOT_ROUTING) {
+                                // 角色卡 → system（TT dump-008 的 [3] stage_1_base_requirements 同位置语义）
+                                slotSections.push({ name: 'dsht-rp:slot:character', order: tt_projection_ts_1.SLOT_ORDERS.characterCard, text: personaText });
+                            }
+                            else {
+                                d = withPersonaSnapshot(d, personaText);
+                            }
                         }
                     }
                     // ---- T3.2：长期记忆注入（世界书快照同一带区）：最近 20 条 `- [时间] 文本`；
@@ -3050,7 +3313,13 @@ function apply(ctx, _config) {
                         const memorySnapshot = `【长期记忆】（此前固化的用户偏好/设定变动/承诺；生成回复前可先 memory_query 检索更多）\n${memoryText}`;
                         if (retainedMemory.get(agent) !== memorySnapshot) {
                             retainedMemory.set(agent, memorySnapshot);
-                            d = withMemorySnapshot(d, memorySnapshot);
+                            if (SLOT_ROUTING) {
+                                // 长期记忆 → system（TT [11] 过往记忆 同位置语义）
+                                slotSections.push({ name: 'dsht-rp:slot:memory', order: tt_projection_ts_1.SLOT_ORDERS.memory, text: memorySnapshot });
+                            }
+                            else {
+                                d = withMemorySnapshot(d, memorySnapshot);
+                            }
                         }
                     }
                     // ---- E3：表格快照注入（st-memory-enhancement 表格系统）：会话有启用表且本 step
@@ -3063,12 +3332,22 @@ function apply(ctx, _config) {
                                 const tablesText = renderTablePrompt(active);
                                 if (tablesText && retainedTables.get(agent) !== tablesText) {
                                     retainedTables.set(agent, tablesText);
-                                    d = withTablesSnapshot(d, tablesText);
+                                    if (SLOT_ROUTING) {
+                                        slotSections.push({ name: 'dsht-memory:slot:tables', order: tt_projection_ts_1.SLOT_ORDERS.tables, text: tablesText });
+                                    }
+                                    else {
+                                        d = withTablesSnapshot(d, tablesText);
+                                    }
                                 }
                             }
                         }
                         catch { /* 表格加载失败不阻塞主流程 */ }
                     }
+                    // D-3：发布本轮 slot 内容（assemble 下一 step 读走；见 slotPublished 注释）
+                    // 有内容才覆盖——无内容时保留上一轮发布，避免 turn 内后续 step（如工具轮）
+                    // 把 system 槽位清空导致角色设定"闪断"（实机易见的一致性风险）。
+                    if (slotSections.length > 0)
+                        publishSlots(agent, slotSections);
                     // ---- T2.7/⑧ 预设注入（有效预设 = 显式选择 ?? ST 激活预设默认）----
                     // relative 条目由 system-prompt/assemble 瀑布注入 request.system（顶部、prompt_order
                     // 保序）；这里只承担 depth 条目（jailbreak 类）——真深度 splice（ST in-chat 注入语义），
@@ -3122,6 +3401,14 @@ function apply(ctx, _config) {
                     return finalize(d);
                 }
             };
+            // 【hook 移植 L3】assemble 挂点（ST GENERATE_AFTER_COMBINE_PROMPTS / GENERATE_AFTER_DATA
+            // 对应物）：本 handler 全部正常返回路径统一过这里——第三方插件 ctx.on('dsht-rp/assemble',
+            // (p, next) => ...) 可在最终决定发给模型前改写 decision.messages（p.decision 读回语义）。
+            // 异常路径（catch 降级为普通会话）不过挂点——钩子失败不该连坐已有容错。
+            const viaAssembleHook = async (dp) => {
+                const dd = await dp;
+                return await ctx.waterfall(null, 'dsht-rp/assemble', { agent, sessionId: traceKey, slug, turn: turnNo, decision: dd }, (p) => Promise.resolve(p.decision));
+            };
             // ---- 组装管线（§4.1）步骤 1：正则 prompt 时机跑完整批（enter decision.messages）----
             // 注意不能只跑 payload.messages（claimed 新消息）：多 step turn 里后续 step 的批由
             // DSH 从 surface 原文重建，claimed 已空——只跑 claimed 会让正则在 step 2+ 失效。
@@ -3130,14 +3417,24 @@ function apply(ctx, _config) {
             const sessionIdForRegex = String(agent.session.id ?? '');
             const regexScripts = await mergedRegex(rp, signal, sessionIdForRegex);
             const regexHits = [];
-            let batch = applyPromptRegexes(decision.messages, regexScripts, regexHits);
+            // 【hook 移植 L3 2026-09-06】RP 域自定义 cordis 事件链（ST/Luker generate() 分段开放
+            // 挂点的同构建面）。设计决策：内置逻辑作 waterfall 的 fallback（最内层 next），第三方
+            // 插件 ctx.on('dsht-rp/regex', (p, next) => ...) 包裹/改写/否决——cordis 官方惯用法
+            // （与 agent/pre-step 的默认 enter 决策同款）。注意首参 null：cordis dispatch 会把
+            // 首个 object 参数误当 scope thisArg（cordis/lib/index.js:259），必须显式占住。
+            // 事件链：dsht-rp/turn(emit) → dsht-rp/regex(waterfall) → dsht-rp/wi-scan(waterfall)
+            //        → dsht-rp/wi-activated(emit) → dsht-rp/wi-finalize(waterfall) → dsht-rp/assemble(waterfall)
+            ctx.emit(null, 'dsht-rp/turn', { sessionId: sessionIdForRegex, slug, turn: turnNo });
+            let batch = await ctx.waterfall(null, 'dsht-rp/regex', { agent, sessionId: sessionIdForRegex, slug, turn: turnNo, messages: decision.messages, hits: regexHits }, (p) => applyPromptRegexes(p.messages, regexScripts, regexHits));
             // ---- B9 + B2（提示词模板生成期管线；rp/ejs-settings.json 驱动）----
             // B9 filter_chat_message：楼层里的 <% %> 模板语句剥除（不进模型上下文）；
             // B2 generate_enabled：含 <% %> 的楼层在生成期自求值（template='' → 消息文本即模板，
             // chatDepth 深度门控同款）。二者互斥（过滤优先——ST 同序）。
             try {
                 const ejs = await loadEjsSettings(dshHome);
-                const ejsCtx = { user: rp.macros.user || '用户', char: rp.macros.char || rp.characterName };
+                // ①轮收口：EJS ctx 的 user 也走 persona 优先的 userName（原来用 rp.macros.user，
+                // persona 切换后 EJS 楼层自求值的 {{user}} 与其他通道不一致）
+                const ejsCtx = { user: userName, char: rp.macros.char || rp.characterName };
                 if (ejs.enabled !== false && ejs.filterChatMessage === true) {
                     const fr = filterTemplateStatements(batch);
                     if (fr.filtered > 0) {
@@ -3230,7 +3527,7 @@ function apply(ctx, _config) {
             const hasUserInput = hasDirectUserInput(raw.messages);
             if (!hasUserInput) {
                 console.log(`[dsht-rp] pre-step: 工具轮（无真实用户消息），跳过世界书注入（cursor=${cursor}）`);
-                return await withPresetLayer({ ...decision, messages: batch });
+                return await viaAssembleHook(withPresetLayer({ ...decision, messages: batch }));
             }
             // 触发扫描（M1 引擎）：历史 + 本批消息（扫描文本也过 prompt 正则——ST 语义：WI 看到的是正则后文本）
             const history = scanSurfaceHistory(agent.session, batch, rp.trigger.scanDepth ?? 2, regexScripts);
@@ -3273,6 +3570,7 @@ function apply(ctx, _config) {
             });
             const opening = isNewChat && rp.firstMes ? `【故事开场（已发生的剧情）】\n${rp.firstMes}\n\n【开场结束。自此用户介入剧情。】\n\n` : '';
             // 宏上下文（§4.1.1：WI 内容组装期求值；stableSeed 锚定 pick 宏）
+            // userName 用上方统一计算的（persona active 优先，R33 悬空引用事故的收口）
             const macroCtx = {
                 user: userName,
                 char: rp.macros.char,
@@ -3307,10 +3605,10 @@ function apply(ctx, _config) {
                     if (retained.get(agent) !== openingOnly) {
                         retained.set(agent, openingOnly);
                         traceRuntime.snapshotChars = openingOnly.length;
-                        return await withPresetLayer(withSnapshot({ ...decision, messages: batch }, openingOnly));
+                        return await viaAssembleHook(withPresetLayer(withSnapshot({ ...decision, messages: batch }, openingOnly)));
                     }
                 }
-                return await withPresetLayer({ ...decision, messages: batch });
+                return await viaAssembleHook(withPresetLayer({ ...decision, messages: batch }));
             }
             // P2#11：跨轮 timed effects（sticky/cooldown）从 rp/state/<sid>.json 的 loreTimed 键读回，
             // 时间轴 = 上方已算好的 visibleMessageCursor；本轮新写入的 effect 由引擎合入结果返回后写回。
@@ -3320,14 +3618,17 @@ function apply(ctx, _config) {
                 if (Array.isArray(stt.loreTimed))
                     priorTimed = stt.loreTimed;
             }
-            const result = (0, trigger_ts_1.triggerWorldInfo)(entries, history, {
+            // 【hook 移植 L3】wi-scan 挂点（ST GENERATION_BEFORE/AFTER_WORLD_INFO_SCAN 对应物）：
+            // 第三方可改写扫描输入（history/entries/options）或完全接管（不调 next 自产 result）
+            const wiScanOptions = {
                 scanDepth: rp.trigger.scanDepth ?? 2,
                 matchWholeWords: rp.trigger.matchWholeWords ?? false,
                 budgetPercent: rp.trigger.budgetPercent ?? 25,
                 budgetCap: rp.trigger.budgetCap ?? 6000,
                 cursor,
                 timedEffects: priorTimed,
-            });
+            };
+            const result = await ctx.waterfall(null, 'dsht-rp/wi-scan', { agent, sessionId: stateSid, slug, turn: turnNo, history, entries, options: wiScanOptions }, (p) => Promise.resolve((0, trigger_ts_1.triggerWorldInfo)(p.entries, p.history, p.options)));
             if (stateSid) {
                 const stw = await loadSessionState(stateSid);
                 if (JSON.stringify(stw.loreTimed ?? []) !== JSON.stringify(result.timedEffects)) {
@@ -3337,7 +3638,13 @@ function apply(ctx, _config) {
             }
             traceRuntime.droppedByBudget = result.budgetDropped.length;
             // ---- 步骤 2+4：激活条目 → 正则（WORLD_INFO）+ 宏求值 + 位置分桶 ----
-            const buckets = processActivatedEntries(result.activated, regexScripts, macroCtx, regexHits);
+            // 【hook 移植 L3】wi-activated 通知（ST WORLD_INFO_ACTIVATED）+ wi-finalize 挂点
+            // （ST GENERATION_WORLD_INFO_FINALIZED 对应物：分桶产物可改写）
+            ctx.emit(null, 'dsht-rp/wi-activated', {
+                sessionId: stateSid, slug, turn: turnNo,
+                entries: result.activated.map(a => ({ comment: a.entry.comment, reason: a.reason })),
+            });
+            const buckets = await ctx.waterfall(null, 'dsht-rp/wi-finalize', { agent, sessionId: stateSid, slug, turn: turnNo, result, buckets: processActivatedEntries(result.activated, regexScripts, macroCtx, regexHits) }, (p) => p.buckets);
             traceRuntime.activatedEntries = result.activated.map(a => ({
                 comment: a.entry.comment,
                 reason: a.reason,
@@ -3447,7 +3754,7 @@ function apply(ctx, _config) {
                 retained.set(agent, '');
                 mergeTraceHits();
                 lastTrace.set(traceKey, traceRuntime);
-                return await withPresetLayer(baseDecision);
+                return await viaAssembleHook(withPresetLayer(baseDecision));
             }
             // 任务 1：快照文本过宏引擎（WI 条目内容已在 processActivatedEntries 过旧引擎求值；
             // 这里补全 getvar/setvar/time 等酒馆助手宏的真语义，未知宏原样保留）
@@ -3458,9 +3765,21 @@ function apply(ctx, _config) {
             console.log(`[dsht-rp] scan: entries=${entries.length} activated=${result.activated.length} dropped=${result.budgetDropped.length} snapshot=${snapshotText.length}ch depthInj=${buckets.atDepth.length} regexHits=${regexHits.length}${opening ? ' (+opening)' : ''}`);
             // retained 跳过（影子化豁免最新副本—— WI 快照恒一份）
             if (retained.get(agent) === snapshotText)
-                return await withPresetLayer(baseDecision);
+                return await viaAssembleHook(withPresetLayer(baseDecision));
             retained.set(agent, snapshotText);
-            return await withPresetLayer(withSnapshot(baseDecision, snapshotText));
+            // ---- D-3：世界书 → system 槽位（TT dump-008 的 [6]/[7] World_Lore_Database 同位置语义）----
+            // 与 withPresetLayer 内部的 slot 发布共用同一张表：世界书在 pre-step 的两个分支里
+            // 计算（有激活/无激活），本处覆盖"有激活"的主路径。合并而非覆盖，避免把
+            // withPresetLayer 已发布的状态树/记忆丢掉。
+            if (SLOT_ROUTING) {
+                const prev = slotPublished.get(agent)?.sections ?? [];
+                publishSlots(agent, [
+                    ...prev.filter(s => s.name !== 'dsht-rp:slot:worldbook'),
+                    { name: 'dsht-rp:slot:worldbook', order: tt_projection_ts_1.SLOT_ORDERS.worldbook, text: snapshotText },
+                ]);
+                return await viaAssembleHook(withPresetLayer(baseDecision));
+            }
+            return await viaAssembleHook(withPresetLayer(withSnapshot(baseDecision, snapshotText)));
         }
         catch (error) {
             if (error?.name === 'AbortError')
@@ -3653,6 +3972,76 @@ function apply(ctx, _config) {
                             const previewClaims = preview ? await (0, import_preview_ts_1.collectPreviewClaims)(dshHome, unpacked, preview) : [];
                             return send(200, { batchId, progress: (0, import_preview_ts_1.buildBatchProgress)(meta, checkpoint, previewClaims) });
                         }
+                        // 【2026-09-06 视觉验收】GET /rp/avatar?slug=… → 工作区头像（ST 楼层头像同源物）。
+                        // 卡导入/迁移时把 ST 角色 PNG 缩制落盘 <rp>/<slug>/avatar.png；缺文件 → 404
+                        //（前端 onError 隐藏 img，占位圆）。同源缓存 1h。
+                        if (subPath === '/rp/avatar') {
+                            const slug = new URLSearchParams(subQuery).get('slug') ?? '';
+                            if (!/^[\w.-]{1,80}$/.test(slug))
+                                return send(400, { error: 'slug required' });
+                            try {
+                                const buf = await (0, promises_1.readFile)((0, node_path_1.join)(dshHome, 'rp', slug, 'avatar.png'));
+                                res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': String(buf.length), 'Cache-Control': 'max-age=3600' });
+                                return res.end(buf);
+                            }
+                            catch {
+                                return sendText(404, 'no avatar', 'text/plain');
+                            }
+                        }
+                        // 【2026-09-07 ST 对齐】GET /rp/charname?slug=… → 角色显示名（ST 楼层名同源物，
+                        // rp.json 的 characterName；基准 316 楼层名「ExampleGame ExampleWorld MVU Edition」）。
+                        // 旧实现楼层名直接用 workspace slug → 头像列被长 slug 名撑爆（真机回归实证）。
+                        if (subPath === '/rp/charname') {
+                            const slug = new URLSearchParams(subQuery).get('slug') ?? '';
+                            if (!/^[\w.-]{1,80}$/.test(slug))
+                                return send(400, { error: 'slug required' });
+                            let name = slug;
+                            try {
+                                const raw = JSON.parse(await (0, promises_1.readFile)((0, node_path_1.join)(dshHome, 'rp', slug, 'rp.json'), 'utf8'));
+                                if (typeof raw.characterName === 'string' && raw.characterName.trim())
+                                    name = raw.characterName.trim();
+                            }
+                            catch { /* rp.json 缺失 → slug 兜底 */ }
+                            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'max-age=3600' });
+                            return res.end(JSON.stringify({ name }));
+                        }
+                        // ---- /rp/build-info：构建版本可见性（2026-09-08 用户痛点「我装的到底是不是最新包」）----
+                        // 读 filesDir/dsh-runtime/.installed-v* 哨兵（APK 内 NodeService.RUNTIME_SENTINEL
+                        // 写入的解压标记）+ node 运行时真实版本——手机上一眼对出安装包新旧。
+                        // dsh-runtime 缺席（PC 纯前端验证）→ sentinel: null。
+                        // 【2026-09-08 死代码修复】本分支原被并行编辑错位到 POST-only 区（GET 块 L3650
+                        // 兜底 return 之后）——GET 恒 404 text/plain、POST 恒 400 bad json，实机实证。
+                        // 迁回 GET 块兜底之前，恢复 GET 语义。
+                        if (sub === '/rp/build-info') {
+                            let sentinel = null;
+                            try {
+                                const runtimeDir = (0, node_path_1.join)(dshHome, '..', 'dsh-runtime');
+                                const entries = await (0, promises_1.readdir)(runtimeDir);
+                                // 【2026-09-08 鲁棒性】历史哨兵不清理（NodeService 每次升级写新文件不删旧，
+                                // 实机 28 个残留）——find() 目录序会取到最旧的，版本显示恒滞后。改为解析
+                                // vNNN 数值取最大（= 最近一次成功解压的标记）。
+                                let maxV = -1;
+                                for (const e of entries) {
+                                    if (!e.startsWith('.installed-v'))
+                                        continue;
+                                    const n = Number(e.slice('.installed-v'.length));
+                                    if (Number.isFinite(n) && n > maxV) {
+                                        maxV = n;
+                                        sentinel = e;
+                                    }
+                                }
+                                if (maxV < 0)
+                                    sentinel = null;
+                            }
+                            catch { /* PC 验证环境无 runtime 目录 */ }
+                            let dshVersion = null;
+                            try {
+                                const pkg = JSON.parse((0, node_fs_2.readFileSync)((0, node_path_1.join)(dshHome, '..', 'dsh-runtime', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'), 'utf8'));
+                                dshVersion = pkg.version ?? null;
+                            }
+                            catch { /* PC 无 node_modules 布局 */ }
+                            return send(200, { sentinel, dshVersion, fixTag: 'wb-fix-0908' });
+                        }
                         return sendText(404, 'not found', 'text/plain');
                     }
                     // §4.16.1 断点续跑：DELETE 语义清 checkpoint（= POST {reset:true} 的等价形式；
@@ -3677,6 +4066,10 @@ function apply(ctx, _config) {
                     catch {
                         return send(400, { error: 'bad json' });
                     }
+                    // 【鲁棒轮 2026-09-09】body 为 JSON null/数组时 payload.xxx 抛 TypeError → 统一 500；
+                    // 显式 400 让调用方看到真实错误（合法 JSON 但形状不对）。
+                    if (payload === null || typeof payload !== 'object' || Array.isArray(payload))
+                        return send(400, { error: 'bad json: body must be an object' });
                     try {
                         // T2.11：数据面诊断（嵌入导入中心「运行时诊断」面板消费）
                         if (sub === '/diag') {
@@ -3988,13 +4381,17 @@ function apply(ctx, _config) {
                             const adapterDir = (0, node_path_1.join)(dshHome, 'rp-import', '_adapter');
                             await (0, promises_1.mkdir)(adapterDir, { recursive: true });
                             const wsDir = await (0, promises_1.realpath)(adapterDir).catch(() => adapterDir);
-                            const ws = await rpc('workspace.create', { path: wsDir });
+                            // 0.1.2 wire 信封（R21 同族修复，2026-09-09）：kickoff 的 4 处 loopback 调用
+                            // 此前为裸形状（R21 适配时只改了 register-workspaces 路径，kickoff 漏网）——
+                            // workspace.create 报 missing "request"。统一包 { request: {...} } 信封，
+                            // session.prompt 补 0.1.2 必填 requestId。
+                            const ws = await rpc('workspace.create', { request: { path: wsDir } });
                             const workspace = ws.workspace;
                             const workspaceId = workspace?.workspaceId;
                             // 2. 命名「ST 数据适配」（固定标题；rename 失败不阻塞）
                             if (workspaceId) {
                                 try {
-                                    await rpc('workspace.rename', { workspaceId, title: 'ST 数据适配' });
+                                    await rpc('workspace.rename', { request: { workspaceId, title: 'ST 数据适配' } });
                                 }
                                 catch (e) {
                                     console.log(`[dsht-rp] kickoff rename failed: ${e.message}`);
@@ -4005,8 +4402,10 @@ function apply(ctx, _config) {
                             let presetUsed = 'dsht-adapter';
                             try {
                                 const created = await rpc('session.create', {
-                                    ...(workspaceId ? { workspaceId } : { cwd: wsDir }),
-                                    agentPreset: 'dsht-adapter',
+                                    request: {
+                                        ...(workspaceId ? { workspaceId } : { cwd: wsDir }),
+                                        agentPreset: 'dsht-adapter',
+                                    },
                                 });
                                 sessionId = String(created.sessionId ?? '');
                             }
@@ -4015,7 +4414,7 @@ function apply(ctx, _config) {
                                 if (!code.startsWith('agent-preset'))
                                     throw e;
                                 presetUsed = null;
-                                const created = await rpc('session.create', workspaceId ? { workspaceId } : { cwd: wsDir });
+                                const created = await rpc('session.create', { request: workspaceId ? { workspaceId } : { cwd: wsDir } });
                                 sessionId = String(created.sessionId ?? '');
                                 console.log(`[dsht-rp] kickoff: dsht-adapter preset 不可用（${e.message}），退默认 preset`);
                             }
@@ -4042,7 +4441,7 @@ function apply(ctx, _config) {
                                 // §4.16.1 断点续跑：resumeFrom=true 且 checkpoint 非空时追加续跑指示（否则空串）
                                 await resumeNote(),
                             ].join('\n');
-                            await rpc('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text: kickoffText }] });
+                            await rpc('session.prompt', { request: { requestId: (0, node_crypto_1.randomUUID)(), sessionId, mode: 'queue', content: [{ type: 'text', text: kickoffText }] } });
                             // 5. 幂等记录
                             meta.kickoff = { sessionId, workspaceId: workspaceId ?? null, preset: presetUsed, at: new Date().toISOString() };
                             await (0, promises_1.writeFile)(metaPath, JSON.stringify(meta, null, 1), 'utf8');
@@ -4090,14 +4489,27 @@ function apply(ctx, _config) {
                                     let lines = 0;
                                     let lastTime = null;
                                     try {
-                                        const text = await (0, promises_1.readFile)(f, 'utf8');
-                                        const rows = text.split('\n').filter(r => r.trim() !== '');
-                                        lines = Math.max(0, rows.length - 1);
+                                        // 【鲁棒轮 2026-09-09】流式逐行（内存恒定）——原实现整文件读入 + split：
+                                        // rp-import 适配会话可到 254MB（代码下方 repairAllSessionSeqs 自己设了
+                                        // 8MiB 上限），手机端审计/自动清理一扫即 OOM 崩整个 node 进程。
+                                        // 只需 header（首非空行）+ 行数 + 最后一行 time。
+                                        let count = 0;
+                                        let firstRow = '';
+                                        let lastRow = '';
+                                        const rl = (0, node_readline_1.createInterface)({ input: (0, node_fs_1.createReadStream)(f, { encoding: 'utf8' }), crlfDelay: Infinity });
+                                        for await (const row of rl) {
+                                            if (row.trim() === '')
+                                                continue;
+                                            if (count === 0)
+                                                firstRow = row;
+                                            lastRow = row;
+                                            count++;
+                                        }
+                                        lines = Math.max(0, count - 1);
                                         try {
-                                            header = JSON.parse(rows[0] ?? '{}');
+                                            header = JSON.parse(firstRow);
                                         }
                                         catch { /* 坏行忽略 */ }
-                                        const lastRow = rows[rows.length - 1];
                                         try {
                                             lastTime = Number(JSON.parse(lastRow).time ?? 0) || null;
                                         }
@@ -4222,9 +4634,10 @@ function apply(ctx, _config) {
                                 const target = (0, node_path_1.join)(dshHome, 'sessions', (0, dsh_export_ts_1.projectKey)(wsAbs), (0, dsh_export_ts_1.encodeSegment)(sessionId), 'session.jsonl');
                                 const existed = await (0, promises_1.readFile)(target, 'utf8').then(() => true, () => false);
                                 if (existed)
-                                    await (0, promises_1.writeFile)(`${target}.bak2`, await (0, promises_1.readFile)(target, 'utf8'), 'utf8');
+                                    await atomicWriteFile(`${target}.bak2`, await (0, promises_1.readFile)(target, 'utf8'));
                                 await (0, promises_1.mkdir)((0, node_path_1.join)(target, '..'), { recursive: true });
-                                await (0, promises_1.writeFile)(target, conv.content, 'utf8');
+                                // 【鲁棒轮收尾】原子发布——裸 writeFile 中途被杀 = torn session 会话打不开
+                                await atomicWriteFile(target, conv.content);
                                 console.log(`[dsht-rp] convert-chat(file): ${sessionId} ← ${filePath} → ${conv.turns} turns, ${conv.variantGroups} variant groups, ${conv.skipped} skipped`);
                                 return send(200, {
                                     written: true, path: (0, node_path_1.relative)((0, node_path_1.join)(dshHome, 'sessions'), target).split(node_path_1.sep).join('/'),
@@ -4324,9 +4737,10 @@ function apply(ctx, _config) {
                                         const target = (0, node_path_1.join)(dshHome, 'sessions', (0, dsh_export_ts_1.projectKey)(wsAbs), (0, dsh_export_ts_1.encodeSegment)(sessionId), 'session.jsonl');
                                         const existed = await (0, promises_1.readFile)(target, 'utf8').then(() => true, () => false);
                                         if (existed)
-                                            await (0, promises_1.writeFile)(`${target}.bak2`, await (0, promises_1.readFile)(target, 'utf8'), 'utf8');
+                                            await atomicWriteFile(`${target}.bak2`, await (0, promises_1.readFile)(target, 'utf8'));
                                         await (0, promises_1.mkdir)((0, node_path_1.join)(target, '..'), { recursive: true });
-                                        await (0, promises_1.writeFile)(target, conv.content, 'utf8');
+                                        // 【鲁棒轮收尾】原子发布（同 convert-chat 文件模式）
+                                        await atomicWriteFile(target, conv.content);
                                         // MVU 变量：chat_metadata.variables → rp/state/<sessionId>.json（裸对象形态）
                                         try {
                                             const meta = JSON.parse(text.split('\n')[0]);
@@ -4334,7 +4748,7 @@ function apply(ctx, _config) {
                                             if (vars && typeof vars === 'object' && Object.keys(vars).length > 0) {
                                                 const statePath = (0, node_path_1.join)(dshHome, 'rp', 'state', `${sessionId}.json`);
                                                 await (0, promises_1.mkdir)((0, node_path_1.dirname)(statePath), { recursive: true });
-                                                await (0, promises_1.writeFile)(statePath, JSON.stringify(vars), 'utf8');
+                                                await (0, atomic_fs_ts_1.atomicWriteText)(statePath, JSON.stringify(vars));
                                             }
                                         }
                                         catch { /* 变量缺失不阻塞 */ }
@@ -4379,52 +4793,75 @@ function apply(ctx, _config) {
                                     return send(400, { error: 'keepThroughSeq 须为 >= 0 的整数' });
                             }
                             const live = ctx.sessions?.get(sessionId);
+                            // 【2026-09-08 用户语义】回退到此处 = 「内容回输入框」：includeAnchor=true 时
+                            // 锚消息本身连同其后一切一起移出上下文（文本由前端放回 composer 供修改重发，
+                            // ST「回退」同语义）。掩码 rolledBackTo = anchor-1 → UI 连锚一起隐藏。
+                            const includeAnchor = payload.includeAnchor === true;
                             if (live !== undefined && typeof live.append === 'function' && Array.isArray(live.surface?.nodes)) {
-                                // ---- live：逻辑回退（官方原语）----
-                                const view = live.surface.nodes;
-                                const anchor = isEdit ? editSeq : keepThroughSeq; // edit 锚点消息本身也移出视图
-                                const idx = view.indexOf(anchor);
-                                if (idx === -1)
-                                    return send(400, { error: `目标消息 seq=${anchor} 不在当前视图（可能已被回退/折叠）` });
-                                const start = isEdit ? anchor : (idx + 1 < view.length ? view[idx + 1] : -1);
-                                if (start === -1 || start > view[view.length - 1])
-                                    return send(200, { logical: true, replaced: 0, note: 'no-op（目标之后没有可回退的视图内容）' });
-                                const end = view[view.length - 1];
-                                const seqs = view.filter(q => q >= start);
-                                // 计量（core 估价器同款——replace 必须带紧邻 claim，否则投影/meter 不更新）
-                                let shadowed = 0;
-                                for (const q of seqs) {
-                                    // 坑 #22：sessionEventAt 替代 live.events?.[q]（0.1.2 无公开 events）
-                                    const d = ((sessionEventAt(live, q)?.data) ?? {});
-                                    const blocks = Array.isArray(d.content) ? d.content : [];
-                                    shadowed += blocks.reduce((t, b) => t + (b && (b.type === 'text' || b.type === 'reasoning') && typeof b.text === 'string' ? Math.ceil(b.text.length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
-                                }
-                                live.append('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
-                                const anchorTime = typeof sessionEventAt(live, anchor)?.time === 'number' ? sessionEventAt(live, anchor)?.time : Date.now();
-                                // 变量回滚：undo 日志里晚于锚点时刻的变量写逆序恢复（编辑/回退语义一致）
-                                const undo = await (0, undo_ts_1.replayUndoLog)(dshHome, sessionId, anchorTime);
-                                const markerText = isEdit
-                                    ? `[消息已编辑] 该消息原文及其后的回复已从上下文移除，编辑后的新消息随后发出。`
-                                    : `[已回退] 该消息之后的对话已从上下文移除（事件仍保留在日志，可经 /expand 查看）。`;
-                                live.append('user/message', {
-                                    id: `dsht-rp-${isEdit ? 'edit' : 'rollback'}-${(0, node_crypto_1.randomUUID)()}`,
-                                    role: 'user',
-                                    content: [{ type: 'text', text: markerText }],
-                                    source: isEdit
-                                        ? { kind: 'plugin', plugin: 'dsht-rp', editedFrom: anchor }
-                                        : { kind: 'plugin', plugin: 'dsht-rp', rolledBackTo: keepThroughSeq },
-                                }, { surfaceOp: { op: 'replace', start, end }, sourceEventSeqs: seqs });
-                                logLine(`${isEdit ? 'session-edit' : 'session-rollback'}(live): ${sessionId} 锚 seq ${anchor} → replace [${start},${end}] ${seqs.length} 事件；变量回滚 ${undo.restored} 条`);
-                                console.log(`[dsht-rp] ${isEdit ? 'session-edit' : 'session-rollback'}: ${sessionId} (live) replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`);
-                                // I8-1：立即耐久 barrier——手机端进程被杀在 200ms 窗口内 = 回退标记丢失
-                                try {
-                                    await flushLiveSession(ctx.sessions, live);
-                                }
-                                catch (e) {
-                                    return send(500, { error: `${isEdit ? '编辑' : '回退'}已应用但落盘失败：${e.message}` });
-                                }
-                                rollbackMaskCache.clear();
-                                return send(200, { logical: true, replaced: seqs.length, variablesRestored: undo.restored, ...(isEdit ? { editedSeq: anchor } : { truncatedTo: keepThroughSeq }) });
+                                // ---- live：逻辑回退（官方原语）——【鲁棒轮】per-session 串行（withLiveSurgery），
+                                // 防 await replayUndoLog 窗口内并发请求捕获过期视图 → 错位 replace ----
+                                return await withLiveSurgery(sessionId, async () => {
+                                    const view = live.surface.nodes;
+                                    const anchor = isEdit ? editSeq : keepThroughSeq; // edit 锚点消息本身也移出视图
+                                    // 【2026-09-08 大会话修复】锚不在当前视图不再硬报错：视图窗口化/此前压缩
+                                    // 后旧 seq 不在 surface.nodes（实机 155 轮会话 seq=1362 实证）。取视图中
+                                    // 第一个 > 锚 的 seq 作为 replace 起点——「锚之后的一切移出上下文」语义
+                                    // 不变（视图早于锚的节点本就应保留）。视图全部 ≤ 锚 → no-op。
+                                    let start;
+                                    const idx = view.indexOf(anchor);
+                                    if (idx !== -1) {
+                                        start = includeAnchor ? anchor : (idx + 1 < view.length ? view[idx + 1] : -1);
+                                    }
+                                    else {
+                                        start = view.find(q => q > anchor) ?? -1;
+                                    }
+                                    if (start === -1 || start > view[view.length - 1])
+                                        return send(200, { logical: true, replaced: 0, note: 'no-op（目标之后没有可回退的视图内容）' });
+                                    const end = view[view.length - 1];
+                                    const seqs = view.filter(q => q >= start);
+                                    // 计量（core 估价器同款——replace 必须带紧邻 claim，否则投影/meter 不更新）
+                                    let shadowed = 0;
+                                    for (const q of seqs) {
+                                        // 坑 #22：sessionEventAt 替代 live.events?.[q]（0.1.2 无公开 events）
+                                        const raw = (sessionEventAt(live, q)?.data ?? {});
+                                        // 【鲁棒轮 2026-09-09】assistant/message 的 payload 是 {turn,step,message:{...}}
+                                        // ——原实现直接读 data.content 恒 undefined → 每条 assistant 消息只计 4
+                                        // token（meter 严重少记；chat/update 路由 5710 行早已同口径解包，此处补齐）
+                                        const d = (raw.message && typeof raw.message === 'object' ? raw.message : raw);
+                                        const blocks = Array.isArray(d.content) ? d.content : [];
+                                        shadowed += blocks.reduce((t, b) => t + (b && (b.type === 'text' || b.type === 'reasoning') && typeof b.text === 'string' ? Math.ceil(b.text.length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
+                                    }
+                                    // 【2026-09-08 鲁棒性】undo 回放挪到 claim 之前：compaction/prune claim 必须
+                                    // **紧邻** marker replace（影子化协议铁律）——旧顺序 claim → await replayUndoLog
+                                    // → marker，await 窗口里运行中 turn 的 append 会插进两者之间，投影/meter 漂移。
+                                    const anchorTime = typeof sessionEventAt(live, anchor)?.time === 'number' ? sessionEventAt(live, anchor)?.time : Date.now();
+                                    const undo = await (0, undo_ts_1.replayUndoLog)(dshHome, sessionId, anchorTime);
+                                    live.append('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
+                                    const markerText = isEdit
+                                        ? `[消息已编辑] 该消息原文及其后的回复已从上下文移除，编辑后的新消息随后发出。`
+                                        : includeAnchor
+                                            ? `[已回退] 该消息及其后的对话已从上下文移除（原文已放回输入框；事件仍保留在日志，可经 /expand 查看）。`
+                                            : `[已回退] 该消息之后的对话已从上下文移除（事件仍保留在日志，可经 /expand 查看）。`;
+                                    live.append('user/message', {
+                                        id: `dsht-rp-${isEdit ? 'edit' : 'rollback'}-${(0, node_crypto_1.randomUUID)()}`,
+                                        role: 'user',
+                                        content: [{ type: 'text', text: markerText }],
+                                        source: isEdit
+                                            ? { kind: 'plugin', plugin: 'dsht-rp', editedFrom: anchor }
+                                            : { kind: 'plugin', plugin: 'dsht-rp', rolledBackTo: includeAnchor ? anchor - 1 : keepThroughSeq },
+                                    }, { surfaceOp: { op: 'replace', start, end }, sourceEventSeqs: seqs });
+                                    logLine(`${isEdit ? 'session-edit' : 'session-rollback'}(live): ${sessionId} 锚 seq ${anchor} → replace [${start},${end}] ${seqs.length} 事件；变量回滚 ${undo.restored} 条`);
+                                    console.log(`[dsht-rp] ${isEdit ? 'session-edit' : 'session-rollback'}: ${sessionId} (live) replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`);
+                                    // I8-1：立即耐久 barrier——手机端进程被杀在 200ms 窗口内 = 回退标记丢失
+                                    try {
+                                        await flushLiveSession(ctx.sessions, live);
+                                    }
+                                    catch (e) {
+                                        return send(500, { error: `${isEdit ? '编辑' : '回退'}已应用但落盘失败：${e.message}` });
+                                    }
+                                    rollbackMaskCache.clear();
+                                    return send(200, { logical: true, replaced: seqs.length, variablesRestored: undo.restored, ...(isEdit ? { editedSeq: anchor } : { truncatedTo: keepThroughSeq }) });
+                                }); // end withLiveSurgery
                             }
                             // ---- 非 live：文件截断（原路径）----
                             if (!isEdit) {
@@ -4464,12 +4901,19 @@ function apply(ctx, _config) {
                                 // 回放后截断 undo 日志。
                                 const cutoff = sessionContentMaxTime(r.content);
                                 const undo = await (0, undo_ts_1.replayUndoLog)(dshHome, sessionId, cutoff);
+                                rollbackMaskCache.clear(); // 掩码缓存按 mtime 失效已覆盖；显式 clear 与 edit/regenerate 分支一致（mtime 粒度内重复回退防串值）
                                 logLine(`session-rollback: ${sessionId} 截到 seq ${keepThroughSeq}（留 ${r.kept} 事件，截 ${r.dropped}；变量回滚 ${undo.restored} 条；文件快照回滚 ${fsnap.restoredTurns.length} turn/${fsnap.filesRestored + fsnap.filesDeleted} 文件）`);
                                 console.log(`[dsht-rp] session-rollback: ${sessionId} → kept=${r.kept} dropped=${r.dropped} undoRestored=${undo.restored} snapshotTurns=${fsnap.restoredTurns.join(',')}`);
                                 return send(200, { kept: r.kept, dropped: r.dropped, variablesRestored: undo.restored, fileSnapshots: { turns: fsnap.restoredTurns, restored: fsnap.filesRestored, deleted: fsnap.filesDeleted, errors: fsnap.errors } });
                             }
                             // edit 非 live：文件截断到目标消息之前（原 R20 语义）
                             {
+                                // 【鲁棒轮 2026-09-09】live 会话 409 守卫（rollback/regenerate 非 live 分支
+                                // 同款）——edit 漏了：会话已 attach 但 surface 异常降级时会直接做文件手术，
+                                // 随后 live flush 把内存旧事件写回 → 内容复活/seq gap。
+                                if (ctx.sessions?.get(sessionId) !== undefined) {
+                                    return send(409, { error: 'session live（内存态权威）：先在 DSH 里关闭该会话再编辑' });
+                                }
                                 const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId);
                                 if (!hit)
                                     return send(404, { error: `session not found: ${sessionId}` });
@@ -4539,60 +4983,67 @@ function apply(ctx, _config) {
                                 return send(400, { error: 'sessionId required' });
                             const live = ctx.sessions?.get(sessionId);
                             if (live !== undefined && typeof live.append === 'function' && Array.isArray(live.surface?.nodes)) {
-                                // live：找事件流里最后一条真 user 消息
-                                // 坑 #22：sessionEventsSnapshot 替代 live.events（0.1.2 无公开 events）
-                                const evList = [];
-                                let n = 0;
-                                for (const ev of sessionEventsSnapshot(live)) {
-                                    const seq = typeof ev.seq === 'number' ? ev.seq : n++;
-                                    if (!ev || ev.type !== 'user/message')
-                                        continue;
-                                    if (ev.data?.source?.kind !== 'user')
-                                        continue;
-                                    const blocks = Array.isArray(ev.data?.content) ? ev.data.content : [];
-                                    const text = blocks.filter(b => b && b.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n');
-                                    evList.push({ seq, time: typeof ev.time === 'number' ? ev.time : undefined, text });
-                                }
-                                evList.sort((a, b) => a.seq - b.seq);
-                                const anchorEv = evList[evList.length - 1];
-                                if (anchorEv === undefined)
-                                    return send(400, { error: '会话里没有用户消息（无可重新生成的锚点）' });
-                                const view = live.surface.nodes;
-                                const idx = view.indexOf(anchorEv.seq);
-                                if (idx === -1)
-                                    return send(400, { error: `锚消息 seq=${anchorEv.seq} 不在当前视图` });
-                                if (idx + 1 >= view.length)
-                                    return send(200, { logical: true, replaced: 0, lastUserText: anchorEv.text, note: 'no-op（锚消息之后没有可重生成的视图内容）' });
-                                const start = view[idx + 1];
-                                const end = view[view.length - 1];
-                                const seqs = view.filter(q => q >= start);
-                                let shadowed = 0;
-                                for (const q of seqs) {
-                                    const d = ((sessionEventAt(live, q)?.data) ?? {});
-                                    const blocks = Array.isArray(d.content) ? d.content : [];
-                                    shadowed += blocks.reduce((t, b) => t + (b && (b.type === 'text' || b.type === 'reasoning') && typeof b.text === 'string' ? Math.ceil(b.text.length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
-                                }
-                                live.append('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
-                                const anchorTime = typeof anchorEv.time === 'number' ? anchorEv.time : Date.now();
-                                const undo = await (0, undo_ts_1.replayUndoLog)(dshHome, sessionId, anchorTime);
-                                const markerText = `[重新生成中] 该消息此前的回复已从上下文移除，正在以原消息重新生成。`;
-                                live.append('user/message', {
-                                    id: `dsht-rp-regenerate-${(0, node_crypto_1.randomUUID)()}`,
-                                    role: 'user',
-                                    content: [{ type: 'text', text: markerText }],
-                                    source: { kind: 'plugin', plugin: 'dsht-rp', regeneratedFrom: anchorEv.seq },
-                                }, { surfaceOp: { op: 'replace', start, end }, sourceEventSeqs: seqs });
-                                logLine(`session-regenerate(live): ${sessionId} 锚 seq ${anchorEv.seq} → replace [${start},${end}] ${seqs.length} 事件；变量回滚 ${undo.restored} 条`);
-                                console.log(`[dsht-rp] session-regenerate: ${sessionId} (live) anchor=${anchorEv.seq} replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`);
-                                // I8-1：立即耐久 barrier（同 rollback）
-                                try {
-                                    await flushLiveSession(ctx.sessions, live);
-                                }
-                                catch (e) {
-                                    return send(500, { error: `重生成标记已应用但落盘失败：${e.message}` });
-                                }
-                                rollbackMaskCache.clear();
-                                return send(200, { logical: true, replaced: seqs.length, lastUserText: anchorEv.text, variablesRestored: undo.restored });
+                                // live：找事件流里最后一条真 user 消息——【鲁棒轮】per-session 串行（同 rollback）
+                                return await withLiveSurgery(sessionId, async () => {
+                                    const evList = [];
+                                    let n = 0;
+                                    for (const ev of sessionEventsSnapshot(live)) {
+                                        const seq = typeof ev.seq === 'number' ? ev.seq : n++;
+                                        if (!ev || ev.type !== 'user/message')
+                                            continue;
+                                        if (ev.data?.source?.kind !== 'user')
+                                            continue;
+                                        const blocks = Array.isArray(ev.data?.content) ? ev.data.content : [];
+                                        const text = blocks.filter(b => b && b.type === 'text' && typeof b.text === 'string').map(b => b.text).join('\n');
+                                        evList.push({ seq, time: typeof ev.time === 'number' ? ev.time : undefined, text });
+                                    }
+                                    evList.sort((a, b) => a.seq - b.seq);
+                                    const anchorEv = evList[evList.length - 1];
+                                    if (anchorEv === undefined)
+                                        return send(400, { error: '会话里没有用户消息（无可重新生成的锚点）' });
+                                    const view = live.surface.nodes;
+                                    const idx = view.indexOf(anchorEv.seq);
+                                    // 【2026-09-08 大会话修复】锚不在视图不再硬报错（回退路由同款降级）——
+                                    // 取视图中第一个 > 锚 的 seq 作为 replace 起点；视图全部 ≤ 锚 → no-op。
+                                    const start = idx !== -1
+                                        ? (idx + 1 < view.length ? view[idx + 1] : -1)
+                                        : (view.find(q => q > anchorEv.seq) ?? -1);
+                                    if (start === -1 || start > view[view.length - 1])
+                                        return send(200, { logical: true, replaced: 0, lastUserText: anchorEv.text, note: 'no-op（锚消息之后没有可重生成的视图内容）' });
+                                    const end = view[view.length - 1];
+                                    const seqs = view.filter(q => q >= start);
+                                    let shadowed = 0;
+                                    for (const q of seqs) {
+                                        // 【鲁棒轮 2026-09-09】assistant/message 解包 data.message（同 rollback 补齐——
+                                        // 原实现每条 assistant 消息只计 4 token，meter 少记）
+                                        const raw = ((sessionEventAt(live, q)?.data) ?? {});
+                                        const d = (raw.message && typeof raw.message === 'object' ? raw.message : raw);
+                                        const blocks = Array.isArray(d.content) ? d.content : [];
+                                        shadowed += blocks.reduce((t, b) => t + (b && (b.type === 'text' || b.type === 'reasoning') && typeof b.text === 'string' ? Math.ceil(b.text.length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
+                                    }
+                                    // 【2026-09-08 鲁棒性】undo 回放挪到 claim 之前（紧邻铁律，同 session-rollback）
+                                    const anchorTime = typeof anchorEv.time === 'number' ? anchorEv.time : Date.now();
+                                    const undo = await (0, undo_ts_1.replayUndoLog)(dshHome, sessionId, anchorTime);
+                                    live.append('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
+                                    const markerText = `[重新生成中] 该消息此前的回复已从上下文移除，正在以原消息重新生成。`;
+                                    live.append('user/message', {
+                                        id: `dsht-rp-regenerate-${(0, node_crypto_1.randomUUID)()}`,
+                                        role: 'user',
+                                        content: [{ type: 'text', text: markerText }],
+                                        source: { kind: 'plugin', plugin: 'dsht-rp', regeneratedFrom: anchorEv.seq },
+                                    }, { surfaceOp: { op: 'replace', start, end }, sourceEventSeqs: seqs });
+                                    logLine(`session-regenerate(live): ${sessionId} 锚 seq ${anchorEv.seq} → replace [${start},${end}] ${seqs.length} 事件；变量回滚 ${undo.restored} 条`);
+                                    console.log(`[dsht-rp] session-regenerate: ${sessionId} (live) anchor=${anchorEv.seq} replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`);
+                                    // I8-1：立即耐久 barrier（同 rollback）
+                                    try {
+                                        await flushLiveSession(ctx.sessions, live);
+                                    }
+                                    catch (e) {
+                                        return send(500, { error: `重生成标记已应用但落盘失败：${e.message}` });
+                                    }
+                                    rollbackMaskCache.clear();
+                                    return send(200, { logical: true, replaced: seqs.length, lastUserText: anchorEv.text, variablesRestored: undo.restored });
+                                }); // end withLiveSurgery
                             }
                             // 非 live：文件截断（原路径）
                             {
@@ -5810,6 +6261,18 @@ function apply(ctx, _config) {
                             }, { surfaceOp: 'append' });
                             session.append('step/end', { turn, step: 1 });
                             session.append('turn/end', { turn, reason: { kind: 'completed' } });
+                            // 【R49 2026-09-06】同步内核 agent 的 turn 计数：agent 构造时缓存
+                            // phase.lastTurn（读自 turnBoundary 投影），此后我们直写的 turn/start
+                            // 事件不会刷新这个缓存 → 内核下一条 prompt 用 turn()=lastTurn+1 重开
+                            // 同一 turn → 会话日志出现重复 turn/start → 前端 ConversationNodeAssembler
+                            // 「received more than one start Match」崩溃 → event feed subscriber 死亡，
+                            // 折叠行/会话流停摆（实机实证，turn 序列 1,1,2..18）。idle 时推进 lastTurn
+                            // 是安全同步点（无 driver 竞争）。
+                            const liveAgent = ctx.agents?.get(sessionId);
+                            if (liveAgent?.phase && liveAgent.phase.kind === 'idle'
+                                && typeof liveAgent.phase.lastTurn === 'number' && liveAgent.phase.lastTurn < turn) {
+                                liveAgent.phase.lastTurn = turn;
+                            }
                             // 主动 flush：持久化是按需 checkpoint（per-request barrier / idle），
                             // 直接 append 不落盘的话进程退出即丢开场白（SessionStore.flush 契约）。
                             // I8-1：flush 失败必须显式报告（禁止空吞假成功——用户以为开场白已保存）
@@ -5823,6 +6286,257 @@ function apply(ctx, _config) {
                             }
                             console.log(`[dsht-rp] open-chat: ${slug} session=${sessionId} opening=${text.length}ch turn=${turn}`);
                             return send(200, { ok: true, materialized: true, ...(flushFailed !== null ? { flushFailed } : {}) });
+                        }
+                        // ---- P3a（2026-09-07）：TH 聊天写路径桥 —— /rp/chat/append + /rp/chat/update ----
+                        // ST 酒馆助手 createChatMessages / setChatMessages 的后端面（此前记名拒绝，飞讯等
+                        // 卡脚本的统合记录写不进 → 手机悬浮球「发消息没反应」的根因之一）。
+                        // - append：insert_before:'end' 语义。idle 时完整 turn 物化（oneTurnLog 契约 +
+                        //   phase.lastTurn 同步，复刻 open-chat 防 R49 重复 turn/start）；busy 时消息并入
+                        //   当前 open turn（step 续接，kernel 工具步同构——不越界开新 turn）。
+                        //   system 角色 → source.thSystem 标记（facade 导出 role:'system'/is_system；前端
+                        //   ST 同款系统楼层）；data 附加字段 → source.thData（getChatMessages 回读）。
+                        // - update：message_id → seq 映射与 facade chatMessages 导出同构（user/assistant/
+                        //   thSystem；snapshot 注入与非 thSystem 空文本跳过），单节点 compaction/prune +
+                        //   replace 官方原语（模型视图与前端投影立即生效，事件留日志零丢失）。
+                        if (sub === '/rp/chat/append') {
+                            const sessionId = String(payload.sessionId ?? '');
+                            if (!sessionId)
+                                return send(400, { error: 'sessionId required' });
+                            const insertBefore = payload.insertBefore ?? payload.insert_before;
+                            if (insertBefore !== undefined && insertBefore !== 'end') {
+                                return send(400, { error: 'insert_before 仅支持 end（DSH 会话日志 append-only，历史插入会漂移）' });
+                            }
+                            const msgs = (Array.isArray(payload.messages) ? payload.messages : []).filter((m) => m !== null && typeof m === 'object' && !Array.isArray(m));
+                            if (msgs.length === 0)
+                                return send(400, { error: 'messages required' });
+                            const live = ctx.sessions?.get(sessionId);
+                            if (!live)
+                                return send(404, { error: 'session not live（先经 session.create 创建）' });
+                            const agent = ctx.agents?.get(sessionId);
+                            const idle = agent?.phase?.kind === 'idle';
+                            const snap = sessionEventsSnapshot(live);
+                            // 最后一个 turn 编号（open-chat 同款续接规则）
+                            let lastTurn = 0;
+                            for (let i = snap.length - 1; i >= 0; i--) {
+                                if (snap[i]?.type === 'turn/start') {
+                                    lastTurn = Number(snap[i]?.data?.turn ?? 0) || 0;
+                                    break;
+                                }
+                            }
+                            // busy 时当前 open turn 的 step 续接数（自最后一个 turn/start 起的 step/start 计数）
+                            let openSteps = 0;
+                            if (!idle) {
+                                for (let i = snap.length - 1; i >= 0; i--) {
+                                    if (snap[i]?.type === 'turn/start')
+                                        break;
+                                    if (snap[i]?.type === 'step/start')
+                                        openSteps++;
+                                }
+                            }
+                            const appendMessage = (turn, step, role, text, data) => {
+                                // 【内核校验对齐】assistant/message 强制 model source（kind:'model'+provider+model，
+                                // 实证：plugin source 落盘后整会话 refused to load「message must have model source」）；
+                                // thSystem/thData 作为 model source 的扩展键随行（校验只查 kind/provider/model，
+                                // merge-extensible sum 允许扩展键）。user 角色走 user/message（plugin source 合法）。
+                                if (role === 'user') {
+                                    const source = { kind: 'plugin', plugin: 'dsht-tavern-helper' };
+                                    if (data !== null)
+                                        source['thData'] = data;
+                                    live.append('user/message', {
+                                        id: `dsht-th-${(0, node_crypto_1.randomUUID)()}`,
+                                        role: 'user',
+                                        content: [{ type: 'text', text }],
+                                        source,
+                                    }, { surfaceOp: 'append' });
+                                    return;
+                                }
+                                const source = {
+                                    kind: 'model', provider: 'dsht-tavern-helper', model: 'th-system',
+                                    ...(role === 'system' ? { thSystem: true } : {}),
+                                    ...(data !== null ? { thData: data } : {}),
+                                };
+                                live.append('assistant/message', {
+                                    turn, step,
+                                    message: {
+                                        id: `dsht-th-${(0, node_crypto_1.randomUUID)()}`,
+                                        role: 'assistant',
+                                        content: [{ type: 'text', text }],
+                                        source,
+                                    },
+                                }, { surfaceOp: 'append' });
+                            };
+                            if (idle) {
+                                const turn = lastTurn + 1;
+                                live.append('turn/start', { turn });
+                                for (let i = 0; i < msgs.length; i++) {
+                                    const m = msgs[i];
+                                    const text = String(m.message ?? '');
+                                    const data = m.data !== null && typeof m.data === 'object' ? m.data : null;
+                                    live.append('step/start', { turn, step: i + 1 });
+                                    appendMessage(turn, i + 1, String(m.role ?? 'system'), text, data);
+                                    live.append('step/end', { turn, step: i + 1 });
+                                }
+                                live.append('turn/end', { turn, reason: { kind: 'completed' } });
+                                // R49 同步：agent 的 phase.lastTurn 缓存不刷新会让内核重开同一 turn
+                                if (agent?.phase && typeof agent.phase.lastTurn === 'number' && agent.phase.lastTurn < turn) {
+                                    agent.phase.lastTurn = turn;
+                                }
+                                console.log(`[dsht-rp] chat/append: ${sessionId} turn=${turn} n=${msgs.length}（idle 全 turn 物化）`);
+                            }
+                            else {
+                                const turn = Math.max(lastTurn, 1);
+                                for (let i = 0; i < msgs.length; i++) {
+                                    const m = msgs[i];
+                                    const text = String(m.message ?? '');
+                                    const data = m.data !== null && typeof m.data === 'object' ? m.data : null;
+                                    const step = openSteps + i + 1;
+                                    live.append('step/start', { turn, step });
+                                    appendMessage(turn, step, String(m.role ?? 'system'), text, data);
+                                    live.append('step/end', { turn, step });
+                                }
+                                console.log(`[dsht-rp] chat/append: ${sessionId} turn=${turn} n=${msgs.length}（busy 并入 open turn）`);
+                            }
+                            try {
+                                await flushLiveSession(ctx.sessions, live);
+                            }
+                            catch (e) {
+                                return send(500, { error: `消息已追加但落盘失败：${e.message}` });
+                            }
+                            return send(200, { ok: true, appended: msgs.length });
+                        }
+                        if (sub === '/rp/chat/update') {
+                            const sessionId = String(payload.sessionId ?? '');
+                            if (!sessionId)
+                                return send(400, { error: 'sessionId required' });
+                            const targets = (Array.isArray(payload.targets) ? payload.targets : []).filter((t) => t !== null && typeof t === 'object' && !Array.isArray(t));
+                            if (targets.length === 0)
+                                return send(400, { error: 'targets required' });
+                            const live = ctx.sessions?.get(sessionId);
+                            if (!live)
+                                return send(404, { error: 'session not live' });
+                            const view = live.surface?.nodes;
+                            if (!Array.isArray(view))
+                                return send(409, { error: 'session surface unavailable' });
+                            // message_id → {seq, event} 映射：与 facade chatMessages 导出同构
+                            //（user/assistant/thSystem 计入；snapshot 注入与非 thSystem 空文本跳过；
+                            // compaction/prune 遮蔽集同步剔除——replace 后旧事件不占编号，与 facade 双遍扫描同语义）
+                            const snap = sessionEventsSnapshot(live);
+                            const shadowedSeqs = new Set();
+                            for (const ev0 of snap) {
+                                if (ev0?.type !== 'compaction/prune')
+                                    continue;
+                                const d0 = ev0.data;
+                                if (Array.isArray(d0?.shadowedSeqs))
+                                    for (const q of d0.shadowedSeqs)
+                                        if (typeof q === 'number')
+                                            shadowedSeqs.add(q);
+                            }
+                            const exportSeqs = [];
+                            for (const ev of snap) {
+                                if (ev.type !== 'user/message' && ev.type !== 'assistant/message')
+                                    continue;
+                                if (typeof ev.seq === 'number' && shadowedSeqs.has(ev.seq))
+                                    continue;
+                                const d = ev.data;
+                                const msg = (ev.type === 'assistant/message' ? d?.message : d);
+                                if (!msg || typeof msg !== 'object')
+                                    continue;
+                                const source = msg.source;
+                                if (source && typeof source === 'object' && source['form'] === 'snapshot')
+                                    continue;
+                                const content = msg.content;
+                                const text = Array.isArray(content)
+                                    ? content.filter((b) => b !== null && typeof b === 'object' && b.type === 'text')
+                                        .map((b) => String(b.text ?? '')).join('\n')
+                                    : typeof content === 'string' ? content : '';
+                                const isTh = !!(source && typeof source === 'object' && source['thSystem'] === true);
+                                if (!text && !isTh)
+                                    continue;
+                                if (typeof ev.seq === 'number')
+                                    exportSeqs.push(ev.seq);
+                            }
+                            let updated = 0;
+                            const errors = [];
+                            for (const t of targets) {
+                                const mid = Number(t.message_id ?? -1);
+                                const seq = exportSeqs[mid];
+                                if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 0) {
+                                    errors.push(`message_id=${mid} 不存在`);
+                                    continue;
+                                }
+                                if (!view.includes(seq)) {
+                                    errors.push(`message_id=${mid}（seq=${seq}）不在当前视图（可能已被回退/折叠）`);
+                                    continue;
+                                }
+                                const oldEv = sessionEventAt(live, seq);
+                                const oldData = (oldEv?.data ?? {});
+                                const isUser = oldEv?.type === 'user/message';
+                                // user/message 的 data 就是 Message 本体；assistant/message 是 {turn, step, message} 包装
+                                const oldMsg = ((isUser ? oldData : oldData.message) ?? {});
+                                const oldText = Array.isArray(oldMsg.content)
+                                    ? oldMsg.content.filter(b => b?.type === 'text').map(b => String(b.text ?? '')).join('\n')
+                                    : '';
+                                const text = t.message !== undefined ? String(t.message ?? '') : oldText;
+                                const oldSource = (oldMsg.source && typeof oldMsg.source === 'object' ? oldMsg.source : {});
+                                const oldThData = oldSource['thData'] !== undefined ? oldSource['thData'] : null;
+                                const data = t.data !== undefined ? t.data : oldThData;
+                                // 计量（core 估价器同款——replace 必须带紧邻 claim）。
+                                // 【2026-09-08 鲁棒性】shadowedTokenCount 按**被影子化的旧事件**内容计
+                                // （meter 记账对象 = 移出视图的旧事件，与 session-rollback 路由同口径）——
+                                // 旧实现用替换后的新文本长度：新文本更短 → meter 少记移出量、更长 → 多记。
+                                const oldBlocks = Array.isArray(oldMsg.content)
+                                    ? oldMsg.content
+                                    : [];
+                                let shadowedTokens = oldBlocks.reduce((t2, b) => t2 + (b && (b['type'] === 'text' || b['type'] === 'reasoning') && typeof b['text'] === 'string'
+                                    ? Math.ceil(b['text'].length / 4) + 4
+                                    : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
+                                live.append('compaction/prune', { shadowedRange: { start: seq, end: seq }, shadowedSeqs: [seq], shadowedTokenCount: shadowedTokens });
+                                const turn = typeof oldData.turn === 'number' ? oldData.turn : 1;
+                                const step = typeof oldData.step === 'number' ? oldData.step : 1;
+                                if (isUser) {
+                                    // user 楼层替换：plugin source（内核对 user/message 的 source kind 宽容）
+                                    const source = { kind: 'plugin', plugin: 'dsht-tavern-helper' };
+                                    if (data !== null && typeof data === 'object')
+                                        source['thData'] = data;
+                                    live.append('user/message', {
+                                        id: `dsht-th-${(0, node_crypto_1.randomUUID)()}`,
+                                        role: 'user',
+                                        content: [{ type: 'text', text }],
+                                        source,
+                                    }, { surfaceOp: { op: 'replace', start: seq, end: seq }, sourceEventSeqs: [seq] });
+                                }
+                                else {
+                                    // assistant 楼层替换：必须 model source（内核校验）——provider/model 换成
+                                    // th-edit 身份，原 replayState 不随行（文本已改，回放态失配且跨 provider 永不命中）
+                                    const source = {
+                                        kind: 'model', provider: 'dsht-tavern-helper', model: 'th-edit',
+                                        ...(oldSource['thSystem'] === true ? { thSystem: true } : {}),
+                                        ...(data !== null && typeof data === 'object' ? { thData: data } : {}),
+                                    };
+                                    live.append('assistant/message', {
+                                        turn, step,
+                                        message: {
+                                            id: `dsht-th-${(0, node_crypto_1.randomUUID)()}`,
+                                            role: 'assistant',
+                                            content: [{ type: 'text', text }],
+                                            source,
+                                        },
+                                    }, { surfaceOp: { op: 'replace', start: seq, end: seq }, sourceEventSeqs: [seq] });
+                                }
+                                updated++;
+                            }
+                            if (updated > 0) {
+                                try {
+                                    await flushLiveSession(ctx.sessions, live);
+                                }
+                                catch (e) {
+                                    return send(500, { error: `改写已应用但落盘失败：${e.message}` });
+                                }
+                            }
+                            console.log(`[dsht-rp] chat/update: ${sessionId} updated=${updated} errors=${errors.length}`);
+                            if (errors.length > 0 && updated === 0)
+                                return send(400, { error: errors.join('; ') });
+                            return send(200, { ok: true, updated, ...(errors.length > 0 ? { errors } : {}) });
                         }
                         // ---- T2.7：RP 预设体系（组装层关注点；session 内随时切换）----
                         // /preset/import-st {json, name} → ST completion 预设导入（示例预设等）：
@@ -5964,6 +6678,46 @@ function apply(ctx, _config) {
                             const st = await loadSessionState(sessionId);
                             const explicit = typeof st.presetId === 'string' && st.presetId ? st.presetId : null;
                             return send(200, { presetId: explicit ?? await resolveActiveStPresetId(), explicit });
+                        }
+                        // ---- L1b：自定义宏注册（ST MacroRegistry.registerMacro 对应物；hook 移植）----
+                        // /macros/list {} → 字符串模板类自定义宏全表（客户端显示期水合用）
+                        if (sub === '/macros/list') {
+                            return send(200, { macros: (0, macros_ts_1.listCustomMacros)() });
+                        }
+                        // /macros/register {name, value} → 注册（字符串模板）+ 持久化 rp/macros.json
+                        // /macros/unregister {name} → 注销 + 持久化
+                        if (sub === '/macros/register' || sub === '/macros/unregister') {
+                            const macroName = String(payload.name ?? '').trim().toLowerCase();
+                            if (!macroName)
+                                return send(400, { error: 'name required' });
+                            // 读改写串行化：探针/脚本爆发式并发注册时防丢更新（配合 atomicWriteFile tmp 去重）
+                            const result = await (macroWriteChain = macroWriteChain.then(async () => {
+                                const macrosFile = (0, node_path_1.join)(dshHome, 'rp', 'macros.json');
+                                let disk = {};
+                                try {
+                                    disk = JSON.parse(await (0, promises_1.readFile)(macrosFile, 'utf8'));
+                                }
+                                catch { /* 无文件 */ }
+                                try {
+                                    if (sub === '/macros/register') {
+                                        const value = String(payload.value ?? '');
+                                        (0, macros_ts_1.registerMacro)(macroName, value);
+                                        disk[macroName] = value;
+                                    }
+                                    else {
+                                        (0, macros_ts_1.unregisterMacro)(macroName);
+                                        delete disk[macroName];
+                                    }
+                                }
+                                catch (e) {
+                                    return { status: 400, body: { error: e.message } };
+                                }
+                                await (0, promises_1.mkdir)((0, node_path_1.join)(dshHome, 'rp'), { recursive: true });
+                                await atomicWriteFile(macrosFile, JSON.stringify(disk, null, 2));
+                                console.log(`[dsht-rp] macro ${sub === '/macros/register' ? 'registered' : 'unregistered'}: {{${macroName}}}（共 ${Object.keys(disk).length} 个自定义宏）`);
+                                return { status: 200, body: { ok: true, macros: (0, macros_ts_1.listCustomMacros)() } };
+                            }).catch((e) => ({ status: 500, body: { error: String(e) } })));
+                            return send(result.status, result.body);
                         }
                         // /state {sessionId} → T2.3 MVU 状态树（只读诊断/前端消费；写走自动提取与
                         // state_update 工具）。state 键优先，历史扁平文件/variables 键兜底。

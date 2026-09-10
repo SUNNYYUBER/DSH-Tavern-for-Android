@@ -53,6 +53,13 @@ function tryDecor(el: HTMLElement): void {
 /** 保护区锚点（每轮碰撞检测时现取 rect——布局会变） */
 const PROTECTED_ANCHORS = '[role="tablist"],[data-composer-input]'
 
+/** 【2026-09-10 心跳 35】自家浮球（参与跨浮窗避让的己方锚点）。
+ *  用户实证诉求：「TT 能保证悬浮窗互不遮挡」——脚本浮窗(如 fx-floating-ball z=9999)
+ *  与本插件浮球（🌌 z=60 / 🧩 z=10050）几何重叠时，此前**无任何检测**（PROTECTED_ANCHORS
+ *  只含宿主 chrome），两球叠在一起。这里把自家浮球一并纳入避让域。
+ *  优先级：本方核心 chrome > 脚本注入的装饰性浮窗（本方让位成本更低、可控）。 */
+const OWN_FLOAT_SELECTOR = '.dsht-rp-statefloat-ball,.dsht-rp-scriptball'
+
 interface FloatEntry { offeredNudge: boolean }
 
 /** 已登记的脚本悬浮窗（弱引用随 DOM 回收） */
@@ -178,6 +185,225 @@ function processElement(el: HTMLElement, zones: Array<{ rect: DOMRect; name: str
   negotiateCollision(el, zones)
 }
 
+// ---- ③ 跨浮窗避让（脚本浮窗 ↔ 我方浮球；2026-09-10 心跳 35）----
+
+/** 我方浮球当前是否可见（非 RP 会话不渲染 → rect 为 0） */
+function visibleOwnFloats(): HTMLElement[] {
+  const out: HTMLElement[] = []
+  for (const el of document.querySelectorAll<HTMLElement>(OWN_FLOAT_SELECTOR)) {
+    const r = el.getBoundingClientRect()
+    if (r.width < 8 || r.height < 8) continue
+    let cs: CSSStyleDeclaration
+    try { cs = getComputedStyle(el) } catch { continue }
+    if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) continue
+    // 【2026-09-10 心跳 35 修复】必须真的在视口内：React 首帧渲染时 style.left 还是
+    // 初始值（尚未应用 left:92vw），rect 会落在 (-16,-16)，此时若参与避让会把这个
+    // 未定位坐标冻结成内联 px（实测把 🌌 球钉死在左上角 (6,6)）。
+    if (r.right < 0 || r.bottom < 0 || r.left > window.innerWidth || r.top > window.innerHeight) continue
+    // 只处理「完整落在视口内」的球（部分出界说明正在被 CSS 定位，跳过本轮）
+    if (r.left < 0 || r.top < 0) continue
+    out.push(el)
+  }
+  return out
+}
+
+/** 我方浮球位置用内联 left/top（RpStateFloat 的 style={{left:..vw,top:..vh}}）——
+ *  避让时改成 px 位移；返回是否成功施加 */
+function nudgeOwnFloat(el: HTMLElement, dx: number, dy: number): void {
+  const r = el.getBoundingClientRect()
+  const targetLeft = Math.round(r.left + dx)
+  const targetTop = Math.round(r.top + dy)
+  // 【2026-09-10 心跳 35】优先走 React 回写通道：浮球位置由组件 state（vw/vh）拥有，
+  // 直接写内联会被下一次渲染冲掉（实测：写 left:313px 后立刻被 vw 值覆盖回 291）。
+  const resolver = ownFloatResolvers.get(el)
+  if (resolver !== undefined) {
+    try { resolver(el, targetLeft, targetTop) } catch (e) { console.warn('[dsht-rp-ui] resolver 失败，回退内联', e) }
+  } else {
+    el.style.left = `${targetLeft}px`
+    el.style.top = `${targetTop}px`
+  }
+  el.dataset.dshtNudged = '1'
+}
+
+/** 我方浮球的位置回写器（组件注册；键 = 浮球元素，值 = 转比例坐标写回 state） */
+const ownFloatResolvers = new WeakMap<HTMLElement, (el: HTMLElement, left: number, top: number) => void>()
+
+/** 注册某类浮球的位置回写器；返回注销函数。selector 用于把当前 DOM 元素绑到 resolver。
+ *  浮球元素可能晚于本调用挂载（cwd 补取是异步的 → 球延后渲染），因此除立即绑定外，
+ *  还要持续监听 DOM 新增把 resolver 绑到新出现的元素上。 */
+export function registerOwnFloatResolver(
+  selector: string,
+  resolver: (el: HTMLElement, left: number, top: number) => void,
+): () => void {
+  const bind = (): void => {
+    for (const el of document.querySelectorAll<HTMLElement>(selector)) ownFloatResolvers.set(el, resolver)
+  }
+  bind()
+  const t = setTimeout(bind, 0)
+  // 浮球渲染时机不定（RpStateFloat 要异步补取 cwd 后才 return 非 null）→ 观察新增节点
+  let obs: MutationObserver | null = null
+  if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
+    obs = new MutationObserver(() => { bind() })
+    obs.observe(document.body, { childList: true, subtree: true })
+  }
+  return () => {
+    clearTimeout(t)
+    if (obs !== null) obs.disconnect()
+  }
+}
+
+/** 【2026-09-10 心跳 35 自愈】清掉 v197 及以前版本因 bug（未定位坐标冻结）写死的
+ *  内联 left/top，让 React 的 vw/vh 定位重新接管。只针对「我方浮球 + 冻结在角落」
+ *  这一确凿坏形态，不动脚本浮窗。 */
+function healFrozenOwnFloats(): void {
+  for (const el of document.querySelectorAll<HTMLElement>(OWN_FLOAT_SELECTOR)) {
+    if (el.dataset.dshtNudged !== '1') continue
+    const raw = el.getAttribute('style') ?? ''
+    // 修复版写的是「保边滑动」的 px；旧 bug 版写的是 6px 级别的角落坐标
+    const m = /left:\s*(\d+(?:\.\d+)?)px/i.exec(raw)
+    const n = /top:\s*(\d+(?:\.\d+)?)px/i.exec(raw)
+    if (m === null || n === null) continue
+    const x = Number(m[1])
+    const y = Number(n[1])
+    if (x <= 12 && y <= 12) { // 左上角死角 = 坏形态
+      el.style.removeProperty('left')
+      el.style.removeProperty('top')
+      delete el.dataset.dshtNudged
+      console.info('[dsht-rp-ui] 已自愈浮球冻结坐标（左上角死角）:', el.className)
+    }
+  }
+}
+
+/** 【2026-09-10 心跳 35】真正的「悬浮小部件」判定——用户投诉的「到处乱窜」根因：
+ *  宿主的遮罩层/侧栏容器（`pI_x6G_overlayLayer` 393×873 全屏、`pI_x6G_sidebarCol`
+ *  320×873 抽屉）也会被登记进 liveFloats，它们与任何浮球都「重叠」，
+ *  导致避让逻辑被反复触发、浮球被推向各处。
+ *  判据：视口占比 + 绝对尺寸上限——悬浮球/悬浮窗是小的，遮罩层是全屏的。 */
+function isCompactFloat(el: HTMLElement, r: DOMRect): boolean {
+  const vw = window.innerWidth || 1
+  const vh = window.innerHeight || 1
+  const maxW = Math.min(360, vw * 0.72)
+  const maxH = Math.min(360, vh * 0.55)
+  if (r.width > maxW || r.height > maxH) return false
+  return true
+}
+
+/** 跨浮窗避让主逻辑：对每个脚本浮窗，若与我方浮球重叠，则**我方浮球让位**
+ *  （脚本浮窗归第三方脚本所有，主动改它会导致脚本复位抖动；我方浮球位置由
+ *   组件 state 拥有，让位通过 resolver 写回，用户下次拖拽即覆盖）。 */
+function resolveOwnFloatCollisions(): void {
+  const own = visibleOwnFloats()
+  if (own.length === 0) return
+  // 只与「紧凑悬浮小部件」协商——全屏遮罩/侧栏抽屉不算（否则永远重叠 → 浮球乱窜）
+  const others = [...liveFloats].filter((el) => {
+    if (!el.isConnected) return false
+    const r = el.getBoundingClientRect()
+    if (r.width < 8 || r.height < 8) return false
+    return isCompactFloat(el, r)
+  })
+  if (others.length === 0) return
+
+  // 我方浮球按 z-index 升序处理（低的先让，避免高优先级球被推）
+  own.sort((a, b) => Number(getComputedStyle(a).zIndex || 0) - Number(getComputedStyle(b).zIndex || 0))
+
+  let moved = 0
+  for (const mine of own) {
+    let guard = 0
+    // 迭代推挤：一个球可能同时撞到多个脚本浮窗，最多 6 轮防死循环
+    while (guard++ < 6) {
+      const r = mine.getBoundingClientRect()
+      if (r.width < 8 || r.height < 8) break
+      let hit: DOMRect | null = null
+      for (const o of others) {
+        const or = o.getBoundingClientRect()
+        if (or.width < 8 || or.height < 8) continue
+        const area = overlapArea(r, or)
+        // 阈值：重叠 > 220px² 且 > 浮球面积 18%（轻微擦边不动，避免抖动）
+        if (area > 220 && area > r.width * r.height * 0.18) { hit = or; break }
+      }
+      if (hit === null) break
+
+      // 【2026-09-10 心跳 35 修复】保边滑动，而非「最小位移推出」——
+      // 原算法会把球推到屏幕角落死角（实测 🌌 被钉到 (6,6)），且乱窜。
+      // 规则：保持球当前所在的左/右半边（用户拖拽贴边的语义），只沿**垂直**方向
+      // 滑出重叠区；垂直无处可去时才沿水平方向错开（仍回到同侧边缘）。
+      const preferRight = (r.left + r.width / 2) >= window.innerWidth / 2
+      const MARGIN = 8
+      const GAP = 8
+      const minX = MARGIN
+      const maxX = window.innerWidth - r.width - MARGIN
+      const minY = MARGIN
+      const maxY = window.innerHeight - r.height - MARGIN
+      const edgeX = preferRight ? Math.min(maxX, Math.max(minX, window.innerWidth - r.width - MARGIN - 10)) : minX + 10
+
+      // 垂直候选：滑到脚本浮窗上方 / 下方
+      const candsY = [hit.top - GAP - r.height, hit.bottom + GAP]
+      let best: { x: number; y: number; cost: number } | null = null
+      for (const cy of candsY) {
+        if (cy < minY || cy > maxY) continue
+        for (const cx of [edgeX, Math.min(maxX, Math.max(minX, r.left))]) {
+          const rect = { left: cx, top: cy, right: cx + r.width, bottom: cy + r.height }
+          let worst = 0
+          for (const o of others) {
+            const or = o.getBoundingClientRect()
+            if (or.width < 8 || or.height < 8) continue
+            worst = Math.max(worst, overlapArea(rect as DOMRect, or))
+          }
+          if (worst > 220) continue
+          const cost = Math.abs(cy - r.top) + Math.abs(cx - r.left) * 0.35
+          if (best === null || cost < best.cost) best = { x: cx, y: cy, cost }
+        }
+      }
+      if (best === null) break // 无合法落点（视口太小）→ 放弃本轮，不乱推
+      const rdx = Math.round(best.x - r.left)
+      const rdy = Math.round(best.y - r.top)
+      if (rdx === 0 && rdy === 0) break
+      nudgeOwnFloat(mine, rdx, rdy)
+      moved += 1
+      // 位置持久化由 resolver（组件侧 savePos）负责；无 resolver 时（理论不达）仍写内联。
+    }
+  }
+  if (moved > 0) console.info(`[dsht-rp-ui] 自家浮球跨浮窗避让: ${moved} 次位移（脚本浮窗 ${others.length} 个）`)
+}
+
+/** 跨浮窗扫描节流：MutationObserver/轮询都会调，用时间戳防抖 */
+let lastCrossScan = 0
+function maybeResolveCross(force = false): void {
+  const now = Date.now()
+  if (!force && now - lastCrossScan < 700) return
+  lastCrossScan = now
+  try { resolveOwnFloatCollisions() } catch (e) { console.warn('[dsht-rp-ui] 跨浮窗避让失败', e) }
+}
+
+/** 供浮球组件在拖拽落定后主动触发（拖到脚本浮窗上时立即让位，不等 3s 轮询） */
+export function requestFloatCollisionResolve(): void {
+  maybeResolveCross(true)
+}
+
+/** 诊断快照（CDP 探针用）：列出当前跨浮窗避让的参与方与碰撞结果 */
+export function floatCollisionSnapshot(): { own: number; others: number; overlapping: number; resolvers: number } {
+  const own = visibleOwnFloats()
+  const others = [...liveFloats].filter((el) => {
+    if (!el.isConnected) return false
+    const r = el.getBoundingClientRect()
+    if (r.width < 8 || r.height < 8) return false
+    return isCompactFloat(el, r)
+  })
+  let overlapping = 0
+  for (const mine of own) {
+    const r = mine.getBoundingClientRect()
+    for (const o of others) {
+      const or = o.getBoundingClientRect()
+      if (overlapArea(r, or) > 1) { overlapping += 1; break }
+    }
+  }
+  let resolvers = 0
+  for (const el of document.querySelectorAll<HTMLElement>(OWN_FLOAT_SELECTOR)) {
+    if (ownFloatResolvers.has(el)) resolvers += 1
+  }
+  return { own: own.length, others: others.length, overlapping, resolvers }
+}
+
 /** 对已登记未协商的元素做保护区碰撞检测；命中弹一次性 toast（同意式避让） */
 function negotiateCollision(el: HTMLElement, zones: Array<{ rect: DOMRect; name: string }> | null): void {
   const entry = floatRegistry.get(el)
@@ -225,14 +451,16 @@ function guardScan(root: HTMLElement | Document | null): void {
     if (!el.isConnected) { liveFloats.delete(el); floatRegistry.delete(el); continue }
     negotiateCollision(el, zones)
   }
+  // ③ 跨浮窗避让：脚本浮窗 ↔ 我方浮球（与宿主保护区无关，独立触发）
+  maybeResolveCross()
 }
 
 /** 安装守卫；返回卸载函数（插件 fiber 随动） */
 export function installScriptUiGuard(): () => void {
   if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => { /* SSR/测试环境 */ }
-  // 诊断探针（CDP 排障用）：window.__dshtGuard = { installed, scans }
+  // 诊断探针（CDP 排障用）：window.__dshtGuard = { installed, scans, floatSnapshot() }
   const dbg = (window as unknown as Record<string, unknown>)
-  dbg['__dshtGuard'] = { installed: Date.now(), scans: 0 }
+  dbg['__dshtGuard'] = { installed: Date.now(), scans: 0, floatSnapshot: floatCollisionSnapshot }
   let timer: ReturnType<typeof setTimeout> | null = null
   /** 待扫根（mutation 增量；安装时先全量一轮） */
   let pendingRoots: HTMLElement[] = []
@@ -251,6 +479,7 @@ export function installScriptUiGuard(): () => void {
     timer = setTimeout(run, 400)
   }
   run()
+  healFrozenOwnFloats() // 自愈旧版冻结坐标（一次性）
   const observer = new MutationObserver((muts) => {
     for (const m of muts) {
       for (const n of m.addedNodes) {
@@ -259,9 +488,16 @@ export function installScriptUiGuard(): () => void {
     }
   })
   observer.observe(document.body, { childList: true, subtree: true })
+  // ③ 视口变化（转屏/软键盘弹出）→ 浮球重排后重新解重叠
+  const onViewport = (): void => { maybeResolveCross(true) }
+  window.addEventListener('resize', onViewport)
+  window.addEventListener('orientationchange', onViewport)
   // 低频复检（3s）：页面静止（无 mutation）时已登记未协商的悬浮窗也要参与碰撞检测
   const recheck = setInterval(() => {
     try {
+      // ③ 跨浮窗避让独立于宿主保护区：即使 liveFloats 为空也先去重（脚本浮窗
+      //    可能已被 cleanup 移除但自家浮球仍在原位撞着残留层）
+      maybeResolveCross()
       if (liveFloats.size === 0) return
       const zones: Array<{ rect: DOMRect; name: string }> = []
       for (const anchor of document.querySelectorAll<HTMLElement>(PROTECTED_ANCHORS)) {
@@ -273,7 +509,14 @@ export function installScriptUiGuard(): () => void {
         if (!el.isConnected) { liveFloats.delete(el); floatRegistry.delete(el); continue }
         negotiateCollision(el, zones)
       }
+      // ③ 静止期也要解跨浮窗重叠（浮球 mout/脚本注入都可能不产生 mutation）
+      maybeResolveCross()
     } catch { /* 复检失败不影响主流程 */ }
   }, 3000)
-  return () => { observer.disconnect(); clearInterval(recheck); if (timer !== null) clearTimeout(timer) }
+  return () => {
+    observer.disconnect(); clearInterval(recheck)
+    window.removeEventListener('resize', onViewport)
+    window.removeEventListener('orientationchange', onViewport)
+    if (timer !== null) clearTimeout(timer)
+  }
 }

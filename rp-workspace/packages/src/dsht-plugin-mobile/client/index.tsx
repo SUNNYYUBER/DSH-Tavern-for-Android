@@ -79,6 +79,38 @@ function MobileNav({ toggle }: MobileNavProps): JSX.Element {
   )
 }
 
+/**
+ * 📎 附件上传按钮（conversation.input.left 席位；2026-09-08 用户问题「加号不能上传文件吗」）：
+ * DSH 原生加号 = 命令菜单（源码设定），附件面只有拖拽/粘贴（桌面手势，手机没有）——
+ * 手机端从此无上传入口。本按钮补齐：<input type=file>（Android WebView 的
+ * onShowFileChooser → SAF 文件管理器已实现）→ files 塞进 DataTransfer 合成 document
+ * drop 事件 → 原生 ComposerAttachments 的 onDrop → onAddImages 接住（桌面拖拽同管线，
+ * 类型/大小校验与被拒 toast 全部原生）。
+ */
+function MobileAttach(): JSX.Element {
+  const onClick = (): void => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.multiple = true
+    input.accept = 'image/*' // DSH 0.1.2 附件面 = 视觉图片（onAddImages 校验，非图原生 toast 拒绝）
+    input.onchange = () => {
+      const files = Array.from(input.files ?? [])
+      if (files.length === 0) return
+      try {
+        const dt = new DataTransfer()
+        for (const f of files) dt.items.add(f)
+        document.dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true }))
+      } catch { /* DataTransfer 构造不可用（老 WebView）：静默 */ }
+    }
+    input.click()
+  }
+  return (
+    <button type="button" className="dsht-mobile-attach" aria-label="添加图片" onClick={onClick}>
+      📎
+    </button>
+  )
+}
+
 export const inject = ['slots', 'layout']
 
 export function apply(ctx: {
@@ -87,6 +119,12 @@ export function apply(ctx: {
   layout?: { toggleSidebar?: () => void } | undefined
 }): void {
   boot()
+  // 📎 上传按钮（conversation.input.left 席位——原生加号旁；不依赖 layout 服务，
+  // 宿主有 slots 即可装。非会话视图不渲染该槽 → 无副作用）
+  ctx.effect(() => ctx.slots.inject('conversation.input.left', () => ctx.slots.register(
+    { name: 'conversation.input.left', id: 'dsht-mobile-attach', order: 10 },
+    MobileAttach,
+  )), 'dsht-plugin-mobile: attach button')
   // 宿主无 layout 服务（非 DSH rc 系）：CSS/锚点已在模块顶层生效，跳过汉堡注入
   if (typeof ctx.layout?.toggleSidebar !== 'function') return
   const toggle = (): void => ctx.layout?.toggleSidebar?.()

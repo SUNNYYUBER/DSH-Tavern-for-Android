@@ -185,9 +185,14 @@ const DANGEROUS_TAGS: ReadonlySet<string> = new Set([
   'html', 'head', 'body', 'title',
 ])
 
-/** sanitizeDisplayHtml 允许按 HTML 渲染的标签（含 SVG 系列；q = ST 台词橙） */
+/** sanitizeDisplayHtml 允许按 HTML 渲染的标签（含 SVG 系列；q = ST 台词橙）。
+ *  【2026-09-09 适配修复】+ details/summary——Kemini「思维链折叠」等美化正则的产物
+ *  就是 <details><summary>…</summary>…</details>，缺它 → sanitize 整块 null → 强制
+ *  转 iframe → 帧内 100vh 布局随 iframe 高度反馈循环（「画面跳来跳去」主向量之一）。
+ *  details/summary 无事件面，结构标签与 div 同级安全。 */
 const SANITIZE_TAGS: ReadonlySet<string> = new Set([
   'div', 'span', 'font', 'b', 'i', 'em', 'strong', 'small', 'mark', 'q',
+  'details', 'summary',
   'svg', 'g', 'path', 'circle', 'rect', 'line', 'polygon', 'polyline', 'ellipse',
   'text', 'tspan', 'defs', 'use',
 ])
@@ -205,10 +210,31 @@ const SVG_ATTRS: ReadonlyMap<string, string> = new Map([
   ['points', 'points'], ['fill', 'fill'], ['stroke', 'stroke'], ['stroke-width', 'stroke-width'],
 ])
 
-/** sanitizeDisplayHtml 允许的 style 属性（外观类；布局类如 position 一律整体回退） */
+/** sanitizeDisplayHtml 允许的 style 属性。
+ *  【2026-09-09 适配修复】原白名单只有 8 个纯排版属性——ST 卡美化正则的常用布局
+ *  声明（display:flex / width / padding / border / line-height…）全部命中
+ *  「白名单外 → 整块 return null → 转 iframe」或丢样式 → 两栏/卡片布局崩坏
+ *  （楼层「逐字竖排」的直接向量）。扩充纯布局/视觉属性（无注入面，值过滤
+ *  url()/expression() 已有）；position 族仍排除——fixed/absolute 悬浮球走 iframe 舞台。 */
 const SANITIZE_STYLE_PROPS: ReadonlySet<string> = new Set([
+  // 排版（原有）
   'color', 'background', 'background-color', 'font-weight', 'font-size',
   'font-style', 'text-decoration', 'text-align',
+  // 布局盒模型
+  'display', 'flex', 'flex-direction', 'flex-wrap', 'flex-flow', 'justify-content',
+  'align-items', 'align-content', 'align-self', 'gap', 'row-gap', 'column-gap',
+  'order', 'flex-grow', 'flex-shrink', 'flex-basis',
+  'width', 'min-width', 'max-width', 'height', 'min-height', 'max-height',
+  'margin', 'margin-top', 'margin-bottom', 'margin-left', 'margin-right',
+  'padding', 'padding-top', 'padding-bottom', 'padding-left', 'padding-right',
+  'box-sizing', 'overflow', 'overflow-x', 'overflow-y', 'object-fit',
+  // 视觉
+  'border', 'border-width', 'border-style', 'border-color',
+  'border-top', 'border-bottom', 'border-left', 'border-right',
+  'border-radius', 'box-shadow', 'opacity', 'cursor', 'pointer-events',
+  // 文本进阶
+  'line-height', 'letter-spacing', 'word-break', 'overflow-wrap', 'white-space',
+  'text-shadow', 'vertical-align', 'writing-mode', 'font-family',
 ])
 
 /** 文本里是否存在成对的白名单 HTML 标签（决定是否走 HTML 渲染分支） */
@@ -242,10 +268,10 @@ export function sanitizeDisplayHtml(html: string): string | null {
     const attrs = m[2] ?? ''
     let keep = ''
     if (SVG_TAGS.has(tag)) {
-      for (const am of attrs.matchAll(/([\w-]+)\s*=\s*"([^"]*)"/g)) {
+      for (const am of attrs.matchAll(/([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g)) {
         const canonical = SVG_ATTRS.get(am[1].toLowerCase())
         if (canonical === undefined) continue
-        const value = am[2].replace(/[<>"'&]/g, '')
+        const value = (am[2] ?? am[3] ?? am[4] ?? '').replace(/[<>"'&]/g, '')
         if (/url\s*\(|expression\s*\(/i.test(value)) continue
         keep += ` ${canonical}="${value}"`
       }
@@ -253,16 +279,18 @@ export function sanitizeDisplayHtml(html: string): string | null {
       last = tagRe.lastIndex
       continue
     }
-    const cls = attrs.match(/\bclass\s*=\s*"([^"]*)"/i)
-    if (cls) keep += ` class="${cls[1].replace(/[<>"'&]/g, '')}"`
+    // 【2026-09-09 适配修复】属性值只认双引号 → 单引号/无引号形态（ST 卡美化产物常见）
+    // class/style 全丢 → 布局崩坏。统一支持 "…" / '…' / 裸值三种形态。
+    const cls = attrs.match(/\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i)
+    if (cls) keep += ` class="${(cls[1] ?? cls[2] ?? cls[3] ?? '').replace(/[<>"'&]/g, '')}"`
     if (tag === 'font') {
-      const col = attrs.match(/\bcolor\s*=\s*"(#[0-9a-fA-F]{3,8})"/i)
-      if (col) keep += ` color="${col[1]}"`
+      const col = attrs.match(/\bcolor\s*=\s*(?:"(#[0-9a-fA-F]{3,8})"|'(#[0-9a-fA-F]{3,8})'|(#[0-9a-fA-F]{3,8}))/i)
+      if (col) keep += ` color="${col[1] ?? col[2] ?? col[3]}"`
     }
-    const sty = attrs.match(/\bstyle\s*=\s*"([^"]*)"/i)
+    const sty = attrs.match(/\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i)
     if (sty) {
       const safe: string[] = []
-      for (const decl of sty[1].split(';')) {
+      for (const decl of (sty[1] ?? sty[2] ?? sty[3] ?? '').split(';')) {
         const i = decl.indexOf(':')
         if (i < 0) continue
         const prop = decl.slice(0, i).trim().toLowerCase()
@@ -316,19 +344,19 @@ export function applyOutputProtocolSegments(text: string, proto: OutputProtocol,
 
   // 状态更新块（整块提取——MVU 协议，位于消息尾部）
   for (const tag of tags(proto.stateUpdateTags)) {
-    work = work.replace(new RegExp(`<${escapeRe(tag)}>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) =>
+    work = work.replace(new RegExp(`<${escapeRe(tag)}(?:\\s[^<>]*)?>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) =>
       stash({ kind: 'state-update', raw: String(inner).trim(), ...parseStateUpdateBlock(String(inner)) }))
   }
   // 伏笔登记册（面板）
   for (const tag of tags(proto.foreshadowingTags)) {
-    work = work.replace(new RegExp(`<${escapeRe(tag)}>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) =>
+    work = work.replace(new RegExp(`<${escapeRe(tag)}(?:\\s[^<>]*)?>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) =>
       stash({ kind: 'foreshadowing', content: String(inner).trim() }))
   }
   // 折叠块（details：解析 <summary> 标题；无 summary 时按标签给默认标题——draft →「草稿」）
   const COLLAPSIBLE_DEFAULT_TITLES: Record<string, string> = { details: '详情', draft: '草稿' }
   for (const tag of tags(proto.collapsibleTags)) {
-    work = work.replace(new RegExp(`<${escapeRe(tag)}>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) => {
-      const m = String(inner).match(/<summary>([\s\S]*?)<\/summary>/i)
+    work = work.replace(new RegExp(`<${escapeRe(tag)}(?:\\s[^<>]*)?>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) => {
+      const m = String(inner).match(/<summary(?:\s[^<>]*)?>([\s\S]*?)<\/summary>/i)
       const title = m ? m[1].trim() : (COLLAPSIBLE_DEFAULT_TITLES[tag] ?? '详情')
       const content = m ? String(inner).replace(m[0], '') : String(inner)
       return stash({ kind: 'collapsible', title, content: content.trim() })
@@ -336,12 +364,12 @@ export function applyOutputProtocolSegments(text: string, proto: OutputProtocol,
   }
   // 独立思维链标签
   for (const tag of tags(proto.reasoningTags)) {
-    work = work.replace(new RegExp(`<${escapeRe(tag)}>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) =>
+    work = work.replace(new RegExp(`<${escapeRe(tag)}(?:\\s[^<>]*)?>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) =>
       stash({ kind: 'reasoning', content: String(inner).trim() }))
   }
   // 状态栏卡片
   for (const tag of tags(proto.statusTags)) {
-    work = work.replace(new RegExp(`<${escapeRe(tag)}>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) => {
+    work = work.replace(new RegExp(`<${escapeRe(tag)}(?:\\s[^<>]*)?>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) => {
       const t = String(inner).trim()
       return t ? stash({ kind: 'status', content: t }) : ''
     })
@@ -349,7 +377,7 @@ export function applyOutputProtocolSegments(text: string, proto: OutputProtocol,
   // 行动选项（渲染于尾部：占位符移到文本末——ST 形态）。
   // 批次修复：块内多行【…】/（…）开头拆成独立按钮；<font color="#hex"> 剥壳为按钮文字颜色
   for (const tag of tags(proto.actionTags)) {
-    work = work.replace(new RegExp(`<${escapeRe(tag)}>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) => {
+    work = work.replace(new RegExp(`<${escapeRe(tag)}(?:\\s[^<>]*)?>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), (_m, inner: string) => {
       const opts = splitActionOptions(String(inner).trim())
       return opts.map(o => stash(o.color !== undefined
         ? { kind: 'action', text: o.label, color: o.color }
@@ -358,7 +386,7 @@ export function applyOutputProtocolSegments(text: string, proto: OutputProtocol,
   }
   // 剥壳（wrap：内容保留原位）
   for (const tag of tags(proto.wrapTags)) {
-    work = work.replace(new RegExp(`<${escapeRe(tag)}>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), '$1')
+    work = work.replace(new RegExp(`<${escapeRe(tag)}(?:\\s[^<>]*)?>([\\s\\S]*?)</${escapeRe(tag)}>`, 'g'), '$1')
   }
 
   // ---- 批次修复：通用未知标签兜底 ----
@@ -417,20 +445,24 @@ export function applyOutputProtocolSegments(text: string, proto: OutputProtocol,
 
   if (streaming) {
     // 尾部悬空开标签（流式未闭合）：循环剥离——嵌套未闭合（<A>…<B>半截）从最内层
-    // 逐层剥掉，闭合后走上面的完整提取
+    // 逐层剥掉，闭合后走上面的完整提取。
+    // 【2026-09-08 流式修复】原正则 <tag>([^<]*)$ 要求内容无 < → 含 HTML 的悬空标签
+    // （如 <status><b>半截）不剥离 → 楼层顶部裸闪 <status>。改为 negative-lookahead：
+    // 匹配 <tag> 后到末尾、且中间不含 </tag> 的区段，整体替换为内容本身（剥壳不丢内容）。
     const all = [...tags(proto.stateUpdateTags), ...tags(proto.foreshadowingTags), ...tags(proto.collapsibleTags),
       ...tags(proto.reasoningTags), ...tags(proto.statusTags), ...tags(proto.actionTags), ...tags(proto.wrapTags),
       'StatusPlaceHolderImpl']
     for (let i = 0; i < 12; i++) { // 嵌套深度上限防御
       let changed = false
       for (const tag of all) {
-        const next = work.replace(new RegExp(`<${escapeRe(tag)}>([^<]*)$`), '$1')
+        const re = new RegExp(`<${escapeRe(tag)}(?:\\s[^<>]*)?>((?:(?!</${escapeRe(tag)}>)[\\s\\S])*)$`)
+        const next = work.replace(re, '$1')
         if (next !== work) { work = next; changed = true }
       }
-      const nextSummary = work.replace(/<summary>([^<]*)$/, '$1')
+      const nextSummary = work.replace(/<summary(?:\s[^<>]*)?>((?:(?!<\/summary>)[\s\S])*)$/i, '$1')
       if (nextSummary !== work) { work = nextSummary; changed = true }
       // 未知标签的悬空开标签同样剥离（闭合前不闪原始标签）
-      const nextUnknown = work.replace(/<([A-Za-z][\w-]*)(?:\s[^<>]*)?>([^<>]*)$/,
+      const nextUnknown = work.replace(/<([A-Za-z][\w~-]*)(?:\s[^<>]*)?>((?:(?!<\/\1>)[\s\S])*)$/i,
         (m, tag: string, inner: string) => (isUnknownTag(tag) ? String(inner) : m))
       if (nextUnknown !== work) { work = nextUnknown; changed = true }
       if (!changed) break

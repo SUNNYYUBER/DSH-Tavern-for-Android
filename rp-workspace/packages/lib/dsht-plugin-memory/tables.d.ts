@@ -83,7 +83,14 @@ export interface LoadedSheets {
  * 无 sheets 键但发现旧键 tableData/tables → E11 一次性转换并写回（标 tablesMigrated）。
  */
 export declare function loadSheets(dshHome: string, sessionId: string): Promise<LoadedSheets>;
-/** 写会话表格（薄 IO，建目录；调用方负责历史栈） */
+/** 写会话表格（薄 IO，建目录；调用方负责历史栈）。
+ *  【鲁棒轮 2026-09-09】字段级 merge 写——rp/state/<sid>.json 是多写方共享文件
+ *  （MVU variables/state、dsh-plugin cursor/presetId、loreTimed…）。原实现把
+ *  load 时读到的 whole 整树原样写回：/tables/step-summary 与 /tables/rebuild 在
+ *  load 与 save 之间隔着秒级 LLM 调用，期间其他写方（每轮 pre-step 的 cursor/
+ *  state、MVU patch）落盘的变更会被旧 whole 静默回滚（cursor 倒退/变量丢失）。
+ *  现改为保存前重读最新盘面、只覆写 sheets/sheetHistory/tablesMigrated 三键，
+ *  其余键保留最新值；写盘换 atomicWriteText（与项目发布口径一致）。 */
 export declare function saveSheets(dshHome: string, sessionId: string, whole: Record<string, unknown>): Promise<void>;
 /** 历史栈入栈（纯函数）：深快照 sheets，栈深 20（超出丢最旧） */
 export declare function pushSheetHistory(history: SheetHistoryEntry[], sheets: Sheet[], now?: number): SheetHistoryEntry[];

@@ -28,11 +28,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { rpApi } from './rpc.ts';
 import { useRpSlug } from './RpStateFloat.tsx';
+import { notifyDisplayMutation } from './RpNativeChat.tsx';
 import { buildIframeDocument, deepMergeAssign, deepMergeInsert, getButtonEventId, handleBridgeCall, parseIncomingMessage, } from './th-shim.ts';
+// 【Kemini 适配 2026-09-08】这些桥 API 成功后需要失效 RP 显示面缓存并重渲染
+// （display 正则三源 / 预设 prompt_order·regex_scripts 直接影响楼层 display 管线）
+const TH_DISPLAY_MUTATION_APIS = new Set([
+    'regexes:replace', 'preset:put', 'preset:delete', 'preset:rename', 'preset:load', 'display:reload',
+]);
 // getTavernHelperVersion 必须返回真 TH 语义的 semver：MVU bundle 等脚本会拿它跑
 // compare-versions（>= 4.0.14 判定）——非 semver 字符串会让整包 ready 回调炸掉、Mvu 挂不上。
 // 构建标记另存 __DSHT_SHIM_BUILD__（不进脚本版本判定）。
 const SHIM_VERSION = '4.8.5'; // 对齐真 TH 大版本（脚本兼容性判定用）
+export { SHIM_VERSION };
 const SHIM_BUILD = 'dsht-th-shim/6-toolbox'; // /6：C7/C8/C9/C15/C17/C18/D6/D8 扩展面 + console 桥
 const READY_TIMEOUT_MS = 15_000;
 // ---------------------------------------------------------------------------
@@ -42,7 +49,22 @@ const READY_TIMEOUT_MS = 15_000;
 // SessionRuntime 构造时注入；开关（rp/mvu-settings.json 的 mvu_notification_failure 类键）
 // 由 notifyUser 统一裁决，关 = 只 console.warn。
 let schemaFailureNotifier = null;
-async function thApi(path, payload = {}, method = 'POST') {
+// 【2026-09-07 轮询风暴截流】卡脚本 masterLoop/心跳 高频轮询同一批读端点
+// （chat/messages 每次含 1.5MB 全量消息）。后端已有 mtime 缓存，但 HTTP 往返+
+// JSON 序列化在模拟器上仍秒级——多个脚本同帧轮询同一端点会重复消耗连接池
+// （Chromium 每 host 6 连接，超配额 fetch 直接 "Failed to fetch"）。
+// 此处做 ①同 key in-flight 合并（并发调用共享同一 Promise）②读端点 1200ms
+// TTL 缓存（一次轮询风暴 N 个脚本只打一发 HTTP）。写端点不缓存且清空读缓存。
+const TH_API_READ_TTL_MS = 1200;
+const thApiReadCache = new Map();
+const thApiInFlight = new Map();
+function thApiCacheKey(path, payload, method) {
+    return `${method} ${path} ${method === 'GET' ? '' : JSON.stringify(payload)}`;
+}
+function thApiInvalidateReads() {
+    thApiReadCache.clear();
+}
+async function thApiRaw(path, payload = {}, method = 'POST') {
     const resp = await fetch(`/dsht-tavern-helper/${path.replace(/^\//, '')}`, {
         method,
         headers: { 'content-type': 'application/json' },
@@ -57,6 +79,28 @@ async function thApi(path, payload = {}, method = 'POST') {
         throw new Error(String(body.error));
     }
     return body;
+}
+async function thApi(path, payload = {}, method = 'POST') {
+    const key = thApiCacheKey(path, payload, method);
+    const now = Date.now();
+    const hit = thApiReadCache.get(key);
+    if (hit && now - hit.at < TH_API_READ_TTL_MS)
+        return hit.value;
+    const inflight = thApiInFlight.get(key);
+    if (inflight)
+        return inflight;
+    const p = thApiRaw(path, payload, method)
+        .then((value) => {
+        // 写端点（POST 变更类）成功后清读缓存；读端点写缓存（generate-raw 是生成非读——raw 归写类，禁缓存）
+        if (/(put|insert|update|replace|delete|merge|create|set|rename|raw|generate)/i.test(path))
+            thApiInvalidateReads();
+        else
+            thApiReadCache.set(key, { at: Date.now(), value });
+        return value;
+    })
+        .finally(() => { thApiInFlight.delete(key); });
+    thApiInFlight.set(key, p);
+    return p;
 }
 /** D8：轻量 DOM toast（右下角浮层；4s 自动消失——比 window alert 温和，不阻塞脚本） */
 function showDomToast(level, message) {
@@ -74,6 +118,15 @@ function showDomToast(level, message) {
     setTimeout(() => el.remove(), 4000);
 }
 async function thVarsGet(scope, slug, sessionId, scriptId) {
+    // message 作用域 = MVU 合并视图（state⊕variables）——真 TH「最新楼层变量快照」语义的
+    // 通用承载：任何 MVU 卡 getVariables({type:'message', message_id:-1}).stat_data 都成立
+    if (scope === 'message') {
+        const resp = await fetch(`/dsht-mvu/variables?sessionId=${encodeURIComponent(sessionId)}`);
+        const body = await resp.json();
+        if (body.error)
+            throw new Error(body.error);
+        return body.variables ?? {};
+    }
     const q = new URLSearchParams({ scope });
     if (slug)
         q.set('slug', slug);
@@ -86,6 +139,43 @@ async function thVarsGet(scope, slug, sessionId, scriptId) {
     if (body.error)
         throw new Error(body.error);
     return body.variables ?? {};
+}
+/** message 作用域写 = MVU 合并视图读改写 → /dsht-mvu/variables/register {replace:true}
+ * （MVU 树单一权威落点；脚本 replaceVariables/insertOrAssignVariables 到 message 作用域
+ * 不落 tavern chat 树，避免与 MVU 框架写路径互相覆盖） */
+async function thMessageVarsRegister(sessionId, variables) {
+    const resp = await fetch('/dsht-mvu/variables/register', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId, variables, replace: true }),
+    });
+    const body = await resp.json();
+    if (body.error)
+        throw new Error(body.error);
+}
+async function thMessageVarsPut(sessionId, mode, vars) {
+    const cur = await thVarsGet('message', '', sessionId, '');
+    const next = mode === 'insert' ? deepMergeInsert(cur, vars) : deepMergeAssign(cur, vars);
+    await thMessageVarsRegister(sessionId, next);
+}
+/** message 作用域按 lodash 路径删除（读改写全树后回写） */
+async function thMessageVarsDelete(sessionId, path) {
+    const cur = await thVarsGet('message', '', sessionId, '');
+    const next = structuredClone(cur);
+    // lodash 路径分段（a.b[0].c / a['b-c']）——与 for-session.ts lodashPathToPointer 同语义
+    const segs = Array.from(path.matchAll(/\[\s*'([^']*)'\s*\]|\[\s*"([^"]*)"\s*\]|\[(\d+)\]|([^.[]+)/g)
+        .map(m => m[1] ?? m[2] ?? m[3] ?? m[4])
+        .filter(Boolean));
+    if (segs.length > 0) {
+        let node = next;
+        for (let i = 0; i < segs.length - 1; i++) {
+            const nxt = node[segs[i]];
+            if (nxt === null || typeof nxt !== 'object')
+                return;
+            node = nxt;
+        }
+        delete node[segs[segs.length - 1]];
+    }
+    await thMessageVarsRegister(sessionId, next);
 }
 // ---------------------------------------------------------------------------
 // 会话运行时（会话级单例）
@@ -110,7 +200,10 @@ class SessionRuntime {
     destroyed = false;
     /** 最近一次 advance 的会话快照（messageId → 楼层号解析用；message_swiped/edited 桥） */
     lastSnapshot = null;
+    /** 流式 token 上一次投递的累计文本长度（running 期逐次 diff） */
+    prevStreamLen = 0;
     /** 最近一次成功组装的上下文快照（regexes/replace preset 作用域解析 presetId 用） */
+    /** 快照最新值（P3a：getRpContextSnapshot 读它做楼层帧 bootstrap） */
     contextSnapshot = null;
     /** C15：console 转发的节流刷新计时器（高日志频脚本不刷爆 React） */
     consoleNotifyTimer = 0;
@@ -163,6 +256,7 @@ class SessionRuntime {
     }
     /** 重载全部脚本（真 TH reloadAll 同款：销毁 iframe 重建） */
     reloadAll() {
+        this.mountGen += 1; // 【鲁棒轮】让 await 窗口内的旧 mountScript 续体全部放弃
         for (const f of this.frames.values())
             f.remove();
         this.frames.clear();
@@ -172,8 +266,52 @@ class SessionRuntime {
         this.loadContextSnapshot();
         this.notify();
     }
+    // ---- 消息楼层 guest shim（2026-09-06 视觉验收：真 TH 对 message iframe 注入
+    //  predefine.js——卡内脚本（示例游戏状态栏等）在楼层 iframe 直接调 getAllVariables/Mvu）----
+    /** guest 桥路由表（React 管理的楼层 iframe；destroy/reloadAll 不 remove 它们） */
+    guestFrames = new Map();
+    guestSeq = 0;
+    /** 预约一个 guest 楼层桥（建 statuses 前先给路由占位）；返回桥参数供建文档用 */
+    reserveGuestFrame() {
+        const scriptId = `msgframe-${++this.guestSeq}`;
+        this.guestFrames.set(scriptId, null);
+        return { scriptId, secret: this.secret };
+    }
+    attachGuestFrame(scriptId, iframe) {
+        if (this.guestFrames.has(scriptId))
+            this.guestFrames.set(scriptId, iframe);
+        // 【P3a 2026-09-07】楼层帧挂载晚于快照推送时补推
+        this.pushContextToGuest(scriptId);
+    }
+    /** 快照补推（重试梯子 0/400/1200/2800ms）：postMessage 在 srcdoc shim 消息监听器
+     * 安装前 posting 会丢（vendor bundle 同步求值窗口），幂等覆盖无副作用 */
+    pushContextToGuest(scriptId) {
+        if (!this.contextSnapshot)
+            return;
+        for (const delay of [0, 400, 1200, 2800]) {
+            setTimeout(() => {
+                if (this.destroyed)
+                    return;
+                const cur = this.guestFrames.get(scriptId);
+                if (!cur || !this.contextSnapshot)
+                    return;
+                cur.contentWindow?.postMessage({
+                    '__dsht_th': true, secret: this.secret, scriptId,
+                    th: 'context', context: this.contextSnapshot,
+                }, '*');
+            }, delay);
+        }
+    }
+    releaseGuestFrame(scriptId) {
+        this.guestFrames.delete(scriptId);
+    }
+    /** 桥消息路由判定（脚本帧 + guest 楼层帧统一入口） */
+    hasBridge(scriptId) {
+        return this.statuses.has(scriptId) || this.guestFrames.has(scriptId);
+    }
     destroy() {
         this.destroyed = true;
+        this.mountGen += 1; // 【鲁棒轮】让 await 窗口内的旧 mountScript 续体全部放弃
         if (this.consoleNotifyTimer) {
             clearTimeout(this.consoleNotifyTimer);
             this.consoleNotifyTimer = 0;
@@ -181,6 +319,7 @@ class SessionRuntime {
         for (const f of this.frames.values())
             f.remove();
         this.frames.clear();
+        this.guestFrames.clear(); // guest 楼层帧由 React 卸载自清理，这里只摘路由
         this.container?.remove();
         this.container = null;
         this.uiListeners.clear();
@@ -229,13 +368,30 @@ class SessionRuntime {
         }
         return this.container;
     }
-    mountScript(script) {
+    /** 【鲁棒轮 2026-09-09】挂载代数：reloadAll/destroy 递增——mountScript 的
+     *  await fetchFrameVars 窗口（首载网络请求，秒级）内用户点「重载」时，旧续体
+     *  恢复后 statuses 已被新挂载重写，原「statuses.has 守卫」永不命中 → 同脚本
+     *  双 iframe 双执行（旧帧不在 frames 里，reload/destroy 永远摘不掉，桥回包
+     *  错投新帧脚本挂死）。恢复后 gen 不匹配即放弃。 */
+    mountGen = 0;
+    async mountScript(script) {
+        const gen = this.mountGen;
         const status = {
             phase: 'loading',
             missing: [],
             buttons: script.buttons.map(b => ({ ...b })),
         };
         this.statuses.set(script.id, status);
+        // 【2026-09-07 真 TH 同步变量面】帧创建即嵌合并变量树（global<preset<character<script
+        // <chat<message-MVU合并视图）——脚本同步读 getVariables(...).stat_data 依赖它
+        //（fetchFrameVars 模块级 5s TTL 缓存：8 个脚本只 1 发请求）
+        let frameVars;
+        try {
+            frameVars = await fetchFrameVars(this.sessionId, this.slug);
+        }
+        catch { /* 拉不到 = 空缓存 */ }
+        if (this.destroyed || gen !== this.mountGen || !this.statuses.has(script.id))
+            return; // 等待期运行时销毁/重载
         const iframe = document.createElement('iframe');
         // 同源形态复刻（用户拍板的定案）：真酒馆助手（TH/JS-Slash-Runner）的脚本 iframe 是
         // srcdoc + same-origin（sandbox 无限制），predefine.js 直接 window.parent.$、从 parent
@@ -245,7 +401,11 @@ class SessionRuntime {
         // token = 与宿主同源，脚本可访问 parent（配合 host-vendor 在宿主 window 上补挂的
         // $/_/z/YAML 全局，等效真 TH 形态）。同源后 localStorage 原生可用（shim 的存储垫
         // 探测成功即自动不遮蔽，无需改动）。
-        iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+        // 【2026-09-07】+ allow-modals/allow-forms/allow-popups：sandbox 缺 allow-modals 时
+        // iframe 内 confirm()/alert() 被 Chromium 静默丢弃（到不了 WebChromeClient 的
+        // onJsConfirm）——「飞讯点联系人 openChat 无响应」实证根因（脚本 confirm 分支
+        // 从未到达、零报错）。Android 侧对话框三件套已实现（MainActivity.kt 2026-09-07）。
+        iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-modals allow-forms allow-popups');
         iframe.name = script.id;
         iframe.title = `TH 脚本：${script.name}`;
         // 默认隐藏（真 TH v-show=false 同款）：实测深色宿主里满视口 iframe 的画布会
@@ -259,15 +419,19 @@ class SessionRuntime {
             secret: this.secret,
             version: SHIM_VERSION,
             content: script.content,
+            initialVars: frameVars,
         });
         this.frames.set(script.id, iframe);
         this.ensureContainer().append(iframe);
-        // 执行超时 watchdog（只判 loading 期；运行期错误记 error 不翻转状态）
+        // 【2026-09-07 根修】就绪 watchdog 改为**非终态**：真机实测宿主页面在物化渲染
+        // 大楼层期主线程饱和，iframe 模块求值可延迟 >15s——旧逻辑 15s 超时直接判 failed
+        // （终态），随后到达的 running 信标被忽略 → 按钮事件永久排队 → 「点击无任何反应」。
+        // 现在超时只记诊断信息，phase 保持 loading，晚到信标照常生效（failed 仅保留给
+        // iframe 完全不存在等硬错误，当前无此路径）。
         setTimeout(() => {
             const st = this.statuses.get(script.id);
             if (st && st.phase === 'loading') {
-                st.phase = 'failed';
-                st.error = `执行超时（${READY_TIMEOUT_MS / 1000}s 未就绪）`;
+                st.error = `等待就绪超过 ${READY_TIMEOUT_MS / 1000}s（继续等待信标，非终态）`;
                 this.notify();
             }
         }, READY_TIMEOUT_MS);
@@ -278,11 +442,25 @@ class SessionRuntime {
             return;
         const st = this.statuses.get(msg.scriptId);
         if (msg.th === 'status') {
-            if (!st)
+            // 【2026-09-07 调试钩子（临时）】信标时序进环形缓冲（任意时刻可读）
+            const log = window.__dshtBeaconLog;
+            if (Array.isArray(log))
+                log.push({ t: Math.round(performance.now() / 1000), th: 'status', sid: msg.scriptId.slice(0, 8), phase: msg.phase, cur: st?.phase ?? 'NO-STATUS' });
+            if (!st) {
+                // 【P3a 2026-09-07】guest 楼层帧（msgframe-*）不在 statuses——其 running 信标
+                // 到达时 shim 监听器必然已就绪，此刻补推快照是零竞态握手点（电梯帧收不到
+                // loadContextSnapshot 的早期推送 → 卡内 getContext 永远 pending 空壳）
+                if (msg.phase === 'running' && msg.scriptId.startsWith('msgframe-')
+                    && this.guestFrames.has(msg.scriptId) && this.contextSnapshot) {
+                    this.pushContextToGuest(msg.scriptId);
+                }
                 return;
+            }
             if (msg.phase === 'running') {
-                if (st.phase === 'loading')
+                if (st.phase === 'loading') {
                     st.phase = 'running';
+                    this.flushPendingEvents(msg.scriptId); // L1a：补投加载期积压的事件
+                }
             }
             else if (msg.phase === 'failed') {
                 // 诚实化：loading 期失败翻转状态；运行期错误只记录（脚本可能部分可用）
@@ -300,6 +478,15 @@ class SessionRuntime {
             }
             return;
         }
+        if (msg.th === 'script-error') {
+            // 【2026-09-07 根修配套】脚本运行期错误只记录（不翻转 phase）——真 TH 语义：
+            // 脚本抛错/异步 rejection 不摘除事件面，按钮等交互保持可用，错误在面板可见。
+            if (st) {
+                st.error = msg.error ?? '未知错误';
+                this.notify();
+            }
+            return;
+        }
         if (msg.th === 'toast') {
             console.log(`[dsht-th] toast(${msg.level}) ${msg.scriptId}: ${msg.message}`);
             this.toasts.push({ ts: Date.now(), level: msg.level, message: msg.message, scriptId: msg.scriptId });
@@ -311,24 +498,15 @@ class SessionRuntime {
         if (msg.th === 'ui') {
             if (st) {
                 st.hasUi = msg.hasUi;
+                // 【真 TH 语义对齐 2026-09-07】真酒馆助手的脚本 iframe = v-show=false 永久隐藏
+                //（Iframe.vue: <iframe v-show="false">），脚本 UI 一律经 parent.$ 注入父文档
+                //（predefine.js/parent_jquery.js）。旧 rect 裁剪机制（iframe 按并集矩形显示）与
+                // position:fixed 部件存在坐标反馈振荡——面板被钉在屏幕底角 187x150（真机实拍）。
+                // 现在 iframe 永不显示：hasUi 仅作面板状态展示，UI 可见性归宿主文档。
                 const frame = this.frames.get(msg.scriptId);
                 if (frame) {
-                    if (msg.hasUi && msg.rect && msg.rect.w > 0 && msg.rect.h > 0) {
-                        // iframe 只包住脚本 UI 的并集矩形（满视口画布在深色宿主会刷白盖住聊天区）；
-                        // 收小后可放心开 pointer-events——脚本浮动部件可点了（沙箱隔离不变）
-                        const { x, y, w, h } = msg.rect;
-                        frame.style.left = `${x}px`;
-                        frame.style.top = `${y}px`;
-                        frame.style.width = `${w}px`;
-                        frame.style.height = `${h}px`;
-                        frame.style.inset = 'auto';
-                        frame.style.visibility = 'visible';
-                        frame.style.pointerEvents = 'auto';
-                    }
-                    else {
-                        frame.style.visibility = 'hidden';
-                        frame.style.pointerEvents = 'none';
-                    }
+                    frame.style.visibility = 'hidden';
+                    frame.style.pointerEvents = 'none';
                 }
                 this.notify();
             }
@@ -339,6 +517,11 @@ class SessionRuntime {
             this.logs.push({ ts: Date.now(), level: msg.level, message: msg.message, scriptId: msg.scriptId });
             if (this.logs.length > 200)
                 this.logs.shift();
+            // 【实机排障镜像】脚本 console 同步进宿主 console（logcat 可读——脚本挂点诊断不依赖面板）
+            try {
+                console.debug(`[dsht-th:script ${msg.scriptId.slice(0, 8)}] ${msg.level}: ${String(msg.message).slice(0, 260)}`);
+            }
+            catch { /* ignore */ }
             if (!this.consoleNotifyTimer) {
                 this.consoleNotifyTimer = setTimeout(() => {
                     this.consoleNotifyTimer = 0;
@@ -351,41 +534,75 @@ class SessionRuntime {
         const call = msg;
         console.debug(`[dsht-th] call ${call.scriptId} ${call.api}`, call.args);
         const respond = (ok, value, error) => {
-            const frame = this.frames.get(call.scriptId);
+            const frame = this.frames.get(call.scriptId) ?? this.guestFrames.get(call.scriptId) ?? null;
+            // 【排障】响应回传可观测（generate:raw 等长回复桥丢失诊断）
+            try {
+                console.debug(`[dsht-th] respond ${call.scriptId.slice(0, 8)} ${call.api} ok=${ok}${frame ? '' : ' FRAME-MISSING!'}`);
+            }
+            catch { /* ignore */ }
             frame?.contentWindow?.postMessage({
                 '__dsht_th': true, secret: this.secret, scriptId: call.scriptId,
                 th: 'result', callId: call.callId, ok, ...(ok ? { value } : { error }),
             }, '*');
         };
+        // 【Kemini 适配 2026-09-08】display 相关变更桥成功后自动失效+重渲染——
+        // 脚本直接 replaceTavernRegexes / updatePresetWith（Kemini 思维链开关）后，
+        // displayRegexCache 不失效会「切了没反应」。
         handleBridgeCall(this.bridgeDeps, call.scriptId, call.api, call.args)
-            .then(value => respond(true, value ?? null))
+            .then(value => {
+            respond(true, value ?? null);
+            if (TH_DISPLAY_MUTATION_APIS.has(call.api))
+                notifyDisplayMutation();
+        })
             .catch((e) => respond(false, undefined, e.message));
     }
     bridgeDeps = {
-        varsGet: (scope, scriptId) => thVarsGet(scope, this.slug, this.sessionId, scriptId),
+        // 【Kemini 适配 2026-09-08】builtin.reloadAndRenderChatWithoutEvents 通道
+        displayReload: () => { notifyDisplayMutation(); return Promise.resolve(); },
+        // 【通用修复 2026-09-09】scope='script' 但 scriptId 为空（楼层渲染 shim 上下文——渲染产出的
+        // 脚本不属于任何注册脚本）→ 降级 'chat' 作用域。原样直发 = host 400 "scriptId required"
+        // → 脚本变量链路死 → 状态栏等交互元素全部无响应（wuwa 实测抓到）。真 TH 语义：非注册
+        // 脚本上下文的 script 作用域无意义，回退 chat 树。
+        varsGet: (scope, scriptId) => thVarsGet(scope === 'script' && !scriptId ? 'chat' : scope, this.slug, this.sessionId, scriptId),
         varsPut: async (scope, tree, scriptId) => {
+            if (scope === 'script' && !scriptId)
+                scope = 'chat';
+            if (scope === 'message')
+                return void await thMessageVarsReplace(this.sessionId, tree);
             await thApi('variables', { scope, slug: this.slug, sessionId: this.sessionId, scriptId, variables: tree });
         },
         varsMerge: async (scope, vars, mode, scriptId) => {
+            if (scope === 'script' && !scriptId)
+                scope = 'chat';
+            if (scope === 'message')
+                return void await thMessageVarsPut(this.sessionId, mode, vars);
             const cur = await thVarsGet(scope, this.slug, this.sessionId, scriptId);
             const next = mode === 'insert' ? deepMergeInsert(cur, vars) : deepMergeAssign(cur, vars);
             await thApi('variables', { scope, slug: this.slug, sessionId: this.sessionId, scriptId, variables: next });
         },
         varsDelete: async (scope, path, scriptId) => {
+            if (scope === 'script' && !scriptId)
+                scope = 'chat';
+            if (scope === 'message')
+                return void await thMessageVarsDelete(this.sessionId, path);
             await thApi('variables', { scope, slug: this.slug, sessionId: this.sessionId, scriptId, path }, 'DELETE');
         },
         varsAll: async (scriptId) => {
-            const [global, preset, character, script, chat] = await Promise.all([
+            const scriptScope = scriptId ? 'script' : 'chat';
+            const [global, preset, character, script, chat, message] = await Promise.all([
                 thVarsGet('global', '', '', ''),
                 thVarsGet('preset', '', this.sessionId, ''),
                 thVarsGet('character', this.slug, '', ''),
-                thVarsGet('script', '', this.sessionId, scriptId),
+                thVarsGet(scriptScope, '', this.sessionId, scriptId),
                 thVarsGet('chat', '', this.sessionId, ''),
+                thVarsGet('message', '', this.sessionId, '').catch(() => ({})),
             ]);
-            // 真 TH _getAllVariables 顺序：global < character < script < chat（preset 位于 global 与 character 之间）
-            return deepMergeAssign(deepMergeAssign(deepMergeAssign(deepMergeAssign(global, preset), character), script), chat);
+            // 真 TH _getAllVariables 顺序：global < character < script < chat（preset 位于 global
+            // 与 character 之间）；message（MVU 合并视图）最高层——楼层帧同步树 stat_data 保证最新
+            return deepMergeAssign(deepMergeAssign(deepMergeAssign(deepMergeAssign(deepMergeAssign(global, preset), character), script), chat), message);
         },
         buttonsGet: (scriptId) => [...(this.statuses.get(scriptId)?.buttons ?? [])],
+        buttonsExists: (scriptId) => this.statuses.has(scriptId),
         buttonsSet: (scriptId, buttons) => {
             const st = this.statuses.get(scriptId);
             if (!st)
@@ -420,6 +637,16 @@ class SessionRuntime {
             await thApi('preset/load', { sessionId: sessionId || this.sessionId, name });
         },
         chatMessages: (sessionId) => thApi('chat/messages', { sessionId: sessionId || this.sessionId }),
+        // ---- 【P3a 2026-09-07】聊天写路径桥（createChatMessages / setChatMessages）----
+        // loopback：/dsht-tavern-helper/chat/append|update → dsh-plugin /dsht-rp/chat/append|update
+        //（live session 官方 append / compaction+replace 原语在 dsh-plugin 进程侧）
+        chatAppend: (messages, options) => thApi('chat/append', {
+            sessionId: this.sessionId, messages,
+            insertBefore: options?.insertBefore === undefined || options.insertBefore === 'end'
+                ? 'end'
+                : Number(options.insertBefore),
+        }),
+        chatUpdate: (targets) => thApi('chat/update', { sessionId: this.sessionId, targets }),
         regexesGet: (slug, sessionId) => thApi('regexes/get', { slug: slug || this.slug, sessionId: sessionId || this.sessionId }),
         regexesReplace: async (regexes, scope, slug, sessionId) => {
             // 精确按契约组装：global 只需 scope；character 需 slug；preset 需 presetId（快照解析，缺则给 sessionId 兜底）
@@ -440,6 +667,25 @@ class SessionRuntime {
         // ---- 【实机审计修复 2026-09-05】P1/P2 长尾 deps ----
         // substitudeMacros：运行期宏展开（{{setvar}} 等写盘语义在 facade 内收口）
         macrosExpand: (text) => thApi('macros/expand', { text, slug: this.slug, sessionId: this.sessionId }),
+        // L1b：自定义宏注册（直走 dsh-plugin 路由——注册表在生成期进程侧，facade 只是预览）
+        macrosRegister: async (name, value) => {
+            const r = await fetch('/dsht-rp/macros/register', {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ name, value }),
+            }).then(x => x.json());
+            if (r.error)
+                throw new Error(r.error);
+            return r;
+        },
+        macrosUnregister: async (name) => {
+            const r = await fetch('/dsht-rp/macros/unregister', {
+                method: 'POST', headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ name }),
+            }).then(x => x.json());
+            if (r.error)
+                throw new Error(r.error);
+            return r;
+        },
         // replaceLorebookEntries：世界书条目整表替换
         wbReplaceEntries: async (name, entries) => {
             await thApi('worldbook/replace-entries', { name, entries, sessionId: this.sessionId });
@@ -473,6 +719,11 @@ class SessionRuntime {
         },
         // C9 一次性补全（TH 插件 loopback 转发 /dsht-rp/llm/classify）
         generate: (system, prompt) => thApi('generate', { sessionId: this.sessionId, system, prompt }),
+        // generateRaw 真语义：完整 payload → /generate-raw（ordered_prompts 装配 + loopback）
+        generateRawRaw: (payload) => thApi('generate-raw', {
+            sessionId: this.sessionId, slug: this.slug,
+            ...(payload && typeof payload === 'object' ? payload : {}),
+        }),
         // D6 window.Mvu 数据面（/dsht-mvu/* 直连，不经 thApi 前缀）
         mvuVariables: async () => {
             const resp = await fetch(`/dsht-mvu/variables?sessionId=${encodeURIComponent(this.sessionId)}`);
@@ -537,37 +788,113 @@ class SessionRuntime {
                     th: 'context', context: snapshot,
                 }, '*');
             }
+            // 【P3a 2026-09-07】guest 楼层帧同样要收快照——卡内脚本（示例游戏开场白状态栏等）
+            // 在楼层 iframe 直接调 getContext/getCharWorldbookNames；只推脚本帧会让楼层帧
+            // 永远停在 __dshtContextPending 空壳 → 「未绑定主世界书」误报（实机实证）。
+            // 推送同样受 shim 监听器安装竞态影响 → 走重试梯子。
+            for (const scriptId of this.guestFrames.keys()) {
+                this.pushContextToGuest(scriptId);
+            }
         }).catch((e) => {
             console.warn('[dsht-th] 上下文快照拉取失败:', e.message);
         });
     }
     // ---- 会话事件流（快照 diff → ST 事件投递）----
+    /** L1a 竞态修复：加载中的 iframe 还没装消息监听——事件按 scriptId 入队，running 后补投
+     * （实测：chat_id_changed 在 mount 后立刻 emit，iframe shim 未就绪 → 事件丢失）。
+     * 队列上限 50（永不就绪的脚本防内存膨胀）；destroy 时随运行时应回收。 */
+    pendingEvents = new Map();
     emitSessionEvent(eventType, args) {
         for (const [scriptId, frame] of this.frames) {
+            const st = this.statuses.get(scriptId);
+            if (st && st.phase !== 'running') {
+                const q = this.pendingEvents.get(scriptId) ?? [];
+                if (q.length < 50)
+                    q.push({ eventType, args });
+                this.pendingEvents.set(scriptId, q);
+                continue;
+            }
             frame.contentWindow?.postMessage({
                 '__dsht_th': true, secret: this.secret, scriptId,
                 th: 'event', eventType, args,
             }, '*');
         }
     }
-    /** 快照推进（组件 props 变化驱动；RP 会话才调用） */
+    /** 脚本就绪（phase → running）后补投积压事件 */
+    flushPendingEvents(scriptId) {
+        const q = this.pendingEvents.get(scriptId);
+        if (!q || q.length === 0)
+            return;
+        this.pendingEvents.delete(scriptId);
+        const frame = this.frames.get(scriptId);
+        for (const ev of q) {
+            frame?.contentWindow?.postMessage({
+                '__dsht_th': true, secret: this.secret, scriptId,
+                th: 'event', eventType: ev.eventType, args: ev.args,
+            }, '*');
+        }
+    }
+    /** 快照推进（组件 props 变化驱动；RP 会话才调用）
+     *  【hook 移植 L1a 2026-09-06】事件桥补全（ST/Luker events.js 对照）：
+     *  - 逐楼层投递（一次 advance 落多条时逐条发，不再只看末条）；
+     *  - order 收缩 → message_deleted（载荷 = 收缩后长度，ST 同语义）；
+     *  - running 期流式 token：末条 assistant 节点文本增长即投 stream_token_received
+     *    （载荷 = 累计文本，ST script.js:6293 同语义）+ iframe 增量变体；
+     *  - generation_started/ended 双命名空间同投（tavern_events + iframe js_* 变体）。 */
     advance(snapshot) {
         this.lastSnapshot = snapshot;
-        const order = snapshot.chat?.order?.length ?? snapshot.surface?.nodes?.length ?? 0;
-        const nodes = snapshot.surface?.nodes;
-        const lastKind = nodes && nodes.length > 0 ? String(nodes[nodes.length - 1]?.kind ?? '') : '';
+        const chat = snapshot.chat;
+        const order = chat?.order?.length ?? 0;
         const running = snapshot.running === true;
-        if (this.prevOrder >= 0 && order > this.prevOrder) {
-            const idx = order - 1;
-            if (lastKind === 'user')
-                this.emitSessionEvent('message_sent', [idx]);
-            else if (lastKind)
-                this.emitSessionEvent('message_received', [idx]);
+        if (this.prevOrder >= 0 && chat?.order && chat.nodes) {
+            if (order > this.prevOrder) {
+                // 逐楼层投递：kind 在节点顶层（'user' / 'assistant-step' / 'steering' 等）
+                const kindByKey = new Map();
+                for (const n of chat.nodes.values()) {
+                    if (typeof n.key === 'string')
+                        kindByKey.set(n.key, String(n.kind ?? ''));
+                }
+                for (let idx = this.prevOrder; idx < order; idx++) {
+                    const kind = kindByKey.get(String(chat.order[idx])) ?? '';
+                    if (kind === 'user')
+                        this.emitSessionEvent('message_sent', [idx]);
+                    else if (kind === 'assistant-step' || kind === 'assistant')
+                        this.emitSessionEvent('message_received', [idx]);
+                }
+            }
+            else if (order < this.prevOrder) {
+                this.emitSessionEvent('message_deleted', [order]);
+            }
         }
-        if (!this.prevRunning && running)
+        // 流式 token（running 期）：chat.order 末条 assistant 节点的 text 块拼接 diff
+        if (running && chat?.order && chat.nodes && chat.order.length > 0) {
+            const lastKey = String(chat.order[chat.order.length - 1]);
+            for (const n of chat.nodes.values()) {
+                if (typeof n.key !== 'string' || n.key !== lastKey)
+                    continue;
+                if (n.data?.status !== 'running')
+                    continue;
+                let text = '';
+                for (const b of n.data.blocks ?? []) {
+                    if (b.kind === 'text' && typeof b.text === 'string')
+                        text += b.text;
+                }
+                if (text.length > this.prevStreamLen) {
+                    this.prevStreamLen = text.length;
+                    this.emitSessionEvent('stream_token_received', [text]);
+                    this.emitSessionEvent('js_stream_token_received_incrementally', [text]);
+                }
+            }
+        }
+        if (!this.prevRunning && running) {
+            this.prevStreamLen = 0;
             this.emitSessionEvent('generation_started', []);
+            this.emitSessionEvent('js_generation_started', []);
+        }
         if (this.prevRunning && !running) {
             this.emitSessionEvent('generation_ended', [order]);
+            this.emitSessionEvent('js_generation_ended', [order]);
+            this.emitSessionEvent('js_stream_token_received_fully', []);
             // 生成结束后消息面已变：重拉快照推给 iframe（getContext 同步面保持新鲜）
             this.loadContextSnapshot();
         }
@@ -575,44 +902,130 @@ class SessionRuntime {
         this.prevRunning = running;
     }
     /**
-     * 【实机审计修复 2026-09-05】RpNativeChat 成功回调桥（message_swiped / message_edited）：
-     * 变体切换 / 会话编辑成功处 dispatch 的 TH_HOST_EVENT 进来后，把锚（assistant 的
-     * messageId / user 的 nodeKey）解析为楼层号再投递。楼层号 = chat.order 下标（与
-     * advance() 的 message_sent/received 楼层口径一致）；解析不到（快照未含该消息）静默跳过。
+     * RpNativeChat 成功回调桥（message_swiped / message_edited / message_sent / message_received /
+     * message_deleted）：TH_HOST_EVENT CustomEvent 进来后解析楼层号再投递。
+     * 【实机验证修复 2026-09-06】dock 席位的 session prop 不带 chat 投影（advance 实机 dump
+     * 实证 chat=n）——旧实现从 lastSnapshot.chat 解析楼层恒 undefined 静默跳过，swiped/edited
+     * 从未真正投递。改为经数据面 chat/messages（facade 导出现在带事件 seq）按 seq 解析楼层；
+     * 解析不到回落最新消息序号（事件语义 = "最新那条被 swipe/edit"）。
      */
-    emitNativeChatEvent(sessionId, eventType, anchor) {
+    emitNativeChatEvent(sessionId, eventType, anchor, args) {
         if (sessionId !== this.sessionId)
             return;
-        const chat = this.lastSnapshot?.chat;
-        const order = chat?.order;
-        const nodes = chat?.nodes;
-        if (!order || !nodes)
+        // args 存在 = 直投（stream_token_received 等无楼层锚的事件）
+        if (args !== undefined) {
+            this.emitSessionEvent(eventType, args);
+            // 双命名空间补齐：live 路径（dock prop 无 chat 投影，advance 流式分支跑不到）
+            // 的 js_* 变体也在这里同投，与 advance() 的 665-666 行对齐
+            if (eventType === 'stream_token_received')
+                this.emitSessionEvent('js_stream_token_received_incrementally', args);
             return;
-        const messageIdByKey = new Map();
-        for (const n of nodes.values()) {
-            if (typeof n.key === 'string')
-                messageIdByKey.set(n.key, n.data?.finalNode?.messageId);
         }
-        let floor = -1;
-        let i = 0;
-        for (const key of order) {
-            const k = String(key);
-            if ((anchor.nodeKey !== undefined && k === anchor.nodeKey)
-                || (anchor.messageId !== undefined && messageIdByKey.get(k) === anchor.messageId)) {
-                floor = i;
-                break;
+        void (async () => {
+            let floor = -1;
+            try {
+                const r = await thApi('chat/messages', { sessionId: this.sessionId });
+                const msgs = Array.isArray(r.messages) ? r.messages : [];
+                if (anchor.seq !== undefined) {
+                    const hit = msgs.find(m => m.seq === anchor.seq);
+                    if (hit && typeof hit.message_id === 'number')
+                        floor = hit.message_id;
+                }
+                if (floor < 0 && msgs.length > 0) {
+                    // 回落：锚解析失败（导出滞后于视图等）→ 最新消息
+                    const last = msgs[msgs.length - 1];
+                    floor = typeof last.message_id === 'number' ? last.message_id : msgs.length - 1;
+                }
             }
-            i++;
-        }
-        if (floor >= 0)
-            this.emitSessionEvent(eventType, [floor]);
+            catch { /* 数据面不可达 */ }
+            if (floor < 0 && eventType === 'message_deleted')
+                floor = 0;
+            if (floor >= 0)
+                this.emitSessionEvent(eventType, [floor]);
+        })();
     }
     clickButton(scriptId, buttonName) {
+        // 【2026-09-07 调试钩子配套】按钮事件派发路径可观测化（临时）
+        const st = this.statuses.get(scriptId);
+        console.log(`[dsht-th-beacon] clickButton: script=${scriptId.slice(0, 8)} btn=${buttonName} phase=${st?.phase ?? 'NO-STATUS'} frames=${this.frames.size}`);
         this.emitSessionEvent(getButtonEventId(scriptId, buttonName), []);
     }
 }
 /** 会话级单例注册表 */
 const runtimes = new Map();
+// 【实机排障钩子】CDP 诊断面：window.__dshtThRt().get(sid) → SessionRuntime（logs/statuses 可读）
+if (typeof window !== 'undefined') {
+    window['__dshtThRt'] = () => runtimes;
+}
+// 【2026-09-07 调试钩子（临时）】暴露各 runtime 的脚本 phase / 队列深度 + 信标环形缓冲
+if (typeof window !== 'undefined') {
+    window.__dshtBeaconLog = [];
+    window.__dshtRtDebug = {
+        list() {
+            return [...runtimes.entries()].map(([sid, rt]) => ({
+                session: sid,
+                scripts: rt.scripts.map(sc => {
+                    const st = rt.statuses.get(sc.id);
+                    return { id: sc.id.slice(0, 8), phase: st?.phase, error: st?.error, buttons: st?.buttons.map(b => b.name), queued: (rt.pendingEvents?.get(sc.id) ?? []).length };
+                }),
+                frames: [...rt.frames.keys()].map(k => k.slice(0, 8)),
+            }));
+        },
+    };
+}
+// ---- 消息楼层 guest shim 对外 API（RpMessageFrame 注入 TH shim 用）----
+/** 预约楼层 guest 桥（无运行时则创建但不 start——脚本装载仍归 dock 管） */
+export function reserveMessageFrame(sessionId, slug) {
+    if (typeof window === 'undefined' || !sessionId)
+        return null;
+    const rt = runtimeFor(sessionId, slug);
+    return { sessionId, ...rt.reserveGuestFrame() };
+}
+export function attachMessageFrame(sessionId, scriptId, iframe) {
+    runtimes.get(sessionId)?.attachGuestFrame(scriptId, iframe);
+}
+export function releaseMessageFrame(sessionId, scriptId) {
+    runtimes.get(sessionId)?.releaseGuestFrame(scriptId);
+}
+/** 【P3a 2026-09-07】楼层帧 context 引导源：取该会话运行时的最新上下文快照。
+ * 楼层 iframe 文档构建时内嵌为 window.__dshtInitialContext（卡脚本运行前就位，
+ * 消除 postMessage 竞态——卡内 detectEnvironment 首读 getContext 不再落 pending 空壳） */
+export function getRpContextSnapshot(sessionId) {
+    return runtimes.get(sessionId)?.contextSnapshot ?? null;
+}
+/** 楼层帧同步变量面数据源：合并变量树（global<preset<character<script<chat）。
+ *  模块级 5s TTL 缓存——楼层帧多、窗口化回渲频繁，不能每帧 5 发请求。
+ *  逐域 fail-soft（单域 400/异常 = 该域空树）——script 域空 scriptId 恒 400，不能
+ *  让整个 Promise.all 拒绝把楼层帧卡死在「等变量树」白屏态（实测抓到）。 */
+let frameVarsCache = null;
+export function fetchFrameVars(sessionId, slug) {
+    const key = `${slug}::${sessionId}`;
+    const now = Date.now();
+    if (frameVarsCache !== null && frameVarsCache.key === key && now - frameVarsCache.at < 5000)
+        return frameVarsCache.value;
+    const soft = async (scope, sid, scriptId) => {
+        try {
+            return await thVarsGet(scope, scope === 'character' ? slug : '', sid, scriptId);
+        }
+        catch {
+            return {};
+        }
+    };
+    const value = (async () => {
+        const [global, preset, character, script, chat, message] = await Promise.all([
+            soft('global', '', ''),
+            soft('preset', sessionId, ''),
+            soft('character', '', ''),
+            soft('script', sessionId, ''),
+            soft('chat', sessionId, ''),
+            soft('message', sessionId, ''),
+        ]);
+        // message（MVU 合并视图）最高层：楼层帧同步树 stat_data 恒最新（真 TH 每消息快照语义）
+        return deepMergeAssign(deepMergeAssign(deepMergeAssign(deepMergeAssign(deepMergeAssign(global, preset), character), script), chat), message);
+    })();
+    frameVarsCache = { at: now, key, value };
+    return value;
+}
 function runtimeFor(sessionId, slug) {
     // 单会话活跃：挂载新会话的运行时时，销毁其他会话的残留运行时
     //（实测：iframe 挂 document.body 跨视图存活，离开会话后脚本仍在首页刷白屏）
@@ -646,7 +1059,7 @@ function ensureMessageListener() {
         if (!msg)
             return;
         for (const rt of runtimes.values()) {
-            if (rt.statuses.has(msg.scriptId)) {
+            if (rt.hasBridge(msg.scriptId)) {
                 rt.handleMessage(msg);
                 return;
             }
@@ -654,14 +1067,16 @@ function ensureMessageListener() {
     });
     // 【实机审计修复 2026-09-05】message_swiped / message_edited 桥：RpNativeChat 的
     // 变体切换 / 会话编辑成功回调 dispatch（宿主页同源 CustomEvent，零新依赖）
+    // 【L1a 2026-09-06】扩到 message_sent/received/deleted/stream_token_received（args 直投）
     window.addEventListener(TH_HOST_EVENT, (ev) => {
         const detail = ev.detail;
         if (!detail?.sessionId || !detail.eventType)
             return;
-        runtimes.get(detail.sessionId)?.emitNativeChatEvent(detail.sessionId, detail.eventType, { messageId: detail.messageId, nodeKey: detail.nodeKey });
+        runtimes.get(detail.sessionId)?.emitNativeChatEvent(detail.sessionId, detail.eventType, { messageId: detail.messageId, nodeKey: detail.nodeKey, seq: detail.seq }, detail.args);
     });
 }
-const PANEL_POS = { right: '4vw', bottom: '12vh' };
+// P4（2026-09-07）：ST 扩展菜单形态——下拉面板锚定顶栏右上图标正下方（不再悬浮球 + 居中弹窗）
+const PANEL_POS = { right: '10px', top: 'calc(env(safe-area-inset-top, 0px) + 106px)', bottom: 'auto' };
 export function RpScriptHost(props) {
     const s = (props.session ?? {});
     const sessionId = s.sessionId ?? s.id ?? '';
@@ -780,4 +1195,36 @@ export function RpScriptHost(props) {
           </div>
         </div>)}
     </>);
+}
+/** 【2026-09-07 ST 按钮条对齐（基准 1/316）】脚本按钮常驻悬浮条——ST 里 TH 脚本按钮
+ *  以胶囊按钮浮在输入框上方（Kemini / 重试额外模型解析 / 剧情控制台 / ExampleGame 世界书控制…），
+ *  不藏进管理面板。dock 席位挂载，读会话运行时的按钮清单，点击回投按钮事件。 */
+export function RpScriptButtonsBar(props) {
+    const s = (props.session ?? {});
+    const sessionId = s.sessionId ?? s.id ?? '';
+    const { slug, resolved } = useRpSlug(s.header?.cwd ?? s.cwd, sessionId);
+    const [, forceTick] = useState(0);
+    const rtRef = useRef(null);
+    useEffect(() => {
+        if (!sessionId || !slug) {
+            rtRef.current = null;
+            forceTick(t => t + 1);
+            return;
+        }
+        ensureMessageListener();
+        const rt = runtimeFor(sessionId, slug);
+        rtRef.current = rt;
+        return rt.subscribe(() => forceTick(t => t + 1));
+    }, [sessionId, slug, resolved]);
+    const rt = rtRef.current;
+    if (rt === null || rt.scriptCount === 0)
+        return null;
+    const allButtons = rt.scripts.flatMap(sc => (rt.statuses.get(sc.id)?.buttons ?? [])
+        .filter(b => b.visible && (sc.buttonEnabled || rt.statuses.get(sc.id)?.phase === 'running'))
+        .map(b => ({ scriptId: sc.id, scriptName: sc.name, name: b.name })));
+    if (allButtons.length === 0)
+        return null;
+    return (<div className="dsht-rp-script-pillbar" role="toolbar" aria-label="酒馆助手脚本按钮">
+      {allButtons.map(b => (<button key={`${b.scriptId}:${b.name}`} type="button" className="dsht-rp-script-pill" title={`${b.scriptName} · ${b.name}`} onClick={() => { rt.clickButton(b.scriptId, b.name); }}>{b.name}</button>))}
+    </div>);
 }

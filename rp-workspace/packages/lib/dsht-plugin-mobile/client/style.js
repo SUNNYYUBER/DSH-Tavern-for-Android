@@ -37,6 +37,16 @@ export const MOBILE_CSS = `
 /* 触屏无 hover：角色卡设置角标常显（从 dsht-rp-ui/style.ts 抽离的触屏规则） */
 @media (hover: none) { .dsht-rp-card-gear { opacity: 1; } }
 
+/* 📎 附件上传按钮（conversation.input.left 席位）：对齐原生图标钮的触控尺寸与暗色观感 */
+.dsht-mobile-attach {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 34px; height: 34px; padding: 0 6px;
+  border: none; border-radius: 8px; background: transparent;
+  font-size: 17px; line-height: 1; cursor: pointer; user-select: none;
+  color: var(--dsw-alias-label-secondary, inherit);
+}
+.dsht-mobile-attach:active { background: var(--dsw-specific-bg-layer-hover, rgba(128, 128, 128, 0.18)); }
+
 @media (max-width: 700px) {
   /* ① 动态视口：避免移动浏览器工具栏遮挡底部输入区 */
   html, body { height: 100dvh; }

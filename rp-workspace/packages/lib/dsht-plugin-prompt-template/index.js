@@ -325,9 +325,17 @@ function apply(ctx, _config) {
                 message: {
                     ...msg,
                     content: [{ type: 'text', text }],
-                    source: { ...(msg.source ?? {}), kind: 'plugin', plugin: 'dsht-ejs', ejsProcessed: true },
+                    // 【2026-09-07 损坏根修】必须保留原 source.kind（加载器强校验 assistant
+                    // 消息 source.kind ∈ {gateway, internal}——写 'plugin' 会让整个会话
+                    // "failed validation: message must have model source" 拒载（真机实证，
+                    // 用户迁移会话差点报废）。只在原 source 上追加插件标记。
+                    source: { ...(msg.source ?? {}), plugin: 'dsht-ejs', ejsProcessed: true },
                 },
-            }, { surfaceOp: { op: 'replace', start: seq, end: seq } });
+                // 【2026-09-07 500 根修】surfaceOp replace 的血缘 seqs 必须覆盖全部被 shadow
+                // 的 surface 节点——session.append 的 surface 元数据键名是 sourceEventSeqs
+                // （dsh-session append: opts[0].sourceEventSeqs → 事件字段）。缺失会被
+                // assertProvenance 拒绝（"missing <seq>" 500，真机 B8 写回全数失败）。
+            }, { surfaceOp: { op: 'replace', start: seq, end: seq }, sourceEventSeqs: [seq] });
             try {
                 if (typeof sessions?.flush === 'function')
                     await sessions.flush.call(sessions, session);
@@ -384,11 +392,23 @@ function apply(ctx, _config) {
             };
             const evalOne = (content) => {
                 const stripped = content.replace(/\[\s*RENDER\s*[:：]?[^\]]*\]/gi, '').trim();
-                if (cfg.sandbox === true) {
-                    const r = (0, sandbox_ts_1.renderEjsSandbox)(stripped, context);
-                    return r.ok ? r.text : '';
+                try {
+                    if (cfg.sandbox === true) {
+                        const r = (0, sandbox_ts_1.renderEjsSandbox)(stripped, context);
+                        return r.ok ? r.text : '';
+                    }
+                    return (0, ejs_ts_1.renderEjsSubset)(stripped, context);
                 }
-                return (0, ejs_ts_1.renderEjsSubset)(stripped, context);
+                catch (e) {
+                    // 【鲁棒轮 2026-09-09】单条坏条目（未闭合 {{/<% 的世界书原文常态）不再炸整个
+                    // /render-entries 端点（原 subset 分支无守护 → 全部 before/after 丢失 500）。
+                    // fail-soft 与 sandbox 分支对齐；warn 带 comment 便于定位坏条目。
+                    try {
+                        console.warn('[dsht-ejs] render-entries 条目渲染失败（跳过）:', e?.message);
+                    }
+                    catch { /* noop */ }
+                    return '';
+                }
             };
             const parts = { before: [], after: [] };
             for (const e of targets) {

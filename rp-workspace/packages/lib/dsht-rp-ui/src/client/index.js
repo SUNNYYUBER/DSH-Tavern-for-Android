@@ -1,13 +1,14 @@
 import { ensureStyle } from './style.ts';
-import { installHostVendor } from './host-vendor.ts';
+import { installHostVendor, installHostFontAwesome, installHostToastr } from './host-vendor.ts';
 import { RpOverlay, RP_OPEN_EVENT } from './RpOverlay.tsx';
 import { RpAssistantNodeView, RpRegenerateAction, RpUserNodeView, RpVariantActions } from './RpNativeChat.tsx';
 import { RpPresetSwitch } from './RpPresetSwitch.tsx';
 import { RpImportDockEntry } from './RpImportDock.tsx';
 import { RpGreetingDock } from './RpGreetingDock.tsx';
 import { RpStateFloat } from './RpStateFloat.tsx';
-import { RpScriptHost } from './RpScriptHost.tsx';
+import { RpScriptHost, RpScriptButtonsBar } from './RpScriptHost.tsx';
 import { RpTokenMeter } from './RpTokenMeter.tsx';
+import { installScriptUiGuard } from './script-ui-guard.ts';
 import { PLUGIN_CARD_KEYS, makePluginCard } from './PluginCards.tsx';
 import { dshRpc, rpApi } from './rpc.ts';
 import { installComposerEnterFix } from './composer-enter-fix.ts';
@@ -63,6 +64,12 @@ export function apply(ctx) {
     if (hostVendorMissing.length > 0) {
         console.info('[dsht-rp-ui] host-vendor 补挂宿主全局:', hostVendorMissing.join('、'));
     }
+    // 宿主 FontAwesome：TH 脚本经 window.parent.$ 把 UI append 进宿主 body（真 TH 同态，
+    // 飞讯悬浮球实证）——宿主无 FA 样式则所有 fa-* 图标渲染成空白（用户报「图标不加载」根因）。
+    installHostFontAwesome();
+    // 宿主 toastr：真 TH predefine.js 把父页 toastr 合并进脚本全局——脚本的 toastr 弹窗
+    // 必须出现在可见宿主页（iframe 内弹窗不可见）。缺 toastr 全局则脚本通知静默丢失。
+    installHostToastr();
     // 批次修复 17：会话列表排序默认「手动排序」（用户定案：方便给角色卡排序）。
     // DSH ui-workspace 的视图 store 以整棵 state JSON 持久化到 localStorage（key=dsh.workspace.view.v5，
     // 无 version 包裹，缺省 init 是 orderBy:'updated'）——仅在键不存在时写入默认，绝不覆盖用户已选。
@@ -78,7 +85,11 @@ export function apply(ctx) {
     // 任务 A：主会话过程折叠——【I3 已停用（2026-09-05 用户拍板）】：0.1.2 原生新增了
     // 「N 次工具调用 · M 条消息」折叠行，与我们 DOM 注入的「运行了 xx · N 个步骤」折叠行
     // 双行并存。用户拍板只保留原生折叠行——不再安装本注入器（ProcessFolder.ts 保留备查）。
+    // 【2026-09-08 复核】原生折叠行机制正常（模拟器实测：带工具调用轮次渲染
+    // 「N 次工具调用 · M 条消息」可点按钮；无工具调用轮次行高 0 不可见）。
     // ctx.effect(() => installProcessFolder(), 'dsht-rp-ui: process folder')
+    // 【审计 A 类 2026-09-08】脚本注入悬浮 UI 守卫：装饰层触摸穿透（详见 script-ui-guard.ts）
+    ctx.effect(() => installScriptUiGuard(), 'dsht-rp-ui: script ui guard');
     // 通知深链消费（PROJECT_PLAN §4.16.2 B 类）：Android 壳把系统通知/外部
     // dsht://session/<id> 深链转成 window 'dsht-rp-ui:locate-session' CustomEvent 派发
     // 到本页面。消费路径与点角色卡完全一致（复用现有能力，零新路由）：
@@ -252,6 +263,9 @@ export function apply(ctx) {
     // 酒馆助手脚本运行时宿主（TavernHelper 移植验收点）：沙箱 iframe 层 + 🧩 脚本管理浮球。
     // dock 席位挂载；仅 RP 会话且会话脚本清单非空时显示，非 RP 会话零影响。
     ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'dsht-rp-scripthost', order: 47 }, RpScriptHost));
+    // 【2026-09-07 ST 按钮条对齐（基准 1/316）】脚本按钮常驻胶囊条（ST 同位：输入框上方），
+    // order 46 在 scripthost(47)/statefloat(48) 之下、紧贴 composer。
+    ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'dsht-rp-script-pills', order: 46 }, RpScriptButtonsBar));
     // PROJECT_PLAN §7 措施 8 / §4.15：token 上下文进度条 → input dock 席位
     // （order 51 = dock 序列最末，紧贴 composer 输入框上方的常驻细条；
     // 仅 RP 会话且有消息时显示，字符量估算口径见 RpTokenMeter 头注）

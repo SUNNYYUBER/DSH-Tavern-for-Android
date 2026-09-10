@@ -21,8 +21,11 @@ import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives';
 import { dshRpc, rpApi } from './rpc.ts';
 import { isMessageWindowed, messagePlaceholderHeight, registerMessageWindowing, reportWindowCommit, subscribeWindowing, findScrollAncestor, } from './chat-windowing.ts';
 import { applyOutputProtocolSegments, parseJsonPatches, parseStatusBarRows, parseVariableJson, sanitizeDisplayHtml, slugFromCwd, splitStatusbarBlocks, withDefaults, } from './output-protocol.ts';
-import { FRAME_HEIGHT_MESSAGE_TYPE, FRAME_MAX_HEIGHT, buildDisplayFrameDocument, clampFrameHeight, compileDisplaySegments, enhancePreBlocks, expandDisplayMacros, loadDisplayRenderCtx, loadEjsDisplaySettings, loadRenderEntries, loadThRenderSettings, reportPermanentRender, runDisplayScripts, } from './display-compiler.ts';
+import { FRAME_HEIGHT_MESSAGE_TYPE, FRAME_MAX_HEIGHT, buildDisplayFrameDocument, clampFrameHeight, compileDisplaySegments, enhancePreBlocks, expandDisplayMacros, invalidateDisplayDataCache, loadDisplayRenderCtx, loadEjsDisplaySettings, loadRenderEntries, loadThRenderSettings, reportPermanentRender, runDisplayScripts, unwrapForeignTags, } from './display-compiler.ts';
+import { attachMessageFrame, fetchFrameVars, getRpContextSnapshot, releaseMessageFrame, reserveMessageFrame, SHIM_VERSION } from './RpScriptHost.tsx';
+import { buildMessageFrameDocument, buildShimSource, getVendorBlobUrl } from './th-shim.ts';
 import { groupOf, normalizeVariantGroups } from './variant-groups.ts';
+import { wrapStQuotes } from './st-quotes.ts';
 // ---------------------------------------------------------------------------
 // 工作区输出协议配置（T2.5f 下发链：rp.json → 3081 /rp/workspaces → 此处消费）
 // ---------------------------------------------------------------------------
@@ -36,6 +39,25 @@ export function invalidateWsCache() {
     wsCache = null;
     rpSessionCache = null;
     displayRegexCache.clear();
+    invalidateDisplayDataCache();
+}
+// ---------------------------------------------------------------------------
+// 【Kemini 适配 2026-09-08】display epoch——TH 脚本改正则/预设后的显示面失效+重渲染。
+// 根因：脚本经 replaceTavernRegexes / updatePresetWith 改了 display 正则状态，
+// displayRegexCache 不失效、消息楼层不重渲染 →「切了思维链开关画面没反应」。
+// notifyDisplayMutation：清缓存 + bump epoch；楼层组件订阅 epoch 重跑 processed
+// （含 displayScripts 重取）。真 TH 的 builtin.reloadAndRenderChatWithoutEvents 走本通道。
+// ---------------------------------------------------------------------------
+let displayEpoch = 0;
+const displayEpochListeners = new Set();
+export function notifyDisplayMutation() {
+    invalidateWsCache();
+    displayEpoch += 1;
+    for (const l of displayEpochListeners)
+        l();
+}
+function useDisplayEpoch() {
+    return useSyncExternalStore(cb => { displayEpochListeners.add(cb); return () => displayEpochListeners.delete(cb); }, () => displayEpoch);
 }
 function fetchWorkspaces() {
     if (wsCache === null) {
@@ -88,6 +110,7 @@ function fetchDisplayRegexes(slug, sessionId) {
 }
 function useDisplayRegexes(slug, sessionId) {
     const [scripts, setScripts] = useState([]);
+    const epoch = useDisplayEpoch(); // 【Kemini 适配】正则/预设变更（epoch bump）后重取
     useEffect(() => {
         let alive = true;
         if (slug === null || !sessionId) {
@@ -97,13 +120,17 @@ function useDisplayRegexes(slug, sessionId) {
         void fetchDisplayRegexes(slug, sessionId).then(s => { if (alive)
             setScripts(s); });
         return () => { alive = false; };
-    }, [slug, sessionId]);
+    }, [slug, sessionId, epoch]);
     return scripts;
 }
 const EMPTY_PIPELINE_ENTRIES = { before: '', after: '' };
 const PIPELINE_UNLOADED = { ctx: null, entries: EMPTY_PIPELINE_ENTRIES, ejs: null, th: null };
 function useDisplayPipeline(slug, sessionId) {
     const [data, setData] = useState(PIPELINE_UNLOADED);
+    // 【鲁棒轮 2026-09-09】订阅 display epoch：Kemini 开关（regexes:replace/preset:put/
+    // display:reload → notifyDisplayMutation）后已挂载楼层的宏上下文/[RENDER] 条目必须重取，
+    // 否则楼层永远用挂载时刻的 ctx（变量树）展开 {{getvar}}。数据面 5s TTL 缓存兜住成本。
+    const epoch = useDisplayEpoch();
     useEffect(() => {
         let alive = true;
         void Promise.all([
@@ -116,7 +143,7 @@ function useDisplayPipeline(slug, sessionId) {
                 setData({ ctx, entries, ejs, th });
         });
         return () => { alive = false; };
-    }, [slug, sessionId]);
+    }, [slug, sessionId, epoch]);
     return data;
 }
 // ---------------------------------------------------------------------------
@@ -190,16 +217,13 @@ function hideAfterOf(snapshot) {
 const floorIndexCache = new WeakMap();
 /** 掩码按 (snapshot, hideAfter) 组合缓存——同一快照在掩码变化（回退操作后）时重算 */
 const floorIndexCacheKey = new WeakMap();
-function floorIndexOf(snapshot, hideAfter = hideAfterOf(snapshot)) {
-    const snap = snapshot;
-    const cached = floorIndexCache.get(snap);
-    const cachedMask = floorIndexCacheKey.get(snap) ?? 0;
-    if (cached !== undefined && cachedMask === hideAfter)
-        return cached;
+/** 【2026-09-06 实证修复】核心按 Chat 本体计算（nodes/order 顶层）——SessionSnapshot
+ *  不带 chat 投影（fiber 实证），旧实现把 useSession 快照当有 chat 用 → 楼层号恒缺席
+ * （真机 hashFloors=[] 实证）。chat.node 席位组件同时拿得到 useChat（Chat 本体快照）。 */
+function floorIndexOfChat(chat, hideAfter) {
     const floors = new Map();
     const stepMs = new Map();
     const turnMs = new Map();
-    const chat = snapshot.chat;
     if (chat?.order && chat.nodes) {
         const byKey = new Map();
         for (const n of chat.nodes.values()) {
@@ -262,8 +286,34 @@ function floorIndexOf(snapshot, hideAfter = hideAfterOf(snapshot)) {
                 turnMs.set(last.key, last.end - first.start);
         }
     }
-    const index = { floors, stepMs, turnMs, hideAfter: hideAfterOf(snapshot) };
+    return { floors, stepMs, turnMs };
+}
+/** SessionSnapshot 包装（旧调用点；快照带 chat 投影时才有效） */
+function floorIndexOf(snapshot, hideAfter = hideAfterOf(snapshot)) {
+    const snap = snapshot;
+    const cached = floorIndexCache.get(snap);
+    const cachedMask = floorIndexCacheKey.get(snap) ?? 0;
+    if (cached !== undefined && cachedMask === hideAfter)
+        return cached;
+    const core = floorIndexOfChat(snapshot.chat, hideAfter);
+    const index = { ...core, hideAfter: hideAfterOf(snapshot) };
     floorIndexCache.set(snap, index);
+    // 【鲁棒轮 2026-09-09】漏写 cacheKey → rollbackMask 异步到达后的重算恒 miss
+    // （O(N²) 每帧重算 + mask 回退时陈旧命中），与 floorIndexFromChat 对齐。
+    floorIndexCacheKey.set(snap, hideAfter);
+    return index;
+}
+/** Chat 本体快照 → 楼层索引（useChat 选择器；WeakMap 按代际缓存） */
+function floorIndexFromChat(chat, hideAfter) {
+    const snap = (chat ?? {});
+    const cached = floorIndexCache.get(snap);
+    const cachedMask = floorIndexCacheKey.get(snap) ?? 0;
+    if (cached !== undefined && cachedMask === hideAfter)
+        return cached;
+    const core = floorIndexOfChat(chat, hideAfter);
+    const index = { ...core, hideAfter };
+    floorIndexCache.set(snap, index);
+    floorIndexCacheKey.set(snap, hideAfter);
     return index;
 }
 /** 兼容旧调用点：楼层表（floorIndexOf().floors） */
@@ -336,15 +386,150 @@ function useFloorBadgePref() {
     }, []);
     return on;
 }
-/** 楼层号徽章 #N（1 起始；assistant 右上角 absolute / user 右对齐 inline；设置可关）。
- *  掩码联动：sessionId 在场时取逻辑回退掩码，楼层号按隐藏后视图重排。 */
-const RpFloorBadge = memo(function RpFloorBadge({ useSession, nodeKey, side, sessionId }) {
-    const enabled = useFloorBadgePref();
-    const hideAfter = useRollbackMask(sessionId);
-    const floor = useSession === undefined ? undefined : useSession((snapshot) => floorIndexOf(snapshot, hideAfter).floors.get(nodeKey));
-    if (!enabled || floor === undefined)
+/** 工作区角色名缓存（rp/workspaces 全量缓存按 slug 取 name——楼层头用，避免逐楼请求） */
+const wsNameCache = new Map();
+function workspaceName(slug) {
+    const hit = wsNameCache.get(slug);
+    if (hit !== undefined)
+        return hit;
+    void fetchWorkspaces().then(list => {
+        const hit = list.find(w => w.slug === slug);
+        if (hit !== undefined && !wsNameCache.has(slug))
+            wsNameCache.set(slug, hit.name);
+    }).catch(() => { });
+    return slug;
+}
+function formatFloorTime(ms) {
+    try {
+        return new Date(ms).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+    catch {
+        return '';
+    }
+}
+/** ST 同款楼层时间（基准 316：September 3, 2026 + 6:38 AM 两行；en-US 固定——与用户 ST 实测一致） */
+function formatFloorTimeSt(ms) {
+    try {
+        const d = new Date(ms);
+        return {
+            date: d.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+            time: d.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
+        };
+    }
+    catch {
+        return { date: '', time: '' };
+    }
+}
+/** ST 同款楼层耗时（基准 316：68.4s 一位小数秒；<0.1s 视为无真实生成窗口不显示） */
+function formatFloorDurationSt(ms) {
+    return `${(ms / 1000).toFixed(1)}s`;
+}
+/** 节点时间（epoch ms；消息节点 data.time，迁移/实发都在） */
+function nodeTimeMs(node) {
+    const t = node.data?.time;
+    return typeof t === 'number' && Number.isFinite(t) && t > 0 ? t : undefined;
+}
+/** RP 会话活跃标记（body[data-dsht-rp-active]）：楼层头挂载计数 >0 即 RP 楼层在场，
+ * turn-process 隐藏 CSS 的作用域开关（非 RP 会话宿主行为零影响）。 */
+let rpActiveFloors = 0;
+function useRpActiveMarker() {
+    useEffect(() => {
+        rpActiveFloors += 1;
+        document.body.setAttribute('data-dsht-rp-active', '1');
+        return () => {
+            rpActiveFloors -= 1;
+            if (rpActiveFloors <= 0)
+                document.body.removeAttribute('data-dsht-rp-active');
+        };
+    }, []);
+}
+/** ST 同款楼层头（2026-09-06 视觉验收，对照基准 316）：
+ *  头像（/dsht-rp/rp/avatar?slug=，404 时隐藏）+ 角色名 + `#N · 耗时 · 时间` 元信息行。
+ *  user 侧右对齐无头像（ST 用户名 = 玩家名，此处显示「你」）。
+ *  楼层号/耗时来自 useChat（Chat 本体快照）——SessionSnapshot 不带 chat（fiber 实证），
+ *  旧 RpFloorBadge 用 useSession → 楼层号恒缺席（真机 hashFloors=[] 实证），本组件取代之。 */
+// 【2026-09-07 ST 对齐】角色显示名缓存（GET /dsht-rp/rp/charname?slug=）：single-flight +
+// 订阅刷新——166 个楼层共享一次请求，name 到达后一次性重渲染。
+const charNameCache = new Map();
+const charNameInflight = new Map();
+let charNameSubs = null;
+function useCharName(slug) {
+    const [, tick] = useState(0);
+    useEffect(() => {
+        if (charNameSubs === null)
+            charNameSubs = new Set();
+        const fn = () => tick(t => t + 1);
+        charNameSubs.add(fn);
+        return () => { charNameSubs?.delete(fn); };
+    }, []);
+    if (slug === null)
         return null;
-    return <span className={`dsht-rp-floor dsht-rp-floor-${side}`} data-testid="dsht-rp-floor">#{floor}</span>;
+    const hit = charNameCache.get(slug);
+    if (hit !== undefined)
+        return hit;
+    if (!charNameInflight.has(slug)) {
+        charNameInflight.set(slug, fetch(`/dsht-rp/rp/charname?slug=${encodeURIComponent(slug)}`)
+            .then(r => r.json())
+            .then(b => {
+            charNameCache.set(slug, typeof b.name === 'string' && b.name ? b.name : slug);
+        })
+            .catch(() => { charNameCache.set(slug, slug); })
+            .finally(() => {
+            charNameInflight.delete(slug);
+            for (const fn of charNameSubs ?? []) {
+                try {
+                    fn();
+                }
+                catch { /* 订阅者异常不扩散 */ }
+            }
+        }));
+    }
+    return null;
+}
+const RpFloorHeader = memo(function RpFloorHeader({ useChat, nodeKey, side, sessionId, slug, timeMs }) {
+    const showFloor = useFloorBadgePref();
+    const hideAfter = useRollbackMask(sessionId);
+    const index = useChat === undefined ? undefined : useChat((snapshot) => floorIndexFromChat(snapshot, hideAfter));
+    const floor = index?.floors.get(nodeKey);
+    const turnMs = index?.turnMs.get(nodeKey);
+    useRpActiveMarker();
+    // 【2026-09-07 ST 对齐】assistant 楼层名 = 角色显示名（GET /dsht-rp/rp/charname，基准 316
+    // 「ExampleGame ExampleWorld MVU Edition」）——workspace slug 只是加载期的兜底（166 楼层共享一次请求）
+    const charName = useCharName(side === 'assistant' ? slug : null);
+    const name = side === 'assistant' && slug !== null
+        ? charName ?? wsNameCache.get(slug) ?? workspaceName(slug)
+        : '你';
+    if (floor === undefined)
+        return null;
+    // 【2026-09-07 楼层头二次对齐】assistant 楼层头横排在楼层顶部（头像+名字+元信息一行），
+    // 正文全宽在其下；sticky top 长楼层下滑时钉在视口顶（布局细节见 style.ts .dsht-rp-assistant）
+    const meta = [];
+    if (side === 'assistant') {
+        if (showFloor)
+            meta.push(`#${floor}`);
+        if (typeof turnMs === 'number' && turnMs >= 500)
+            meta.push(formatFloorDurationSt(turnMs));
+    }
+    else {
+        if (showFloor)
+            meta.push(`#${floor}`);
+        if (side === 'assistant' && typeof turnMs === 'number' && turnMs >= 500)
+            meta.push(formatDuration(turnMs));
+        if (typeof timeMs === 'number' && timeMs > 0)
+            meta.push(formatFloorTime(timeMs));
+    }
+    const st = side === 'assistant' && typeof timeMs === 'number' && timeMs > 0 ? formatFloorTimeSt(timeMs) : null;
+    return (<div className={`dsht-rp-floor-head dsht-rp-floor-head-${side}`} data-testid="dsht-rp-floor">
+      {side === 'assistant' && slug !== null && (<img className="dsht-rp-avatar" alt="" src={`/dsht-rp/rp/avatar?slug=${encodeURIComponent(slug)}`} onError={(e) => { e.currentTarget.style.display = 'none'; }}/>)}
+      <div className="dsht-rp-floor-meta">
+        <span className="dsht-rp-floor-name">{name}</span>
+        {meta.length > 0 && <span className="dsht-rp-floor-sub">{meta.join(' · ')}</span>}
+        {st !== null && st.date !== '' && (<>
+            <span className="dsht-rp-floor-sub">{st.date}</span>
+            <span className="dsht-rp-floor-sub">{st.time}</span>
+          </>)}
+      </div>
+    </div>);
 });
 /** 状态栏卡片（§4.6：状态/位置信息渲染为卡片，数据不出本组件） */
 export const StatusBarCard = memo(function StatusBarCard({ content }) {
@@ -396,49 +581,248 @@ const MvuStatusbar = memo(function MvuStatusbar({ sessionId }) {
         return null;
     return <div className="dsht-rp-mvu-statusbar" data-testid="dsht-rp-statusbar" dangerouslySetInnerHTML={{ __html: html }}/>;
 });
-/**
- * 完整 HTML 文档段的 iframe 渲染器（P0-2；骨架照抄 dsh-tavern client.js L903-941
- * TavernMessageFrame，MIT）：
- * - sandbox="allow-scripts"（不给 allow-same-origin）+ referrerPolicy="no-referrer"；
- * - srcdoc 由 buildDisplayFrameDocument 组装（CSP + 高度上报脚本）；C3 use_blob_url
- *   开启时改走 blob: URL（TH 同款形态；卸载/文档变更时 revoke）；
- * - 高度由 iframe 内 postMessage 上报（token + event.source 双校验），clamp [48,12000]。
- * 悬浮球这类 position:fixed 部件在 iframe 内能跑（iframe 即它的舞台）。
- */
-const RpMessageFrame = memo(function RpMessageFrame({ html, useBlobUrl = false }) {
+/** frameKey → 停车条目（含 in-use；同 key 并存实例上限 2，防重复楼层撑爆） */
+const framePark = new Map();
+/** 全局停车上限（16 帧：多会话轮换也要保得住状态；驱逐 = 该帧重执行，状态丢失——
+ *  审计第二轮实证 8 帧在 4 会话轮换下不够用）。shim blob ~600KB/帧，16 帧 ≈ 10MB 封顶 */
+const FRAME_PARK_LIMIT = 16;
+let frameParkContainer = null;
+function frameHash8(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++)
+        h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+}
+function frameParkContainerOf() {
+    if (frameParkContainer === null) {
+        frameParkContainer = document.createElement('div');
+        frameParkContainer.id = 'dsht-rp-frame-park';
+        frameParkContainer.setAttribute('aria-hidden', 'true');
+        frameParkContainer.style.cssText = 'display:none';
+        document.body.appendChild(frameParkContainer);
+    }
+    return frameParkContainer;
+}
+/** LRU 驱逐：只驱逐非 in-use 条目；真正释放 guest + revoke blob + 销毁节点 */
+function evictParkedFrames() {
+    const all = [];
+    for (const [key, list] of framePark) {
+        for (const e of list)
+            if (!e.inUse)
+                all.push({ e, key }); // 保留原引用（filter 身份比对靠它）
+    }
+    if (all.length <= FRAME_PARK_LIMIT)
+        return;
+    all.sort((a, b) => a.e.parkedAt - b.e.parkedAt);
+    const victims = all.slice(0, all.length - FRAME_PARK_LIMIT);
+    for (const { e: victim, key } of victims) {
+        const list = framePark.get(key);
+        if (list !== undefined) {
+            const next = list.filter(e => e !== victim);
+            if (next.length === 0)
+                framePark.delete(key);
+            else
+                framePark.set(key, next);
+        }
+        if (victim.guest !== null)
+            releaseMessageFrame(victim.guest.sessionId, victim.guest.scriptId);
+        if (victim.shimBlob !== null)
+            URL.revokeObjectURL(victim.shimBlob);
+        if (victim.blobUrl !== null)
+            URL.revokeObjectURL(victim.blobUrl);
+        victim.el.remove();
+    }
+}
+/** 入场：卸载的 iframe 移入停车场（不释放任何活资源） */
+function parkMessageFrame(key, entry) {
+    entry.inUse = false;
+    entry.parkedAt = Date.now();
+    const list = framePark.get(key) ?? [];
+    list.push(entry);
+    // 同 key 并存上限 2：最旧的非 in-use 条目直接驱逐（防流式楼层 hash 序列膨胀）
+    const idle = list.filter(e => !e.inUse);
+    if (idle.length > 2) {
+        idle.sort((a, b) => a.parkedAt - b.parkedAt);
+        const victim = idle[0];
+        if (victim !== undefined) {
+            framePark.set(key, list.filter(e => e !== victim));
+            if (victim.guest !== null)
+                releaseMessageFrame(victim.guest.sessionId, victim.guest.scriptId);
+            if (victim.shimBlob !== null)
+                URL.revokeObjectURL(victim.shimBlob);
+            if (victim.blobUrl !== null)
+                URL.revokeObjectURL(victim.blobUrl);
+            victim.el.remove();
+        }
+    }
+    else {
+        framePark.set(key, list);
+    }
+    frameParkContainerOf().appendChild(entry.el);
+    evictParkedFrames();
+}
+const RpMessageFrame = memo(function RpMessageFrame({ html, useBlobUrl = false, sessionId, slug, thShim }) {
+    const mountRef = useRef(null);
     const frameRef = useRef(null);
     const tokenRef = useRef('');
-    if (tokenRef.current === '') {
-        tokenRef.current = typeof window.crypto?.randomUUID === 'function'
+    const [height, setHeight] = useState(80);
+    const [mounted, setMounted] = useState(false);
+    // TH shim guest 注入（真 TH message iframe 同款）：卡内脚本（示例游戏状态栏等）在楼层
+    // iframe 直接调 getAllVariables/Mvu——无 shim 时数据恒为占位符「--」（CDP 实测）。
+    const guestRef = useRef(null);
+    const shimBlobRef = useRef(null);
+    const blobRef = useRef(null);
+    // 需要注 shim 的帧才注（vendor ~600KB/帧的 srcdoc 体积与解析成本）——卡内脚本
+    // 调 TH API（getAllVariables/Mvu/eventOn…）的楼层帧才需要；纯剧情文档直接渲染
+    const needsShim = /getAllVariables|getVariables\s*\(|TavernHelper|Mvu\.|eventOn\s*\(|insertOrAssignVariables|replaceVariables|getChatMessages/.test(html);
+    const shimOn = thShim === true && sessionId !== undefined && slug !== undefined && needsShim;
+    // 同步变量面数据源：帧建好前先拉一次合并变量树（模块级 TTL 缓存，多帧共享）
+    const [frameVars, setFrameVars] = useState(null);
+    useEffect(() => {
+        if (!shimOn || sessionId === undefined || slug === undefined)
+            return;
+        let alive = true;
+        void fetchFrameVars(sessionId, slug).then(v => { if (alive)
+            setFrameVars(v); }).catch(() => { });
+        return () => { alive = false; };
+    }, [shimOn, sessionId, slug]);
+    // 等 guest shim 的变量树到位（未就绪期不渲染 mount，状态栏首帧即真数据）
+    const docReady = !shimOn || frameVars !== null;
+    // 帧身份：html 内容哈希 + 会话域 + shim 形态 + blob 模式——停车场认领/入库的唯一键。
+    // 【审计第二轮修复】sessionId 无条件入键：同卡各会话的开场帧 html 相同，早期版本
+    // plain 帧不含 session → 跨会话认领到别的会话的帧（元素身份漂移，审计实证）
+    const frameKey = `${frameHash8(html)}|${sessionId !== undefined ? `${sessionId}::${slug ?? ''}` : 'plain'}|${shimOn ? 'th' : 'plain'}|${useBlobUrl ? 'b' : 's'}`;
+    useEffect(() => {
+        if (!docReady)
+            return;
+        const mount = mountRef.current;
+        if (mount === null)
+            return;
+        // 1) 停车场认领：同 key 空闲帧原样移回（文档不重执行，卡状态保留）
+        const list = framePark.get(frameKey);
+        const entry = list?.find(e => !e.inUse);
+        if (entry !== undefined && list !== undefined) {
+            framePark.set(frameKey, list.filter(e => e !== entry));
+            entry.inUse = true;
+            frameRef.current = entry.el;
+            tokenRef.current = entry.token;
+            guestRef.current = entry.guest;
+            shimBlobRef.current = entry.shimBlob;
+            blobRef.current = entry.blobUrl;
+            const lastH = Number(entry.el.dataset.lastHeight);
+            if (Number.isFinite(lastH) && lastH > 0)
+                setHeight(clampFrameHeight(lastH));
+            mount.appendChild(entry.el);
+            if (entry.guest !== null)
+                attachMessageFrame(entry.guest.sessionId, entry.guest.scriptId, entry.el);
+            setMounted(true);
+            // cleanup（闭包捕获本轮实体，绝不裸读 ref——下一轮 effect 的 cleanup 先于本轮 body 运行）
+            const el = entry.el;
+            const guest = entry.guest;
+            return () => {
+                parkMessageFrame(frameKey, {
+                    el, token: entry.token, guest, shimBlob: entry.shimBlob, blobUrl: entry.blobUrl,
+                    inUse: false, parkedAt: Date.now(),
+                });
+                if (frameRef.current === el)
+                    frameRef.current = null;
+            };
+        }
+        // 2) 新建：命令式创建 iframe（React 不管理其生命周期）
+        // 【审计第三轮修正】shim 帧**不进停车场**：park 往返的 iframe 重插入会重载文档 →
+        // shim 重执行后与宿主的桥接序号/握手失配 → 首个桥调用永无回包（实测：start 按钮
+        // 点出 callId 后永挂）。shim 帧卸载走完整释放；切会话重渲染消息 iframe 本就是
+        // ST 原生行为（状态重置属预期）。纯 DOM 帧（无 shim）继续 park 保活。
+        const parkable = !shimOn;
+        const el = document.createElement('iframe');
+        el.className = 'dsht-rp-message-frame';
+        el.title = '人物卡前端界面';
+        // allow-same-origin：卡自带 <script> 依赖 parent.$/jQuery/Mvu/eventOn（真 TH/ST 的
+        // message iframe 就是同源形态，用户拍板复刻）。【2026-09-07】+ allow-modals 等：
+        // sandbox 缺 allow-modals 时 iframe 内 confirm()/alert() 被 Chromium 静默丢弃。
+        el.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-modals allow-forms allow-popups');
+        el.setAttribute('referrerpolicy', 'no-referrer');
+        el.style.cssText = 'width:100%;height:100%;border:0;display:block;background:transparent';
+        const token = typeof window.crypto?.randomUUID === 'function'
             ? window.crypto.randomUUID()
             : `${Date.now()}:${Math.random()}`;
-    }
-    const [height, setHeight] = useState(80);
-    const srcDoc = useMemo(() => buildDisplayFrameDocument(html, tokenRef.current), [html]);
-    // C3 use_blob_url：blob: URL 与 srcdoc 二选一（blob 生命周期跟随本文档）
-    const [blobUrl, setBlobUrl] = useState(null);
-    useEffect(() => {
-        if (!useBlobUrl) {
-            setBlobUrl(null);
-            return;
+        tokenRef.current = token;
+        let guest = null;
+        let shimBlob = null;
+        // 先建显示骨架（CSP + 高度上报 + 遮挡 lint），再把 vendor/shim 以 blob 外链注进
+        // <head>——卡的 style/script 保持原位且晚于 shim 执行（真 TH 顺序语义）
+        let doc = buildDisplayFrameDocument(html, token);
+        if (shimOn && sessionId !== undefined && slug !== undefined) {
+            const g = reserveMessageFrame(sessionId, slug);
+            if (g !== null) {
+                const shimSrc = buildShimSource({ scriptId: g.scriptId, scriptName: '楼层渲染', secret: g.secret, version: SHIM_VERSION });
+                shimBlob = URL.createObjectURL(new Blob([shimSrc], { type: 'text/javascript' }));
+                guest = { sessionId: g.sessionId, scriptId: g.scriptId };
+                doc = buildMessageFrameDocument(doc, {
+                    scriptId: g.scriptId, scriptName: '楼层渲染', secret: g.secret, version: SHIM_VERSION,
+                    initialVars: frameVars ?? undefined,
+                    initialContext: getRpContextSnapshot(sessionId),
+                    vendorUrl: getVendorBlobUrl(), shimUrl: shimBlob,
+                });
+            }
         }
-        const url = URL.createObjectURL(new Blob([srcDoc], { type: 'text/html' }));
-        setBlobUrl(url);
-        return () => { URL.revokeObjectURL(url); };
-    }, [srcDoc, useBlobUrl]);
+        let blobUrl = null;
+        if (useBlobUrl) {
+            blobUrl = URL.createObjectURL(new Blob([doc], { type: 'text/html' }));
+            el.src = blobUrl;
+        }
+        else {
+            el.srcdoc = doc;
+        }
+        mount.appendChild(el);
+        frameRef.current = el;
+        guestRef.current = guest;
+        shimBlobRef.current = shimBlob;
+        blobRef.current = blobUrl;
+        if (guest !== null)
+            attachMessageFrame(guest.sessionId, guest.scriptId, el);
+        setMounted(true);
+        // cleanup：卸载 → shim 帧完整释放（保活会让重载帧桥接死亡，见上）；纯 DOM 帧 → 入停车场保活
+        return () => {
+            if (!parkable) {
+                if (guest !== null)
+                    releaseMessageFrame(guest.sessionId, guest.scriptId);
+                if (shimBlob !== null)
+                    URL.revokeObjectURL(shimBlob);
+                if (blobUrl !== null)
+                    URL.revokeObjectURL(blobUrl);
+                el.remove();
+                if (frameRef.current === el)
+                    frameRef.current = null;
+                return;
+            }
+            parkMessageFrame(frameKey, {
+                el, token, guest: null, shimBlob: null, blobUrl, inUse: false, parkedAt: Date.now(),
+            });
+            if (frameRef.current === el)
+                frameRef.current = null;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [docReady, frameKey]);
     useEffect(() => {
         const receive = (event) => {
             const frame = frameRef.current;
             const data = event.data;
             if (frame === null || event.source !== frame.contentWindow || data === null || data.token !== tokenRef.current)
                 return;
-            if (data.type === FRAME_HEIGHT_MESSAGE_TYPE)
-                setHeight(clampFrameHeight(Number(data.height)));
+            if (data.type === FRAME_HEIGHT_MESSAGE_TYPE) {
+                const h = clampFrameHeight(Number(data.height));
+                frame.dataset.lastHeight = String(h); // 停车/认领往返后恢复高度（防止回落 80px 抖动）
+                setHeight(h);
+            }
         };
         window.addEventListener('message', receive);
         return () => { window.removeEventListener('message', receive); };
     }, []);
-    return (<iframe ref={frameRef} className="dsht-rp-message-frame" title="人物卡前端界面" sandbox="allow-scripts" referrerPolicy="no-referrer" src={blobUrl ?? undefined} srcDoc={blobUrl === null ? srcDoc : undefined} style={{ height: `${height}px`, overflow: height >= FRAME_MAX_HEIGHT ? 'auto' : 'hidden' }}/>);
+    // 等 guest shim 的变量树到位（未就绪期不渲染，状态栏首帧即真数据）
+    if (!docReady)
+        return null;
+    return (<div ref={mountRef} className="dsht-rp-message-frame-mount" style={{ height: mounted ? `${height}px` : '80px', overflow: height >= FRAME_MAX_HEIGHT ? 'auto' : 'hidden' }}/>);
 });
 /** 耗时格式化（思考折叠行「思考了 X」）：秒 <60，否则 分+秒 */
 function formatDuration(ms) {
@@ -447,25 +831,61 @@ function formatDuration(ms) {
         return `${s} 秒`;
     return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
 }
+/** ST 迁移：思考耗时标记（<!--dsht:reasoning-duration:123-->）解析。
+ *  toAssistantBlock 只留 kind/text（lib 闭件），耗时随 reasoning 文本首行走；
+ *  注释在渲染层天然不可见，这里剥离并把毫秒交给 ReasoningRow「思考了 X」。 */
+const REASONING_DURATION_RE = /^<!--dsht:reasoning-duration:(\d+)-->\s*/;
+function parseReasoningDuration(text) {
+    const m = REASONING_DURATION_RE.exec(text);
+    if (m === null)
+        return { text };
+    const ms = Number(m[1]);
+    return Number.isFinite(ms) && ms > 0 ? { text: text.slice(m[0].length), durationMs: ms } : { text: text.slice(m[0].length) };
+}
 /** reasoning 折叠行（T2.5d 差值补齐：原生 ReasoningRow 不可 import，最小等效实现）。
  *  任务结束后折叠为一行并显示耗时（2026-09-04 用户要求）：settled 且有快照
- *  time 数据时显示「思考了 X」；turn 总耗时可得时附「本轮共 X」。 */
+ *  time 数据时显示「思考了 X」；turn 总耗时可得时附「本轮共 X」。
+ *  无耗时的兜底文案对齐 ST/TauriTavern 原生「思考了一会」（2026-09-06 视觉验收）。 */
 const ReasoningRow = memo(function ReasoningRow({ text, running, durationMs, turnTotalMs }) {
     const summary = running
         ? '思考中…'
         : durationMs === undefined
-            ? (turnTotalMs === undefined ? '已深度思考' : `任务耗时 ${formatDuration(turnTotalMs)}`)
+            ? (turnTotalMs === undefined ? '思考了一会' : `任务耗时 ${formatDuration(turnTotalMs)}`)
             : (turnTotalMs === undefined ? `思考了 ${formatDuration(durationMs)}` : `思考了 ${formatDuration(durationMs)} · 任务耗时 ${formatDuration(turnTotalMs)}`);
     return (<details className="dsht-rp-reasoning" data-running={running || undefined}>
       <summary>{summary}</summary>
-      <div className="rp-reasoning-body">{text}</div>
+      <div className="rp-reasoning-body"><CompiledBody text={text}/></div>
     </details>);
+});
+/** 【ST 对齐 2026-09-07】折叠体内文的三段编译渲染——ST 的 reasoning/折叠体经
+ *  messageFormatting（markdown + 浏览器 HTML 解析）渲染：成对已知标签（<font color>）
+ *  出样式、未知标签（<interactive_input>）按浏览器语义解包隐藏标签名、游离 </font>
+ *  被解析器丢弃。旧实现裸 {text} 让楼层折叠体里裸显「<thinking></font>」源码字样
+ *  （真机实证）。markdown 段走 MarkdownText，行内 HTML 走 sanitize 白名单，完整文档
+ *  转沙箱 iframe（thShim 关——折叠体内不需要 TH 数据面）。 */
+const CompiledBody = memo(function CompiledBody({ text }) {
+    const markdownLabels = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
+    const segs = useMemo(() => compileDisplaySegments(unwrapForeignTags(text)), [text]);
+    return (<>
+      {segs.map((dseg, i) => {
+            if (dseg.kind === 'markdown') {
+                return dseg.text.trim() ? <MarkdownText key={i} text={dseg.text} labels={markdownLabels}/> : null;
+            }
+            if (dseg.kind === 'html') {
+                return <RpMessageFrame key={i} html={dseg.source} thShim={false}/>;
+            }
+            const clean = sanitizeDisplayHtml(dseg.source);
+            return clean !== null
+                ? <div key={i} className="dsht-rp-html" dangerouslySetInnerHTML={{ __html: clean }}/>
+                : <RpMessageFrame key={i} html={dseg.source} thShim={false}/>;
+        })}
+    </>);
 });
 /** T2.10 折叠块（collapsibleTags：<details><summary>标题</summary>内容 → 原生折叠组件） */
 const CollapsibleBlock = memo(function CollapsibleBlock({ title, content }) {
     return (<details className="dsht-rp-collapsible">
       <summary><span className="cl-title">{title}</span></summary>
-      <div className="cl-body">{content}</div>
+      <div className="cl-body"><CompiledBody text={content}/></div>
     </details>);
 });
 /**
@@ -527,7 +947,7 @@ const ForeshadowingPanel = memo(function ForeshadowingPanel({ content }) {
     </details>);
 });
 /** assistant-step shadowing 渲染器（T2.5a） */
-export const RpAssistantNodeView = memo(function RpAssistantNodeView({ node, cwd, renderMessageImages, inputActions, useSession, sessionId, }) {
+export const RpAssistantNodeView = memo(function RpAssistantNodeView({ node, cwd, renderMessageImages, inputActions, useSession, useChat, sessionId, }) {
     const proto = useOutputProtocol(cwd);
     const slug = slugFromCwd(cwd);
     // 批次修复 5：display 时机正则（markdownOnly + placement 含 1/3）由渲染层消费
@@ -538,6 +958,38 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({ node, cwd
     const data = node.data;
     const streaming = data.status === 'running';
     const interrupted = data.status === 'interrupted';
+    // 【hook 移植 L1a】TH 事件桥：message_received + stream_token_received
+    // （streaming 期文本 diff 直投；ST STREAM_TOKEN_RECEIVED 载荷 = 累计文本）
+    // message_received 语义 = "回复定稿"：mount 时已定稿的新鲜消息（重连/补页场景）投一次 +
+    // running → 非 running 转换瞬间投一次（流式完成）。
+    const receivedSeq = typeof data.finalNode?.seq === 'number' ? data.finalNode.seq : undefined;
+    useEffect(() => {
+        if (sessionId === undefined || !isFreshMessage(data) || data.status === 'running')
+            return;
+        dispatchThEvent(sessionId, 'message_received', { nodeKey: node.key, seq: receivedSeq });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const prevStreaming = useRef(streaming);
+    useEffect(() => {
+        if (prevStreaming.current && !streaming && sessionId !== undefined) {
+            dispatchThEvent(sessionId, 'message_received', { nodeKey: node.key, seq: receivedSeq });
+        }
+        prevStreaming.current = streaming;
+    }, [streaming, sessionId, node.key, receivedSeq]);
+    const streamText = streaming
+        ? (data.blocks ?? []).filter(b => b.kind === 'text').map(b => String(b.text ?? '')).join('')
+        : '';
+    const lastStreamLen = useRef(0);
+    useEffect(() => {
+        if (!streaming || sessionId === undefined)
+            return;
+        if (streamText.length <= lastStreamLen.current)
+            return;
+        lastStreamLen.current = streamText.length;
+        dispatchThEvent(sessionId, 'stream_token_received', { args: [streamText] });
+    });
+    useEffect(() => { if (!streaming)
+        lastStreamLen.current = 0; }, [streaming]);
     // T1.14 窗口化：外壳自注册进共享协调器；流式中的消息恒渲染（forced，不占位）
     const sessionKey = sessionId ?? cwd ?? 'rp-chat';
     const { shellRef, windowed, placeholderHeight } = useMessageWindowing(sessionKey, node.key, streaming);
@@ -621,19 +1073,21 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({ node, cwd
         const actions = [];
         // ---- C3 TH 渲染组门（设置不可达 = 全开/不限，不因数据面降级）----
         const thRenderOn = pipeline.th === null ? true : pipeline.th.enabled;
-        const depthLimit = pipeline.th === null ? -1 : pipeline.th.depth;
-        const effectiveDepth = (messageDepth ?? 0) - hiddenNewerCount;
-        const depthOk = depthLimit < 0 || effectiveDepth <= depthLimit;
+        // 【2026-09-06 裸露修复】三段编译是 ST「markdown html 渲染」的等价物——ST 是
+        // 全楼层渲染的，TH 的 render.depth 只该管它自己的强化面。旧实现把三段编译整个
+        // 挂在 depth 门下（TH 设置默认 depth=0 仅最新楼层）→ 用户翻历史楼层时 HTML/代码
+        // 全部裸露（真机截图实证）。深度门只保留在 <pre> 增强（enhancePreBlocks）。
         // allow_streaming：关 = 流式期间不出 iframe 段（定稿后一次性渲染，TH 同语义）
         const streamingRenderOk = !streaming || (pipeline.th?.allowStreaming === true);
-        const enhanced = thRenderOn && depthOk && streamingRenderOk;
+        const enhanced = thRenderOn && streamingRenderOk;
         // ---- B8 素材：展开前后全文对比（确有变化才写回）----
         const rawTexts = [];
         const expandedTexts = [];
         let pureTextMessage = true; // 含 reasoning/tool 等块的楼层不写回（replace 会丢思考历史）
         for (const block of data.blocks) {
             if (block.kind === 'reasoning') {
-                units.push({ kind: 'reasoning', text: block.text ?? '' });
+                const parsed = parseReasoningDuration(block.text ?? '');
+                units.push({ kind: 'reasoning', text: parsed.text, ...(parsed.durationMs !== undefined ? { durationMs: parsed.durationMs } : {}) });
                 pureTextMessage = false;
             }
             else if (block.kind === 'image') {
@@ -712,9 +1166,9 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({ node, cwd
             // tool-call 块由官方 ChatView 分组成工具行，这里跳过（与官方 AssistantMarkdown 同语义）
         }
         // ---- B6 [RENDER:BEFORE/AFTER] 包裹：编译输出首尾拼 render-entries HTML
-        //（ejs renderLoader 启用 + TH 渲染开/深度内；sanitize 失败转 iframe，与正则块同兜底）----
+        //（ejs renderLoader 启用 + TH 渲染开；sanitize 失败转 iframe，与正则块同兜底）----
         if (proto !== null && pipeline.ejs !== null && pipeline.ejs.enabled
-            && pipeline.ejs.renderLoaderEnabled && thRenderOn && depthOk) {
+            && pipeline.ejs.renderLoaderEnabled && thRenderOn) {
             if (pipeline.entries.before.trim() !== '') {
                 const clean = sanitizeDisplayHtml(pipeline.entries.before);
                 units.unshift(clean !== null ? { kind: 'html', html: clean } : { kind: 'frame', html: pipeline.entries.before });
@@ -757,7 +1211,48 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({ node, cwd
             return;
         enhancePreBlocks(el, { collapse: th.collapseCodeBlock !== 'none', hljs: th.optimizeHljs });
         // processed 变化（流式重排/窗口化回渲）时 React 可能重建 pre 节点 → 重跑补齐（幂等）
-    }, [pipeline.th, streaming, processed, messageDepth, hiddenNewerCount]);
+        // 【鲁棒轮 2026-09-09】windowed 翻转会卸载/重挂 body div（deps 同引用不重跑 → 新 DOM
+        // 永不增强），windowed 必须入 deps。
+    }, [pipeline.th, streaming, processed, messageDepth, hiddenNewerCount, windowed]);
+    // ---- ST 台词着色（SillyTavern messageFormatting 的 <q> 包裹等价；settled 楼层 DOM 过一遍）----
+    // MarkdownText（宿主 micromark 渲染器）把 raw HTML 当文本渲染 → 源码注入 <q> 会字面露出，
+    // 故渲染后 DOM 包裹（st-quotes.ts 头注）。仅 settled（流式重建频繁，落定即上色）。
+    useLayoutEffect(() => {
+        const el = bodyRef.current;
+        if (el === null || streaming)
+            return;
+        wrapStQuotes(el);
+        // 【鲁棒轮 2026-09-09】windowed 入 deps：窗口化往返后 body div 重挂，新 DOM 需重新上色
+    }, [streaming, processed, windowed]);
+    // 【2026-09-07 竞态根修】MarkdownText 异步填充（宿主组件内部 effect/懒解析）——
+    // layout effect 跑时 body 可能还是空壳，deps 稳定后不再重跑 → 楼层永久无 <q>
+    //（长聊天实测：61 对引号 0 包裹，手动复刻包裹则全部命中）。MutationObserver +
+    // rAF 去抖兜底：内容落定后必然补裹；wrapStQuotes 幂等（已包裹区跳过），自触发
+    // 的 DOM 变更下一轮无变更即自熄。
+    useEffect(() => {
+        const el = bodyRef.current;
+        if (el === null || streaming)
+            return;
+        let scheduled = false;
+        const run = () => {
+            scheduled = false;
+            const cur = bodyRef.current;
+            if (cur !== null)
+                wrapStQuotes(cur);
+        };
+        const mo = new MutationObserver(() => {
+            if (scheduled)
+                return;
+            scheduled = true;
+            requestAnimationFrame(run);
+        });
+        mo.observe(el, { childList: true, subtree: true, characterData: true });
+        wrapStQuotes(el);
+        return () => { mo.disconnect(); if (scheduled) {
+            scheduled = false;
+        } };
+        // 【鲁棒轮 2026-09-09】windowed 入 deps：翻转重挂 body 后 observer 要挂到新节点
+    }, [streaming, windowed]);
     /** T2.5b：行动选项点击 → 原生 composer 提交通道（setDraft + submit，不自绘输入栏） */
     const sendAction = useCallback((text) => {
         inputActions?.setDraft(text);
@@ -769,7 +1264,9 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({ node, cwd
     const hiddenByRollback = hideAfter > 0 && mySeq !== undefined && mySeq > hideAfter;
     if (!hasVisible || hiddenByRollback)
         return null;
-    const codeLabels = { copyLabel: '复制', copiedLabel: '已复制' };
+    // MarkdownText 的真实契约（host bundle ic 组件）：labels={{code:{copyLabel,copiedLabel}, footnotes}}
+    // ——旧 codeLabels prop 宿主根本不读，labels=undefined 遇代码块必崩（slot entry crashed）
+    const markdownLabels = { code: { copyLabel: '复制', copiedLabel: '已复制' }, footnotes: '脚注' };
     // 耗时只挂最后一个 reasoning 单元（思考在最后一块结束时结束；多个思考块不重复显示）
     let lastReasoningIdx = -1;
     for (let i = 0; i < processed.units.length; i++) {
@@ -779,11 +1276,11 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({ node, cwd
     }
     return (<div ref={shellRef} className="dsht-rp-assistant" data-windowed={windowed || undefined} style={windowed ? { height: `${placeholderHeight}px` } : undefined}>
       {!windowed && (<>
-      <RpFloorBadge useSession={useSession} nodeKey={node.key} side="assistant" sessionId={sessionId}/>
+      <RpFloorHeader useChat={useChat} nodeKey={node.key} side="assistant" sessionId={sessionId} slug={slug} timeMs={nodeTimeMs(node)}/>
       <div className="dsht-rp-assistant-body" ref={bodyRef}>
         {processed.units.map((u, i) => {
                 if (u.kind === 'text') {
-                    return <MarkdownText key={i} text={u.text} streaming={streaming && i === processed.units.length - 1} codeLabels={codeLabels}/>;
+                    return <MarkdownText key={i} text={u.text} streaming={streaming && i === processed.units.length - 1} labels={markdownLabels}/>;
                 }
                 if (u.kind === 'html') {
                     // display 正则/B6 包裹产出的白名单 HTML（已 sanitize；sanitize 失败的整块已转 iframe）
@@ -792,14 +1289,18 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({ node, cwd
                 if (u.kind === 'frame') {
                     // 完整 HTML 文档段 / sanitize 失败的平衡 HTML 块 → 沙箱 iframe（悬浮球舞台）
                     // C3 use_blob_url：TH Blob URL 渲染形态（沙箱不变，blob 加载失败可关回 srcdoc）
-                    return <RpMessageFrame key={i} html={u.html} useBlobUrl={pipeline.th?.useBlobUrl === true}/>;
+                    // guest shim：卡内脚本需要 TH API（示例游戏状态栏 getAllVariables 等）时注入
+                    return <RpMessageFrame key={i} html={u.html} useBlobUrl={pipeline.th?.useBlobUrl === true} sessionId={sessionId} slug={slug} thShim={pipeline.th === null || pipeline.th.enabled === true}/>;
                 }
                 if (u.kind === 'statusbar') {
                     return <StatusBarCard key={i} content={u.text}/>;
                 }
                 if (u.kind === 'reasoning') {
                     const last = i === lastReasoningIdx;
-                    return <ReasoningRow key={i} text={u.text} running={streaming} {...(last ? { durationMs: stepDurationMs, turnTotalMs } : {})}/>;
+                    // 消息自带思考耗时（ST 迁移）优先；缺失时退回 step 事件计时（live 轮）
+                    const ms = u.durationMs ?? (last ? stepDurationMs : undefined);
+                    const total = last ? turnTotalMs : undefined;
+                    return <ReasoningRow key={i} text={u.text} running={streaming} {...(ms !== undefined || total !== undefined ? { durationMs: ms, ...(total !== undefined ? { turnTotalMs: total } : {}) } : {})}/>;
                 }
                 if (u.kind === 'protocol') {
                     const seg = u.seg;
@@ -848,11 +1349,13 @@ async function fetchVariantGroups(sessionId) {
         return normalizeVariantGroups(r.groups ?? []);
     }
     catch {
-        return [];
+        return null; // 【鲁棒轮 2026-09-09】失败不写缓存——写 [] 会让 cache-miss 守卫永远跳过重试
     }
 }
 async function refreshVariantGroups(sessionId) {
-    groupsCache.set(sessionId, await fetchVariantGroups(sessionId));
+    const next = await fetchVariantGroups(sessionId);
+    if (next !== null)
+        groupsCache.set(sessionId, next);
     for (const fn of groupsListeners.get(sessionId) ?? [])
         fn();
 }
@@ -860,28 +1363,33 @@ async function refreshVariantGroups(sessionId) {
  * 变体组订阅 hook：挂载取缓存（无则拉取）、监听切换事件刷新。
  * nodeCount 由调用方传入（useSession 的选择器读 chat.order 长度——重 roll 入组
  * 会增节点；replace 事件不增节点，靠切换通知刷新）。
+ * 【鲁棒轮 2026-09-09】nodeCount 增长时无条件刷新（原 cache-miss 守卫让它成为死代码：
+ * 重新生成/新消息入列后新 seq 不在任何组里 → 变体条 ‹n/m› 永不出现，直到手动切换）。
  */
 function useVariantGroups(sessionId, nodeCount) {
     const [version, setVersion] = useState(0);
+    const prevCountRef = useRef(-1);
     useEffect(() => {
         const bump = () => { setVersion(v => v + 1); };
         const listeners = groupsListeners.get(sessionId) ?? new Set();
         listeners.add(bump);
         groupsListeners.set(sessionId, listeners);
-        if (!groupsCache.has(sessionId))
+        const grew = nodeCount > prevCountRef.current && prevCountRef.current >= 0;
+        prevCountRef.current = nodeCount;
+        if (!groupsCache.has(sessionId) || grew)
             void refreshVariantGroups(sessionId);
         return () => { listeners.delete(bump); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionId, nodeCount]);
+    void version;
     return groupsCache.get(sessionId) ?? EMPTY_GROUPS;
 }
 const EMPTY_GROUPS = [];
 // ---------------------------------------------------------------------------
 // 变体条（T2.5c）：conversation.chat.assistant-actions 席位
 // ---------------------------------------------------------------------------
-/** 会话快照里 assistant 节点的轻量投影：messageId → seq */
-function seqOfMessage(snapshot, messageId) {
-    const chat = snapshot.chat;
+/** Chat 快照里 assistant 节点的轻量投影：messageId → seq（入参 = useChat 的 Chat 本体快照） */
+function seqOfMessage(chat, messageId) {
     if (!chat?.nodes)
         return undefined;
     for (const n of chat.nodes.values()) {
@@ -892,9 +1400,9 @@ function seqOfMessage(snapshot, messageId) {
     return undefined;
 }
 /** 变体条 ‹ n/m ›（渲染进原生 IconActions 行，位于 copy 与 branch 之间） */
-export function RpVariantActions({ messageId, useSession, sessionId }) {
-    const seq = useSession((snapshot) => seqOfMessage(snapshot, messageId));
-    const nodeCount = useSession((snapshot) => snapshot.chat?.order?.length ?? 0);
+export function RpVariantActions({ messageId, useChat, sessionId }) {
+    const seq = useChat((snapshot) => seqOfMessage(snapshot, messageId));
+    const nodeCount = useChat((snapshot) => snapshot.order?.length ?? 0);
     const groups = useVariantGroups(sessionId, nodeCount);
     const [switching, setSwitching] = useState(false);
     const group = seq === undefined ? undefined : groupOf(groups, seq);
@@ -928,6 +1436,19 @@ export function RpVariantActions({ messageId, useSession, sessionId }) {
       <button type="button" className="vb-arrow" aria-label="下一个变体" disabled={atRight || switching} onClick={() => { void switchTo(group.members[idx + 1].seq); }}>›</button>
     </span>);
 }
+/** TH 事件桥统一入口（message_sent/received/deleted/stream_token_received；
+ *  RpScriptHost 的 SessionRuntime 监听同名 CustomEvent 后按 nodeKey 解析楼层投递。
+ *  【hook 移植 L1a 2026-09-06】args 存在 = 直投（流式 token 等无楼层锚的事件） */
+const dispatchThEvent = (sessionId, eventType, opts = {}) => {
+    window.dispatchEvent(new CustomEvent('dsht-rp-ui:th-host-event', {
+        detail: { sessionId, eventType, nodeKey: opts.nodeKey, messageId: opts.messageId, seq: opts.seq, args: opts.args },
+    }));
+};
+/** 新鲜度门（15s）：开聊重放的历史楼层不投递 message_sent/received（ST 同语义） */
+const isFreshMessage = (data) => {
+    const t = data?.time;
+    return typeof t !== 'number' || Date.now() - t < 15000;
+};
 // ---------------------------------------------------------------------------
 // 批次修复 6：「↻ 重新生成」按钮（conversation.chat.assistant-actions 席位，
 // 与变体条共存）。与「↩ 回退到此处」的区别：回退 = 回到某条用户输入（连同其后
@@ -938,13 +1459,15 @@ export function RpVariantActions({ messageId, useSession, sessionId }) {
 let rpSessionCache = null;
 function fetchRpSessionMap() {
     if (rpSessionCache === null) {
-        rpSessionCache = dshRpc('session.list', {})
+        // rc.7 wire 契约：session/list 的 args 必须带 _request（空对象）——漏了会 gateway/arguments-invalid
+        // 静默 catch 成空 Map → isRp 恒 false → 重新生成按钮永不显示（实机抓到）
+        rpSessionCache = dshRpc('session.list', { _request: {} })
             .then(r => new Map((r.items ?? []).map(it => [it.sessionId, slugFromCwd(it.cwd) !== null])))
             .catch(() => new Map());
     }
     return rpSessionCache;
 }
-export const RpRegenerateAction = memo(function RpRegenerateAction({ messageId, useSession, sessionId, regenerate, }) {
+export const RpRegenerateAction = memo(function RpRegenerateAction({ messageId, useSession, useChat, sessionId, regenerate, }) {
     const [busy, setBusy] = useState(false);
     const [isRp, setIsRp] = useState(false);
     useEffect(() => {
@@ -954,8 +1477,9 @@ export const RpRegenerateAction = memo(function RpRegenerateAction({ messageId, 
         return () => { alive = false; };
     }, [sessionId]);
     // 仅最后一条 assistant 消息显示（重新生成语义 = 只重来最后一轮）
-    const isLastAssistant = useSession((snapshot) => {
-        const chat = snapshot.chat;
+    // useChat：本席位 useSession 快照不带 chat 投影（实机实证），Chat 本体快照 nodes/order 顶层
+    const isLastAssistant = useChat((snapshot) => {
+        const chat = snapshot;
         let lastSeq = -1;
         let lastId;
         for (const n of chat?.nodes?.values() ?? []) {
@@ -978,6 +1502,8 @@ export const RpRegenerateAction = memo(function RpRegenerateAction({ messageId, 
         setBusy(true);
         try {
             await regenerate(sessionId);
+            // TH 事件桥：重新生成 = 旧回复移除语义 → message_deleted（ST MESSAGE_DELETED 对应）
+            dispatchThEvent(sessionId, 'message_deleted');
         }
         catch (e) {
             window.alert(`重新生成失败：${e.message}`);
@@ -994,14 +1520,27 @@ export const RpRegenerateAction = memo(function RpRegenerateAction({ messageId, 
 });
 /** user 气泡的「↩ 回退到此处」+「✎ 编辑」（**所有会话**——适配 agent/普通会话同样
  *  可回退；2026-09-04 真机反馈：原先仅 RP 工作区会话显示，用户在适配会话里找不到）。
- *  回退 = 逻辑回退到这条消息（/rp/session-rollback）；编辑 = 截断到这条消息**之前**
- *  并以新文本重新发送（/rp/session-edit + session.prompt，「编辑并重发」语义）。 */
-export const RpUserNodeView = memo(function RpUserNodeView({ node, cwd, renderMessageImages, sessionId, useSession, }) {
+ *  回退 = 逻辑回退到这条消息（/rp/session-rollback；【2026-09-08 用户语义】includeAnchor
+ *  = 连锚消息一起移出上下文，原文放回 composer 输入框——ST「回退」同语义，用户可改后
+ *  重发）；编辑 = 截断到这条消息**之前** 并以新文本重新发送（/rp/session-edit +
+ *  session.prompt，「编辑并重发」语义）。 */
+export const RpUserNodeView = memo(function RpUserNodeView({ node, cwd, renderMessageImages, inputActions, sessionId, useSession, useChat, }) {
     const data = node.data;
     const [busy, setBusy] = useState(false);
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState('');
     const seq = typeof data.seq === 'number' ? data.seq : undefined;
+    // 【2026-09-08 鲁棒性】running 守卫（重新生成按钮同款）：turn 运行中回退/编辑会与
+    // 生成期 append 互踩（live replace 的 claim/mark 窗口被生成 append 插入——数据面已把
+    // undo 回放挪出该窗口，这里再禁掉入口），按钮置灰防误触。
+    const running = useSession === undefined ? false : useSession((snapshot) => snapshot.running === true);
+    // 【hook 移植 L1a】TH 事件桥：message_sent（mount 新鲜度门——开聊重放历史不投递）
+    useEffect(() => {
+        if (sessionId === undefined || sessionId === null || !isFreshMessage(data))
+            return;
+        dispatchThEvent(sessionId, 'message_sent', { nodeKey: node.key, seq: typeof data.seq === 'number' ? data.seq : undefined });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
     // T1.14 窗口化：user 消息外壳同样自注册（静态内容，无 forced 场景）
     const sessionKey = sessionId ?? cwd ?? 'rp-chat';
     const { shellRef, windowed, placeholderHeight } = useMessageWindowing(sessionKey, node.key, false);
@@ -1018,15 +1557,21 @@ export const RpUserNodeView = memo(function RpUserNodeView({ node, cwd, renderMe
         return { text: texts.join(''), images };
     }, [data.content]);
     const rollback = useCallback(async () => {
-        if (busy || seq === undefined || !sessionId)
+        if (busy || running || seq === undefined || !sessionId)
             return;
-        if (!window.confirm('回退到这条消息？其后的对话将从上下文移除（事件仍保留在日志；状态/变量一并回滚）。'))
+        if (!window.confirm('回退到这条消息？该消息与其后的对话将从上下文移除，原文放回输入框（事件仍保留在日志；状态/变量一并回滚）。'))
             return;
         setBusy(true);
         try {
             // POST /dsht-rp/rp/session-rollback：live → 官方 replace 原语逻辑回退（投影
             // 立即生效，无需刷新）；非 live → 文件截断 + .bak（需要整页重载重建投影）
-            const r = await rpApi('rp/session-rollback', { sessionId, keepThroughSeq: seq });
+            // 【2026-09-08 用户语义】includeAnchor: true = 锚消息一起移除 + 文本回输入框
+            const r = await rpApi('rp/session-rollback', { sessionId, keepThroughSeq: seq, includeAnchor: true });
+            // TH 事件桥：回退 = 其后楼层移除语义 → message_deleted（ST MESSAGE_DELETED 对应）
+            dispatchThEvent(sessionId, 'message_deleted');
+            // 【2026-09-08 用户语义】原文放回 composer 输入框（ST 回退同款；inputActions 缺席
+            // 的挂载形态静默跳过——回退本身已完成）
+            inputActions?.setDraft(parts.text);
             if (r.logical === true) {
                 // 【⑨修复 2026-09-05】live 回退后不整页重载——原生 composer 草稿不持久化，
                 // reload 即清空。改为 live 同款逻辑回退（掩码更新 + 会话重开）
@@ -1034,9 +1579,10 @@ export const RpUserNodeView = memo(function RpUserNodeView({ node, cwd, renderMe
                 setBusy(false);
             }
             else {
-                // 非 live：文件截断 + .bak——会话重开（不整页重载，保留 composer 草稿）
-                await dshRpc('session.close', { sessionId }).catch(() => undefined);
-                await dshRpc('session.open', { sessionId }).catch(() => undefined);
+                // 非 live：文件截断 + .bak。【①轮核查 2026-09-06】此分支在聊天视图里实际不可达
+                // （会话正被查看 = 在宿主 sessions 登记表里 = 必走 live 逻辑回退）；仅防御脚本化
+                // API 调用场景。rc.7 web wire 无 session.close/open 方法（只有 ACP 有）——
+                // 之前这里的 close/open 调用是被 catch 吞掉的恒失败 no-op，移除，避免误读。
                 void refreshRollbackMask(sessionId);
                 setBusy(false);
             }
@@ -1045,9 +1591,9 @@ export const RpUserNodeView = memo(function RpUserNodeView({ node, cwd, renderMe
             window.alert(`回退失败：${e.message}`);
             setBusy(false);
         }
-    }, [busy, seq, sessionId]);
+    }, [busy, running, seq, sessionId, inputActions, parts.text]);
     const saveEdit = useCallback(async () => {
-        if (busy || seq === undefined || !sessionId)
+        if (busy || running || seq === undefined || !sessionId)
             return;
         const text = draft.trim();
         if (!text)
@@ -1091,8 +1637,8 @@ export const RpUserNodeView = memo(function RpUserNodeView({ node, cwd, renderMe
                     });
                 }
                 catch { /* 重发失败也重开：用户看得到截断结果再手动重试 */ }
-                await dshRpc('session.close', { sessionId }).catch(() => undefined);
-                await dshRpc('session.open', { sessionId }).catch(() => undefined);
+                // 【①轮核查 2026-09-06】同 rollback 分支：rc.7 web wire 无 session.close/open，
+                // 原调用恒失败被 catch 吞掉；且本分支在聊天视图里不可达（viewing = live）。移除。
                 void refreshRollbackMask(sessionId);
                 setBusy(false);
                 setEditing(false);
@@ -1102,7 +1648,7 @@ export const RpUserNodeView = memo(function RpUserNodeView({ node, cwd, renderMe
             window.alert(`编辑失败：${e.message}`);
             setBusy(false);
         }
-    }, [busy, draft, seq, sessionId, node.key]);
+    }, [busy, running, draft, seq, sessionId, node.key]);
     // 逻辑回退掩码：本消息 seq 已被编辑/回退移出上下文 → 不渲染（编辑重发的新消息
     // seq 更大，正常显示）
     const maskHide = useRollbackMask(sessionId);
@@ -1111,7 +1657,7 @@ export const RpUserNodeView = memo(function RpUserNodeView({ node, cwd, renderMe
         return null;
     return (<div ref={shellRef} className="dsht-rp-user-row" data-windowed={windowed || undefined} style={windowed ? { height: `${placeholderHeight}px` } : undefined}>
       {!windowed && (<>
-      <RpFloorBadge useSession={useSession} nodeKey={node.key} side="user" sessionId={sessionId}/>
+      <RpFloorHeader useChat={useChat} nodeKey={node.key} side="user" sessionId={sessionId} slug={null} timeMs={nodeTimeMs(node)}/>
       <div className="dsht-rp-user-stack">
         {parts.images.length > 0 && renderMessageImages({ images: parts.images, align: 'end' })}
         {parts.text !== '' && !editing && <div className="dsht-rp-user-bubble">{parts.text}</div>}
@@ -1126,10 +1672,10 @@ export const RpUserNodeView = memo(function RpUserNodeView({ node, cwd, renderMe
       {seq !== undefined && sessionId !== undefined && !editing && (<>
           {busy && <span className="dsht-rp-note">回退完成，正在刷新会话…</span>}
           <div className="dsht-rp-user-actions">
-            <button type="button" className="dsht-rp-rollback-btn" data-testid="dsht-rp-rollback" disabled={busy} title="回退到这条消息（移除其后的对话）" onClick={() => { void rollback(); }}>
+            <button type="button" className="dsht-rp-rollback-btn" data-testid="dsht-rp-rollback" disabled={busy || running} title={running ? '生成运行中，等待本轮结束再回退' : '回退到这条消息（该消息与其后的对话移出上下文，原文放回输入框供修改重发）'} onClick={() => { void rollback(); }}>
               {busy ? '回退中…' : '↩ 回退到此处'}
             </button>
-            <button type="button" className="dsht-rp-rollback-btn" data-testid="dsht-rp-edit" disabled={busy} title="编辑这条已发送的消息（就地截断后以新文本重新发送）" onClick={() => { setDraft(parts.text); setEditing(true); }}>
+            <button type="button" className="dsht-rp-rollback-btn" data-testid="dsht-rp-edit" disabled={busy || running} title={running ? '生成运行中，等待本轮结束再编辑' : '编辑这条已发送的消息（就地截断后以新文本重新发送）'} onClick={() => { setDraft(parts.text); setEditing(true); }}>
               ✎ 编辑
             </button>
           </div>

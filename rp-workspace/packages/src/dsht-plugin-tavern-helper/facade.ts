@@ -991,21 +991,39 @@ interface EntryPutQueue {
 const entryPutQueues = new Map<string, EntryPutQueue>()
 const ENTRY_PUT_COALESCE_MS = 250
 
-/** 队列 flush（同书一次读改写落盘 + 读缓存预热）；导出：测试断言落盘前必须 flush（250ms 写合并） */
+/** 队列 flush（同书一次读改写落盘 + 读缓存预热）；导出：测试断言落盘前必须 flush（250ms 写合并）。
+ *  【鲁棒轮 2026-09-09】并发洞修复：原实现先 delete 队列再异步落盘——窗口内新 entry-put
+ *  会从磁盘读旧内容建新队列，后续 flush 用「旧盘内容+B」覆盖 → 已确认返回 ok 的 put A
+ *  静默丢失；GET 窗口内 has()=false 直读盘 → 旧值（read-your-writes 失效）。
+ *  修复：① flush 期间队列保留在 map（新 put 继续应用进同一内存权威副本）；② flush 完成后
+ *  若期间又有新 put → 重新定 timer 二次落盘，没有才出队；③ per-book flush 串行链（并发
+ *  flush 等前序完成，幂等写不再双写）。 */
+const entryPutFlushChains = new Map<string, Promise<void>>()
 export async function flushEntryPuts(dshHome: string, lorePath: string): Promise<void> {
-  const q = entryPutQueues.get(lorePath)
-  if (!q) return
-  if (q.timer !== null) { clearTimeout(q.timer); q.timer = null }
-  entryPutQueues.delete(lorePath)
-  const sessionId = q.puts[q.puts.length - 1]?.sessionId ?? ''
-  await snapshotFor(dshHome, sessionId, [lorePath])
-  await mkdir(dirname(homePath(dshHome, lorePath)), { recursive: true })
-  await atomicWrite(homePath(dshHome, lorePath), JSON.stringify(q.book, null, 1), 'utf8')
-  try {
-    const st = await stat(homePath(dshHome, lorePath))
-    loreBookCache.set(homePath(dshHome, lorePath), { mtimeMs: st.mtimeMs, size: st.size, book: q.book })
-  } catch { /* stat 失败跳过预热 */ }
-  console.log(`[dsht-th] worldbook/entry-put flush: ${lorePath}（合并 ${q.puts.length} 条，共 ${q.book.entries.length} 条）`)
+  const prev = entryPutFlushChains.get(lorePath) ?? Promise.resolve()
+  const run = prev.catch(() => { /* 前序失败不阻塞本次 */ }).then(async () => {
+    const q = entryPutQueues.get(lorePath)
+    if (!q) return
+    if (q.timer !== null) { clearTimeout(q.timer); q.timer = null }
+    const sessionId = q.puts[q.puts.length - 1]?.sessionId ?? ''
+    q.puts = [] // 本批 puts 已被 q.book 吸收（内存权威），flush 后新增会重新积累
+    await snapshotFor(dshHome, sessionId, [lorePath])
+    await mkdir(dirname(homePath(dshHome, lorePath)), { recursive: true })
+    await atomicWrite(homePath(dshHome, lorePath), JSON.stringify(q.book, null, 1), 'utf8')
+    try {
+      const st = await stat(homePath(dshHome, lorePath))
+      loreBookCache.set(homePath(dshHome, lorePath), { mtimeMs: st.mtimeMs, size: st.size, book: q.book })
+    } catch { /* stat 失败跳过预热 */ }
+    // flush 窗口内又有新 put → 保留队列 + 重新定 timer（二次落盘携带新增）；否则出队
+    if (q.puts.length > 0) {
+      if (q.timer === null) q.timer = setTimeout(() => { void flushEntryPuts(dshHome, lorePath).catch(() => {}) }, ENTRY_PUT_COALESCE_MS)
+    } else {
+      entryPutQueues.delete(lorePath)
+    }
+    console.log(`[dsht-th] worldbook/entry-put flush: ${lorePath}（共 ${q.book.entries.length} 条）`)
+  })
+  entryPutFlushChains.set(lorePath, run)
+  return run
 }
 
 export async function worldbookEntryPut(dshHome: string, body: Record<string, unknown>): Promise<FacadeResult> {

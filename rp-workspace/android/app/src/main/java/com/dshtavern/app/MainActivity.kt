@@ -291,6 +291,23 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        /** 【2026-09-08】所有文件访问状态：{granted: bool}（MANAGE_EXTERNAL_STORAGE，
+         *  Android 11+；低版本恒 true——LEGACY 外部存储无此开关） */
+        @JavascriptInterface
+        fun allFilesAccessStatus(): String {
+            val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.os.Environment.isExternalStorageManager()
+            } else true
+            return JSONObject().put("ok", true).put("granted", granted).toString()
+        }
+
+        /** 【2026-09-08】拉起「所有文件访问」系统设置页（用户手动开关后回到 app 即生效；
+         *  node 运行时进程随后即可直读直写 /sdcard——沙箱外全盘通道） */
+        @JavascriptInterface
+        fun requestAllFilesAccess() {
+            handler.post { launchAllFilesAccessSettings() }
+        }
+
         /** 授权目录里的 zip 清单：{ok, granted, files:[{name,size,mtime}]}（DocumentsContract 裸查询，零新依赖） */
         @JavascriptInterface
         fun listTreeZips(): String {
@@ -764,6 +781,49 @@ class MainActivity : AppCompatActivity() {
                 arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
                 1002,
             )
+        }
+
+        // 【2026-09-08 用户需求】「所有文件访问」一次性引导（存储权限拉满：突破安卓沙箱，
+        // node 运行时可直读直写 /sdcard）。仅提示一次（用户拒绝后不打扰——应用内设置/
+        // JS 桥 requestAllFilesAccess 随时可再拉起）。
+        maybePromptAllFilesAccess()
+    }
+
+    /** 「所有文件访问」系统设置页（MANAGE_EXTERNAL_STORAGE 的专用入口） */
+    private fun launchAllFilesAccessSettings() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                startActivity(
+                    Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                        .setData(Uri.parse("package:$packageName"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("DSHTavern", "MANAGE_APP_ALL_FILES_ACCESS 拉起失败", e)
+        }
+    }
+
+    /** 首启一次性引导：未授予「所有文件访问」时弹窗解释 + 跳系统设置（prefs 记忆已问过） */
+    private fun maybePromptAllFilesAccess() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        if (android.os.Environment.isExternalStorageManager()) return
+        if (prefs.getBoolean("all_files_prompted", false)) return
+        prefs.edit().putBoolean("all_files_prompted", true).apply()
+        try {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("授予「所有文件访问」权限？")
+                .setMessage(
+                    "DSHTavern 需要「所有文件访问权限」才能直接读写 /sdcard 上的角色包、世界书、聊天记录与导出文件" +
+                        "（绕过安卓 11+ 的应用沙箱限制）。\n\n" +
+                        "不授予不影响基本使用（内部存储工作区照常），但导入/导出只能走分享或目录授权通道。" +
+                        "随时可在 系统设置 → 应用 → DSHTavern → 权限 中修改。",
+                )
+                .setPositiveButton("去授权") { _, _ -> launchAllFilesAccessSettings() }
+                .setNegativeButton("暂不", null)
+                .show()
+        } catch (e: Exception) {
+            android.util.Log.w("DSHTavern", "all-files 引导弹窗失败", e)
         }
     }
 

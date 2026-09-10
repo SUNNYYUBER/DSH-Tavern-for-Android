@@ -129,7 +129,15 @@ export function expandDisplayMacros(text, ctx) {
                 // 显示期不落盘：只透传空串（值不写 variables——写变量走聊天/MVU 管线）
                 return '';
             }
+            // ---- L1b：自定义宏（注册表字符串模板；内层 {{…}} 不在显示期迭代——显示引擎单轮）----
+            const custom = ctx.customMacros?.[name];
+            if (custom !== undefined)
+                return custom;
         }
+        // 无参形式的自定义宏（{{name}} 不带参数）
+        const customBare = ctx.customMacros?.[lower];
+        if (customBare !== undefined)
+            return customBare;
         // 未知宏原样保留
         return raw;
     });

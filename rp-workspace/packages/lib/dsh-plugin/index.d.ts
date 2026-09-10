@@ -62,6 +62,12 @@ interface LikeToolExec {
 /** AgentRegistry 最小面（结论 4/5：agents.get + inject） */
 interface LikeAgentFull extends LikeAgent {
     inject: (message: unknown) => unknown;
+    /** 内核 driver phase（R49 同步面：idle 时 lastTurn 可安全推进——构造时缓存，
+     *  外部直写 turn/start 事件不会刷新它，见 open-chat 物化处） */
+    phase?: {
+        kind?: string;
+        lastTurn?: number;
+    } | undefined;
 }
 interface LikeAgentRegistry {
     get: (id: string) => LikeAgentFull | undefined;
@@ -241,9 +247,6 @@ export declare function filterTemplateStatements<T extends object>(messages: T[]
     messages: T[];
     filtered: number;
 };
-/** I8-2（移动端鲁棒性）：原子写文件——temp 独占创建 + fsync + rename 发布 + 父目录 fsync。
- * 0.1.2 的 dsh-atomic-write rename 前不 fsync（官方 TODO），我们自己补齐：
- * 手机端进程被杀在任意时刻都不能留下半写文件（torn tail 可修复，但覆盖型半写=静默丢尾部）。 */
 export declare function atomicWriteFile(path: string, content: string): Promise<void>;
 /** I8-3（移动端鲁棒性）：会话文件手术锁——0.1.2 无 lease，多写者（残留 runtime /
  * 第二进程）是 seq gap 的主因。手术期间持独占 .lock（wx 独占创建 = 进程级互斥），
