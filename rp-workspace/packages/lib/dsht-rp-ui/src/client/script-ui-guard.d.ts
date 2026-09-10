@@ -14,5 +14,18 @@
  * **增量扫新增子树（含根自身）**——querySelectorAll 只匹配后代，根自身必须单独
  * processElement，否则注入的悬浮窗本体永远漏登记（v1 实测踩坑）。
  */
+/** 注册某类浮球的位置回写器；返回注销函数。selector 用于把当前 DOM 元素绑到 resolver。
+ *  浮球元素可能晚于本调用挂载（cwd 补取是异步的 → 球延后渲染），因此除立即绑定外，
+ *  还要持续监听 DOM 新增把 resolver 绑到新出现的元素上。 */
+export declare function registerOwnFloatResolver(selector: string, resolver: (el: HTMLElement, left: number, top: number) => void): () => void;
+/** 供浮球组件在拖拽落定后主动触发（拖到脚本浮窗上时立即让位，不等 3s 轮询） */
+export declare function requestFloatCollisionResolve(): void;
+/** 诊断快照（CDP 探针用）：列出当前跨浮窗避让的参与方与碰撞结果 */
+export declare function floatCollisionSnapshot(): {
+    own: number;
+    others: number;
+    overlapping: number;
+    resolvers: number;
+};
 /** 安装守卫；返回卸载函数（插件 fiber 随动） */
 export declare function installScriptUiGuard(): () => void;

@@ -169,6 +169,11 @@ export const SLOT_ORDERS = {
   tables: 45,
   /** 预设 relative 条目（指令层，靠后） */
   preset: 50,
+  /**
+   * 【2026-09-10】promptOnly 正则投影后的整批消息文本（TT `GENERATE_AFTER_COMBINE_PROMPTS`
+   * 对应物）。放最后：语义上是"最终 payload 的镜像"，且只在该批确有 promptOnly 命中时存在。
+   */
+  projectedPrompt: 60,
 } as const
 
 /** `assemble` 监听器可消费的一批槽位内容（由 pre-step 各注入点登记） */

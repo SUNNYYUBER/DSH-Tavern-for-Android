@@ -333,6 +333,23 @@ describe('门面：worldbook ST 形状往返', () => {
     const back = stEntryToLore(st, '测试书', entry.id)
     expect(back).toEqual(entry)
   })
+
+  // 【2026-09-10 极性回归】读面同时给出 enabled 与 disabled（镜像），写面原实现让
+  // disabled 无条件压过 enabled → 卡脚本 `Object.assign({}, e, {enabled:true})` 时
+  // disabled 仍是旧 true，改动被吞，条目永远停在禁用态（实机翻转→还原失败复现）。
+  it('enabled 显式给出时优先于 stale disabled（极性回归）', () => {
+    // 条目曾被禁用：读面形状 = { enabled:false, disabled:true }
+    const st = { uid: 0, comment: '地点', content: 'x', enabled: false, disabled: true }
+    expect(stEntryToLore(st, '书', 'id0').enabled).toBe(false)
+    // 卡只改 enabled → true（disabled 旧值仍 true，不应压过）
+    const back = stEntryToLore({ ...st, enabled: true }, '书', 'id0')
+    expect(back.enabled).toBe(true)
+    // 仅给 disabled（无 enabled）时回落：disabled:true → enabled:false
+    const noEnabled = stEntryToLore({ uid: 0, comment: 'x', disabled: true }, '书', 'id0')
+    expect(noEnabled.enabled).toBe(false)
+    const noEnabled2 = stEntryToLore({ uid: 0, comment: 'x', disabled: false }, '书', 'id0')
+    expect(noEnabled2.enabled).toBe(true)
+  })
 })
 
 describe('门面：chat/messages 基本映射', () => {

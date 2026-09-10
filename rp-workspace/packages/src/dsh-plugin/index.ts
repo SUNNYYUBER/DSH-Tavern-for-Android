@@ -998,22 +998,60 @@ export function hasDirectUserInput(messages: LikeMessage[] | undefined): boolean
   return (messages ?? []).some(m => m?.source?.kind === 'user')
 }
 
-/** 步骤 1：正则 prompt 时机跑本批消息（user→USER_INPUT、assistant→AI_OUTPUT placement） */
+/**
+ * 【TT 对照修复 2026-09-10】消息深度计算（对照 TT `script.js:5285`
+ * `depth: coreChat.length - index - (isContinue ? 2 : 1)` 的语义简化版）。
+ *
+ * TT 公式里 `-1` 是为「最新一条是待生成的 assistant 占位」预留的偏移；DSH 的
+ * decision.messages 不含占位，故此处直接用「距末尾的距离」：末尾一条 depth=0，
+ * 倒数第二条 depth=1……。ST 的 minDepth/maxDepth 语义即建立在这个尺度上
+ * （engine.js:368-378：depth < minDepth 跳过、depth > maxDepth 跳过）。
+ */
+export function messageDepth(total: number, index: number): number {
+  return Math.max(0, total - index - 1)
+}
+
+/**
+ * 步骤 1：正则 prompt 时机跑本批消息（user→USER_INPUT、assistant→AI_OUTPUT placement）。
+ *
+ * 【两种模式（2026-09-10 重写，TT 语义对齐）】
+ * - `'persist'`：只跑 `markdownOnly === false && promptOnly === false` 的「通用」脚本
+ *   （ST engine.js:357 的第三分支）。其结果会随 `decision.messages` 落 `user/message`
+ *   耐久事件 —— 对应 ST 里写入 chat 数组的那类脚本，可以改变聊天记录本体。
+ * - `'prompt'`：跑 `!markdownOnly` 的全部脚本（含 `promptOnly`）。**结果绝不落盘**，
+ *   只在发往 LLM 的最终投影上生效（`llm/stream` 钩子内调用）—— 对应 ST
+ *   `script.js:5282-5312` 的 `getRegexedStringBatchAsync(..., { isPrompt: true })`：
+ *   TT 把结果写进**局部变量 `coreChat`**，从不回写 `chat`。
+ *
+ * 修复前：`promptOnly: true` 的脚本（如 Kemini 预设的「aether opus正则一」把用户输入
+ * 包成 `<interactive_input>$1</interactive_input>`）在 pre-step 阶段就跑，结果经
+ * `{...decision, messages: batch}` 被宿主落成 `user/message` 事件 → **聊天记录被污染**，
+ * UI 气泡显示出 `<interactive_input>` 包装、且 `$1` 残留会永久写死。
+ */
 export function applyPromptRegexes(
   messages: LikeMessage[],
   scripts: RegexScript[],
   traceRegexHits: Array<{ scriptName: string; count: number }>,
+  mode: 'persist' | 'prompt' = 'persist',
 ): LikeMessage[] {
   if (scripts.length === 0) return messages
-  return messages.map(m => {
+  // persist 模式排除 promptOnly（其结果不该改变聊天记录本体）；prompt 模式全收。
+  const pool = mode === 'persist' ? scripts.filter(s => s.promptOnly !== true) : scripts
+  if (pool.length === 0) return messages
+  const total = messages.length
+  return messages.map((m, idx) => {
     if (!Array.isArray(m.content)) return m
     const role = m.role === 'user' ? 'user' : m.role === 'assistant' ? 'assistant' : null
     if (role === null) return m // system/其他角色不经正则（ST 语义：正则作用于对话消息）
     const placement = role === 'user' ? PLACEMENT.USER_INPUT : PLACEMENT.AI_OUTPUT
+    // TT 对照：depth 必须真实传入，否则 minDepth/maxDepth 过滤全失效（engine.appliesTo
+    // 里 `depth === null` 直接 return true）。wuwa 预设「aether opus正则一」声明
+    // maxDepth: 1（只作用于最新一条），此前因 depth 恒为 null 而作用于全部历史楼层。
+    const depth = messageDepth(total, idx)
     let changed = false
     const content = m.content.map(block => {
       if (block.type !== 'text' || typeof block.text !== 'string') return block
-      const r = runRegexScripts(scripts, block.text, 'prompt', placement, { depth: null })
+      const r = runRegexScripts(pool, block.text, 'prompt', placement, { depth })
       if (r.hits.length > 0) {
         changed = true
         for (const h of r.hits) traceRegexHits.push({ scriptName: h.scriptName, count: h.count })
@@ -2451,6 +2489,56 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           if (tablesText) out.push({ name: 'dsht-memory:slot:tables', order: SLOT_ORDERS.tables, text: tablesText })
         }
       } catch { /* 无表格系统或加载失败：静默跳过 */ }
+
+      // ---- 【2026-09-10】promptOnly 正则投影 → system 槽位（TT GENERATE_AFTER_COMBINE_PROMPTS）----
+      // 为什么在这里而不是 llm/stream：见该钩子头注 —— loop 组装的 options 是 deep-frozen
+      // （dsh-llm/lib/index.js:87 / dsh-agent-loop/lib/index.js:747），messages 改写被架构封死。
+      // system-prompt/assemble 是显式可变通道（dsh-system-prompt/lib/types/index.d.ts:23
+      // "the mutable assembly"），故投影内容改由本槽位承载。
+      //
+      // 保真度说明：这不是把正则结果塞回 messages（DD 做不到，且那样会破坏
+      // reconstructability），而是把「投影后的整批文本」作为一个 system section 附在尾部，
+      // 令模型看到的**文本内容**与 TT 的 prompt 期变换一致。TT 侧该变换同样是"只进
+      // prompt 不回写 chat"，语义等价。
+      try {
+        // 【时序取证】实测 turn 内顺序为 assemble → pre-step（v197 探针，见本文件 3040 附近注释）。
+        // 故 pre-step 预热对**本 turn** 的 assemble 不可见 —— 此处自己按需预热，
+        // 缓存已有的（pre-step 写过）直接复用。
+        let pj = preparedPromptProjections.get(sid)
+        if (pj === undefined) {
+          try {
+            const all = await mergedRegex(rp, new AbortController().signal, sid)
+            pj = { slug, scripts: all.filter(s => s.promptOnly === true) }
+            preparedPromptProjections.set(sid, pj)
+          } catch { pj = undefined }
+        }
+        if (pj !== undefined && pj.scripts.length > 0) {
+          const msgs = agent.session.deriveMessages() as unknown as LikeMessage[]
+          if (msgs.length > 0) {
+            const hits: Array<{ scriptName: string; count: number }> = []
+            const projected = applyPromptRegexes(msgs, pj.scripts, hits, 'prompt')
+            if (hits.length > 0) {
+              // 只投影"确实被改写过"的那几条（未命中的层与原文一致，无需重复入 prompt）
+              const changed: string[] = []
+              for (let i = 0; i < projected.length; i++) {
+                const a = messageText(msgs[i] as LikeMessage)
+                const b = messageText(projected[i] as LikeMessage)
+                if (a !== b) changed.push(b)
+              }
+              if (changed.length > 0) {
+                out.push({
+                  name: 'dsht-rp:slot:prompt-projection',
+                  order: SLOT_ORDERS.projectedPrompt,
+                  text: `【生成期正则投影】（以下 ${changed.length} 段为经 promptOnly 正则处理后的最终文本，`
+                    + `与聊天记录显示的原文可能不同；命中脚本：${hits.map(h => h.scriptName).join('、')}）\n\n`
+                    + changed.join('\n\n'),
+                })
+                console.log(`[dsht-rp] promptOnly 投影入 system 槽位：${changed.length} 段命中（${hits.map(h => h.scriptName).join('、')}）`)
+              }
+            }
+          }
+        }
+      } catch (e) { console.log(`[dsht-rp] promptOnly 投影槽位失败（跳过）：${(e as Error).message}`) }
     } catch (e) {
       console.log(`[dsht-rp] D-3 slot 内容收集失败（不阻塞）：${(e as Error).message}`)
     }
@@ -3069,22 +3157,37 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       const seqFile0 = join(gdir0, 'llm-seq.txt')
       const gFetch = globalThis.fetch.bind(globalThis)
       globalThis.fetch = (async (input: unknown, init?: unknown) => {
+        const url0 = typeof input === 'string' ? input : (input as { url?: string })?.url ?? String(input)
         try {
-          const url = typeof input === 'string' ? input : (input as { url?: string })?.url ?? String(input)
           const body = typeof init === 'object' && init !== null ? (init as { body?: unknown }).body : undefined
-          if (typeof body === 'string' && body.length > 200 && /chat\/completions|\/v1\/messages|provider\/v1/i.test(url)) {
+          if (typeof body === 'string' && body.length > 200 && /chat\/completions|\/v1\/messages|provider\/v1/i.test(url0)) {
             let seq = 0
             try { seq = parseInt((readFileSync(seqFile0, 'utf8')).trim() || '0', 10) || 0 } catch { /* 首次 */ }
             seq += 1
             writeFileSync(join(gdir0, `llm-${String(seq).padStart(3, '0')}.json`), JSON.stringify({
               tag: 'provider_llm_request', seq, env: 'dshtavern', ts: new Date().toISOString(),
-              url: url.slice(0, 200),
+              url: url0.slice(0, 200),
               data: { body: JSON.parse(body) },
             }, null, 1))
             writeFileSync(seqFile0, String(seq))
           }
         } catch { /* golden dump 失败不影响请求 */ }
-        return gFetch(input as Parameters<typeof gFetch>[0], init as Parameters<typeof gFetch>[1])
+        // 【2026-09-10 排障】记录每一次出站 fetch 的目标与结果 —— 「发不出来消息」的
+        // TRANSPORT/Connection error 需要看到 URL 与底层异常才能归因（此前只有
+        // llm/stream 观测，看不到 provider 层）。
+        const isLlmRoute = /chat\/completions|\/v1\/messages|\/models|provider\/v1/i.test(url0)
+        if (isLlmRoute) console.log(`[dsht-rp] outbound fetch → ${url0.slice(0, 160)}`)
+        try {
+          return await gFetch(input as Parameters<typeof gFetch>[0], init as Parameters<typeof gFetch>[1])
+        } catch (e) {
+          if (isLlmRoute) {
+            const err = e as { name?: string; message?: string; cause?: unknown }
+            const cause = err.cause as { code?: string; message?: string } | undefined
+            console.log(`[dsht-rp] outbound fetch 失败 ← ${url0.slice(0, 160)} :: ${err.name}: ${err.message}`
+              + (cause ? ` | cause=${cause.code ?? ''} ${cause.message ?? ''}` : ''))
+          }
+          throw e
+        }
       }) as typeof fetch
       console.log('[dsht-rp] golden: provider fetch 拦截已启用（llm dump → rp/golden/dsht/）')
     }
@@ -3136,11 +3239,32 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
     } catch { return config }
   })
 
-  // ---- D-3/D-4 投影层探针（2026-09-10 心跳 33）：llm/stream 是官方唯一的"最终请求"
-  //      投影点（TT 侧的 GENERATE_AFTER_COMBINE_PROMPTS 等价物）。此处只观测不改写，
-  //      用于确认 ① 钩子可达 ② messages/system 的最终形状 ③ 与 deriveMessages 的关系。
-  //      排序依据：agent-loop 的不变式用 { prepend: true } 注册（invariant.ts:56），
-  //      本监听器不带 prepend → 在其 next() 之后执行，安全。
+  // 【2026-09-10】sessionId → promptOnly 投影脚本缓存。
+  // 为什么需要：`llm/stream` 是 **generator 型 waterfall**（`next: () => AsyncIterable<StreamChunk>`，
+  // 见 dsh-llm/lib/types/index.d.ts:43），handler 必须是同步的（返回 AsyncIterable 而非 Promise）。
+  // 因此不能在钩子里 await 读盘，改为在 pre-step（async 语境）预热本缓存，llm/stream 同步读。
+  const preparedPromptProjections = new Map<string, { scripts: RegexScript[]; slug: string }>()
+
+  /** 【2026-09-10】promptOnly 投影命中记录（诊断用；llm/stream 只读不写，见该钩子头注）。 */
+  const projectedPromptHits = new Map<string, { at: number; hits: string[]; chars: number }>()
+
+  // ---- D-3/D-4 投影层探针 + promptOnly 正则投影（2026-09-10）
+  //
+  // 【为什么 promptOnly 正则在 llm/stream 而不在 pre-step】
+  // ST/TT 语义：`promptOnly: true` 的脚本只在生成期变换**发往 LLM 的文本**，
+  // **从不回写 chat 数组**（对照 TT `script.js:5282-5312`：`getRegexedStringBatchAsync(...,
+  // { isPrompt: true })` 的结果写进局部 `coreChat`，`chat` 保持原样）。
+  //
+  // DSH 的 pre-step `decision.messages` 会被宿主**落成 `user/message` 耐久事件**
+  // （index.ts:2167 注释：「宿主硬约束：decision.messages 全部落 user/message 事件」）。
+  // 故 pre-step 阶段只能跑「通用」脚本（`applyPromptRegexes(mode:'persist')`），
+  // `promptOnly` 脚本必须推迟到本钩子 —— 这是「最终请求」投影点，其改写不会落盘
+  // （TT 的 `GENERATE_AFTER_COMBINE_PROMPTS` 等价物）。
+  //
+  // 修复前的症状：Kemini 预设的「aether opus正则一」（`promptOnly:true`,
+  // `maxDepth:1`, replaceString=`<interactive_input>\n$1\n</interactive_input>`）
+  // 在 pre-step 就跑并被落盘 → 聊天记录被写成 `<interactive_input>…</interactive_input>`，
+  // UI 气泡直接显示包装标签。
   ctx.on('llm/stream', (options: unknown, next: () => unknown) => {
     try {
       const o = options as {
@@ -3149,17 +3273,62 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         maxTokens?: unknown; temperature?: unknown; thinking?: unknown
         purpose?: unknown
       }
-      const msgs = Array.isArray(o.messages) ? o.messages : []
-      const head = msgs.slice(0, 3).map((m) => {
+      const msgs0 = Array.isArray(o.messages) ? o.messages : []
+      const head = msgs0.slice(0, 3).map((m) => {
         const mm = m as { role?: unknown; content?: unknown }
         const c = typeof mm.content === 'string' ? mm.content : JSON.stringify(mm.content ?? '')
         return `${String(mm.role ?? '?')}:${c.length}ch`
       })
       console.log(`[dsht-rp] llm/stream 观测: provider=${String(o.provider ?? '')} model=${String(o.model ?? '')} `
-        + `messages=${msgs.length} system=${typeof o.system === 'string' ? o.system.length + 'ch' : '(none)'} `
+        + `messages=${msgs0.length} system=${typeof o.system === 'string' ? o.system.length + 'ch' : '(none)'} `
         + `tools=${Array.isArray(o.tools) ? o.tools.length : 0} maxTokens=${String(o.maxTokens ?? '')} `
         + `temp=${String(o.temperature ?? '')} purpose=${String(o.purpose ?? '')} sessionId=${String(o.sessionId ?? '')} `
         + `| 首3条: ${head.join(' ')}`)
+
+      // ---- promptOnly 正则投影（不落盘）----
+      // 【签名约束】llm/stream 是 generator 型 waterfall（dsh-llm/lib/types/index.d.ts:43
+      // `next: () => AsyncIterable<StreamChunk>`），**不能**用 async handler（会返回 Promise
+      // 而非 AsyncIterable，下游 validateStream 直接炸）。
+      //
+      // 【2026-09-10 二次修复：为什么不再直接改 o.messages】
+      // 原实现 `o.messages = projected` 在实机抛
+      //   TypeError: Cannot assign to read only property 'messages' of object '#<Object>'
+      // 根因不是笔误，而是**宿主的架构约束**：
+      //   - dsh-llm/lib/index.js:87 `isAgentLoopRequest` 的文档明写：loop 组装的 request
+      //     到达本瀑布时 **deep-frozen（mutation throws）**，其内容是「会话日志的纯函数」
+      //     （reconstructability Agent Note），**listeners read it, never rewrite it**；
+      //   - dsh-agent-loop/lib/index.js:747 `markAgentLoopRequest(deepFreeze({...}))`
+      //     正是那个 freeze 点。
+      // 即 messages 的改写通道在架构上被**故意封死**（保证历史可从日志重建）。
+      //
+      // 那 promptOnly 投影该落在哪？——**落 system 槽位**（`system-prompt/assemble`
+      // waterfall 是显式可变的：dsh-system-prompt/lib/types/index.d.ts:23 原文
+      // "the **mutable** assembly built from registered providers"）。
+      // 发送前由 pre-step 侧把「正则投影后的消息文本」发布进 `projectedPromptSections`，
+      // 本钩子只负责**读**（日志/探针），真正的注入由 system 槽位完成。
+      // 这样既满足 TT 语义（promptOnly 只影响发给模型的投影、不回写 chat），
+      // 又不触碰任何 frozen 对象。
+      const proj = preparedPromptProjections.get(String(o.sessionId ?? ''))
+      if (proj !== undefined && proj.scripts.length > 0 && msgs0.length > 0) {
+        const hits: Array<{ scriptName: string; count: number }> = []
+        const projected = applyPromptRegexes(msgs0 as LikeMessage[], proj.scripts, hits, 'prompt')
+        if (hits.length > 0) {
+          // 【为什么这里只读不写】options 是 deep-frozen 的 loop request（见上）。
+          // 投影结果改由 pre-step 发布到 system 槽位（projectedPromptSections）。
+          // 此处仅记录命中，供日志与 Golden Master 对照取证。
+          projectedPromptHits.set(String(o.sessionId ?? ''), {
+            at: Date.now(),
+            hits: hits.map(h => h.scriptName),
+            chars: projected.reduce((n, m) => {
+              const c = (m as { content?: unknown }).content
+              if (typeof c === 'string') return n + c.length
+              if (Array.isArray(c)) return n + c.reduce((k, b) => k + (typeof (b as { text?: unknown }).text === 'string' ? ((b as { text: string }).text.length) : 0), 0)
+              return n
+            }, 0),
+          })
+          console.log(`[dsht-rp] promptOnly 正则投影: ${hits.length} 条命中（${hits.map(h => h.scriptName).join('、')}）—— 经 system 槽位生效，未落盘`)
+        }
+      }
     } catch (e) {
       console.log(`[dsht-rp] llm/stream 观测失败: ${(e as Error).message}`)
     }
@@ -3364,6 +3533,14 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       // T2.8：三源合并（全局 + 预设 + 角色）
       const sessionIdForRegex = String((agent.session as unknown as { id?: string }).id ?? '')
       const regexScripts = await mergedRegex(rp, signal, sessionIdForRegex)
+      // 【2026-09-10】预热 promptOnly 投影脚本（供 llm/stream 同步读取——该钩子是 generator
+      // 型 waterfall，handler 不能 async）。只留 promptOnly 脚本，减少钩子内过滤开销。
+      if (sessionIdForRegex) {
+        preparedPromptProjections.set(sessionIdForRegex, {
+          slug: slug ?? '',
+          scripts: regexScripts.filter(s => s.promptOnly === true),
+        })
+      }
       const regexHits: Array<{ scriptName: string; count: number }> = []
       // 【hook 移植 L3 2026-09-06】RP 域自定义 cordis 事件链（ST/Luker generate() 分段开放
       // 挂点的同构建面）。设计决策：内置逻辑作 waterfall 的 fallback（最内层 next），第三方
@@ -3372,10 +3549,14 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       // 首个 object 参数误当 scope thisArg（cordis/lib/index.js:259），必须显式占住。
       // 事件链：dsht-rp/turn(emit) → dsht-rp/regex(waterfall) → dsht-rp/wi-scan(waterfall)
       //        → dsht-rp/wi-activated(emit) → dsht-rp/wi-finalize(waterfall) → dsht-rp/assemble(waterfall)
+      // 【2026-09-10 TT 语义修正】本批只跑「通用」脚本（mode:'persist'——排除 promptOnly）。
+      // 原因：此处结果会随 decision.messages 落 user/message 耐久事件，而 promptOnly 脚本
+      // 按 ST/TT 语义只该影响发给 LLM 的投影、不该改聊天记录本体（TT script.js:5282-5312
+      // 写的是局部 coreChat）。promptOnly 统一推迟到 llm/stream 投影（不落盘）。
       ctx.emit(null, 'dsht-rp/turn', { sessionId: sessionIdForRegex, slug, turn: turnNo })
       let batch = await ctx.waterfall(null, 'dsht-rp/regex',
         { agent, sessionId: sessionIdForRegex, slug, turn: turnNo, messages: decision.messages, hits: regexHits },
-        (p: { messages: LikeDecision['messages'] }) => applyPromptRegexes(p.messages, regexScripts, regexHits)) as LikeDecision['messages']
+        (p: { messages: LikeDecision['messages'] }) => applyPromptRegexes(p.messages, regexScripts, regexHits, 'persist')) as LikeDecision['messages']
 
       // ---- B9 + B2（提示词模板生成期管线；rp/ejs-settings.json 驱动）----
       // B9 filter_chat_message：楼层里的 <% %> 模板语句剥除（不进模型上下文）；

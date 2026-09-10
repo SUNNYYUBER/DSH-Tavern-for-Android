@@ -64,13 +64,31 @@ export interface RegexRunResult {
   hits: RegexHit[]
 }
 
-/** 按时机过滤脚本（disabled 永不执行） */
+/**
+ * 按时机过滤脚本（disabled 永不执行）。
+ *
+ * 【2026-09-10 TT 语义修正】原实现对 `prompt` 时机只收 `promptOnly === true` 的脚本，
+ * 这是**错的**。对照 TT `extensions/regex/engine.js:354-357`：
+ * ```
+ * const isScopeMatch =
+ *     (script.markdownOnly && isMarkdown) ||
+ *     (script.promptOnly && isPrompt) ||
+ *     (!script.markdownOnly && !script.promptOnly && !isMarkdown && !isPrompt);
+ * ```
+ * 即生成期（`isPrompt: true`）应同时纳入 **promptOnly 脚本**与**通用脚本**（第三分支
+ * `!markdownOnly && !promptOnly` 在 `isPrompt` 下也成立——注意它只要求「非 markdownOnly
+ * 且非 promptOnly」，并不排除 isPrompt）。只有 `markdownOnly` 脚本被排除在 prompt 之外。
+ *
+ * 同理 display 时机（`isMarkdown: true`）应同时纳入 markdownOnly 与通用脚本。
+ */
 function activeScripts(scripts: RegexScript[], timing: RegexTiming): RegexScript[] {
   return scripts.filter(s => {
     if (s.disabled) return false
-    if (timing === 'display') return s.markdownOnly
-    if (timing === 'prompt') return s.promptOnly
-    // permanent：两者皆否的脚本（"永久改写"）
+    // display（TT isMarkdown）：markdownOnly 专属 + 通用（第三分支）
+    if (timing === 'display') return !s.promptOnly
+    // prompt（TT isPrompt）：promptOnly 专属 + 通用（第三分支）
+    if (timing === 'prompt') return !s.markdownOnly
+    // permanent：仅通用脚本（两者皆否）
     return !s.markdownOnly && !s.promptOnly
   })
 }

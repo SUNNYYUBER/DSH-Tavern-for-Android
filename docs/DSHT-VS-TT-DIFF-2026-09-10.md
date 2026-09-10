@@ -235,6 +235,155 @@ settings.yaml
   - 自动检测：**7 条 `$1` 字面残留**（`[13][14][20][23][37]` 等）—— **存量脏数据**（这些楼层在 v196 修复前已写死进聊天记录）❌
 - **待判定**：DSHT 的 `<interactive_input>` 包装本身是否应保留。TT 无此包装 → 若要「体验一致」，需确认该包装是 DSHT 预设作者显式添加的（那应保留），还是迁移导入引入的（那应移除）。
 
+#### D-5 追查结论（2026-09-10 心跳 36，全链取证 + 已修 ✅）
+
+**包装来源查清（四层排除法，每层都有取证）**：
+
+| 排查层 | 结果 | 证据 |
+|---|---|---|
+| TT 源码 / TT data | **零命中** | `grep -rn interactive_input TauriTavern-Canary/` 空 |
+| TT 聊天记录（153 个用户楼层） | **0 个含包装** | 逐备份统计 |
+| 卡本体（PNG `chara` base64） | **零命中** | 解 base64 → JSON，全字段扫 |
+| 卡 `rp.json`（DSHT 侧转换产物） | **零命中** | 10 个字段逐一统计 |
+| 卡变量（chat snapshot `variables`） | **2 个命中** | `zhuanshu` / `meizhu1` |
+| **预设 `Kemini Dramatron`（`extensions.regex_scripts[3]`）** | **真凶** | 见下 |
+
+**真凶**：预设自带正则 —— **TT/ST 侧就是靠它包装的**：
+
+```json
+{
+  "scriptName": "aether opus正则一",
+  "findRegex": "^([\\s\\S]*)$",
+  "replaceString": "<interactive_input>\n$1\n</interactive_input>",
+  "placement": [1],          // 用户输入
+  "maxDepth": 1,             // 只作用于最新一条
+  "promptOnly": true,        // 只改 prompt，不改聊天记录
+  "markdownOnly": false,
+  "runOnEdit": true,
+  "disabled": false
+}
+```
+
+→ **包装行为本身是正确的**（TT 一致）。TT 聊天记录里看不到包装，是因为 `promptOnly: true` 只在生成期变换 prompt、**从不回写 chat**。
+
+**真正的缺陷（DSHT 侧，两处，均已修）**：
+
+| # | 缺陷 | 后果 | 证据 |
+|---|---|---|---|
+| ① | `promptOnly` 正则结果**被回写耐久日志** | 聊天记录被写成 `<interactive_input>…</interactive_input>`，UI 气泡直接显示包装标签 | `session-7973a03e` 的 `seq 401` 落盘即为包装后文本；`RpNativeChat.tsx:1862` 直读 `parts.text` 渲染 |
+| ② | `depth` 恒传 `null` → `minDepth/maxDepth` **全失效** | `maxDepth: 1` 本该只改最新一条，实际作用于**全部历史楼层** | `index.ts` 三处调用点硬编码 `{ depth: null }`；`engine.appliesTo` 首行 `if (depth === null) return true` |
+| ③ | `activeScripts(timing='prompt')` **只收 `promptOnly` 脚本** | 通用（permanent）脚本在 prompt 时机被漏掉 —— 与 ST/TT 不符 | 对照 TT `engine.js:354-357` `isScopeMatch` 三分支 |
+
+**TT 正确实现对照**（`TauriTavern-Canary/src/script.js:5282-5312`）：
+```js
+const coreChatRegexedMessages = await getRegexedStringBatchAsync(coreChat.map((chatItem, index) => ({
+    rawString: chatItem.mes,
+    placement: chatItem.is_user ? regex_placement.USER_INPUT : regex_placement.AI_OUTPUT,
+    params: { isPrompt: true, depth: (coreChat.length - index - (isContinue ? 2 : 1)) },
+})));
+coreChat = ... { ...chatItem, mes: regexedMessage, index }   // ← 只改写局部 coreChat
+```
+关键三点：**① `isPrompt: true` 让 promptOnly 生效 ② `depth` 真实传入 ③ 结果只进局部变量，`chat` 数组原样不动**。
+
+**修复（2026-09-10）**：
+
+1. **`applyPromptRegexes` 加 `mode: 'persist' \| 'prompt'`**（`dsh-plugin/index.ts:1002+`）
+   - `'persist'`：只跑 `promptOnly !== true` 的通用脚本 → 结果随 `decision.messages` 落盘（对应 ST 里写 chat 的那类）
+   - `'prompt'`：全收（含 promptOnly）→ **绝不落盘**，只在最终投影生效
+   - pre-step 调用点改传 `'persist'`；`llm/stream` 钩子内跑 `'prompt'`
+2. **`messageDepth(total, index)` 新增**，`applyPromptRegexes` 内真实计算深度（末尾 depth=0）
+   → 三处 `{ depth: null }` 的顺序语义问题在消息维度上得到修正
+3. **`activeScripts` 时机过滤按 TT 三分支重写**（`engine.ts:68+`）
+   - `display` = `!promptOnly`（markdownOnly 专属 + 通用）
+   - `prompt` = `!markdownOnly`（promptOnly 专属 + 通用）
+   - `permanent` = 两者皆否
+4. **`llm/stream` 投影**：因该钩子是 **generator 型 waterfall**（`dsh-llm/lib/types/index.d.ts:43`
+   `next: () => AsyncIterable<StreamChunk>`），handler **不能 async** —— 改为 pre-step
+   预热 `preparedPromptProjections`（sessionId → promptOnly 脚本），钩子内同步读取应用。
+
+**新增测试**（`dsh-plugin.spec.ts` +3 / `regex.spec.ts` 修正 1）：
+- `applyPromptRegexes(persist)`：promptOnly 脚本**不作用于**批消息（复刻 aether opus 正则，断言裸文本 + 无 `$1`）
+- `applyPromptRegexes` depth 过滤：`maxDepth:1` / `maxDepth:0` 的边界
+- `messageDepth`：末尾为 0、倒数递增
+- 三时机用例按 TT 语义修正（通用脚本在 prompt/display 也执行）
+
+**全量单测 703/703 绿（36 文件）**。
+
+**存量脏数据**：`session-7973a03e`（37 处）/ `session-5f4414a8`（35 处）/ `session-wuwa-migrated-01`（74 处）
+里的包装楼层是修复前写入的，清不清由用户定（不影响新消息）。
+
+### D-8　「发不出来消息」全链闭环　【致命·用户直接投诉】—— ✅ **2026-09-10 心跳 37 已修复**
+
+用户原话：「你只是立案了有什么用？**发不出来消息**就是因为这两个还没解决的问题啊！」
+→ 本项是 goal 达成的前置阻塞，逐层剥开是**三个独立缺陷叠加**（不是两个）。
+
+#### 缺陷 A：`llm/stream` 的 `Cannot assign to read only property 'messages'`
+
+| 层 | 取证 |
+|---|---|
+| 现象 | 实机 logcat 反复抛 `TypeError: Cannot assign to read only property 'messages' of object '#<Object>'`，每轮重试 |
+| 根因（非笔误，是**宿主架构约束**） | `dsh-llm/lib/types/index.d.ts:33-36` 明文：loop 组装的 request 携带 `markAgentLoopRequest` 身份，到达瀑布时 **deep-frozen（mutation throws）**，其内容是「会话日志的**纯函数**」（reconstructability Agent Note），**listeners read it, never rewrite it** |
+| freeze 发生点 | `dsh-agent-loop/lib/index.js:747` `markAgentLoopRequest(deepFreeze({...}))` |
+
+**结论：`o.messages = projected` 这条路被宿主故意封死**，浅拷贝后 `next()` 同样无效（冻结在深层对象上）。
+
+**修复**：投影改走 `system-prompt/assemble`（宿主明文标注的 **"the mutable assembly"**，`dsh-system-prompt/lib/types/index.d.ts:23`）。
+
+- `dsh-plugin/index.ts`：删除 `o.messages = projected`，改为**只读诊断**（记 `projectedPromptHits`）。
+- `tt-projection.ts`：新增槽位序号 `projectedPrompt = 60`（注释标明对应 TT 的 `GENERATE_AFTER_COMBINE_PROMPTS`）。
+- `gatherSlotSections` 内新增投影发布：assemble 时**自己预热** `preparedPromptProjections`
+  （时序铁律：`assemble(:497) → pre-step(:502)`，pre-step 发布对本 turn 不可见），
+  命中则推 `dsht-rp:slot:prompt-projection` 段（含命中脚本名 + 变更文本）。
+
+**实机验证**：只读报错**彻底消失**，日志变为
+```
+[dsht-rp] promptOnly 正则投影: 2 条命中（aether opus正则一）—— 经 system 槽位生效，未落盘
+[dsht-rp] D-3 system 槽位注入：3 段 / 40416ch（dsht-rp:slot:character, dsht-rp:slot:state, dsht-rp:slot:prompt-projection）
+```
+
+#### 缺陷 B：出站请求根本没离开 app
+
+修完 A 后 mock LLM **一条请求都收不到**，`llm/stream` 却在每 3–5s 重试。加出站观测（golden fetch patch 内打点）后拿到真凶：
+
+```
+[dsht-rp] outbound fetch → http://127.0.0.1:31101/v1/chat/completions
+[dsht-rp] outbound fetch 失败 :: TypeError: fetch failed | cause=UND_ERR_SOCKET other side closed
+```
+
+两个环境陷阱叠加：
+
+| 陷阱 | 事实 | 判定 |
+|---|---|---|
+| **环境代理** | 本机 `HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:1303`（WorkBuddy 沙箱代理），**Node/undici 会读** | `curl -x http://127.0.0.1:1303 http://127.0.0.1:31101/v1/models` → `upstream connect failed (os error 10061)`；直连正常 → 请求被导向代理 |
+| **`adb reverse` 失效** | `adb reverse tcp:31101 tcp:31101` 命令显示建立成功，设备侧 `nc` 打不通 | **此环境不可用，弃用** |
+
+**修复**：改用 **`10.0.2.2:31101`**（Android 模拟器内置宿主别名，绕过代理与 reverse）。
+
+#### 缺陷 C：mock 进程被沙箱回收
+
+`nohup ... &` / `> /tmp/x.log &` 起的进程在 bash tool call 返回时即被回收；`/tmp` 也是每次调用独立。
+
+**修复**：`run_in_background: true` 常驻，日志用 `TaskOutput` 读。
+
+#### 决定性验证（全链）
+
+| 判据 | 实测值 |
+|---|---|
+| mock 收到请求 | `POST /v1/chat/completions (179209B) messages=45`、`(204538B) messages=48` |
+| 请求完成 | `turn/end {kind:"completed"}` |
+| 用量 | `usage {input:100, output:20}` → UI `276 tok/s · Input 304 tok · Output 64 tok` |
+| UI 渲染 | 气泡显示**裸文本**（非错误态） |
+| 错误计数 | `errCount: 10` 发送前后**不变**（全为陈旧项），不再增长 |
+
+#### 本轮固化的三条铁律
+
+1. **`llm/stream` 是只读瀑布** —— loop-built request 深冻结，任何 messages 改写都会 throw。
+   要影响最终 payload，只走 `system-prompt/assemble` 的 `sections`。
+2. **mock 必须 `run_in_background` 常驻**；`adb reverse` 在本环境**不可用**，走 `10.0.2.2`。
+3. **环境代理会劫持 Node 出站** —— 排障时先看 `HTTP_PROXY`，必要时 `undici` 层绕过。
+
+---
+
 ### D-6　工具/agent 层污染　【结构性】
 
 - **DSHT 独有**：`[0]` 24,773 字的 DSH agent 说明书、7 条 `tool` 消息、10 条 `assistant` 思考链、`[4]` 运行时上下文、`[5]` skill 提醒、**31 个 `tools` 定义**。
@@ -270,6 +419,9 @@ settings.yaml
    把用户输入放在倒数第 3 位 —— 属**组装语义**错误，非 API 缺失。**（修复后仍存在：12 条里 10 条 user / 1 条 system，列为 P1）**
 5. **`$1` 修复已确认生效**（新楼层内容正确）；历史 7 条 `$1` 为存量脏数据，需一次性清洗。
 6. **agent 层污染（D-6）** 是 DSHT 架构固有 —— 需评估 RP 会话是否应关闭 tools（31 个）。
+7. **✅「发不出来消息」已闭环（D-8）** —— 三个缺陷叠加（`llm/stream` 深层冻结 / 环境代理劫持出站 / mock 被回收），
+   全链实机验证通过：mock 收到 `messages=45/48`、`turn/end completed`、UI 渲染裸文本、错误计数不增长。
+   **goal 的前置阻塞解除。**
 
 ---
 
@@ -277,13 +429,17 @@ settings.yaml
 
 | 优先级 | 项 | 落点 |
 |---|---|---|
+| ~~P0~~ ✅ | ~~修「发不出来消息」（D-8 三缺陷链）~~ **已修复**（`llm/stream` 只读 → `system-prompt/assemble` 投影；`10.0.2.2` 出站通路） | `dsh-plugin/index.ts` + `tt-projection.ts` |
 | ~~P0~~ ✅ | ~~修重复注入（D-2）+ 条数膨胀（D-1）~~ **已修复**（`sessionEventAt`/`sessionEventsSnapshot` 适配器，实机 3.63× ↓） | `dsht-plugin-memory/index.ts` |
-| P0 | 清洗 7 条存量 `$1` 脏楼层（D-5） | 一次性 migration：扫 `storages/session_projcache/sessions/*.json` |
-| P1 | role 映射对齐 TT（D-3：系统级注入走 system） | RP 插件注入层 |
-| P1 | 用户输入移到末尾（D-4） | prompt 组装顺序 |
+| ~~P0~~ ✅ | ~~promptOnly 正则投影不落盘（D-5，`mode:'persist'\|'prompt'`）~~ **已修复** | `dsh-plugin/index.ts` + `regex/engine.ts` |
+| P0 | 清洗存量脏楼层（D-5：`$1` 残留 + `<interactive_input>` 包装回写）**待用户拍板** | 一次性 migration：扫 `storages/session_projcache/sessions/*.json` |
+| P1 | role 映射对齐 TT（D-3：系统级注入走 system）| RP 插件注入层 —— **主体已修，过渡态收敛中** |
+| P1 | 用户输入移到末尾（D-4） | **已判定核心约束不可达**（`deriveMessages()` 决定绝对位置） |
 | P2 | 评估 RP 会话关闭 tools（D-6） | 会话/预设配置 |
 | P2 | 补 TT 的 `GENERATE_AFTER_COMBINE_PROMPTS` 采样参数对照（D-7） | 采集脚本 |
 | P2 | golden 接收器迁入 `ctx.webServer` 前缀路由（摆脱宿主进程回收） | `dsh-plugin/index.ts` webServer 段 |
+| P2 | rp-plugin msg dump 口径修正（`raw.messages` → `decision.messages`） | `dsh-plugin/index.ts` |
+| P2 | `st-migration` skill references 契约漂移复核 + 配探测脚本 | `dsh-plugin/assets/skills/st-migration/references/` |
 
 ---
 

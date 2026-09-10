@@ -1155,18 +1155,78 @@ function getLorebookEntries(name) {
 // updateWorldbookWith（真 TH：fn(entries) → 返回改后数组，差量落盘）。世界书控制/飞讯写路径。
 // 差量 = 与原数组按位 JSON 比对，变了才逐条 wb:entryPut（host 单条 upsert；条目删除场景
 // entryPut 无法表达——诚实限制，注释标明）。
+// 【2026-09-10 幂等修复】差量判定必须只比"host 真正落盘的字段"。
+// 原实现直接 JSON.stringify(next[i]) vs JSON.stringify(orig[i]) —— 但 thEnrichEntry 会
+// 给条目注入 strategy/use_regex（host 侧 stEntryToLore 明确忽略、不落盘，见 facade.ts:886），
+// 且把 position 由数字改写成对象。脚本只要读过一次条目（getLorebookEntries）再回传，
+// 两侧形状就永久不等 → 恒等变换也产生 27 条 entryPut（实机实证）→ 250ms 队列永不收敛
+// → 每秒 1 次 2.2MB lore.json 全量重写（实测 774 次 flush/6.5min，日志刷屏、事件循环被占）。
+// 修复：仅在"可落盘规范形"上比对，命中才写；且写入前去掉注入的展示字段，避免脏字段回灌磁盘。
+var WB_PERSIST_KEYS = ['uid', 'comment', 'content', 'key', 'keysecondary', 'selectiveLogic',
+  'constant', 'selective', 'position', 'depth', 'role', 'scanDepth', 'preventRecursion',
+  'excludeRecursion', 'order', 'sticky', 'cooldown', 'delay', 'group', 'groupOverride'];
+function wbCanonical(e, i) {
+  var out = {};
+  if (!e || typeof e !== 'object') return out;
+  for (var k = 0; k < WB_PERSIST_KEYS.length; k++) {
+    var key = WB_PERSIST_KEYS[k];
+    var v = e[key];
+    if (key === 'uid') { v = (typeof v === 'number' && v >= 0) ? v : i; }
+    if (key === 'position' && v && typeof v === 'object' && !Array.isArray(v)) v = v.type || 'before_char';
+    out[key] = v === undefined ? null : v;
+  }
+  // 【2026-09-10】enabled/disabled 双字段归一：host 语义是
+  //   enabled 显式给出则以它为准，否则回落 disabled（facade.ts:954）
+  // 卡脚本惯例只改一个（spread 后只覆盖 enabled，disabled 仍是旧值）。
+  // 若把两者当独立字段比对，单改 enabled 的变更会被判为"无差异"而静默丢失（本测试实证）。
+  // 归一成一个布尔，优先级与 host 一致。
+  var eff;
+  if (typeof e.enabled === 'boolean') eff = e.enabled;
+  else eff = e.disabled !== true;
+  out['__enabled'] = eff;
+  out.comment = e.comment != null ? e.comment : (e.name != null ? e.name : '');
+  return out;
+}
+function wbCanonKey(e, i) { return JSON.stringify(wbCanonical(e, i)); }
+/** 去掉 enrich 注入的展示字段再回传 host（否则 strategy/use_regex 会随 entry-put 回灌） */
+function wbStripPresentation(e) {
+  if (!e || typeof e !== 'object') return e;
+  var c = {};
+  for (var k = 0; k < WB_PERSIST_KEYS.length; k++) {
+    var key = WB_PERSIST_KEYS[k];
+    if (e[key] !== undefined) c[key] = e[key];
+  }
+  // key 兜底：脚本可能只改 keys（TH 别名）
+  if (c.key === undefined && Array.isArray(e.keys)) c.key = e.keys;
+  if (c.keysecondary === undefined && Array.isArray(e.secondaryKeys)) c.keysecondary = e.secondaryKeys;
+  // 【2026-09-10】enabled/disabled 双写归一：host 取 (disabled!==true && enabled!==false)。
+  // 脚本常只改一个字段，若原样回传另一个旧值，host 会以"两个都要满足"的方式算出意外结果
+  // （例：改 enabled=false 但 disabled 旧值为 false → host 仍得 false，看似对；但
+  // 改 enabled=true 而 disabled 旧值为 true → host 得 false，脚本意图被吞）。
+  // 统一写出一致的两字段，消除这种隐性冲突。
+  var eff = wbCanonical(e, 0)['__enabled'];
+  c.enabled = eff;
+  c.disabled = !eff;
+  return c;
+}
 function updateWorldbookWith(name, fn) {
   return call('wb:get', [String(name)]).then(function (r) {
     var book = wbBookOf(r);
-    var orig = (book && Array.isArray(book.entries)) ? book.entries : [];
+    var raw = (book && Array.isArray(book.entries)) ? book.entries : [];
+    // 【2026-09-10 幂等修复 · 关键】必须先对"变更前"形状留快照。
+    // 脚本惯例是 entries[i].xxx = v 原地改再返回同一数组引用 —— 若直接用 orig 参与比对，
+    // 比的是同一个已被改写的对象，恒等 → 变更被静默吞掉（本修复前实测 0 写入）。
+    var before = raw.map(function (e, i) { return wbCanonKey(e, i) });
+    var orig = raw.map(function (e) { return e });   // 传给 fn 的仍是原对象（原地改语义保留）
     return Promise.resolve()
       .then(function () { return fn(orig); })
       .then(function (out) {
         var next = Array.isArray(out) ? out : orig;
         var puts = [];
         for (var i = 0; i < next.length; i++) {
-          if (JSON.stringify(next[i]) !== JSON.stringify(orig[i])) puts.push(next[i]);
+          if (wbCanonKey(next[i], i) !== before[i]) puts.push(wbStripPresentation(next[i]));
         }
+        if (puts.length === 0) return next;   // 无实质变更：零写入（幂等出口）
         return Promise.all(puts.map(function (e) { return call('wb:entryPut', [String(name), e]); }))
           .then(function () { return next; });
       });

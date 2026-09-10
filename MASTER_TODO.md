@@ -21,7 +21,25 @@
 
 **一句话总结差距**：能玩，但"重度玩家聊很多楼"会撞上性能墙（见 §2.2），离"敢公开给别人用"还差发布前的准备工作（见 §3）。
 
-## 1.5 战略收口决定（2026-09-08，用户拍板执行）
+> **2026-09-10 最新状态（心跳 37）**：用户三项直接投诉**全部闭环** ——
+> ① 悬浮窗乱窜（§2.2c ✅）② `$1` 包装显示（§2.2d ✅）③ **发不出来消息**（§2.2e ✅）。
+> **goal 的前置阻塞已解除**：实机全链验证通过（mock 收到 `messages=45/48`、`turn/end completed`、
+> UI 裸文本渲染、错误计数不增长），全量单测 **710/710 绿**。
+> 当前验收基准已由用户重新定义为 **TauriTavern-Canary**（见 §1.5）。
+
+## 1.5 验收基准重定义（2026-09-09 用户拍板，最高优先级）
+
+**基准 = TauriTavern-Canary**（`D:\SillyTavern-1.16.0\TauriTavern-Canary`，ST 社区 fork，用户判定"写得更好"）。
+
+- **判据**：DSHT 的移植机制在 **功能 / 显示效果 / 使用体验** 三方与 TauriTavern **完全一致** = 初步移植完成。
+- 此前「和 ST 一致」的表述统一精化为「**和 TauriTavern 一致**」。
+- Golden Master 对照的**基准侧 = TT**（ST 侧数据仍可采集作参考）。
+- 用户明确指令：「别再用 luker 了，给我用 tauritavern」；「我让你对比同步的是 DSHT 和 TT 的使用体验，
+  你非要去弄 ST 不是浪费时间吗？」→ **一切差异追查以 TT 源码/data 为第一取证源。**
+
+---
+
+## 1.6 战略收口决定（2026-09-08，用户拍板执行）
 
 - **git 版本控制建立**：本仓库首次基线提交 `947d8f9`（v0.2.0 收口点；vitest 实测 656/656 全绿）。此后每完成一个条目即提交一次；vendor runtime / 构建产物 / 签名文件 / 大体积测试输入经 .gitignore 排除。提交身份暂用内联 `DSH <dsh@local>`（未改全局配置，可随时 `git config --global user.name` 自定）。
 - **工作区清场**：`.audit`（约 9.8k 文件）与根 `tmp`（约 32k 文件）的一次性探针/截图归档至 `D:\DSH-RolePlay-archive\`，工作区只留活代码。历史文档引用的 tmp 脚本（verify-fixes.mjs、audit2-*.mjs、parse-check.ps1 等）以归档目录为准。
@@ -673,6 +691,110 @@ TT 的「用户输入夹在 system 块中 + system 收尾」结构在当前 DSH 
 **③ 三次采样位置完全一致** —— 「到处乱窜」已消除。
 
 截图复核：**左侧坚条（✕⬅😊☰ 压正文）消失、正文完整、🌌 在左中 / 🧩 在右上各就各位**。
+
+
+### 2.2d `promptOnly` 正则污染耐久日志（用户直接投诉项②，2026-09-10 心跳 36 修复 ✅）
+
+**用户原话**：「它显示的我发送的内容也不是"（金标对照测试）…"而是"`<interactive_input>\n$1\n</interactive_input>`"」
+
+**全链取证（四层排除，每层有据）**：
+
+| 排查层 | 结果 |
+|---|---|
+| TT 源码 / TT data | 零命中 |
+| TT 聊天记录（153 用户楼层） | **0 个含包装** |
+| 卡本体 PNG（`chara` base64 解码） | 零命中 |
+| 卡 `rp.json`（10 个字段） | 零命中 |
+| 卡变量（chat snapshot） | `zhuanshu` / `meizhu1` 2 处（只描述标签语义） |
+| **预设 `Kemini Dramatron` `extensions.regex_scripts[3]`** | ✅ **真凶** |
+
+**真凶 = 预设自带正则**（TT/ST 侧就靠它包装 —— **包装行为本身正确**）：
+
+```json
+{ "scriptName": "aether opus正则一", "findRegex": "^([\\s\\S]*)$",
+  "replaceString": "<interactive_input>\n$1\n</interactive_input>",
+  "placement": [1], "maxDepth": 1, "promptOnly": true, "markdownOnly": false }
+```
+
+TT 聊天记录看不到包装，是因为 `promptOnly: true` **只在生成期改 prompt、从不回写 chat**。
+
+**DSHT 侧三个缺陷（全部已修）**：
+
+| # | 缺陷 | 后果 |
+|---|---|---|
+| ① | `promptOnly` 结果**被回写耐久日志**（`{...decision, messages: batch}` → 宿主落 `user/message`） | 聊天记录被写成包装文本，UI 气泡直接显示标签 |
+| ② | `depth` 恒传 `null` → `minDepth/maxDepth` **全失效** | `maxDepth:1` 本该只改最新一条，实际改了全部历史 |
+| ③ | `activeScripts('prompt')` **只收 promptOnly 脚本** | 通用脚本在 prompt 时机被漏（与 ST/TT 不符） |
+
+**TT 正确实现对照**（`TauriTavern-Canary/src/script.js:5282-5312`）：`getRegexedStringBatchAsync(..., { isPrompt: true, depth: coreChat.length-index-1 })` 的结果**只写局部 `coreChat`**，`chat` 数组原样不动。
+
+**修复（四处）**：
+1. `applyPromptRegexes` 加 `mode: 'persist' | 'prompt'` —— `'persist'`（pre-step，会落盘）排除 `promptOnly`；`'prompt'`（llm/stream 投影）全收且**不落盘**。
+2. 新增 `messageDepth()`，在 `applyPromptRegexes` 内真实计算深度（末尾 = 0）。
+3. `activeScripts` 三时机过滤按 TT `engine.js:354-357` 三分支重写。
+4. `llm/stream` 是 **generator 型 waterfall**（`next: () => AsyncIterable<StreamChunk>`，`dsh-llm/lib/types/index.d.ts:43`）→ handler **不能 async**；改 pre-step 预热 `preparedPromptProjections`，钩子内同步应用。
+
+**新增测试 3 项 + 修正 1 项**；**全量单测 703/703 绿**。
+
+**存量脏数据**（修复前写入，不影响新消息）：`session-7973a03e` 37 处 / `session-5f4414a8` 35 处 / `session-wuwa-migrated-01` 74 处。
+
+
+### 2.2e 「发不出来消息」全链闭环（用户直接投诉项③，2026-09-10 心跳 37 修复 ✅）
+
+**用户原话**：「你只是立案了有什么用？**发不出来消息**就是因为这两个还没解决的问题啊！」
+
+→ 逐层剥开是**三个独立缺陷叠加**，本项是 goal 的**前置阻塞**。
+
+#### 缺陷 A：`llm/stream` 的 `Cannot assign to read only property 'messages'`（架构性，非笔误）
+
+| 层 | 取证 |
+|---|---|
+| 现象 | 实机 logcat 反复 `TypeError: Cannot assign to read only property 'messages' of object '#<Object>'` |
+| 根因 | `dsh-llm/lib/types/index.d.ts:33-36`：loop 组装的 request 带 `markAgentLoopRequest` 身份，到瀑布时 **deep-frozen（mutation throws）**，内容是「会话日志的**纯函数**」，**listeners read it, never rewrite it** |
+| freeze 点 | `dsh-agent-loop/lib/index.js:747` `markAgentLoopRequest(deepFreeze({...}))` |
+
+**结论：`o.messages = projected` 被宿主故意封死**（浅拷贝后 `next()` 同样无效，冻结在深层对象上）。
+
+**修复**：改走 `system-prompt/assemble`（宿主明文 `dsh-system-prompt/lib/types/index.d.ts:23` **"the mutable assembly"**）：
+- `dsh-plugin/index.ts`：删 `o.messages = projected`，改为只读诊断（`projectedPromptHits`）。
+- `tt-projection.ts`：新增槽位 `projectedPrompt = 60`（对应 TT `GENERATE_AFTER_COMBINE_PROMPTS`）。
+- `gatherSlotSections` 内**自己预热** `preparedPromptProjections`（时序：`assemble(:497) → pre-step(:502)`，pre-step 发布对本 turn 不可见），命中推 `dsht-rp:slot:prompt-projection`。
+
+**实机验证**：只读报错消失 → `promptOnly 正则投影: 2 条命中（aether opus正则一）—— 经 system 槽位生效，未落盘`。
+
+#### 缺陷 B：出站请求根本没离开 app
+
+加出站观测（golden fetch patch 打点）后拿到真凶：`outbound fetch 失败 :: TypeError: fetch failed | cause=UND_ERR_SOCKET other side closed`。
+
+| 陷阱 | 事实 | 判定 |
+|---|---|---|
+| **环境代理** | 本机 `HTTP_PROXY/HTTPS_PROXY=http://127.0.0.1:1303`（WorkBuddy 沙箱代理），**Node/undici 会读** | 请求被导向代理 → `upstream connect failed (10061)`；直连正常 |
+| **`adb reverse` 失效** | `adb reverse tcp:31101 tcp:31101` 显示建立成功，设备侧 `nc` **打不通** | **本环境不可用，弃用** |
+
+**修复**：改用 **`10.0.2.2:31101`**（模拟器内置宿主别名）。
+
+#### 缺陷 C：mock 进程被沙箱回收
+
+`nohup ... &` / `> /tmp/x.log &` 起的进程在 bash tool call 返回时即被回收；`/tmp` 每次调用独立。
+**修复**：`run_in_background: true` 常驻，日志用 `TaskOutput` 读。
+
+#### 决定性验证（全链）
+
+| 判据 | 实测值 |
+|---|---|
+| mock 收到请求 | `POST /v1/chat/completions (179209B) messages=45`、`(204538B) messages=48` |
+| 请求完成 | `turn/end {kind:"completed"}` |
+| 用量 | `usage {input:100, output:20}` → UI `276 tok/s · Input 304 tok · Output 64 tok` |
+| UI 渲染 | 气泡显示**裸文本** |
+| 错误计数 | `errCount: 10` 发送前后**不变**（全陈旧），不再增长 |
+
+**全量单测 710/710 绿（36 文件）**（`facade.spec.ts` entry-put 与 `undo.spec.ts` 各一次 flaky，隔离重跑全绿，非回归）。
+
+#### 本轮固化三条铁律
+
+1. **`llm/stream` 是只读瀑布** —— loop-built request 深冻结，任何 messages 改写必 throw；要影响最终 payload 只走 `system-prompt/assemble` 的 `sections`。
+2. **mock 必须 `run_in_background` 常驻**；`adb reverse` 在本环境**不可用**，走 `10.0.2.2`。
+3. **环境代理会劫持 Node 出站** —— 排障先查 `HTTP_PROXY`。
 
 
 ### 2.3 已拍板的五件事（②收益最大先做，其余互相独立可穿插）

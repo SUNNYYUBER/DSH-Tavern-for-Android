@@ -327,11 +327,37 @@ export interface AssemblyTraceRuntime {
 }
 /** P0-5 per-turn 闸门判定（dsh-worldbook inject.ts L39-42 同款）：本 step inbox 含 source.kind==='user' 的真实用户消息 */
 export declare function hasDirectUserInput(messages: LikeMessage[] | undefined): boolean;
-/** 步骤 1：正则 prompt 时机跑本批消息（user→USER_INPUT、assistant→AI_OUTPUT placement） */
+/**
+ * 【TT 对照修复 2026-09-10】消息深度计算（对照 TT `script.js:5285`
+ * `depth: coreChat.length - index - (isContinue ? 2 : 1)` 的语义简化版）。
+ *
+ * TT 公式里 `-1` 是为「最新一条是待生成的 assistant 占位」预留的偏移；DSH 的
+ * decision.messages 不含占位，故此处直接用「距末尾的距离」：末尾一条 depth=0，
+ * 倒数第二条 depth=1……。ST 的 minDepth/maxDepth 语义即建立在这个尺度上
+ * （engine.js:368-378：depth < minDepth 跳过、depth > maxDepth 跳过）。
+ */
+export declare function messageDepth(total: number, index: number): number;
+/**
+ * 步骤 1：正则 prompt 时机跑本批消息（user→USER_INPUT、assistant→AI_OUTPUT placement）。
+ *
+ * 【两种模式（2026-09-10 重写，TT 语义对齐）】
+ * - `'persist'`：只跑 `markdownOnly === false && promptOnly === false` 的「通用」脚本
+ *   （ST engine.js:357 的第三分支）。其结果会随 `decision.messages` 落 `user/message`
+ *   耐久事件 —— 对应 ST 里写入 chat 数组的那类脚本，可以改变聊天记录本体。
+ * - `'prompt'`：跑 `!markdownOnly` 的全部脚本（含 `promptOnly`）。**结果绝不落盘**，
+ *   只在发往 LLM 的最终投影上生效（`llm/stream` 钩子内调用）—— 对应 ST
+ *   `script.js:5282-5312` 的 `getRegexedStringBatchAsync(..., { isPrompt: true })`：
+ *   TT 把结果写进**局部变量 `coreChat`**，从不回写 `chat`。
+ *
+ * 修复前：`promptOnly: true` 的脚本（如 Kemini 预设的「aether opus正则一」把用户输入
+ * 包成 `<interactive_input>$1</interactive_input>`）在 pre-step 阶段就跑，结果经
+ * `{...decision, messages: batch}` 被宿主落成 `user/message` 事件 → **聊天记录被污染**，
+ * UI 气泡显示出 `<interactive_input>` 包装、且 `$1` 残留会永久写死。
+ */
 export declare function applyPromptRegexes(messages: LikeMessage[], scripts: RegexScript[], traceRegexHits: Array<{
     scriptName: string;
     count: number;
-}>): LikeMessage[];
+}>, mode?: 'persist' | 'prompt'): LikeMessage[];
 /** 步骤 2+4：WI 激活条目 → 正则（WORLD_INFO placement）+ 宏求值 + 位置分桶 */
 export declare function processActivatedEntries(activated: Array<{
     entry: LoreEntry;

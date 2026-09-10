@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   agentPresetDirId, applyPromptRegexes, buildPersonaSnapshotMessage, buildVariantSwitchEvent,
+  messageDepth,
   collectVariantGroups, extractPersonaTextFromAgentYml, findLastUserMessage, findStDataRoot,
   hasDirectUserInput,
   processActivatedEntries, renderWorldInfoSnapshot, repairSessionSeqs, rewriteSessionHeaderCwd,
@@ -162,14 +163,16 @@ const regex = (over: Partial<RegexScript>): RegexScript => ({
 
 describe('dsht-rp-plugin: 组装管线接线', () => {
   it('applyPromptRegexes：prompt 时机改批消息（user/assistant 按位过滤，system 不动）', () => {
-    const scripts = [regex({})]
+    // 【2026-09-10】显式 promptOnly:false —— 本用例考的是「通用脚本」路径（persist 模式
+    // 只跑通用脚本）；promptOnly 脚本的语义与不落盘保证另有用例覆盖。
+    const scripts = [regex({ promptOnly: false })]
     const msgs = [
       { role: 'user', content: [{ type: 'text', text: '我说了旧词' }] },
       { role: 'assistant', content: [{ type: 'text', text: '她回应旧词' }] },
       { role: 'system', content: [{ type: 'text', text: '系统旧词不该被改' }] },
     ] as never[]
     const hits: Array<{ scriptName: string; count: number }> = []
-    const out = applyPromptRegexes(msgs, scripts, hits)
+    const out = applyPromptRegexes(msgs, scripts, hits, 'prompt')
     expect((out[0] as { content: Array<{ text: string }> }).content[0].text).toBe('我说了新词')
     expect((out[1] as { content: Array<{ text: string }> }).content[0].text).toBe('她回应新词')
     expect((out[2] as { content: Array<{ text: string }> }).content[0].text).toBe('系统旧词不该被改')
@@ -185,8 +188,67 @@ describe('dsht-rp-plugin: 组装管线接线', () => {
     expect(hits.length).toBe(0)
   })
 
-  it('processActivatedEntries：WI 内容过正则（WORLD_INFO 位）+ 宏求值 + 位置分桶', () => {
-    const scripts = [regex({ findRegex: '/旧词/g', replaceString: '新词', placement: [5] })]
+  // ---- 【2026-09-10 TT 语义修正】promptOnly 不得污染耐久日志 + depth 过滤必须生效 ----
+  it('applyPromptRegexes(persist)：promptOnly 脚本不作用于批消息（不落盘）', () => {
+    // 复刻 wuwa 预设「aether opus正则一」：把用户输入包成 <interactive_input>$1</interactive_input>
+    const wrap = regex({
+      scriptName: 'aether opus正则一',
+      findRegex: '^([\\s\\S]*)$',
+      replaceString: '<interactive_input>\n$1\n</interactive_input>',
+      placement: [1],
+      promptOnly: true,
+      markdownOnly: false,
+      maxDepth: 1,
+    })
+    const msgs = [{ role: 'user', content: [{ type: 'text', text: '（金标对照测试）打个招呼。' }] }] as never[]
+    const hits: Array<{ scriptName: string; count: number }> = []
+    const persist = applyPromptRegexes(msgs, [wrap], hits, 'persist')
+    // 关键断言：落盘批里必须是裸文本，不得出现包装标签
+    expect((persist[0] as { content: Array<{ text: string }> }).content[0].text).toBe('（金标对照测试）打个招呼。')
+    expect(hits.length).toBe(0)
+
+    // prompt 模式（llm/stream 投影）才应用，且 $1 正确展开
+    const hits2: Array<{ scriptName: string; count: number }> = []
+    const proj = applyPromptRegexes(msgs, [wrap], hits2, 'prompt')
+    const text = (proj[0] as { content: Array<{ text: string }> }).content[0].text
+    expect(text).toBe('<interactive_input>\n（金标对照测试）打个招呼。\n</interactive_input>')
+    expect(text).not.toContain('$1')
+    expect(hits2.length).toBe(1)
+  })
+
+  it('applyPromptRegexes：depth 过滤生效（maxDepth:1 只改最新一条，不碰历史）', () => {
+    const s = regex({
+      findRegex: '旧词',
+      replaceString: '新词',
+      placement: [1],
+      maxDepth: 1,
+    })
+    const msgs = [
+      { role: 'user', content: [{ type: 'text', text: '旧词（历史倒数2）' }] },
+      { role: 'user', content: [{ type: 'text', text: '旧词（最新 depth0）' }] },
+    ] as never[]
+    const hits: Array<{ scriptName: string; count: number }> = []
+    const out = applyPromptRegexes(msgs, [s], hits, 'prompt')
+    // 倒数第二条 depth=1（<= maxDepth 通过）；最新一条 depth=0（通过）
+    expect((out[0] as { content: Array<{ text: string }> }).content[0].text).toBe('新词（历史倒数2）')
+    expect((out[1] as { content: Array<{ text: string }> }).content[0].text).toBe('新词（最新 depth0）')
+
+    // maxDepth:0 → 只有最新一条（depth=0）通过
+    const s0 = regex({ findRegex: '旧词', replaceString: '新词', placement: [1], maxDepth: 0 })
+    const hits0: Array<{ scriptName: string; count: number }> = []
+    const out0 = applyPromptRegexes(msgs, [s0], hits0, 'prompt')
+    expect((out0[0] as { content: Array<{ text: string }> }).content[0].text).toBe('旧词（历史倒数2）')
+    expect((out0[1] as { content: Array<{ text: string }> }).content[0].text).toBe('新词（最新 depth0）')
+  })
+
+  it('messageDepth：末尾为 0，倒数递增', () => {
+    expect(messageDepth(3, 0)).toBe(2)
+    expect(messageDepth(3, 1)).toBe(1)
+    expect(messageDepth(3, 2)).toBe(0)
+    expect(messageDepth(1, 0)).toBe(0)
+  })
+
+  it('processActivatedEntries：WI 内容过正则（WORLD_INFO 位）+ 宏求值 + 位置分桶', () => {    const scripts = [regex({ findRegex: '/旧词/g', replaceString: '新词', placement: [5] })]
     const activated = [
       { entry: entry({ comment: '顶部条目', content: '{{char}}知道旧词', position: 0 }), reason: 'constant' },
       { entry: entry({ comment: '底部条目', content: '{{user}}所在', position: 1 }), reason: '关键词' },

@@ -5725,18 +5725,78 @@ function getLorebookEntries(name) {
 // updateWorldbookWith\uFF08\u771F TH\uFF1Afn(entries) \u2192 \u8FD4\u56DE\u6539\u540E\u6570\u7EC4\uFF0C\u5DEE\u91CF\u843D\u76D8\uFF09\u3002\u4E16\u754C\u4E66\u63A7\u5236/\u98DE\u8BAF\u5199\u8DEF\u5F84\u3002
 // \u5DEE\u91CF = \u4E0E\u539F\u6570\u7EC4\u6309\u4F4D JSON \u6BD4\u5BF9\uFF0C\u53D8\u4E86\u624D\u9010\u6761 wb:entryPut\uFF08host \u5355\u6761 upsert\uFF1B\u6761\u76EE\u5220\u9664\u573A\u666F
 // entryPut \u65E0\u6CD5\u8868\u8FBE\u2014\u2014\u8BDA\u5B9E\u9650\u5236\uFF0C\u6CE8\u91CA\u6807\u660E\uFF09\u3002
+// \u30102026-09-10 \u5E42\u7B49\u4FEE\u590D\u3011\u5DEE\u91CF\u5224\u5B9A\u5FC5\u987B\u53EA\u6BD4"host \u771F\u6B63\u843D\u76D8\u7684\u5B57\u6BB5"\u3002
+// \u539F\u5B9E\u73B0\u76F4\u63A5 JSON.stringify(next[i]) vs JSON.stringify(orig[i]) \u2014\u2014 \u4F46 thEnrichEntry \u4F1A
+// \u7ED9\u6761\u76EE\u6CE8\u5165 strategy/use_regex\uFF08host \u4FA7 stEntryToLore \u660E\u786E\u5FFD\u7565\u3001\u4E0D\u843D\u76D8\uFF0C\u89C1 facade.ts:886\uFF09\uFF0C
+// \u4E14\u628A position \u7531\u6570\u5B57\u6539\u5199\u6210\u5BF9\u8C61\u3002\u811A\u672C\u53EA\u8981\u8BFB\u8FC7\u4E00\u6B21\u6761\u76EE\uFF08getLorebookEntries\uFF09\u518D\u56DE\u4F20\uFF0C
+// \u4E24\u4FA7\u5F62\u72B6\u5C31\u6C38\u4E45\u4E0D\u7B49 \u2192 \u6052\u7B49\u53D8\u6362\u4E5F\u4EA7\u751F 27 \u6761 entryPut\uFF08\u5B9E\u673A\u5B9E\u8BC1\uFF09\u2192 250ms \u961F\u5217\u6C38\u4E0D\u6536\u655B
+// \u2192 \u6BCF\u79D2 1 \u6B21 2.2MB lore.json \u5168\u91CF\u91CD\u5199\uFF08\u5B9E\u6D4B 774 \u6B21 flush/6.5min\uFF0C\u65E5\u5FD7\u5237\u5C4F\u3001\u4E8B\u4EF6\u5FAA\u73AF\u88AB\u5360\uFF09\u3002
+// \u4FEE\u590D\uFF1A\u4EC5\u5728"\u53EF\u843D\u76D8\u89C4\u8303\u5F62"\u4E0A\u6BD4\u5BF9\uFF0C\u547D\u4E2D\u624D\u5199\uFF1B\u4E14\u5199\u5165\u524D\u53BB\u6389\u6CE8\u5165\u7684\u5C55\u793A\u5B57\u6BB5\uFF0C\u907F\u514D\u810F\u5B57\u6BB5\u56DE\u704C\u78C1\u76D8\u3002
+var WB_PERSIST_KEYS = ['uid', 'comment', 'content', 'key', 'keysecondary', 'selectiveLogic',
+  'constant', 'selective', 'position', 'depth', 'role', 'scanDepth', 'preventRecursion',
+  'excludeRecursion', 'order', 'sticky', 'cooldown', 'delay', 'group', 'groupOverride'];
+function wbCanonical(e, i) {
+  var out = {};
+  if (!e || typeof e !== 'object') return out;
+  for (var k = 0; k < WB_PERSIST_KEYS.length; k++) {
+    var key = WB_PERSIST_KEYS[k];
+    var v = e[key];
+    if (key === 'uid') { v = (typeof v === 'number' && v >= 0) ? v : i; }
+    if (key === 'position' && v && typeof v === 'object' && !Array.isArray(v)) v = v.type || 'before_char';
+    out[key] = v === undefined ? null : v;
+  }
+  // \u30102026-09-10\u3011enabled/disabled \u53CC\u5B57\u6BB5\u5F52\u4E00\uFF1Ahost \u8BED\u4E49\u662F
+  //   enabled \u663E\u5F0F\u7ED9\u51FA\u5219\u4EE5\u5B83\u4E3A\u51C6\uFF0C\u5426\u5219\u56DE\u843D disabled\uFF08facade.ts:954\uFF09
+  // \u5361\u811A\u672C\u60EF\u4F8B\u53EA\u6539\u4E00\u4E2A\uFF08spread \u540E\u53EA\u8986\u76D6 enabled\uFF0Cdisabled \u4ECD\u662F\u65E7\u503C\uFF09\u3002
+  // \u82E5\u628A\u4E24\u8005\u5F53\u72EC\u7ACB\u5B57\u6BB5\u6BD4\u5BF9\uFF0C\u5355\u6539 enabled \u7684\u53D8\u66F4\u4F1A\u88AB\u5224\u4E3A"\u65E0\u5DEE\u5F02"\u800C\u9759\u9ED8\u4E22\u5931\uFF08\u672C\u6D4B\u8BD5\u5B9E\u8BC1\uFF09\u3002
+  // \u5F52\u4E00\u6210\u4E00\u4E2A\u5E03\u5C14\uFF0C\u4F18\u5148\u7EA7\u4E0E host \u4E00\u81F4\u3002
+  var eff;
+  if (typeof e.enabled === 'boolean') eff = e.enabled;
+  else eff = e.disabled !== true;
+  out['__enabled'] = eff;
+  out.comment = e.comment != null ? e.comment : (e.name != null ? e.name : '');
+  return out;
+}
+function wbCanonKey(e, i) { return JSON.stringify(wbCanonical(e, i)); }
+/** \u53BB\u6389 enrich \u6CE8\u5165\u7684\u5C55\u793A\u5B57\u6BB5\u518D\u56DE\u4F20 host\uFF08\u5426\u5219 strategy/use_regex \u4F1A\u968F entry-put \u56DE\u704C\uFF09 */
+function wbStripPresentation(e) {
+  if (!e || typeof e !== 'object') return e;
+  var c = {};
+  for (var k = 0; k < WB_PERSIST_KEYS.length; k++) {
+    var key = WB_PERSIST_KEYS[k];
+    if (e[key] !== undefined) c[key] = e[key];
+  }
+  // key \u515C\u5E95\uFF1A\u811A\u672C\u53EF\u80FD\u53EA\u6539 keys\uFF08TH \u522B\u540D\uFF09
+  if (c.key === undefined && Array.isArray(e.keys)) c.key = e.keys;
+  if (c.keysecondary === undefined && Array.isArray(e.secondaryKeys)) c.keysecondary = e.secondaryKeys;
+  // \u30102026-09-10\u3011enabled/disabled \u53CC\u5199\u5F52\u4E00\uFF1Ahost \u53D6 (disabled!==true && enabled!==false)\u3002
+  // \u811A\u672C\u5E38\u53EA\u6539\u4E00\u4E2A\u5B57\u6BB5\uFF0C\u82E5\u539F\u6837\u56DE\u4F20\u53E6\u4E00\u4E2A\u65E7\u503C\uFF0Chost \u4F1A\u4EE5"\u4E24\u4E2A\u90FD\u8981\u6EE1\u8DB3"\u7684\u65B9\u5F0F\u7B97\u51FA\u610F\u5916\u7ED3\u679C
+  // \uFF08\u4F8B\uFF1A\u6539 enabled=false \u4F46 disabled \u65E7\u503C\u4E3A false \u2192 host \u4ECD\u5F97 false\uFF0C\u770B\u4F3C\u5BF9\uFF1B\u4F46
+  // \u6539 enabled=true \u800C disabled \u65E7\u503C\u4E3A true \u2192 host \u5F97 false\uFF0C\u811A\u672C\u610F\u56FE\u88AB\u541E\uFF09\u3002
+  // \u7EDF\u4E00\u5199\u51FA\u4E00\u81F4\u7684\u4E24\u5B57\u6BB5\uFF0C\u6D88\u9664\u8FD9\u79CD\u9690\u6027\u51B2\u7A81\u3002
+  var eff = wbCanonical(e, 0)['__enabled'];
+  c.enabled = eff;
+  c.disabled = !eff;
+  return c;
+}
 function updateWorldbookWith(name, fn) {
   return call('wb:get', [String(name)]).then(function (r) {
     var book = wbBookOf(r);
-    var orig = (book && Array.isArray(book.entries)) ? book.entries : [];
+    var raw = (book && Array.isArray(book.entries)) ? book.entries : [];
+    // \u30102026-09-10 \u5E42\u7B49\u4FEE\u590D \xB7 \u5173\u952E\u3011\u5FC5\u987B\u5148\u5BF9"\u53D8\u66F4\u524D"\u5F62\u72B6\u7559\u5FEB\u7167\u3002
+    // \u811A\u672C\u60EF\u4F8B\u662F entries[i].xxx = v \u539F\u5730\u6539\u518D\u8FD4\u56DE\u540C\u4E00\u6570\u7EC4\u5F15\u7528 \u2014\u2014 \u82E5\u76F4\u63A5\u7528 orig \u53C2\u4E0E\u6BD4\u5BF9\uFF0C
+    // \u6BD4\u7684\u662F\u540C\u4E00\u4E2A\u5DF2\u88AB\u6539\u5199\u7684\u5BF9\u8C61\uFF0C\u6052\u7B49 \u2192 \u53D8\u66F4\u88AB\u9759\u9ED8\u541E\u6389\uFF08\u672C\u4FEE\u590D\u524D\u5B9E\u6D4B 0 \u5199\u5165\uFF09\u3002
+    var before = raw.map(function (e, i) { return wbCanonKey(e, i) });
+    var orig = raw.map(function (e) { return e });   // \u4F20\u7ED9 fn \u7684\u4ECD\u662F\u539F\u5BF9\u8C61\uFF08\u539F\u5730\u6539\u8BED\u4E49\u4FDD\u7559\uFF09
     return Promise.resolve()
       .then(function () { return fn(orig); })
       .then(function (out) {
         var next = Array.isArray(out) ? out : orig;
         var puts = [];
         for (var i = 0; i < next.length; i++) {
-          if (JSON.stringify(next[i]) !== JSON.stringify(orig[i])) puts.push(next[i]);
+          if (wbCanonKey(next[i], i) !== before[i]) puts.push(wbStripPresentation(next[i]));
         }
+        if (puts.length === 0) return next;   // \u65E0\u5B9E\u8D28\u53D8\u66F4\uFF1A\u96F6\u5199\u5165\uFF08\u5E42\u7B49\u51FA\u53E3\uFF09
         return Promise.all(puts.map(function (e) { return call('wb:entryPut', [String(name), e]); }))
           .then(function () { return next; });
       });

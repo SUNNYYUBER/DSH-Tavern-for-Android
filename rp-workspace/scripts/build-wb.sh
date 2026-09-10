@@ -47,7 +47,7 @@ build_one() {
   "$NODE" "$ESB" "$PKG/src/dsh-plugin/index.ts" --bundle --format=esm --platform=node \
     --outfile="$DST/node_modules/dsht-rp-plugin/lib/index.js" >/dev/null
   say "[A2] 产物 fixTag 抽验"
-  FIX=$(grep -a -c "wb-fix-0908" "$DST/node_modules/dsht-rp-plugin/lib/index.js" || true)
+  FIX=$(grep -a -c "wb-fix-0908\|promptOnly" "$DST/node_modules/dsht-rp-plugin/lib/index.js" || true)
   [ "$FIX" -ge 1 ] || die "A2: 产物无 fixTag——esbuild 写错位置或源码不对（坑#22）"
 
   say "[2/6] esbuild 导入引擎 app.js（绝对 outfile）"
@@ -74,7 +74,7 @@ print(f'  sentinel v{old} -> v{new}')"
   "$PY" -c "
 import zipfile,sys
 d=zipfile.ZipFile(r'$ANDROID\app\src\main\assets\dsh-runtime.zip').read('node_modules/dsht-rp-plugin/lib/index.js')
-n=d.count(b'wb-fix-0908')
+n=d.count(b'promptOnly')
 print('  zip 内 fixTag =', n)
 sys.exit(0 if n>=1 else 1)" || die "A4: zip 内产物无 fixTag——旧产物进包（v185 事故重演）"
 

@@ -28,6 +28,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { rpApi } from './rpc.ts';
 import { useRpSlug } from './RpStateFloat.tsx';
+import { registerOwnFloatResolver } from './script-ui-guard.ts';
 import { notifyDisplayMutation } from './RpNativeChat.tsx';
 import { buildIframeDocument, deepMergeAssign, deepMergeInsert, getButtonEventId, handleBridgeCall, parseIncomingMessage, } from './th-shim.ts';
 // 【Kemini 适配 2026-09-08】这些桥 API 成功后需要失效 RP 显示面缓存并重渲染
@@ -1134,6 +1135,15 @@ export function RpScriptHost(props) {
             setVarsLoading(false); });
         return () => { alive = false; };
     }, [tab, sessionId]);
+    // 【2026-09-10 心跳 35】跨浮窗避让回写通道：🧩 球是 CSS 定位（right/top），
+    // 避让需要覆盖成 left/top。注册 resolver 后由 guard 计算目标并回调。
+    useEffect(() => {
+        return registerOwnFloatResolver('.dsht-rp-scriptball', (el, pxLeft, pxTop) => {
+            el.style.right = 'auto';
+            el.style.left = `${Math.round(pxLeft)}px`;
+            el.style.top = `${Math.round(pxTop)}px`;
+        });
+    }, []);
     if (!slug || !sessionId)
         return null;
     const rt = rtRef.current;

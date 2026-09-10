@@ -784,6 +784,94 @@ describe('shim：世界书只读（桥）', () => {
   })
 })
 
+describe('shim：updateWorldbookWith 幂等（wb:entryPut 风暴回归）', () => {
+  /** 读一条条目 → 原样回传（恒等变换）。修复前：thEnrichEntry 注入的 strategy/use_regex
+   *  与 host 落盘形状不等 → 恒等也产生 entryPut → 250ms 队列永不收敛 → 每秒全量重写
+   *  2.2MB lore.json（实机 774 次 flush / 6.5min）。修复后：零写入。 */
+  it('恒等变换零写入：不产生任何 wb:entryPut', async () => {
+    const f = makeFrame('s1')
+    runScript(f, `
+      window.__r = null;
+      updateWorldbookWith('主世界书', function (entries) { return entries; })
+        .then(function (n) { window.__r = n; });
+    `)
+    expect(callsOf(f)[0]).toMatchObject({ api: 'wb:get', args: ['主世界书'] })
+    resolveCall(f, 0, { book: { name: '主世界书', entries: [
+      { uid: 0, comment: '角色A', content: '设定', key: ['a'], enabled: true, position: 0 },
+      { uid: 1, comment: '角色B', content: '设定2', key: ['b'], enabled: true, position: 1 },
+    ] } })
+    await settled(f)
+    const puts = callsOf(f).filter(c => c.api === 'wb:entryPut')
+    expect(puts).toEqual([])
+    expect(vm.runInContext('window.__r', f.ctx)).toBeTruthy()
+  })
+
+  it('先经 getLorebookEntries enrich 再回传：仍零写入（关键回归）', async () => {
+    const f = makeFrame('s1')
+    const ENTRIES = [
+      { uid: 0, comment: '角色A', content: '设定', key: ['a'], enabled: true, position: 0 },
+    ]
+    runScript(f, `
+      window.__r = null;
+      getLorebookEntries('主世界书').then(function (es) {
+        return updateWorldbookWith('主世界书', function () { return es; });
+      }).then(function (n) { window.__r = n; });
+    `)
+    // 第 1 个 wb:get（getLorebookEntries）
+    resolveCall(f, 0, { book: { name: '主世界书', entries: ENTRIES } })
+    await settled(f)
+    // 第 2 个 wb:get（updateWorldbookWith 内部）——此时才出现
+    expect(callsOf(f).filter(c => c.api === 'wb:get').length).toBe(2)
+    resolveCall(f, 1, { book: { name: '主世界书', entries: ENTRIES } })
+    await settled(f)
+    await settled(f)
+    expect(callsOf(f).filter(c => c.api === 'wb:entryPut')).toEqual([])
+  })
+
+  it('真实变更：只写改动的那一条，且不带 enrich 注入字段', async () => {
+    const f = makeFrame('s1')
+    runScript(f, `
+      window.__r = null;
+      updateWorldbookWith('主世界书', function (entries) {
+        entries[1].content = '改过了';
+        return entries;
+      }).then(function (n) { window.__r = n; });
+    `)
+    resolveCall(f, 0, { book: { name: '主世界书', entries: [
+      { uid: 0, comment: '角色A', content: '设定', key: ['a'], enabled: true, position: 0 },
+      { uid: 1, comment: '角色B', content: '设定2', key: ['b'], enabled: true, position: 1 },
+    ] } })
+    await settled(f)
+    const puts = callsOf(f).filter(c => c.api === 'wb:entryPut')
+    expect(puts.length).toBe(1)
+    const entry = puts[0]!.args[1] as Record<string, unknown>
+    expect(entry.content).toBe('改过了')
+    expect(entry.uid).toBe(1)
+    // enrich 注入的展示字段不得回灌磁盘
+    expect(entry.strategy).toBeUndefined()
+    expect(entry.use_regex).toBeUndefined()
+  })
+
+  it('position 对象/数字双形态视为等价（不因形态差异触发写入）', async () => {
+    const f = makeFrame('s1')
+    const ENTRIES = [
+      { uid: 0, comment: '角色A', content: '设定', key: ['a'], enabled: true, position: 0 },
+    ]
+    runScript(f, `
+      window.__r = null;
+      getLorebookEntries('主世界书').then(function (es) {
+        return updateWorldbookWith('主世界书', function () { return es; });
+      }).then(function (n) { window.__r = n; });
+    `)
+    resolveCall(f, 0, { book: { name: '主世界书', entries: ENTRIES } })
+    await settled(f)
+    resolveCall(f, 1, { book: { name: '主世界书', entries: ENTRIES } })
+    await settled(f)
+    await settled(f)
+    expect(callsOf(f).filter(c => c.api === 'wb:entryPut')).toEqual([])
+  })
+})
+
 // ---------------------------------------------------------------------------
 // host 桥处理器
 // ---------------------------------------------------------------------------
@@ -995,3 +1083,51 @@ describe('按钮事件 id 与清单一致性', () => {
 // ScriptStatus 类型 smoke（编译期保证）
 const _statusSmoke: ScriptStatus = { phase: 'running', missing: [], buttons: [] }
 void _statusSmoke
+
+describe('shim：updateWorldbookWith 复刻 ExampleGame 卡真实调用形态', () => {
+  /** 卡源码（tavern_helper 内 applyChanges）：
+   *    updateWorldbookWith(book, (entries) => entries.map(e =>
+   *      uidMap.hasOwnProperty(e.uid) ? { ...e, enabled: uidMap[e.uid] } : e))
+   *  1s 心跳反复调用。修复前每轮把 421 条全部重写（实机 774 flush/6.5min）。 */
+  it('uidMap 只改 1 条时：恰好 1 个 entryPut，且是 spread 后的新对象', async () => {
+    const f = makeFrame('s1')
+    runScript(f, `
+      window.__r = null;
+      var uidMap = { 1: false };
+      updateWorldbookWith('内嵌书', function (entries) {
+        return entries.map(function (e) {
+          return uidMap.hasOwnProperty(e.uid) ? Object.assign({}, e, { enabled: uidMap[e.uid] }) : e;
+        });
+      }).then(function (n) { window.__r = n; });
+    `)
+    resolveCall(f, 0, { book: { name: '内嵌书', entries: [
+      { uid: 0, comment: 'A', content: 'c0', key: ['a'], enabled: true, position: 0 },
+      { uid: 1, comment: 'B', content: 'c1', key: ['b'], enabled: true, position: 1 },
+      { uid: 2, comment: 'C', content: 'c2', key: ['c'], enabled: true, position: 2 },
+    ] } })
+    await settled(f)
+    const puts = callsOf(f).filter(c => c.api === 'wb:entryPut')
+    expect(puts.length).toBe(1)
+    expect((puts[0]!.args[1] as Record<string, unknown>).uid).toBe(1)
+    expect((puts[0]!.args[1] as Record<string, unknown>).enabled).toBe(false)
+  })
+
+  it('空 uidMap（心跳无变更）：零 entryPut —— 风暴根因回归锁', async () => {
+    const f = makeFrame('s1')
+    runScript(f, `
+      window.__r = null;
+      var uidMap = {};
+      updateWorldbookWith('内嵌书', function (entries) {
+        return entries.map(function (e) {
+          return uidMap.hasOwnProperty(e.uid) ? Object.assign({}, e, { enabled: uidMap[e.uid] }) : e;
+        });
+      }).then(function (n) { window.__r = n; });
+    `)
+    resolveCall(f, 0, { book: { name: '内嵌书', entries: [
+      { uid: 0, comment: 'A', content: 'c0', key: ['a'], enabled: true, position: 0 },
+      { uid: 1, comment: 'B', content: 'c1', key: ['b'], enabled: true, position: 1 },
+    ] } })
+    await settled(f)
+    expect(callsOf(f).filter(c => c.api === 'wb:entryPut')).toEqual([])
+  })
+})

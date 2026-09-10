@@ -61,7 +61,13 @@ describe('三时机过滤', () => {
   it('两者皆否：permanent 时机（编辑保存场景）', () => {
     const s = base({})
     expect(runRegexScripts([s], text, 'permanent', PLACEMENT.AI_OUTPUT).text).toBe('bar 中间内容 bar')
-    expect(runRegexScripts([s], text, 'prompt', PLACEMENT.AI_OUTPUT).text).toBe(text)
+    // 【2026-09-10 TT 对照修正】通用脚本在 prompt/display 时机**也**执行。
+    // 依据 TT extensions/regex/engine.js:354-357 的 isScopeMatch 第三分支：
+    // `!markdownOnly && !promptOnly && !isMarkdown && !isPrompt` —— 该分支只在
+    // display/prompt **都未置位**时成立，但 promptOnly/markdownOnly 脚本各自还有
+    // 独立分支；即「通用脚本」在三个时机都被纳入（prompt 只排除 markdownOnly）。
+    expect(runRegexScripts([s], text, 'prompt', PLACEMENT.AI_OUTPUT).text).toBe('bar 中间内容 bar')
+    expect(runRegexScripts([s], text, 'display', PLACEMENT.AI_OUTPUT).text).toBe('bar 中间内容 bar')
   })
   it('disabled 永不执行', () => {
     const s = base({ disabled: true })

@@ -245,6 +245,29 @@ async function atomicWrite(path: string, data: string): Promise<void> {
   }
 }
 
+/**
+ * 【2026-09-10 泄漏清理】atomicWrite 的临时文件在异常路径（进程被杀 / rename 与 rm 双失败）
+ * 下会残留。实机实证：示例游戏内嵌书 references/ 目录累积 218 个 .tmp-*（3.4MB）。
+ * 策略：flush 成功后同目录顺手清扫——只删「前缀匹配同一目标文件 且 mtime 早于 60s」的残留，
+ * 避免误删正在进行中的并发写。
+ */
+async function sweepOrphanTemps(targetAbs: string): Promise<void> {
+  try {
+    const dir = dirname(targetAbs)
+    const base = targetAbs.slice(dir.length + 1)
+    const names = await readdir(dir)
+    const cutoff = Date.now() - 60_000
+    for (const n of names) {
+      if (n === base || !n.startsWith(`${base}.tmp-`)) continue
+      const p = join(dir, n)
+      try {
+        const st = await stat(p)
+        if (st.mtimeMs < cutoff) await rm(p, { force: true })
+      } catch { /* 单文件失败不影响其余 */ }
+    }
+  } catch { /* 目录不可读则跳过 */ }
+}
+
 // ---------------------------------------------------------------------------
 // 端点 1：POST /context {sessionId, slug} → 会话有效预设的 ST 上下文视图
 // ---------------------------------------------------------------------------
@@ -928,7 +951,13 @@ export function stEntryToLore(st: Record<string, unknown>, bookName: string, id:
     delay: num(st.delay, 0),
     group: typeof st.group === 'string' ? st.group : '',
     groupOverride: st.groupOverride === true,
-    enabled: st.disabled !== true && st.enabled !== false,
+    // 【2026-09-10 极性修复】原实现 `enabled: st.disabled !== true && st.enabled !== false`
+    // 让 disabled 无条件压过 enabled。但 TH/ST 的 WorldbookEntry 权威字段是 enabled，
+    // disabled 只是我们读面同时给出的镜像（loreEntryToSt:902）。卡脚本惯例是只改一个：
+    //   Object.assign({}, e, { enabled: true })  —— disabled 仍是上一次写下的 true
+    // 旧实现下这个 true 被吞 → 条目永远停在禁用态（实机复现：翻转 → 还原后仍是 false）。
+    // 修复：enabled 显式给出时以它为准；仅当 enabled 缺席时才回落到 disabled。
+    enabled: typeof st.enabled === 'boolean' ? st.enabled : st.disabled !== true,
     book: bookName,
   }
 }
@@ -947,6 +976,9 @@ export async function worldbookGet(dshHome: string, body: Record<string, unknown
   // read-your-writes：该书有未 flush 的 entry-put 队列 → 先落盘再读
   if (entryPutQueues.has(lorePath)) await flushEntryPuts(dshHome, lorePath)
   const abs = homePath(dshHome, lorePath)
+  // 【2026-09-10】读路径顺手清扫残留临时文件。挂 flush 会漏扫（修复写入风暴后 flush 可能
+  // 长期不触发 → 历史残留永不清）；get 是必走的读路径，天然覆盖冷启动。
+  void sweepOrphanTemps(abs)
   let book: LoreBook
   try {
     const st = await stat(abs)
@@ -999,6 +1031,8 @@ const ENTRY_PUT_COALESCE_MS = 250
  *  若期间又有新 put → 重新定 timer 二次落盘，没有才出队；③ per-book flush 串行链（并发
  *  flush 等前序完成，幂等写不再双写）。 */
 const entryPutFlushChains = new Map<string, Promise<void>>()
+/** flush 日志节流：每本书每 60s 最多一条（避免 logcat 同步写淹没事件循环） */
+const flushLogAt = new Map<string, number>()
 export async function flushEntryPuts(dshHome: string, lorePath: string): Promise<void> {
   const prev = entryPutFlushChains.get(lorePath) ?? Promise.resolve()
   const run = prev.catch(() => { /* 前序失败不阻塞本次 */ }).then(async () => {
@@ -1014,13 +1048,22 @@ export async function flushEntryPuts(dshHome: string, lorePath: string): Promise
       const st = await stat(homePath(dshHome, lorePath))
       loreBookCache.set(homePath(dshHome, lorePath), { mtimeMs: st.mtimeMs, size: st.size, book: q.book })
     } catch { /* stat 失败跳过预热 */ }
+    void sweepOrphanTemps(homePath(dshHome, lorePath))
     // flush 窗口内又有新 put → 保留队列 + 重新定 timer（二次落盘携带新增）；否则出队
     if (q.puts.length > 0) {
       if (q.timer === null) q.timer = setTimeout(() => { void flushEntryPuts(dshHome, lorePath).catch(() => {}) }, ENTRY_PUT_COALESCE_MS)
     } else {
       entryPutQueues.delete(lorePath)
     }
-    console.log(`[dsht-th] worldbook/entry-put flush: ${lorePath}（共 ${q.book.entries.length} 条）`)
+    // 【2026-09-10 日志降噪】原实现每次 flush 都 console.log —— 实机 774 条/6.5min，
+    // logcat 同步写成为事件循环负担且淹没真实信号。改为仅状态跃迁时可观测：
+    // 每本书每 60s 最多一条，且首条必打（便于冷启动确认路径生效）。
+    const now = Date.now()
+    const last = flushLogAt.get(lorePath) ?? 0
+    if (now - last > 60_000) {
+      flushLogAt.set(lorePath, now)
+      console.log(`[dsht-th] worldbook flush: ${lorePath}（${q.book.entries.length} 条，本批 ${sessionId ? 'has-sid' : 'no-sid'}）`)
+    }
   })
   entryPutFlushChains.set(lorePath, run)
   return run
@@ -1399,7 +1442,7 @@ export async function assembleGenerateRawPrompt(
         excludeRecursion: e.excludeRecursion === true,
         insertionOrder: typeof e.order === 'number' ? e.order : 100,
         sticky: 0, cooldown: 0, delay: 0, group: '', groupOverride: false,
-        enabled: e.disabled !== true && e.enabled !== false,
+        enabled: typeof e.enabled === 'boolean' ? e.enabled : e.disabled !== true,
         book: name,
       }))
       const act = activateWorldInfo(loreEntries, historyText, userInput)
