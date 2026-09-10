@@ -466,10 +466,11 @@ function installDetailsToggleProxy() {
     const target = e.target;
     const summary = target?.closest?.("summary") ?? null;
     if (summary === null) return;
-    const details = summary.parentElement;
-    if (details === null || details.tagName !== "DETAILS") return;
+    const parent = summary.parentElement;
+    if (parent === null || parent.tagName !== "DETAILS") return;
     e.preventDefault();
     e.stopPropagation();
+    const details = parent;
     details.open = !details.open;
   }, true);
 }

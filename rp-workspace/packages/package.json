@@ -15,10 +15,25 @@
     "@types/react-dom": "^18.3.0",
     "esbuild": "^0.28.2",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "jquery": "3.7.1",
+    "jquery-ui": "1.13.3",
+    "lodash": "4.18.1",
+    "yaml": "2.9.0",
+    "zod": "4.5.4"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
     "jszip": "^3.10.1"
-  }
+  },
+  "//vendor 说明": [
+    "上面 5 个包（jquery / jquery-ui / lodash / yaml / zod）是 dsht-rp-ui 浏览器半边的**构建期输入**：",
+    "scripts/build-rp-ui.mjs 把它们打进 th-vendor.gen.txt / th-host-vendor.gen.txt，复刻真酒馆助手",
+    "iframe 与宿主的全局形态（window.$ / z / Zod / YAML / _）。产物已提交，故列 devDependencies 而非 dependencies。",
+    "【T-34 2026-09-11】此前它们靠 `npm install --no-save` 装、**未在任何清单里声明** —— 一次 pnpm install",
+    "重建 node_modules 就全部消失，构建立刻挂 11 条 `Could not resolve`。即「原机器能过、干净克隆就崩」的",
+    "不可复现缺陷。权威版本表 = scripts/vendor-deps.json（含逐包理由），构建前由 scripts/vendor-deps.mjs 自愈复核；",
+    "**本处声明必须与那张表逐字一致**，否则会出现『pnpm 按本处装 A 版 → 自愈改回 B 版』的振荡。",
+    "jQuery 锁 3.x：ST 宿主 $ 是 jQuery 3；v4 移除 $.trim/$.type/$.fn.bind 等，第三方脚本兼容风险大。"
+  ]
 }

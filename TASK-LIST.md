@@ -158,14 +158,39 @@
   代码已就绪，填上地址即可用；**当前留空**（面板会明说"还没配置更新源"）
 - 旁：`/rp/check-update` 只做检查，不自动下载安装（避免在未定渠道前引入自动更新风险）
 
-### T-34　🔴 类型闸门：UI 层仍无 `tsc` 覆盖（心跳 46 新发现）
-- 背景：`npm run typecheck` 原为 `tsc -b tsconfig.json`，**产出 2546 个错误 → 恒红 = 没有门**
+### T-34　类型闸门：UI 层无 `tsc` 覆盖　✅ **完成**（2026-09-11 心跳 47）
+- **背景**：`npm run typecheck` 原为 `tsc -b tsconfig.json`，**产出 2546 个错误 → 恒红 = 没有门**
   （缺 `allowImportingTsExtensions` + 缺 `jsx`/`@types/react`）。L14 的"让 tsc 拦"对策当时并不生效
-- ✅ **已修一半**：`tsconfig.core.json` + `npm run typecheck:core` → **核心逻辑层 0 错误**；
-  正控（注入 `boolean === 0`）证实报 **TS2367**，闸门真的能拦
-- ⏳ **剩余**：UI 层（`dsht-rp-ui/src/client/*.tsx`）需先装 `@types/react`，
-  再用 `tsconfig.check.json`（`npm run typecheck:ui`，现报 1588 错，绝大多数是缺 react 类型导致）
-- 完成标志：`typecheck:ui` 变绿，或明确记录"UI 层不做静态类型保证"并说明理由
+- ✅ **core 层**：`tsconfig.core.json` + `typecheck:core` → **0 错误**（心跳 46 建；心跳 47 把 include
+  扩到**插件端源码**：`dsh-plugin` / `dsht-plugin-memory` / `-prompt-template` / `-tavern-helper` /
+  `-undo` / `-mvu`——此前只覆盖纯逻辑层，**插件入口不在闸门内**）
+- ✅ **UI 层**：装 `@types/react`(+dom) 并**写进 `devDependencies` + 锁文件**（此前靠临时
+  `npm install --no-save`，换台机器即失效）；新建 `src/types/dsh-host-externals.d.ts` 声明宿主
+  模块表直供的 `dsh-client-ui-slots` / `-primitives`（本仓库不安装，故长期 TS2307）；
+  `tsconfig.check.json` 补 `ES2023.Array`；`typecheck` 改为 `core && ui`
+- ✅ **正控（两配置各一次，L23 要求）**：注入未定义标识符 → **TS2304**；`boolean === 0` →
+  **TS2367**；`number + boolean` → **TS2365**。证明闸门真的会 report，不是摆设
+- **闸门一开就抓出 5 个「函数在、不抛错、但从未生效」（静默失败族）**：
+  1. 🔴 **表格记忆（E1–E12）在 `dsh-plugin` 侧全是自由变量**：`loadSheets`/`renderTablePrompt`/
+     `expandTableMacros` 定义在 `dsht-plugin-memory/tables.ts`，调用处**只调用不导入** →
+     ReferenceError 被空 catch 吞掉。产物实证：三名字引用 3/2/1 次、**定义 0 次**。「表格宏展开」
+     与「E3 表格快照注入」自基线起从未生效
+  2. 🔴 **`deepMergeInitVars` 在整个 git 历史中从未存在过** → D1 MVU initvar 开局变量初始化
+     一直走 `catch { 不阻塞 }`，世界书的 `<initvar>`/`[InitialVariables]` 从未落地
+  3. 🔴 **EJS subset 引擎返回值被当数组用**：`renderMessages` 返回对象却被当数组 →
+     `r.messages[k]` 恒 undefined → **含 `<% %>` 的楼层正文被静默清空并落盘**
+  4. 🟠 `events: r.events + norm.changed + v3.changed`：number+number+**boolean**（L14 同型）
+  5. 🟠 UI 层：`PresetPanel` 的 `expandedKey` 缺 state（点展开即 ReferenceError 整屏崩）、
+     `PluginCards` 的 `TextRow.na` / `usePluginSettings.alive` 未暴露（不可用提示永不显示）、
+     `RpScriptHost.tsx:174` 依赖 Iterator Helpers（**Android WebView 无 → 删变量全废**）、
+     `RpNativeChat` 恒假分支、`TimedCache` 泛型双重 Promise
+- **顺带修掉构建不可复现**：vendor 5 包（jquery/jquery-ui/lodash/yaml/zod）此前靠
+  `npm install --no-save` 装、**未在任何清单声明** → 一次 `pnpm install` 全部消失、构建挂
+  11 条 `Could not resolve`。现由 `scripts/vendor-deps.json`（权威版本表 + 逐包理由）+
+  `scripts/vendor-deps.mjs`（构建前自愈复核）钉死，`package.json` 同步声明（避免两源振荡）
+- **验收**：`npm run typecheck`（core+ui）**全绿**；单测 **838/838**；`build-plugins.sh`
+  **构建通过**（vendor 锚定命中）
+- 详见 [.goal/upgrade-0.1.5/LEARNINGS.md](.goal/upgrade-0.1.5/LEARNINGS.md)
 
 ---
 
@@ -197,15 +222,18 @@
 
 ```
 【已完成】T-01 收口 → T-02 阶段3 迁移验证 → T-03 阶段4 回归(含 D-4 重评)
-   → T-04 双架构 APK 交付 → 【待你装机验三条基线（arm64 v220）】
-   → T-20/T-21 兼容缺口补完 ✅
-【接下来】T-23/T-24 验证债（回归清单可执行化）
-   → T-14/T-15 宿主面收口 → T-12/T-13（D-6/D-7，需你拍板）
-   → T-09 存量清洗（你拍板）→ T-25 大扫除 → T-26 README → T-27 Releases
-   → T-28~T-33 长尾
+   → T-04 双架构 APK 交付 → T-11 D-4 重评 → T-13 D-7 对照 → T-14/T-15 宿主面收口
+   → T-20/T-21 兼容缺口补完 → T-23/T-24 验证债 → T-26 README → T-32 契约漂移
+   → T-34 类型闸门（core+UI 双绿，抓出 5 个从未生效的功能）
+【待你拍板】T-08/T-12（D-6 关不关 tools：TT 请求体**完全没有** tools 字段，D-7 已实锤）
+   → T-09 存量脏楼层清洗（3 会话 146 处）
+【待你执行】把 arm64 包装真机，验三条基线（启动 / 打开旧聊天 / 发消息）
+【待外部条件】T-25 大扫除（需先解冻 RP 数据）→ T-27 更新渠道（需提供目标 GitHub 仓库）
+【随时可做】T-28~T-33 长尾（不阻塞发布）
 ```
 
-**卡点提示**：T-25 大扫除在「T-04 装机验证通过 + 差异收敛」前**不能动**（数据冻结）。
+**卡点提示**：T-25 大扫除在「T-04 装机验证通过 + 差异收敛」前**不能动**（数据冻结）；
+T-27 代码已就绪，只差更新源地址（需你决定公开/私有仓库）。
 
 ---
 
@@ -219,7 +247,8 @@
 | 平台补丁 | `scripts/apply-platform-patches.py`（`--check` 预检） |
 | **补丁标记静态审计** | `node scripts/audit-patch-markers.py`（AST 解析；查"marker 有没有写进替换串"这类幂等检测失效） |
 | **前后端路由契约审计** | `node scripts/audit-route-contract.mjs`（前端 POST × 服务端挂载区；`-v` 列全部；`DSHT_AUDIT_SRC=` 可做负向对照） |
-| **类型闸门（核心逻辑层）** | `npm run typecheck:core`（**已绿**）；UI 层见 T-34 |
+| **类型闸门（core + UI）** | `npm run typecheck`（= `typecheck:core && typecheck:ui`，**双绿**）；两次正控已验闸门会 report |
+| **构建期 vendor 依赖** | `node scripts/vendor-deps.mjs [--check]`（版本锚定表 = `scripts/vendor-deps.json`；缺失即自愈；构建前自动跑） |
 | 插件构建 | `scripts/build-plugins.sh` |
 | 一键升级 | `scripts/upgrade-runtime.sh` |
 | 会话迁移验证 | `tools/verify-session-migration.py` + `scripts/stage3-migration-test.sh` |

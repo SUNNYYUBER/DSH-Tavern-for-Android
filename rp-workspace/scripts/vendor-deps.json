@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "构建期 vendor 依赖锚定表 —— 唯一事实来源（版本 + 理由）。",
+    "这些包只被 scripts/build-rp-ui.mjs 的 vendor iife 使用，不进 APK 的 npm 依赖图；",
+    "历史上用 `npm install --no-save` 手工安装，因此不在 package.json。",
+    "后果：任何 `npm/pnpm install` 都会把不在锁文件里的包『修剪』掉 —— ",
+    "2026-09-11 心跳 47 实测 5 个包全部被剪掉（jquery/jquery-ui/zod/yaml/lodash），",
+    "报错形态是 esbuild 11 条 `Could not resolve`，构建静默中断。",
+    "现在由 scripts/vendor-deps.mjs 做构建前自愈：缺失即按本表整批重装 + 精确版本复核。"
+  ],
+  "anchors": {
+    "jquery": {
+      "version": "3.7.1",
+      "why": "ST 宿主的 $ 是 jQuery 3；v4 移除 $.trim/$.type/$.fn.bind 等废弃 API，第三方脚本（世界书控制等）兼容风险大。"
+    },
+    "jquery-ui": {
+      "version": "1.13.3",
+      "why": "飞讯/世界书控制用 draggable，依赖链含 mouse+widget+data+plugin+ie；版本与 docs/THIRD_PARTY_LICENSES.md 一致。"
+    },
+    "zod": {
+      "version": "4.5.4",
+      "why": "真 TH 往宿主页注入的 z 是 zod v4（third_party_object.ts，^4.4.3，.prefault/.loose 原生存在）。vendor 用 v3 会导致『变量结构 0628』卡深层报错。"
+    },
+    "yaml": {
+      "version": "2.9.0",
+      "why": "真 TH 经 predefine 从宿主合并 globalThis.YAML；MVU bundle 顶层调 YAML.parse。"
+    },
+    "lodash": {
+      "version": "4.18.1",
+      "why": "真 TH 宿主全局 _（predefine 合并面）；脚本可能直接取 window._。"
+    }
+  }
+}

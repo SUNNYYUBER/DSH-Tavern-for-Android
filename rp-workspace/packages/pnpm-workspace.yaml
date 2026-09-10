@@ -1,0 +1,6 @@
+# pnpm 默认不跑依赖的安装脚本（供应链安全策略）。esbuild 的 postinstall 负责落平台二进制，
+# 被拦会让 esbuild 不可用。此处显式放行 esbuild。
+# 【T-34 2026-09-11】此前无本文件，`pnpm install` 以 ERR_PNPM_IGNORED_BUILDS 退出码 1
+# （依赖其实装好了，但非零退出会打断任何把 install 串在前的脚本/CI）。
+allowBuilds:
+  esbuild: true

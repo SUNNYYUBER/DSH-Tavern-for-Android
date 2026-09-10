@@ -390,38 +390,38 @@ coreChat = ... { ...chatItem, mes: regexedMessage, index }   // ← 只改写局
 - **TT**：完全没有这些 —— TT 是纯 RP 对话，无 agent 工具层。
 - **影响**：DSHT 的 RP 消息要跟 agent 工具链抢注意力；`tools: 31` 会让模型在 RP 场景下产生工具调用倾向（历史样本 `[29]-[35]` 正是模型在查 worldbook 工具而非直接 RP）。
 
-### D-7　采样参数差异　【低】　✅ **对照已补齐（2026-09-11 心跳 45）**
+### D-7　采样参数差异　【低】　✅ **对照已补齐（2026-09-11 心跳 46）**
 
-> 补齐方式：`rp-workspace/scripts/golden-tt-sampling.mjs` 在 TT WebView（安卓真机/模拟器 CDP）
-> 里 monkey-patch `fetch` + `XMLHttpRequest`，抓**最终发给模型的请求体**（采样参数不在
-> prompt 事件里，故必须走网络层取证）。TT 侧原始 dump：`golden/tt-sampling/`。
+> 补齐方式：`rp-workspace/scripts/golden-tt-sampling.mjs` 在 TT WebView（安卓 CDP）里
+> monkey-patch `fetch` + `XMLHttpRequest`，抓**最终发给模型的请求体**（采样参数不在
+> prompt 事件里，故必须走网络层取证）。TT 侧原始 dump：`golden/tt-sampling/`（已 gitignore）。
 
-| 参数 | TT（实测） | DSHT（实测） | 差异评估 |
+**测量口径（重要）**：DSHT 侧的 `max_tokens` 随**当前生效的 RP 预设**变化，故必须
+在**同一预设**下比较。下表 DSHT 列取自「切换到真实 ST 预设
+`st-[主预设] V17.1 示例预设 · 示例角色-1lnwm2`（其 `sampling.maxTokens=65535, topP=0.88`）
+之后发出的一轮请求」（`llm-202/203.json` 实测）。
+
+| 参数 | TT（实测） | DSHT（实测·真实ST预设） | 差异评估 |
 |---|---|---|---|
-| `model` | `golden-mock`（本次对照用 mock；真机为导入模型） | `deepseek-v4-flash` | 配置项，非差异 |
+| `model` | `golden-mock`（对照用 mock） | `deepseek-v4-flash` | 配置项，非差异 |
 | `stream` | `true` | `true` | ✅ 一致 |
 | `stream_options` | 无 | `{"include_usage":true}` | DSHT 额外要 usage，无害 |
-| `max_tokens` | **16000** | **384000** | 🔴 **差距 24×** —— DSHT 未把 ST 的 max_tokens 映射过来 |
-| `temperature` | `1` | `1` | ✅ 一致 |
-| `top_p` | **0.88** | **未发送** | 🔴 DSHT 丢了这个参数 |
-| `frequency_penalty` | `0` | 未发送 | 中性（0 与不传等价） |
-| `presence_penalty` | `0` | 未发送 | 中性（0 与不传等价） |
-| `reasoning_effort` | **`low`** | 未发送（走 `thinking:{type:disabled}`） | 🟡 **旋钮不同源**：TT 用 reasoning_effort，DSHT 用 thinking 开关 |
+| `max_tokens` | 16000 | **65535**（= 预设 `maxTokens`） | ✅ **映射正常**（早前误判：曾用无 `maxTokens` 的示范预设测量，取到宿主默认 384000） |
+| `temperature` | 1 | 1 | ✅ 一致 |
+| `top_p` | **0.88** | **未发送** | ⚠️ **宿主限制 H-②**（非我方缺陷）：`dsh-llm-*` 适配器只透传 `temperature/max_tokens/stop` + 配置管线 `reasoningEffort`，其余采样长尾上不了线（见 `AUDIT_TASKLIST.md:257`）。预设里的值**已正确存入 `preset.json` 待宿主支持**（`sampling.topP: 0.88` 实证） |
+| `frequency_penalty` / `presence_penalty` | 0 / 0 | 未发送 | 中性（0 与不传等价）；且同样属 H-② |
+| `reasoning_effort` | **`low`** | 未发送（走 `thinking:{type:disabled}`） | 🟡 **旋钮不同源**：TT 用 `reasoning_effort` + `include_reasoning`；DSHT 用 `thinking` 开关。预设值 `"max"` 不在我方白名单（`minimal/low/medium/high`）→ 按 TT 语义**不发该字段**（已有显式处理） |
 | `include_reasoning` | `true` | —（由 `thinking` 控制） | 🟡 同上 |
-| `thinking` | 无 | `{"type":"disabled"}` | 🟡 同上 |
-| `tools` | **无** | **32 个** | 🔴 **D-6 实锤**（TT 纯 RP 无工具层；DSHT 带 32 个工具定义） |
+| `tools` | **无** | **32 个** | 🔴 **D-6 实锤**：TT 请求体里**完全没有 tools 字段**；DSHT 带 32 个工具定义 |
 
-**结论（3 条可执行项）**：
+**结论**：
 
-1. 🔴 **`max_tokens` 未映射**（16000 → 384000）：DSHT 用了宿主默认上限，没读 ST 预设里的值。
-2. 🔴 **`top_p` 丢失**：TT 发 0.88，DSHT 完全不发 → 采样行为实质不同（0.88 vs 服务端默认 1.0）。
-3. 🔴 **`tools=32` 确认**（D-6 实锤）：TT 的请求体里**完全没有 tools 字段**。
-   DSHT 的 31–32 个工具定义会让模型在 RP 场景产生工具调用倾向（历史样本 `[29]-[35]` 实证）。
-4. 🟡 **推理控制旋钮不同源**：TT 用 `reasoning_effort: low` + `include_reasoning`；
-   DSHT 用 `thinking:{type:disabled}`。下游若按 TT 口径配，DSHT 可能不响应。
-
-**处置建议**：① 与 ② 归入「预设映射补齐」（Tier 1 范畴，改动小）；
-③ 即 T-08（D-6，需你拍板是否关工具）；④ 与 T-30（采样参数长尾）合并评估。
+1. ✅ `max_tokens` **映射正常**（预设 65535 → 请求 65535，实测）。
+2. ⚠️ `top_p`/penalties **未发送 = 宿主限制 H-②**，非我方缺陷；预设值已持久化待宿主开放。
+3. 🔴 **`tools=32` 是唯一真差异**（= D-6，即 T-08，需你拍板是否关工具）。
+4. 🟡 推理控制旋钮不同源（`reasoning_effort` vs `thinking`）：预设里的 `"max"` 落在
+   我方白名单外被按 TT 语义丢弃 —— 行为正确，但若希望 `"max"` 生效需扩白名单
+   （随 T-30 采样参数长尾一并评估）。
 
 ---
 

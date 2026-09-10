@@ -7,6 +7,14 @@ import { mkdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ensureVendorDeps } from './vendor-deps.mjs'
+
+// 构建前预检：vendor iife 依赖的 5 个包不在 package.json（只服务构建、不进 APK 依赖图），
+// 任何 npm/pnpm install 都会把它们当「多余包」修剪掉 → esbuild 报 `Could not resolve "jquery"`
+// 且报错行指向虚拟 stdin 名 th-vendor-entry.mjs（仓库里不存在），极易误判成源码写错。
+// 自愈式预检：缺失即按 vendor-deps.json 的锚定版本整批重装 + 精确复核，复核不过直接抛错。
+// 详见 scripts/vendor-deps.mjs 文件头（构建/部署断链第 ⑨ 类）。
+ensureVendorDeps({ autoInstall: true })
 
 // esbuild 从 packages/ 的 node_modules 解析（脚本自身目录无依赖）
 const require = createRequire(resolve(dirname(fileURLToPath(import.meta.url)), '../packages/package.json'))
