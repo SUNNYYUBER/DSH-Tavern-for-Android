@@ -351,14 +351,48 @@ patch(
     1,
     "P2-1a ChatNodeList 传入 firstSeq",
 )
-patch(
-    _chat,
-    "DSHT-CHAT-FOLD-SEAT",
-    r'function ChatNodeSeat\(\{ nodeKey, useChatNode, useChatNodeProcess, historyIncomplete, compactTranscript,',
-    "function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess, historyIncomplete, dshtOldestSeq, compactTranscript,",
-    1,
-    "P2-1b ChatNodeSeat 接收 dshtOldestSeq",
-)
+# --- P2-1b（自定义块：必须同时兼容「未打」与「已打但缺 marker」两种形态）
+# 背景：本补丁原先的 marker `DSHT-CHAT-FOLD-SEAT** 没有出现在替换串里 →
+# 打上之后 marker 恒为 0 → 幂等检测永久失效（--check 永远报「期望 1 处、实际 0 处」，
+# 而实际代码早就改好了）。这是**补丁框架自身的缺陷**，已另建
+# `audit-patch-markers.py` 做全量静态审计（AST 解析，防同类问题再犯）。
+_CS_ORIG = ('function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess, '
+            'historyIncomplete, compactTranscript,')
+_CS_LEGACY = ('function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess, '
+              'historyIncomplete, dshtOldestSeq, compactTranscript,')
+_CS_DONE = ('function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess, '
+            'historyIncomplete, dshtOldestSeq, /* DSHT-CHAT-FOLD-SEAT */ compactTranscript,')
+
+
+def _patch_chatnode_seat():
+    if not os.path.isfile(_chat):
+        log("  ✗ P2-1b：目标不存在 %s" % _chat)
+        STATS["failed"] += 1
+        return
+    with open(_chat, "r", encoding="utf-8", newline="") as f:
+        t = f.read()
+    if "DSHT-CHAT-FOLD-SEAT" in t:
+        log("  · P2-1b：已打补丁，跳过")
+        STATS["skipped"] += 1
+        return
+    # 三种形态：① 原始（需要 patch）② 已打但缺 marker（历史缺陷遗留，需回填 marker）
+    for legacy, what in ((_CS_LEGACY, True), (_CS_ORIG, False)):
+        if t.count(legacy) != 1:
+            continue
+        if CHECK_ONLY:
+            log("  ✓ P2-1b：%s" % ("已打但缺 marker（待回填）" if what else "未打，锚点就位"))
+            STATS["checked"] += 1
+            return
+        with open(_chat, "w", encoding="utf-8", newline="") as f:
+            f.write(t.replace(legacy, _CS_DONE))
+        log("  ✓ P2-1b：%s" % ("marker 回填完成" if what else "已打补丁"))
+        STATS["applied"] += 1
+        return
+    log("  ✗ P2-1b：既非已打、锚点也不匹配（DSH 升级后产物形态变了？）")
+    STATS["failed"] += 1
+
+
+_patch_chatnode_seat()
 patch(
     _chat,
     "DSHT-CHAT-FOLD-READY",
