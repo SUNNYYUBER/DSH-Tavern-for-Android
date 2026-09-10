@@ -2,6 +2,8 @@
 
 > **这份文档给谁看**：两个读者。① 你——看 §1~§4 的大白话部分做决策，每个问题都解释了"是什么、现状、我推荐什么"；② 未来的工程师或 AI——看"做法细节"和 §6 速查照着干活。
 > 建立：2026-09-02。取代并归档了六份旧文档（位置见 §8），此后新任务、新结论一律回写本文件。
+>
+> 📋 **要动手做事，先看 [TASK-LIST.md](TASK-LIST.md)**（唯一任务清单：做什么、按什么顺序、做完的标志）。本文件管「现状与背景」，TASK-LIST 管「行动」。
 
 ---
 
@@ -57,37 +59,52 @@
 |---|---|---|
 | 0 | 备份设备数据 + 冻结 | ✅ **完成** |
 | 1 | 静态预检（11 个补丁点） | ✅ **完成**：8 稳定 / 2 需扩展 / 1 新 stub |
-| 2 | 升级运行时 + 重打补丁 | ✅ **完成**：0.1.5-rc.1 装入 + **21 处补丁应用成功** + 7 插件部署 + staging 同步完毕 |
-| 3 | 会话迁移验证 | 🔄 **进行中**：设备已备份（901MB）；待安装新 APK 触发迁移 |
-| 4 | 功能回归 + D-4 重评 | 🔄 **APK 已出**：x86_64 debug 187.6MB（内含 0.1.5-rc.1 + F1 补丁 4 处） |
+| 2 | 升级运行时 + 重打补丁 | ✅ **完成**：0.1.5-rc.1 + 21 处补丁 + 7 插件 + 新增第 7 个 stub |
+| 3 | 会话迁移验证 | 🔄 **进行中**：设备已备份（859MB）；runtime 已确认 0.1.5-rc.1；正在测 65MB 大会话迁移 |
+| 4 | 功能回归 + D-4 重评 | 🔄 **x86_64 APK 已实机跑通**（启动 0 错误 / 端口 3080 LISTENING / 插件全注册） |
 
 > **进展度量**：`bash .goal/upgrade-0.1.5/evaluate.sh` → 当前 **3 / 5**
 >
-> **回滚保险**（四层）：`backup/dsh-runtime-android-0.1.2-staging`（runtime 完整副本）
-> 　　`rp-workspace/dsh-runtime-android/node_modules-0.1.2-old`（就地回滚）
-> 　　`stage3-device/backup/dsh-before-migration.tar.gz`（**设备数据 901MB，迁移前**）
-> 　　`rp-workspace/dsh-runtime-src/package.json.bak`（版本回退）
+> **回滚保险（四层）**：`backup/dsh-runtime-android-0.1.2-staging`
+> 　　`rp-workspace/dsh-runtime-android/node_modules-0.1.2-old`
+> 　　`stage3-device/backup/dsh-before-migration.tar.gz`（**设备数据 859MB，迁移前**）
+> 　　`rp-workspace/dsh-runtime-src/package.json.bak`
 
-### ✅ 关键里程碑：0.1.5 首次成功打进 APK
+### 🔴 实机发现并修复的启动阻塞（本轮最大收获）
 
-```
-[build-wb] [0/7] 确保我方插件就位 ✓ 跳过（集成生效）
-[build-wb] [1/6] esbuild dsh-plugin        795.1kb
-[build-wb] [2/6] esbuild app.js            248.9kb
-[build-wb] [3/6] lib 换架构 (x86_64)
-[build-wb] [4/6] sentinel v203 → v204
-[build-wb] [5/6] zip 内 fixTag = 16
-[build-wb] [6/6] gradle assembleDebug
-[build-wb] 交付: DSH-Tavern-0.2.0-x86_64-debug.apk (187.6 MB)
-```
+**症状**：新 APK 卡启动屏 → `端口 3080: 未监听`
 
-**APK 内抽验**（从 `dsh-runtime.zip` 直接读）：
+**根因**：0.1.5 的 `dsh-subprocess-local` **新增静态导入** `@deepseek-ai/dsh-win32-process`
+（9 个符号），而 `pnpm install` 在非 win32 平台**不装该包** →
+**ESM 加载期 SyntaxError → 整个 cordis plugin tree 崩溃**
+
+**修复**：新增**第 7 个 stub**（`stubs/dsh-win32-process/index.js`，21 个符号）
+→ 已注册进 `apply-platform-patches.py`，后续构建自动带上
+
+**✅ 实机验证（决定性）**：
+| 判据 | 结果 |
+|---|---|
+| `loadWin32ProcessBindings` 错误 | **0 次**（原反复崩溃） |
+| 其他 SyntaxError | **0 次** |
+| **端口 3080** | **LISTENING** |
+| 插件注册 | dsht-memory / dsht-rp / dsht-mvu / dsht-th / dsht-ejs 全部 ✅ |
+
+### 沉淀的新铁律
+
+> **平台过滤导致缺包 = 隐蔽的启动杀手**
+> · 表现是"整个 runtime 起不来"，易误判成构建/部署问题
+> · 排查捷径：`logcat | grep "does not provide an export named"`
+> · 预防：升级后 `comm -23` 比对两版包名差集（本次发现 19 个新增包）
+
+### APK 交付
+
 | 项 | 值 |
 |---|---|
-| DSH 版本 | **0.1.5-rc.1** ✅ |
-| F1 补丁标记 | **4 处** ✅ |
-| 我方插件 | `dsht-rp-plugin` 含 `.` / `./client` 双面 ✅ |
-| md5 | `8f2fee9cc884051c97429c17b6f62a6c` |
+| 路径 | `DSH-Tavern-0.2.0-x86_64-debug.apk` |
+| 大小 | 187.6 MB |
+| 内嵌 DSH | **0.1.5-rc.1** |
+| 内嵌补丁 | F1 4 处 + 第 7 个 stub ✓ |
+| sentinel | **v205** |
 
 ### 轮次内新增的基础设施（此前缺失）
 
