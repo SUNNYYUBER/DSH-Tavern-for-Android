@@ -1727,9 +1727,20 @@ function unregisterMacro(name) {
 }
 
 // ---- C7 registerVariableSchema（桥到 host /variables/schema → rp/state variableSchema）----
+// 权威契约（JS-Slash-Runner @types/function/variables.d.ts:203-206）：
+//   registerVariableSchema(schema: z.ZodType<any>, option: {type:'global'|'preset'|'character'|'chat'|'message'}): void
 // 真 TH 收 zod schema：iframe vendor 有 zod v4，经 toJSONSchema 转纯对象过桥；
-// 已是普通对象（JSON-Schema 形态）则原样传。name 空 = 整树 schema。
-function registerVariableSchema(name, schema) {
+// 已是普通对象（JSON-Schema 形态）则原样传。
+//
+// 【阶段4 2026-09-11 修复 · 参数与语义双错】旧实现签名是 (name, schema)：卡按文档
+// 调用 registerVariableSchema(z.object({...}), {type:'message'}) 时——
+//   · arg0（zod 对象）被当 name → String() 得 "[object Object]"；
+//   · arg1（scope 选项）被当 schema → 存成 variableSchema 的值。
+// 实机产物即为 variableSchema.properties["[object Object]"] = {type:'message'}
+// （rp/state/<sid>.json 实证），并被卡脚本读成 "Data Error"。
+// 现在按契约取 (schema, option)：scope 仅 message/空 走整树（本 store 的 variables 根
+// 就是消息楼层变量），其余作用域按作用域名分键保存。
+function registerVariableSchema(schema, option) {
   var json = schema || null;
   try {
     if (json && typeof json === 'object' && typeof json.safeParse === 'function'
@@ -1737,7 +1748,11 @@ function registerVariableSchema(name, schema) {
       json = window.Zod.toJSONSchema(json);
     }
   } catch (e) { /* 转换失败按原样传（host 按 JSON-Schema 最小子集校验） */ }
-  return call('vars:schema', [String(name == null ? '' : name), json]).then(function () { return true; });
+  var scope = option && typeof option === 'object' && typeof option.type === 'string' ? option.type : 'message';
+  if (['global', 'preset', 'character', 'chat', 'message'].indexOf(scope) === -1) scope = 'message';
+  // message 作用域 = 本实现的唯一变量存储（rp/state/<sid>.json 的 variables 根）→ 传 ''
+  // 表示「整树 schema」；其它作用域传作用域名（host 侧按名分键，不再产出 [object Object]）。
+  return call('vars:schema', [scope === 'message' ? '' : scope, json]).then(function () { return true; });
 }
 
 // ---- toastr（桥到 host：console + 脚本面板日志）----
@@ -2480,7 +2495,8 @@ export interface ThBridgeDeps {
   // ---- 以下为 C7/C8/C9/D6 扩展面 deps（/dsht-tavern-helper/* 新路由 + /dsht-mvu/*）----
   /** chat 作用域深合并写入（C7：facade /variables/merge——服务端 undo/快照/schema 校验收口） */
   varsAssignChat: (vars: Record<string, unknown>) => Promise<void>
-  /** 变量 schema 注册（C7：facade /variables/schema → rp/state variableSchema） */
+  /** 变量 schema 注册（C7：facade /variables/schema → rp/state variableSchema。
+   *  首参是 TH 契约里的**作用域** global/preset/character/chat/message；''/message = 整树） */
   varsSchemaPut: (name: string, schema: Record<string, unknown>) => Promise<void>
   /** prompt 注入存储（C8：/inject 同 key 覆盖写入） */
   injectsPut: (injections: Record<string, unknown>[]) => Promise<void>
