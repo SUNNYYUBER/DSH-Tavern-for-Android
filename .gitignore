@@ -47,3 +47,8 @@ backup/
 
 # ===== 0.1.5 升级阶段 3 设备备份（921MB，本机保留不入库；T-01 2026-09-10）=====
 stage3-device/
+
+# ===== 原始抓包（含真实 RP 正文/人名，严禁入库；T-25 大扫除范畴）=====
+# TT 侧采样参数抓包：保留在 golden/tt-sampling/ 本机对照，只把脱敏结论写进
+# docs/DSHT-VS-TT-DIFF-2026-09-10.md §D-7。
+golden/tt-sampling/
