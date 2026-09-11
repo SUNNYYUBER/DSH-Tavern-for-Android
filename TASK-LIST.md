@@ -430,7 +430,24 @@
 ### T-35　清理：4 份 deep-merge 实现收敛到 `dsht-plugin-shared`（P3）
 - 现存：`tavern-helper/variables.ts:deepMergeVars`、`th-shim.ts:deepMergeAssign`、
   `dsht-plugin-mvu/index.ts:deepMerge`、`state/mvu.ts:deepMergeInitVars`（心跳 47 新增）
-- 语义差异尚未逐对核对（前 3 份是否都满足「存量优先、只补不改」）。先补对照表再收敛，勿盲目合并。
+- **对照表已补**（2026-09-11 心跳 47，**判别性用例实测**，不靠读注释 —— 用
+  `LOW={x:1,nested:{a:1,b:2},arr:[1,2]}` vs `HIGH={x:99,nested:{b:88,c:3},arr:[9]}`）：
+
+  | 实现 | `x`（叶冲突） | `nested`（深合并） | `arr` | **语义家族** |
+  |---|---|---|---|---|
+  | `tavern-helper/deepMergeVars` | **99** | `{a:1,b:88,c:3}` | `[9]` | **incoming 获胜**（high 覆盖 low） |
+  | `th-shim/deepMergeAssign` | **99** | `{a:1,b:88,c:3}` | `[9]` | **incoming 获胜** |
+  | `dsht-plugin-mvu/deepMerge` | **99** | `{a:1,b:88,c:3}` | `[9]` | **incoming 获胜** |
+  | `state/mvu/deepMergeInitVars` | **1** | `{a:1,b:2,c:3}` | `[1,2]` | **existing 获胜**（只补缺口） |
+  | `th-shim/deepMergeInsert(low,high)` | **1** | `{b:2,c:3,a:1}` | `[1,2]` | **existing 获胜** |
+
+- ⚠️ **原假设被推翻**：T-35 原写「前 3 份是否都满足『存量优先、只补不改』」——
+  实测**恰好相反**：前 3 份**都是 incoming 获胜**，第 4 份（`deepMergeInitVars`）
+  与 `deepMergeInsert` 才是 existing 获胜。且 `deepMergeInitVars` 的代码注释
+  （「与 th-shim 的 `deepMergeInsert` 同义」）**是对的**，原任务描述的猜测才是错的。
+- **结论**：收敛前必须先**按语义家族分组**（families-A incoming 3 份 / families-B existing 2 份），
+  不能四份合成一个函数——否则任一侧调用方行为会变。**属需专门一轮的重构，本轮不动**
+  （P3，不阻塞发布；且当前四份各自正确、无缺陷）。
 
 ---
 
