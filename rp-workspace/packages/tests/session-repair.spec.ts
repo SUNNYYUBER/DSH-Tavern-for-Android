@@ -163,9 +163,63 @@ describe('session-repair: 存量 v0 会话 → 合法形态', () => {
     // 至少保证：若 prune 保留，端点必须与 shadowedSeqs 端点一致（官方 validateShadowedSeqs）
     if (prune !== undefined) {
       const d = prune.data as { shadowedSeqs: number[]; shadowedRange: { start: number; end: number } }
-      expect(d.shadowedSeqs).toEqual([...d.shadowedSeqs].sort((a, b) => a - b))
       expect(d.shadowedRange.start).toBe(d.shadowedSeqs[0])
       expect(d.shadowedRange.end).toBe(d.shadowedSeqs[d.shadowedSeqs.length - 1])
+    }
+    // 【心跳 53 修正】原文此处还断言 `shadowedSeqs` 必须数值升序 —— **那是把缺陷写成了期望值**：
+    // 官方 `validateShadowedSeqs` 要的是 shadowedSeqs 恰等于当前 surface 的**连续切片**（surface 序），
+    // 而 surface 在多次 replace 后本来就不是数值单调的（设备真实会话实证：shadowedSeqs 为
+    // [57,1134,1150,1136,…]）。按数值重排会立刻被 fixPruneSurfaceSpans 改回来 → 两步互抵 →
+    // `changed` 恒真 → 每次冷启动全量重写。该断言已删除，真不变式由下面两条新用例钉住。
+    expect(r.changed).toBe(true)
+  })
+
+  it('🔴 回归：shadowedSeqs 是 surface 序（非数值升序）→ 零改动（不得每次启动重写）', () => {
+    // 复现设备缺陷（心跳 53）：会话 `session-fdfc1a28…` 的 session.v3.jsonl 与 .bak md5 完全相同
+    // ——即每次冷启动都做了一次「内容零变化的全量重写 + .bak」。
+    // 根因：fixPrune 按数值升序重排，fixPruneSurfaceSpans 又按 surface 序改回，净零变化但 changed 恒真。
+    // 构造：seq 2/3 两条 user 被 seq 9 的 replace 收拢 → surface = [9, 6]（**非**数值升序），
+    //        prune 的 shadowedSeqs 正是这段 surface 切片 → 已合法，必须判零改动。
+    // 【正控】修复前本用例会失败（fixPrune 会把它排成 [6,9] 并置 changed=true）。
+    const hdr3 = JSON.stringify({ type: 'session', version: 3, id: 's1', createdAt: 1, cwd: '/data/x', delegationDepth: 0 })
+    const lines = [
+      hdr3,
+      JSON.stringify({ type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } }),
+      JSON.stringify({ type: 'step/start', seq: 1, time: 2, data: { turn: 1, step: 1 } }),
+      JSON.stringify({ type: 'user/message', seq: 2, time: 3, data: { id: 'u1', role: 'user', content: [{ type: 'text', text: 'a' }], source: { kind: 'user' } }, surfaceOp: 'append' }),
+      JSON.stringify({ type: 'user/message', seq: 3, time: 4, data: { id: 'u2', role: 'user', content: [{ type: 'text', text: 'b' }], source: { kind: 'user' } }, surfaceOp: 'append' }),
+      JSON.stringify({ type: 'step/end', seq: 4, time: 5, data: { turn: 1, step: 1 } }),
+      JSON.stringify({ type: 'step/start', seq: 5, time: 6, data: { turn: 1, step: 2 } }),
+      JSON.stringify({ type: 'assistant/message', seq: 6, time: 7, data: { turn: 1, step: 2, stream: [], message: { id: 'a1', role: 'assistant', content: [{ type: 'text', text: 'c' }], source: { kind: 'model', provider: 'p', model: 'm' } } }, surfaceOp: 'append' }),
+      JSON.stringify({ type: 'step/end', seq: 7, time: 8, data: { turn: 1, step: 2 } }),
+      JSON.stringify({ type: 'turn/end', seq: 8, time: 9, data: { turn: 1, reason: { kind: 'completed' } } }),
+      // seq 9 把 surface 上的 [2,3] 替换成自己 → surface 变为 [9, 6]
+      JSON.stringify({ type: 'user/message', seq: 9, time: 10, data: { id: 'u3', role: 'user', content: [{ type: 'text', text: 'ab' }], source: { kind: 'user' } }, surfaceOp: { op: 'replace', startSeq: 2, endSeq: 3 } }),
+      JSON.stringify({ type: 'compaction/prune', seq: 10, time: 11, data: { shadowedRange: { start: 9, end: 6 }, shadowedSeqs: [9, 6], shadowedTokenCount: 2 } }),
+    ]
+    const src = lines.join('\n') + '\n'
+    const r = repairSessionForV3(src)
+    expect(r.changed).toBe(false)          // ← 核心：已合法就必须零改动
+    expect(r.content).toBe(src)            // ← 连一个字节都不该动
+  })
+
+  it('🔴 回归：shadowedSeqs 含重复 → 去重**保持出现顺序**（不按数值重排）', () => {
+    // 与上一条同源：去重是必要的（官方要求影子集唯一），但顺序权威是 surface 序。
+    const src = session([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      USER('u1', 'hi'),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+      // 重复项 + 非数值序：去重后应是 [2, 9] 的**出现序**（[2, …, 2] → [2, …]）
+      // 注意 seq 99 不在 surface 上，故该 prune 会被整条移除；此处只验「若保留则保序」
+      ['compaction/prune', { shadowedRange: { start: 2, end: 2 }, shadowedSeqs: [2, 2], shadowedTokenCount: 5 }],
+    ])
+    const r = repairSessionForV3(src)
+    const prune = parse(r.content).find(e => e.type === 'compaction/prune')
+    if (prune !== undefined) {
+      const d = prune.data as { shadowedSeqs: number[] }
+      expect(d.shadowedSeqs).toEqual([2])  // 去重生效
     }
     expect(r.changed).toBe(true)
   })

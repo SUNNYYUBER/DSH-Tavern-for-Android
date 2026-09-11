@@ -317,7 +317,9 @@ export function repairSessionForV3(content: string): SessionRepairResult {
     }
     if (ev.type === 'compaction/prune') {
       const d = ev.data as { shadowedRange?: { start?: number; end?: number }; shadowedSeqs?: number[] }
-      if (Array.isArray(d.shadowedSeqs)) d.shadowedSeqs = uniqueSorted(d.shadowedSeqs.map(mapRef)).filter(q => q < ev.seq)
+      // shadowedSeqs 保持 **surface 序**（见 fixPrune 头注）——此处只做重映射 + 去重，
+      // 不按数值重排（重排会被下面的 fixPruneSurfaceSpans 再改回来 = 两步互抵）。
+      if (Array.isArray(d.shadowedSeqs)) d.shadowedSeqs = uniqueStable(d.shadowedSeqs.map(mapRef)).filter(q => q < ev.seq)
       if (d.shadowedRange !== undefined) {
         const seqs = d.shadowedSeqs ?? []
         d.shadowedRange = { start: seqs[0] ?? 0, end: seqs[seqs.length - 1] ?? 0 }
@@ -620,16 +622,29 @@ function fixAssistantMessageSource(data: Record<string, unknown>, notes: string[
   return { data: { ...data, message: m }, changed: true, dropped }
 }
 
-/** compaction/prune：shadowedSeqs 去重升序 + 端点对齐 shadowedRange */
+/**
+ * compaction/prune：shadowedSeqs **保序**去重。
+ *
+ * 【心跳 53 修正 —— 原实现按数值升序重排，与官方契约冲突且造成"两步互抵"】
+ * 官方 `validateShadowedSeqs` 要求 shadowedSeqs 恰等于当前 surface 的**连续切片**，
+ * 即 **surface 序**（本文件 `fixPruneSurfaceSpans` 头注已写明「surface 序而非数值升序」）。
+ * 原实现用 `uniqueSorted` 改成数值升序 → 紧接着 `fixPruneSurfaceSpans` 又改回 surface 序
+ * → 净内容零变化，但 `changed` 恒为 true：
+ *   · 设备实证：会话 `session-fdfc1a28…` 的 `session.v3.jsonl` 与其 `.bak` **md5 完全相同**
+ *     （每次冷启动 2MB 全量重写 + 2MB 备份，且日志恒报 `repaired=1`）；
+ *   · 离线复现（`stage3-device/hb53/repair-chain.mjs`）：`v3.changed=true` 而
+ *     `产物 === 输入`，第二遍**仍** changed=true（不收敛）。
+ * 现改为**只去重、不改顺序**（顺序权威归 `fixPruneSurfaceSpans`）。
+ */
 function fixPrune(data: Record<string, unknown>, notes: string[]): { data: Record<string, unknown>; changed: boolean } {
   const d = { ...data }
   const seqs = Array.isArray(d.shadowedSeqs) ? (d.shadowedSeqs as unknown[]).filter((q): q is number => typeof q === 'number') : []
   if (seqs.length === 0) return { data, changed: false }
-  const fixed = uniqueSorted(seqs)
+  const fixed = uniqueStable(seqs)
   const same = fixed.length === seqs.length && fixed.every((q, i) => q === seqs[i])
   if (same) return { data, changed: false }
   d.shadowedSeqs = fixed
-  notes.push('compaction/prune 的 shadowedSeqs 重排（去重 + 升序，对齐 shadowedRange 端点）')
+  notes.push('compaction/prune 的 shadowedSeqs 去重（保持 surface 序，不按数值重排）')
   return { data, changed: true }
 }
 
@@ -739,6 +754,16 @@ function expandPackedRow(row: Record<string, unknown>): RawEvent[] {
 
 function uniqueSorted(xs: number[]): number[] {
   return [...new Set(xs)].sort((a, b) => a - b)
+}
+
+/**
+ * 保序去重（首次出现序）。
+ * 用于 `shadowedSeqs`：其顺序语义是 **surface 序**（见 `fixPruneSurfaceSpans` 头注），
+ * 按数值重排会让下游 `fixPruneSurfaceSpans` 再改回来 —— 两步互抵 → `changed` 恒真
+ * → 调用方每次启动全量重写（心跳 53 修复）。
+ */
+function uniqueStable(xs: number[]): number[] {
+  return [...new Set(xs)]
 }
 
 /** sourceEventSeqs 可能被宿主编码成 [start,end] 区间形态，先摊平 */

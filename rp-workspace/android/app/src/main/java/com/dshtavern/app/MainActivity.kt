@@ -60,6 +60,17 @@ class MainActivity : AppCompatActivity() {
 
         /** §4.16.2 深链派发重试上限：前端 rp-ui 未就绪时 400ms × 25 ≈ 10s 内等监听注册 */
         private const val LOCATE_RETRY_MAX = 25
+
+        /**
+         * T-45（2026-09-11 心跳 53）主框架加载失败自愈：
+         * 触发条件 = 端口已开放 + token 已捕获 + 加载仍失败（401 / 启动期竞态 / 渲染进程被杀）。
+         * 原逻辑只在 **token 变化** 时重载 → 上述场景 token 不变 → 三个分支全不命中 →
+         * **永久停在等待屏**（设备实证：等 40s / 40 次轮询零次重载；界面显示
+         * 「端口 3080：已开放 ✓ / web 令牌：已捕获 ✓」却不再推进 = 静默失败）。
+         * 现补一条**带预算**的重载分支（不改变既有 token 变化路径的优先级）。
+         */
+        private const val RELOAD_INTERVAL_MS = 3000L
+        private const val RELOAD_MAX = 20
     }
 
     private lateinit var webView: WebView
@@ -74,12 +85,30 @@ class MainActivity : AppCompatActivity() {
     private var tokenDegraded = false
     /** 上次带 token 加载用的令牌（仅当 webToken 变化才重载——修 401↔重载死循环） */
     private var lastTokenAttempt: String? = null
+    /** 上次实际加载的 URL（T-45：失败重载必须回到"本该加载的那个地址"，不能拿当前 url） */
+    private var bootUrl: String? = null
+    /** T-45 主框架加载失败标记（由 onReceivedError / onReceivedHttpError 置位） */
+    private var reloadNeeded = false
+    /** T-45 重载预算（连续失败计数；端口 0→1、token 变化时归零） */
+    private var reloadAttempts = 0
+    /** T-45 上次加载时刻（重载节流） */
+    private var lastLoadAt = 0L
+    /** T-45 端口上一轮状态（用于识别 0→1 跳变以刷新重载预算） */
+    private var lastPortState = false
     /** T2.11 首启标记：仅第一次打开 app 自动显示导入/新手教程页（之后直接进 DSH） */
     private val prefs by lazy { getSharedPreferences("dsht", MODE_PRIVATE) }
 
     private val handler = Handler(Looper.getMainLooper())
     private val diagPoller = object : Runnable {
         override fun run() {
+            // T-45：端口 0→1 跳变（node 首次就绪 / watchdog 重启后回来）→ 刷新重载预算，
+            // 并视为一次合法的"该重载"信号（此刻 WebView 可能停在错误页）。
+            val portNow = NodeService.portOpen
+            if (portNow && !lastPortState) {
+                reloadAttempts = 0
+                if (!dshLoaded) reloadNeeded = true
+            }
+            lastPortState = portNow
             if (!dshLoaded) {
                 val d = NodeService.diagJson()
             try {
@@ -106,6 +135,16 @@ class MainActivity : AppCompatActivity() {
                     val tok = com.dshtavern.app.NodeService.webToken
                     sb.append("\nweb 令牌（0.1.2 鉴权）：").append(if (tok != null) "已捕获 ✓" else "未捕获（等 node 打印 dsh web: 行）")
                 }
+                // T-45：加载失败/重试状态**必须可见**（L42：有意跳过与做成了/失败了同等留痕）
+                if (reloadNeeded || reloadAttempts > 0) {
+                    sb.append("\n页面加载：").append(
+                        if (reloadAttempts >= RELOAD_MAX) {
+                            "连续失败 $reloadAttempts 次，已停止自动重试 —— 请重启应用"
+                        } else {
+                            "失败，${RELOAD_INTERVAL_MS / 1000} 秒后自动重试（第 ${reloadAttempts + 1}/$RELOAD_MAX 次）"
+                        },
+                    )
+                }
                 bootDetail.text = sb.toString()
                 bootDetail.setTextColor(
                     if (state == "FAILED") Color.parseColor("#E65A6A") else Color.parseColor("#9FB0C6")
@@ -129,8 +168,12 @@ class MainActivity : AppCompatActivity() {
                     if (tok != null && tok != lastTokenAttempt) {
                         lastTokenAttempt = tok
                         dshLoaded = true
+                        reloadNeeded = false
+                        reloadAttempts = 0
+                        bootUrl = "http://127.0.0.1:3080/?token=$tok"
+                        lastLoadAt = System.currentTimeMillis()
                         hideBoot()
-                        webView.loadUrl("http://127.0.0.1:3080/?token=$tok")
+                        webView.loadUrl(bootUrl!!)
                         maybeOpenFirstLaunchImport()
                         if (pendingShareOpenImport) {
                             pendingShareOpenImport = false
@@ -148,19 +191,44 @@ class MainActivity : AppCompatActivity() {
                         // token 文件/stdout 到达后下一轮 dshLoaded 分支即带 token 重载）
                         tokenDegraded = true
                         dshLoaded = true
+                        reloadNeeded = false
                         lastTokenAttempt = ""
+                        bootUrl = "http://127.0.0.1:3080"
+                        lastLoadAt = System.currentTimeMillis()
                         hideBoot()
-                        webView.loadUrl("http://127.0.0.1:3080")
+                        webView.loadUrl(bootUrl!!)
                         maybeOpenFirstLaunchImport()
+                    } else if (reloadNeeded && reloadAttempts < RELOAD_MAX &&
+                        System.currentTimeMillis() - lastLoadAt >= RELOAD_INTERVAL_MS
+                    ) {
+                        // ★ T-45（心跳 53）：token 未变但**主框架加载失败** → 带预算重载。
+                        // 原逻辑此处无分支命中 = 永久停在等待屏（设备实证：40s 零次重载）。
+                        // 重载目标用 bootUrl（上次"本该加载"的地址），不是 webView.url
+                        //（失败时它是 chrome-error://，拿它重载等于再失败一次）。
+                        val url = bootUrl
+                        if (url != null) {
+                            reloadAttempts += 1
+                            dshLoaded = true
+                            reloadNeeded = false
+                            lastLoadAt = System.currentTimeMillis()
+                            hideBoot()
+                            android.util.Log.w(
+                                "DSHTavern",
+                                "main-frame load failed → reload (attempt $reloadAttempts/$RELOAD_MAX): $url",
+                            )
+                            webView.loadUrl(url)
+                            maybeOpenFirstLaunchImport()
+                        }
                     }
-                    // 其余情况（等 token 窗口内 / 401 后 token 未变）：不加载，只更新 UI
+                    // 其余情况（等 token 窗口内 / 重载节流窗口内）：不加载，只更新 UI
                 }
             } catch (_: Exception) {
             }
             }
-            // 无条件重排：轮询永生（加载后 WebView 主框架错误 → dshLoaded 复位，
-            // 下一轮按 token 变化重载——旧版 `if (dshLoaded) return` 让轮询死亡，
-            // 401/网络错误后无人重载，等待屏永久冻结）
+            // 无条件重排：轮询永生（加载后 WebView 主框架错误 → dshLoaded 复位）。
+            // 【T-45 心跳 53 更正】原注释声称"下一轮按 token 变化重载"，但 token 不变时
+            // **没有任何分支命中** → 等待屏永久冻结（设备实证）。现补带预算的重载分支，
+            // 生命周期为：失败即重载（3s 节流，上限 20 次），端口 0→1 或 token 变化时归零。
             handler.postDelayed(this, 1000)
         }
     }
@@ -661,8 +729,14 @@ class MainActivity : AppCompatActivity() {
                 // DSH 页面加载失败：回到等待屏轮询（端口探活比 WebView 重试可靠）。
                 // tokenWaits 不重置（修 401↔等待死循环）：401 = 干净 URL 无令牌被拒，
                 // 只等 token 到达即带 token 重载；tokenDegraded 保证不再重复降级。
+                // T-45：同时置 reloadNeeded —— token 未变时也必须有自愈路径。
                 if (request.isForMainFrame) {
+                    android.util.Log.w(
+                        "DSHTavern",
+                        "main-frame error ${error.errorCode} ${error.description} @ ${request.url}",
+                    )
                     dshLoaded = false
+                    reloadNeeded = true
                     showBoot()
                 }
             }
@@ -673,8 +747,15 @@ class MainActivity : AppCompatActivity() {
                 // 走 onReceivedHttpError 而非 onReceivedError（踩过：漏处理导致卡在
                 // "Webpage not available" 错误页，token 到达也无人重载）。回等待屏轮询，
                 // token 到达（stdout/dsht-token 文件双通道）即带 token 重载。
+                // T-45：同样置 reloadNeeded（token 迟到的场景下，重载分支先于 token 变化
+                // 也是安全的——重载用的就是上次的 URL）。
                 if (request.isForMainFrame && request.url.host == "127.0.0.1") {
+                    android.util.Log.w(
+                        "DSHTavern",
+                        "main-frame http ${errorResponse.statusCode} @ ${request.url}",
+                    )
                     dshLoaded = false
+                    reloadNeeded = true
                     showBoot()
                 }
             }

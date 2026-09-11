@@ -562,15 +562,76 @@
   等价判据筛，配正控+反控；给不出精确等价就降级为"不带"）· **L55**（抓包要抓对传输层；优先选
   不依赖"我猜对实现细节"的判据，如**服务端落盘**）。
 
-### T-45　🆕 观察：WebView 启动竞态 → 停在 `chrome-error://chromewebdata/` 且**不自动重试**（心跳 50）
+### T-51　🔴→✅ **修复器「不收敛」：两步互抵 → 每次冷启动全量重写会话**（心跳 53 实机发现并修复）
+
+- **暴露方式**（不是找 bug，是**看日志**）：设备冷启动日志**每次**都对同一会话报
+  ```
+  repair-sessions(v3): session-fdfc1a28-cb0d-46ab-895a-1032a971245c
+    compaction/prune 的 shadowedSeqs 重排（去重 + 升序，对齐 shadowedRange 端点）；
+    compaction/prune 的 shadowedSeqs 对齐实际 surface 切片（失效 prune 已移除）
+  repair-sessions: repaired=1 skipped=1 errors=0
+  ```
+  而该会话的 `session.v3.jsonl` 与其 `.bak` **md5 完全相同**
+  （`37562b17…`，同为 2,076,005 B，mtime 同秒）→ **内容零变化**。
+- **代价**：每个受影响的会话、**每次冷启动** = 一次 2MB 全量重写 + 一次 2MB `.bak` 拷贝
+  （且会在磁盘上持续堆积 `.bak`）。这与心跳 49 修掉的"每次启动重写全部 79 个会话"是**同一族**，
+  只是数量级从 79 个降到 1 个，**所以更容易被漏掉**。
+- **根因 = 两个步骤对同一字段持互斥的规范化目标**：
+  | 步骤 | 目标 | 效果 |
+  |---|---|---|
+  | `session-repair.ts:fixPrune` | `uniqueSorted` → **数值升序** | 把 `[57,1134,1150,1136,…]` 排成 `[57,105,114,…]` → `changed=true` |
+  | `session-repair.ts:fixPruneSurfaceSpans` | **surface 切片序**（官方 `validateShadowedSeqs` 的真实要求） | 又改回 `[57,1134,1150,1136,…]` → `changed=true` |
+  一个"排好"、一个"排回去"，**产物回到原样而 `changed` 永真** → 调用方（`dsh-plugin/index.ts:2194`
+  的 `sessionRepairNeedsWrite`）每次启动都判"需要落盘"。
+  设备真值证实数据本就是 surface 序（`seq=1196` 19 元素 / `seq=1198` 18 元素，
+  **数值升序 = false**）—— surface 在多次 replace 交错后**本来就不单调**。
+  `fixPruneSurfaceSpans` 自己的头注就写着「官方 validateShadowedSeqs：**surface 序而非数值升序**」
+  —— **两个步骤里有一个把自己的头注写对了，却没发现另一个把顺序又改了回去**。
+- ✅ **修复**：新增 **`uniqueStable`（保序去重）**，`fixPrune` 与引用重映射处（`:320`）的 `uniqueSorted`
+  全部改用它 → **顺序权威唯一归 `fixPruneSurfaceSpans`**；note 文案同步改为如实的
+  「去重（保持 surface 序，不按数值重排）」（原文案还声称"对齐 shadowedRange 端点"，而它并不做这件事）。
+- ✅ **三层验证（每一层都带正控）**：
+  1. **离线精确复现** `stage3-device/hb53/repair-chain.mjs`（esbuild 打包两个纯函数模块，
+     对设备真实 1.38MB / 1258 事件文件跑三段链）：修复前 `v3.changed=true` 而**产物 === 输入**、
+     第二遍**仍** `changed=true`；修复后 `changed=false`、无 note、第二遍干净。
+  2. **单测正控**：新用例（surface 序但非数值升序 ⇒ 必须零改动）在**旧实现下实测 FAIL**，
+     恢复修复即 **27 passed**。顺带发现原文一条断言**把缺陷写成了期望值**
+     （`expect(d.shadowedSeqs).toEqual([...d.shadowedSeqs].sort())` 断言必须数值升序）—— 已按基准重写。
+  3. **判据 6 正控**（`scripts/verify-session-pipeline.mjs`，用运行时谓词判"是否还会写"）：
+     还原 HEAD 源码 → 报 `每次启动会重写 1`（`v3.changed=true(boolean)`）；装上修复 → `0`。
+- ✅ **设备闭环 + 全树判据**：装 v263 后**两次冷启动均 `repaired=0 skipped=1`**，会话文件 mtime
+  **纹丝不动**（保持 18:26）；`adb pull` 全树 82 会话 / 200MB → **七项判据全过**，
+  含 **每次启动会重写 0**、内容丢失 0、非幂等 0、目录身份漂移 0、判据 7 运行时拒载 0。
+- **残留观察（低优先）**：会话树里见 6 个 `session.jsonl.bak.<ts>.<pid>.<rand>.tmp`
+  —— 原子写的临时文件残留，**与本次 force-stop 压测吻合**（写盘途中被杀），非独立缺陷；
+  若后续在不频繁强制停止的正常使用下再现，再查 `atomicWriteFile` 的清理路径。
+
+
+### T-45　🆕→✅ **主框架加载失败后无自愈路径 → 永久停在启动屏**（心跳 50 登记 / **心跳 53 定性并修复**）
 - **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在
   `Webpage not available`（`chrome-error://chromewebdata/`），**此后不再重试**，`SillyTavern`/UI 全无。
   重启应用（`force-stop` + `start` + 等 70s）即恢复。
-- **可疑机理**：WebView 立即加载 `http://127.0.0.1:3080/?token=…`，而内嵌 node 尚未 LISTENING
-  → 加载失败且无重试（与"端口 LISTENING ≠ 路由就绪，约 50s"是两个不同阶段）。
-- **状态**：⏳ **登记为观察项，未定性**。要判定是否**产品级缺陷**，需在**不频繁重启**的真实用法下复现
-  （当前证据来自我短时间内连续安装/重启的压测节奏，可能是自造条件）。
-  **下一步判据**：装机后**只启动一次**、等 2 分钟、观察是否自愈；若不愈 → 真缺陷，需在 `NodeService`/Activity 侧加重试。
+- ✅ **心跳 53 定性（源码级 + 设备实证）**：`MainActivity.diagPoller` 里 `portOpen && !dshLoaded` 时
+  **只有三条分支**，第一条是 `if (tok != null && tok != lastTokenAttempt)` ——
+  **重载只在 token 变化时发生**；主框架加载失败（401 / 启动竞态 / `net::ERR_*`）时 token 并未改变
+  → **三条分支全不命中** → 永久停摆。用户看到的是等待屏，且屏上写着
+  「状态：node 运行中／端口 3080：已开放 ✓／web 令牌：已捕获 ✓」
+  —— **每一行都在说"正常"，而流程已经死了**（设备截图 `stage3-device/hb53/before-fix-screen.png`）。
+  **最小复现探针**（非破坏性，零数据写入）：`stage3-device/hb53/hb53-loadfail-recover.mjs`
+  —— 把页面导航到 loopback 上不可达端口（host 仍为 `127.0.0.1` → `shouldOverrideUrlLoading` 放行
+  → 进入 `onReceivedError(isForMainFrame=true)` 分支），然后轮询 `/json` 的 `url`。
+  **修复前：40s / 40 次轮询，零次重载（FAIL）**。
+- ✅ **修复**：补一条**带预算**的重载分支（`RELOAD_INTERVAL_MS = 3000` × `RELOAD_MAX = 20`；
+  端口 0→1 跳变或 token 变化时预算归零；**重载目标用 `bootUrl`**（上次"本该加载"的地址），
+  而不是 `webView.url` —— 失败时后者是 `chrome-error://`，拿它重载等于再失败一次）。
+  同时给等待屏加**进展行**（L42 从「日志」扩到「UI」）：
+  `页面加载：失败，3 秒后自动重试（第 N/20 次）` / 达上限 → `已停止自动重试 —— 请重启应用`。
+- ✅ **设备实证（同一探针前后对照）**：**修复后 7s 内自愈**，连跑 3 轮 PASS；
+  logcat 链路完整：`main-frame error -1 net::ERR_UNSAFE_PORT @ http://127.0.0.1:1/`
+  → `main-frame load failed → reload (attempt 1/20): http://127.0.0.1:3080/?token=…` → 页面恢复。
+- **为何以前判不出**：心跳 50 只能观察到现象，且怀疑是"我短时间内反复安装/重启"造成的自造条件。
+  本轮改用**可复现的最小动作**触发同一分支（而不是等竞态自己出现），
+  于是缺陷从"偶发观察"变成"可证伪的判据"——**偶发问题的定性方法 = 找到能稳定进入同一分支的最简动作**。
 
 ### T-41　🟠→✅ 注册端点不再「比基准更严」：`registerVariableSchema` 拒收既有值不匹配（已修）
 - **暴露方式**：T-40 修完后重跑采集器，卡脚本的 bootstrap **再往深处走**，在 iframe 侧抛出
