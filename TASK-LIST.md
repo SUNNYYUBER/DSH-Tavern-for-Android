@@ -32,7 +32,11 @@
   ④ **实机三级验收全 PASS**：端点 200 / 400（vs 负控 404）· 产物**三方 md5 一致**（staging = 设备 = APK 内）
   · **UI 面板首次可用**（「分叉残留（1）」+ 会话列表 + 归档按钮解禁）。
   ⑤ 🆕 **T-70（性能，登记不开工）**：`/rp/sessions-audit` 暖 **6.4 s** / 冷 **48 s**（服务端为拿 `events` 逐行读完 81 个会话全文）。
-  ⑥ **沉淀 L102 / L103**；证据 `stage3-device/hb63/SESSIONS-PANEL-404-FIX.md`。
+  ⑥ 🆕 **额外推进（零风险只读）：T-47 的「需定语义」查成可执行清单** —— 7 个成员照 L101 三处齐取证 ⇒
+  **1 个可直接做**（`saveChat`）· **1 个应判「不补」**（`chatMetadata.file_name/chat_id` 在基准里本就不是 `chat_metadata` 的属性，
+  真 ST 也是 `undefined`）· **4 个语义已定待实施**（`onlineStatus` / `powerUserSettings` / `extensionPrompts` / 生成栈）·
+  **1 组必须成对建模型**（`characters`+`characterId`）。并**校正计数口径**：「23 次」是上界（含同名本地对象）。
+  ⑦ **沉淀 L102 / L103 / L104**；证据 `stage3-device/hb63/SESSIONS-PANEL-404-FIX.md`。
 - **心跳 63C** = **审计器第三次扩域：把「不可判定」当线索而不是结论** ⇒ 又挖出**三个整类漏检**，
   宿主面缺口 **15 → 18 个成员**、覆盖率 **13/54 → 50/54**。
   ① 三个漏检（全有语料实证 + 正控 + 反控）：**A 可选调用 `getContext?.()`**（`酒馆思维链清洗.js:14`，该文件 6 处 getContext 一条都提不出来）·
@@ -189,7 +193,7 @@
 | ~~T-07~~ | ~~要不要启用「动态替换提示词」（可能解 D-4）~~ | ✅ **已评估**（T-03 内）：需切 `llm-deepseek` 路由 + 显式声明 models 才生效，**属独立任务**（见 T-11） | D-4 可达性 |
 | ~~T-08~~ | ~~工具定义（D-6）要不要关~~ | ✅ **已按拍板落地（2026-09-11 心跳 58）**：<br>▸ **实测口径**（T-13/D-7）：TT 请求体**完全没有** `tools` 字段；DSHT 侧实测 **32 个**（早期记录写 31 —— 工具数随当时注册的插件集浮动，故两个数字都出现过；以最近一次抓包 32 为准）<br>▸ **修法**：`system-prompt/assemble` 按「是否 RP 会话」修剪 —— 见 **T-59**<br>▸ **保留面**：`lightAgent`/`heavyAgent`/`agent` 三路径**不修剪**（其预设正文明确要求调用 `lore_query` 等工具，硬关会让正文指向不存在的工具 = 新的静默不一致） | RP 会话纯净度 |
 | ~~T-09~~ | ~~**存量脏楼层清洗**：`<interactive_input>` 包装 + `$1` 占位残留~~ | ✅ **按拍板选 B：不清洗，关闭本项**（2026-09-11 心跳 58）<br>▸ **实测口径**（心跳 47 复核设备真值）：含 `<interactive_input>` 的文件 **20 个 / 共 965 处**；其中 **`$1` 真未替换**的 **12 个文件 / 共 73 处**；影响面集中在 3 个会话<br>▸ **只读报告**（心跳 54，`scripts/audit-dirty-floors.mjs`，零写入）：**真脏 83 条**（`$1` 字面残留 62 / 嵌套包装 1），**受影响会话 13 个**；另有 35 条属**设计用途快照**（system-level / runtime-ctx / skill-list）不计风险；assistant 提及该标签 192 条属「模型在谈论」<br>▸ **修复已生效**：最后一次污染 09-10 08:53 UTC → 最新消息 09-11 08:12 UTC = **23.3 小时零新增** ⇒ **行为已正确，残留纯属存量**<br>▸ **拍板结论**：**不清洗** —— 只影响旧会话观感，与新版行为无关；零成本、零风险（清洗属不可逆写入，收益不成比例） | 历史聊天外观（**不影响新消息**） |
-| **T-46**<br>**+T-47**<br>（心跳 63 已合并） | **① iframe 门面要不要升、怎么升；② 宿主门面缺的 **18 个**成员怎么办**（`characters` / `characterId` / `chatMetadata` / `onlineStatus` / `powerUserSettings` / `extensionPrompts` / `variables` 等）<br>—— 两者**是同一个决定的两半**：投影（T-46 推荐方案）会丢 10 个自建独有成员，其中 `characters` / `characterId` 恰是 T-47 的待决项。 | **推荐方案 A（照抄基准：父页投影 + 宿主面补齐 9 个）**：逐字同形、约 **5 行**改动、宿主面将来补齐多少 iframe **自动跟随**；<br>**方案 B（保持自建 + 顶层逐条转发）**：22 条转发且**长期漂移**（T-19/T-41 同型约束）。<br>⚠️ 无论哪案，`characters` + `characterId` 必须**成对**建真实角色列表模型、`chatMetadata` 需定**语义归属**（拒绝"给空对象"——那会让卡的写入**静默消失**）。<br>📌 **63C 更新**：缺口 **15 → 18** 个成员，且**优先级排序变了** —— B 档 6 个成员 **零 `typeof` 守卫（撞上就抛）**，而 C 档生成栈 4/6 **有守卫（只静默降级）** ⇒ **B 档 > C 档**（此前把 C 档列为最重）。<br>✅ **A 档只剩 `saveChat`**，且**先补宿主面在"投影"与"不投影"两条路线下都是净收益** ⇒ 可不依赖本决策先行。 | **触发条件目前未成立**（设备 logcat 无 iframe 侧成员报错，已知报错**全在宿主帧**）⇒ **不阻塞发布**；<br>不升则 iframe 侧脚本静默少功能；只投影不补齐 ⇒ **倒退**。 |
+| **T-46**<br>**+T-47**<br>（心跳 63 已合并） | **① iframe 门面要不要升、怎么升；② 宿主门面缺的 **18 个**成员怎么办**（`characters` / `characterId` / `chatMetadata` / `onlineStatus` / `powerUserSettings` / `extensionPrompts` / `variables` 等）<br>—— 两者**是同一个决定的两半**：投影（T-46 推荐方案）会丢 10 个自建独有成员，其中 `characters` / `characterId` 恰是 T-47 的待决项。 | **推荐方案 A（照抄基准：父页投影 + 宿主面补齐 9 个）**：逐字同形、约 **5 行**改动、宿主面将来补齐多少 iframe **自动跟随**；<br>**方案 B（保持自建 + 顶层逐条转发）**：22 条转发且**长期漂移**（T-19/T-41 同型约束）。<br>⚠️ 无论哪案，`characters` + `characterId` 必须**成对**建真实角色列表模型、`chatMetadata` 需定**语义归属**（拒绝"给空对象"——那会让卡的写入**静默消失**）。<br>📌 **63C 更新**：缺口 **15 → 18** 个成员，且**优先级排序变了** —— B 档 6 个成员 **零 `typeof` 守卫（撞上就抛）**，而 C 档生成栈 4/6 **有守卫（只静默降级）** ⇒ **B 档 > C 档**（此前把 C 档列为最重）。<br>✅ **A 档只剩 `saveChat`**，且**先补宿主面在"投影"与"不投影"两条路线下都是净收益** ⇒ 可不依赖本决策先行。<br>📌 **63C 续取证（7 个成员三处齐查完）**：`saveChat` **可直接做**（宿主面镜像 `th-shim.ts:2347` 已有实现）· **`chatMetadata.file_name/chat_id` 应判「不补」**（基准里本就不是 `chat_metadata` 的属性 ⇒ 真 ST 也读到 `undefined`，补了违反 L36 且零收益）· `onlineStatus` / `powerUserSettings` / `extensionPrompts` 语义已定、待实施（后两者**不可给可写容器**）· `characters`+`characterId` **必须成对建真实卡片模型**（给空数组只是把一处崩换成另一处崩）。<br>⚠️ 计数口径校正：「23 次」这类数字**是上界**（含脚本同名本地对象，如 `FEIXUN_DB.characters`）—— **不要当影响面权重用**。 | **触发条件目前未成立**（设备 logcat 无 iframe 侧成员报错，已知报错**全在宿主帧**）⇒ **不阻塞发布**；<br>不升则 iframe 侧脚本静默少功能；只投影不补齐 ⇒ **倒退**。 |
 | **P-1** | 更新开关要用**哪个 GitHub 仓库**（公开 or 私有？影响鉴权） | 需你定；**公开**最简单（无需 token） | 阶段三发布前必须定；代码已就绪，只差填地址 |
 
 ---
@@ -847,7 +851,38 @@ online_status = value;
 会写 `reasoning.auto_parse/prefix/suffix`，而"写进去谁读"在我方**没有消费者**）。
 
 **状态**：⏳ **登记 + 分档已出**；**A 档收缩到只剩 `saveChat`**（1 个成员），**B 档 6 个 / C 档 8 个 / D 档 2 个** —— **等 T-46 的投影决策一并拍板**（宿主门面是 iframe 投影的**数据源**，补齐两者是同一件事的两半；但**先补宿主面在"投影"与"不投影"两条路线下都是净收益**，故 A 档可先行）。
+**✅ 心跳 63C 续：7 个成员的基准取证已完成**（见上方新节）⇒ 结论从"需定语义"细化成
+**1 个可直接做 · 1 个应判「不补」· 4 个语义已定待实施 · 1 组必须成对建模型**；
+顺带校正计数口径（「23 次」是上界，含同名本地对象）。
 **决策池保持 2 项**（T-46+T-47 合并 · P-1）。
+
+#### 🆕 心跳 63C 续：**七个成员的基准取证**（只读，零风险 —— 把"需定语义"变成"已定位"）
+
+方法照 L101 的三处齐：**① 权威面绑定行**（`SillyTavern-reference/public/scripts/st-context.js`）
+→ **② 基准声明 / 初值**（`script.js`）→ **③ 我们语料里的真实用法**。三处齐了才写"已定"。
+
+| 成员 | 权威面绑定 | 基准声明 / 初值 | 我们语料里的真实用法 | 结论 |
+|---|---|---|---|---|
+| `saveChat`（A 档） | `st-context.js:154  saveChat: saveChatConditional` | `script.js:10666  export async function saveChatConditional(commitReason = CHAT_COMMIT_REASON.MUTATION)` —— **无必填参 · async · 真的落盘** | `梦鲸思客消息处理 2.4` 调用 1 次 | ✅ **语义已定，可直接做**：DSHT 会话由核心持续落盘 ⇒ 正确语义 = **resolve 且无需额外动作**。`th-shim.ts:2347` **已经是这个实现**（`saveChat: function () { return Promise.resolve(); }`，注释"宿主自管"）⇒ **只缺宿主面那一份**（镜像即可，L36） |
+| `characters` | `st-context.js:118  characters,` | `script.js:426  export let characters = []` | `ctx.characters[ctx.characterId]`（示例卡二预设，**成对使用**；一处带 `ctx.characters &&` 守卫、416 行后的另一处**没有**） | ⚠️ **形态已定，内容未定**：ST 语义 = 「角色对象数组，**按下标 `characterId` 取**」。要补就得建**真实卡片列表模型**（ST 角色对象字段很多）；**给空数组 = `characters[i]` 恒 `undefined` ⇒ 下游 `.name` 照样抛** —— 等于把一处崩换成另一处崩 |
+| `characterId` | `st-context.js:122  characterId: this_chid,` | `script.js:431  export let this_chid;`（**无初值**） | 同上，**只作 `characters[]` 的下标** | ⚠️ **必须与 `characters` 同批落地**（T-47 原文即如此）：单独给 `characterId` 反而制造 `characters[undefined]` 的**静默取错** |
+| `chatMetadata` | `st-context.js:134  chatMetadata: chat_metadata,` | `script.js:453  export let chat_metadata = {}`（随聊天重置） | 只读两个子路径：`chatMetadata.file_name`(3) · `chatMetadata.chat_id`(3) | 🔴 **应判定为「不补」（重要负面发现）**：`file_name` / `chat_id` **在基准里根本不是 `chat_metadata` 的属性** —— 全树只有 `chat_metadata.chat_id_hash`（`macros.js:316/323`），`file_name` 只出现在**备份 UI**（`chat-backups.js:175-203`）与 `chats.js:376` 的 DOM 表单上。⇒ 卡脚本在**真 ST 里读到的也是 `undefined`**，走的是同一个「未命中」分支 ⇒ **补一个 `{file_name, chat_id}` 空壳 = 补出基准没有的东西（违反 L36），零收益** |
+| `onlineStatus` | `st-context.js:132  onlineStatus: online_status,` | `script.js:600  export let online_status = 'no_connection'` | 1 文件 1 次 | ⚠️ 语义已定（**AI 后端在线标识 / 模型名**，见上文 63C 纠错），但**值必须真实可得**（当前模型 id），**不能编 `'online'`** |
+| `powerUserSettings` | `st-context.js:228  powerUserSettings: power_user,` | 真 ST 的 `power_user`（全量设置对象） | 只读 `persona_description`；另有 `酒馆思维链清洗.js:15-19` **写** `reasoning.*` | ⚠️ **可读不可写**：写侧在我方**无消费者** ⇒ 补一个可写对象 = **写入静默消失**（主力缺陷族）⇒ 正确处置是**出声降级**，不是给空容器 |
+| `extensionPrompts` | `st-context.js:151  extensionPrompts: extension_prompts,` | `script.js:625  export let extension_prompts = {}`（**由扩展注册填充**；`script.js:1588` 每次重置） | 4 文件 4 次 | ⚠️ 语义已定但**归属未定**：其内容**全部来自扩展**，而 DSHT **没有扩展运行环境**（T-48 已判）⇒ "为空"是**诚实**的；但 `{}` 与 `[]` 都会让下游 `.find(...).content` 抛 ⇒ 必须与"扩展面恒为空"这个既定事实**一并**说明 |
+
+#### ⚠️ 顺带校正一处**计数口径**（诚实标注，**不推翻**结论）
+
+`characters` 报的是「3 文件 / 23 次」，但抽查发现**其中一部分不是 ctx 上的 `characters`** ——
+例如 `飞讯_0703.js:560/639` 用的是脚本**自己的** `FEIXUN_DB.characters[k]`（本地 map）。
+⇒ **「23 次」这类计数是上界，不是精确次数**；成员**确实缺失**这一点不变（示例卡二预设的
+`ctx.characters[ctx.characterId]` 是逐字实证），但**不要把次数当影响面权重**。
+（这是"解析器按名字匹配、无法区分同名不同宿主"的**已知能力边界**，与 L99 的三态口径同族。）
+
+**本节的净收益**：把一个含糊的"需定语义"档位，变成**可执行清单** ——
+**1 个可直接做**（`saveChat`，宿主面镜像）· **1 个应判「不补」**（`chatMetadata.file_name/chat_id`）·
+**4 个语义已定待实施**（`onlineStatus` / `powerUserSettings` / `extensionPrompts` / 生成栈）·
+**1 组必须成对建模型**（`characters` + `characterId`）。
 
 **证据全文**：`stage3-device/hb63/T46-CORPUS-CENSUS.md`（63B）· `stage3-device/hb63/T46-CORPUS-CENSUS-2.md`（**63C，含 18 成员表 + 守卫列 + 覆盖率三态**）
 ### T-48　✅ **部分收口** `renderExtensionTemplateAsync`（心跳 62；**完整实现判定为不做**）
