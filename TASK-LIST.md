@@ -1124,11 +1124,17 @@
   里 `window.versionNumber` **全为 `undefined`** —— 而它由 `importFromModule` **前一行**显式写入
   ⇒ 那个 `$(async () => {…})` 块**从未执行** ⇒ `importFromModule` 尚未被调用 ⇒ 当前**无 import 失败**。
   ⚠️ **有时效性**：T-42/T-60 当初就是靠 `versionNumber === 11800` 验证修复的 ⇒ 该块**执行过**。
-- **一旦可达的后果**（两档，均无崩溃）：
-  有守卫的 5 处（`:510/539/550/1347/1914`，`?.`）→ **静默降级**；
-  无守卫的 4 处（`:1843/3025/3039/2254`）→ 理论 `ReferenceError`，但全部落在
-  「永不触发的 `module_imported` 处理器」或「首行即 `if (!promptManager) return` 的钩子」内 ⇒ 不可达。
+- **一旦可达的后果**（工具 `audit-card-resource-surface.mjs` 机读口径；**本节已被该工具纠正过一次**）：
+  **裸标识符 8 处**（`:1843/1847/1914/2254/2256/3025/3039/3045`）→ 理论 `ReferenceError`
+  （⚠️ `:1914` 的 `SPresetImports?.promptManager` **也属此类** —— **可选链挡不住「未声明的标识符」**，
+  `?.` 只对 null/undefined **值** 短路；分档只看有没有 `globalThis.`/`window.` 前缀）；
+  **带前缀 + `?.` 4 处**（`:510/539/550/1347`）→ **静默降级**。
+  **但 8 处裸引用全部下游于 `module_imported`**（`installSPresetMessageInjectionHook` 的调用点
+  `:2303` 就在该处理器体内）⇒ **「鸡与蛋」**：导入失败 → 处理器不跑 → 代码不可达；
+  导入成功 → 容器已定义 → 裸引用有值 ⇒ **在失败模式下结构性不可达**（比"碰巧没触发"更强），两向均无崩溃。
   净后果 = **SPreset / MacroNest / ChatSquash / 结构化消息注入 / 预设重命名 sanitize 等卡侧功能整体静默缺失**。
+- **安全推论**：只修 `STVersionImports` 时，`module_imported` 以 `id:'STVersionImports'` 发射，
+  处理器里 `if (data.id === 'SPresetImports')` 分支被跳过 ⇒ **不会触碰任何 SPreset 裸引用** ⇒ **半修安全**。
 - **可修边界（关键：ES 静态 import 是原子的）**：
 
 | 模块 | 可忠实实现 | 依据 |
@@ -1148,6 +1154,14 @@
 - **落点（若日后修 `STVersionImports` 这一半）**：`dsht-plugin/index.ts:7378` 已有同机制范例
   （`ctx.webServer.register({ kind:'exact', path:'/version' })`），新增 `/script.js` 走同一注册面。
 - **定性证据**：`stage3-device/hb60/T63-ST-MODULE-GAP.md`（全判据 + 实机输出）
+- **新增可复用工具**：`rp-workspace/scripts/audit-card-resource-surface.mjs` —— 把 T-42/T-60/T-63
+  三次"逐次踩坑"升级为 **L43 式一次性静态穷举**：机械抽取卡的 `importFromModule` 模块依赖
+  （**含裸标识符引用点数**，这是分"静默降级 vs ReferenceError"的唯一依据）、`fetch` 端点
+  （`--probe <base>` 实测 HTTP 码）、`globalThis`/`window` 期望全局、资源字面量。
+  **`--selftest` 14/14 PASS**（含 2 条负控：注释掉的调用不得计入）。
+  实跑卡输出：`/version → HTTP 200`（T-60 修复在设备上活着）；`SPresetImports` 裸引用 **8 处**、
+  `STVersionImports` 裸引用 **2 处**；`toastr ×4 ?.`（我方 `host-vendor.ts:87` 已提供等效实现）。
+  ⚠️ **它当场纠正了本轮手工分档的两处错误**（裸引用 4 → **8**；`:1914` 由"静默档"改判"抛错档"）。
 - **沉淀**：LEARNINGS **L83**（缺口"存在"≠缺口"可达"；静态 import 原子性）· **L84**（定锚须用显式 `window` 变量）
 
 ---
