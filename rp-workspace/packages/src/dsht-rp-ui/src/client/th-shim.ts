@@ -32,6 +32,7 @@
 // 体积账：minify 后 ~400KB/份，每脚本 iframe 的 srcdoc 各嵌一份——换 window.$/jQuery/Zod/z
 // 就绪，可接受。
 import thVendorSource from './th-vendor.gen.txt?raw'
+import { deepMergeIncoming } from '../../../dsht-plugin-shared/deep-merge.ts'
 
 // ---------------------------------------------------------------------------
 // 协议常量与类型
@@ -2788,23 +2789,27 @@ function optionToScope(option: unknown, scriptId: string): { scope: VarScope; sc
   throw new Error(`unsupported variable scope: ${String(type)}`)
 }
 
-/** 深合并（high 覆盖 low 叶值；对象递归）——host 侧 assign 合并用 */
-export function deepMergeAssign(low: Record<string, unknown>, high: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...low }
-  for (const [k, v] of Object.entries(high)) {
-    const prev = out[k]
-    if (prev !== null && v !== null && typeof prev === 'object' && typeof v === 'object' && !Array.isArray(prev) && !Array.isArray(v)) {
-      out[k] = deepMergeAssign(prev as Record<string, unknown>, v as Record<string, unknown>)
-    } else {
-      out[k] = v
-    }
-  }
-  return out
-}
+/**
+ * 深合并（high 覆盖 low 叶值；对象递归）—— host 侧 assign 合并用。**families-A**。
+ *
+ * 【T-35 收敛 2026-09-11】原为本文件内的一份独立实现，与 `tavern-helper/variables.ts:deepMergeVars`、
+ * `dsht-plugin-mvu/index.ts:deepMerge` **逐字相同**（三份副本）。现三处统一引
+ * `dsht-plugin-shared/deep-merge.ts` 的 `deepMergeIncoming`，此处仅保留对外名。
+ */
+export const deepMergeAssign = deepMergeIncoming
 
-/** insert 语义合并：只补缺口（existing 叶值恒胜） */
+/**
+ * insert 语义合并：只补缺口（existing 叶值恒胜）。
+ *
+ * 只是 `deepMergeIncoming` 的**换参写法**（低优先 = vars、高优先 = existing）——不是第 5 份实现。
+ *
+ * ⚠️ 与 `state/mvu.ts:deepMergeInitVars` **结果形状相同、引用语义不同**：
+ * 本函数结果以 `{...vars}` 起手，缺键处**共享** `vars` 的子树引用；
+ * `deepMergeInitVars` 则对补入值**深拷贝**（init 树会被复用，须防下游就地改写污染）。
+ * 因此两者**不能**互相替代——该差异由 `tests/deep-merge.spec.ts` 显式钉住。
+ */
 export function deepMergeInsert(existing: Record<string, unknown>, vars: Record<string, unknown>): Record<string, unknown> {
-  return deepMergeAssign(vars, existing)
+  return deepMergeIncoming(vars, existing)
 }
 
 /** 桥调用分发（幂等可追溯：调用方负责 console 记录；未知 api 抛错） */

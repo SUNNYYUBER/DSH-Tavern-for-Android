@@ -31,6 +31,7 @@ import {
   type LikePluginContext,
 } from '../dsht-plugin-shared/http.ts'
 import { registerSettingsNamespace } from '../dsht-plugin-shared/settings-ns.ts'
+import { deepMergeIncoming } from '../dsht-plugin-shared/deep-merge.ts'
 
 export const name = 'dsht-plugin-mvu'
 // services 声明：webServer = /dsht-mvu/* 同源数据面；settings = 命名空间锚点（设置→插件「可配置」可见性）
@@ -42,19 +43,14 @@ export const inject = ['webServer', 'settings']
 // 纯逻辑（可单测）
 // ---------------------------------------------------------------------------
 
-/** 深合并（incoming 覆盖 existing 的叶值；对象递归；数组/标量直接替换） */
-export function deepMerge(existing: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...existing }
-  for (const [k, v] of Object.entries(incoming)) {
-    const prev = out[k]
-    if (prev !== null && v !== null && typeof prev === 'object' && typeof v === 'object' && !Array.isArray(prev) && !Array.isArray(v)) {
-      out[k] = deepMerge(prev as Record<string, unknown>, v as Record<string, unknown>)
-    } else {
-      out[k] = v
-    }
-  }
-  return out
-}
+/**
+ * 深合并（incoming 覆盖 existing 的叶值；对象递归；数组/标量直接替换）—— **families-A**。
+ *
+ * 【T-35 收敛 2026-09-11】原为本文件内的一份独立实现，与 `tavern-helper/variables.ts:deepMergeVars`、
+ * `th-shim.ts:deepMergeAssign` **逐字相同**（三份副本）。现三处统一引
+ * `dsht-plugin-shared/deep-merge.ts` 的 `deepMergeIncoming`，此处仅保留对外名。
+ */
+export const deepMerge = deepMergeIncoming
 
 /** 会话 RP 状态文件形状（与 dsh-plugin 共享 rp/state/<sessionId>.json；各键分权：presetId/state 归 dsh-plugin，variables/variableSchema 归本插件） */
 export interface SessionRpStateFile {

@@ -52,3 +52,6 @@ stage3-device/
 # TT 侧采样参数抓包：保留在 golden/tt-sampling/ 本机对照，只把脱敏结论写进
 # docs/DSHT-VS-TT-DIFF-2026-09-10.md §D-7。
 golden/tt-sampling/
+
+# ===== 发布卫生扫描的词表（含真实卡名/人设名，严禁入库；T-25）=====
+rp-workspace/scripts/publish-hygiene-words.txt

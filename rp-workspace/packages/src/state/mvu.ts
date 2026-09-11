@@ -15,6 +15,8 @@
  * - renderStateSummary：状态树扁平化为模型友好摘要（`云梦璃.好感度: 3`），供组装层 stateSummary 槽位注入
  */
 
+import { deepMergeExistingClone } from '../dsht-plugin-shared/deep-merge.ts'
+
 /** JSONPatch 操作（ST 酒馆助手/MVU 常用子集 + delta 增量 + move/copy/insert） */
 export type StatePatchOp = 'add' | 'replace' | 'remove' | 'delta' | 'move' | 'copy' | 'insert'
 
@@ -447,52 +449,26 @@ export function renderStateSummary(state: Record<string, unknown>): string {
   return ['【角色状态（MVU 变量树，最新优先）】', ...rows.map(([k, v]) => `${k}: ${v}`)].join('\n')
 }
 
-/** 是否为「可递归合并的普通对象」（排除 null / 数组） */
-function isMergeableObject(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v)
-}
-
 /**
- * 【心跳 47 修复】深合并「开局变量」（D1 MVU initvar / B12 预载世界书）到既有变量树。
+ * 【心跳 47 修复 / T-35 收敛 2026-09-11】深合并「开局变量」
+ * （D1 MVU initvar / B12 预载世界书）到既有变量树。
  *
  * **语义：存量优先——只补缺口，绝不覆盖已有叶值。**
  * 这不是可选的风格问题，而是 initvar 幂等账成立的前提：
  * 世界书内容一变 `mvuInitHash` 就不匹配，本函数会被**重放**；若它覆盖存量，
  * 玩家已经跑出来的进度会被世界书声明的初始值打回原形（= 一改世界书就回档）。
  *
- * 规则（与 th-shim 的 `deepMergeInsert` 同义：`existing` 恒胜）：
+ * 规则（= **families-B**：`existing` 恒胜）：
  * - 两边都是普通对象 → 递归合并（只有这样才可能"补"到深层缺口）
  * - 其余（数组 / 标量 / 类型不一致 / 任一侧为 null）→ 保留存量
  * - 存量缺该键 → 取 init 值，且**深拷贝**（init 树被多处复用，共享引用会被下游就地改写污染）
  * - 不修改任何入参（纯函数）
  *
- * ⚠️ 本函数是本项目第 4 份 deep-merge 实现（另三份：`tavern-helper/variables.ts:deepMergeVars`
- *   、`th-shim.ts:deepMergeAssign`、`dsht-plugin-mvu/index.ts:deepMerge`）。四者语义一致但各自
- *   独立，属技术债，已记入 TASK-LIST（T-35 收敛到 shared），本轮不合并以避开跨包回归风险。
+ * 【T-35】原为本项目第 4 份独立 deep-merge 实现。现收敛到
+ * `dsht-plugin-shared/deep-merge.ts:deepMergeExistingClone`（单实现源），此处仅保留对外名。
+ *
+ * ⚠️ **不要**把它与 `th-shim.ts:deepMergeInsert` 合一：两者合并**结果形状**相同，
+ * 但引用语义不同（`deepMergeInsert` 共享 `incoming` 子树，本函数深拷贝）。
+ * 差异由 `tests/deep-merge.spec.ts` 显式钉住。
  */
-export function deepMergeInitVars(
-  existing: Record<string, unknown>,
-  init: Record<string, unknown>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...existing }
-  for (const [k, v] of Object.entries(init)) {
-    const cur = out[k]
-    if (cur === undefined) {
-      out[k] = clonePlainTree(v)
-    } else if (isMergeableObject(cur) && isMergeableObject(v)) {
-      out[k] = deepMergeInitVars(cur, v)
-    }
-    // 其余情况一律保留存量：本函数只会"补"，不会"改"
-  }
-  return out
-}
-
-/** 深拷贝纯 JSON 树（init 树来自 YAML/JSON 解析，无函数/循环引用；不共享引用） */
-function clonePlainTree<T>(v: T): T {
-  if (v === null || typeof v !== 'object') return v
-  if (Array.isArray(v)) return v.map(x => clonePlainTree(x)) as unknown as T
-  const src = v as unknown as Record<string, unknown>
-  const out: Record<string, unknown> = {}
-  for (const [k, x] of Object.entries(src)) out[k] = clonePlainTree(x)
-  return out as unknown as T
-}
+export const deepMergeInitVars = deepMergeExistingClone

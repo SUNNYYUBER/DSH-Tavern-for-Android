@@ -11,6 +11,8 @@
  * 路径语法：JSONPointer（/a/b/c，~1→/、~0→~；空路径 = 整棵树）。
  */
 
+import { deepMergeIncoming } from '../dsht-plugin-shared/deep-merge.ts'
+
 /** JSONPointer 段解码 */
 function decodeSeg(seg: string): string {
   return seg.replace(/~1/g, '/').replace(/~0/g, '~')
@@ -65,19 +67,14 @@ export function deleteByPath(tree: Record<string, unknown>, path: string): Recor
   return next
 }
 
-/** 深合并（high 覆盖 low 的叶值；对象递归；数组/标量直接替换） */
-export function deepMergeVars(low: Record<string, unknown>, high: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...low }
-  for (const [k, v] of Object.entries(high)) {
-    const prev = out[k]
-    if (prev !== null && v !== null && typeof prev === 'object' && typeof v === 'object' && !Array.isArray(prev) && !Array.isArray(v)) {
-      out[k] = deepMergeVars(prev as Record<string, unknown>, v as Record<string, unknown>)
-    } else {
-      out[k] = v
-    }
-  }
-  return out
-}
+/**
+ * 深合并（high 覆盖 low 的叶值；对象递归；数组/标量直接替换）—— **families-A**。
+ *
+ * 【T-35 收敛 2026-09-11】原为本文件内的一份独立实现，与 `th-shim.ts:deepMergeAssign`、
+ * `dsht-plugin-mvu/index.ts:deepMerge` **逐字相同**（三份副本）。现三处统一引
+ * `dsht-plugin-shared/deep-merge.ts` 的 `deepMergeIncoming`，此处仅保留对外名。
+ */
+export const deepMergeVars = deepMergeIncoming
 
 /** 三级合并：global < character < chat */
 export function mergeScopes(

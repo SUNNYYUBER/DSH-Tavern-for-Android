@@ -9,11 +9,12 @@
 
 | 事实 | 说明 |
 |---|---|
-| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v266**，阶段 0/1/2/3/4 已全部推完） |
-| 仓库最新产物 | **x86_64 debug sentinel v265（196,836,000 B）/ arm64 release sentinel v266（128,362,024 B）**，9-11 19:11 构建，载荷标记已解码核验 |
+| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v272**，阶段 0/1/2/3/4 已全部推完） |
+| 仓库最新产物 | **x86_64 debug sentinel v271（196,839,148 B）/ arm64 release sentinel v272（128,365,172 B）**，9-12 00:06 构建，新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中 |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1078 项全绿（51 文件）** · `typecheck` 三段式 **0 错**（心跳 58 末复跑确认） |
-| 未提交改动 | 心跳 53–58 的源码/文档/工具（待提交） |
+| 单测 | **1095 项全绿（52 文件）** · `typecheck` 三段式 **0 错**（心跳 59 复跑确认） |
+| 未提交改动 | 心跳 59 的源码/测试/工具/文档（本轮提交） |
+| 发布闸门 | 🔴 **未达标**（T-25/T-61：受控面扫出 **306 项命中**，含 **1 条真实 API 密钥**）⇒ **现在不能公开**；仓库无远端、从未推送，故非对外事故 |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
 - **心跳 55 · 实例B** = **修掉一个"死了 8 个心跳"的功能级缺陷**：
@@ -173,6 +174,26 @@
 
 > **注**：`.gitignore` 已覆盖三级敏感面（`*.apk` / `backup/` / `stage3-device/`），
 > 大扫除的剩余工作 = 全库扫描真实卡名/人名/服务器地址并清理 —— 属冻结解除后的动作。
+
+#### ✅ 只读预检已完成（2026-09-11 心跳 59，**未动任何文件**）
+
+- **新闸门 = T-61**（见下）：`rp-workspace/scripts/audit-publish-hygiene.mjs`
+  —— 把「搜不到任何真实人名/卡名/服务器地址」从**不可复现的断言**变成**可复跑、带退出码的判据**。
+- **报告**：`docs/T-25-PUBLISH-HYGIENE-2026-09-11.md`（全文掩码书写，自身 0 命中）。
+- **扫描结果（受控面 609 个文本文件 / `git ls-files`）**：退出码 **1**（未达标），合计 **306 项**
+
+  | 判据 | 命中 | 严重度 | 要点 |
+  |---|---|---|---|
+  | SECRET 真实 API 密钥 | **1** | 🔴 发布阻断 | 用户真实上游密钥被逐字记入 `DSH Android Roleplay App Plan.md:3809`（由某轮对话粘贴） |
+  | WXID 个人微信 ID | 16 | 🟠 | 15 处在同一份 Plan 文档 + `golden-import.mjs:6` 硬编码路径 |
+  | WORDLIST 真实卡名/人设名/预设名 | 200 | 🟠 | 集中在 `DSH Android Roleplay App Plan.md` / `docs/archive/*` / `.workbuddy/memory/*` |
+  | PAYLOAD 抓包正文 | 8（≈1.29 MB） | 🟠 | `golden/dsht/*.json`、`golden/st/dump-00{2,4,6,8}*.json`（`golden/tt-sampling/` 已忽略，**同批却两种处置**） |
+  | SERVER 外部服务器地址 | 11 | 🟡 | `api.comm***.ai`(5) / `api.silic***.com`(4) / **卡脚本托管域** `jnai2d9k***.com`(2，其一已嵌入产品源码注释 `host-vendor.ts:130`) |
+  | LOCALPATH 本机绝对路径 | 70 | 🟡 | 24 个文件，主要为构建脚本的 JDK 路径与探针默认参数 |
+
+- **曝光范围（决定紧迫度）**：`git remote -v` **为空** —— 117 个提交**从未推送**
+  ⇒ 密钥**仅本地**，非对外事故；但**必须先清理、后推送**（否则远端历史永久留密）。
+- **清理方案（分 P0–P3 四阶段，含风险与回滚）**见报告 §3；执行前仍需一次确认（数据冻结期内）。
 
 ### T-26　README　✅ 完成（2026-09-11 心跳 45）
 - 内容：这是什么 / 不是什么 / 法律边界 / 致谢 / **alpha 限制声明**
@@ -916,6 +937,29 @@
 
 ---
 
+### T-61　🆕 **发布卫生闸门：把 T-25 的「搜不到敏感信息」变成可复跑判据**（2026-09-11 心跳 59）
+
+- **动机（T-24 同族教训）**：T-25 的完成标志是「仓库内搜不到任何真实人名/卡名/服务器地址」——
+  这是**不可复现的断言**：下次有人改文档、加抓包文件，没有任何东西会拦住他。
+- **工具**：`rp-workspace/scripts/audit-publish-hygiene.mjs`（六类判据 + `--selftest` + `--json` + `--verbose`）
+  - **扫描口径**：只扫 `git ls-files`（**真正会被发布出去的发布面**，609 个文本文件），
+    不扫工作区（`backup/` / `tmp/` / `stage3-device/` 等 4 万+ 已忽略文件）——忽略目录不进仓库即无发布风险。
+  - **六类**：`SECRET` / `WXID` / `LOCALPATH` / `SERVER` / `PAYLOAD` / `WORDLIST`(自定义词表)。
+  - **词表外置**：`scripts/publish-hygiene-words.txt`（**已 gitignore**）。
+    理由 = **自指悖论**：若把真实卡名/人设名硬编码进脚本，扫描器自身就成了泄露源。
+  - **掩码输出**：报告只给「首字 + ＊」或「前缀 + `***` + 后缀」，且 CJK 词只留**首字**
+    （中文词仅 2~4 字，留首尾等于泄露一半）——避免「为清理敏感信息而新增敏感信息」。
+  - **退出码**：0 = 六类全清（T-25 达标判据）；1 = 有命中。
+- **正控（L44）**：`--selftest` **17/17 PASS**。开发中它**当场抓出检测器自身的一个假绿**：
+  首版把占位符判据写成 `/^sk-(abc|test|…)/i` **前缀匹配** → 把 `sk-abcdefghijkl…`
+  这种真密钥形状当成掩码放过。已改为**按分隔符切段、每段都必须是占位词或重复字符**。
+- **首扫结果**：**306 项 / exit 1**（明细见 T-25 与
+  [docs/T-25-PUBLISH-HYGIENE-2026-09-11.md](docs/T-25-PUBLISH-HYGIENE-2026-09-11.md)）。
+  白名单从 60 项噪声收窄到 11 项真信号（jQuery/lodash 官网、示例域、正则截断的伪域名属误报）。
+- **未做**：数据冻结期内**只读**——未改/未删/未 `git rm` 任何文件，报告全文掩码且**自身 0 命中**（已验证）。
+
+---
+
 ### T-45　🆕→✅ **主框架加载失败后无自愈路径 → 永久停在启动屏**（心跳 50 登记 / **心跳 53 定性并修复**）
 - **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在
   `Webpage not available`（`chrome-error://chromewebdata/`），**此后不再重试**，`SillyTavern`/UI 全无。
@@ -1008,7 +1052,7 @@
   | 窄化/形状标注缺失 | 8 | union 未按判别式窄化就取 `messages`；字面量当接口用 |
 - 判据：三闸门全 0 错（`core` / `ui` / `tests`），全量 **47 文件 / 883 测试全绿**。
 
-### T-35　清理：4 份 deep-merge 实现收敛到 `dsht-plugin-shared`（P3）
+### T-35　清理：4 份 deep-merge 实现收敛到 `dsht-plugin-shared`　✅ **完成**（2026-09-11 心跳 59）
 - 现存：`tavern-helper/variables.ts:deepMergeVars`、`th-shim.ts:deepMergeAssign`、
   `dsht-plugin-mvu/index.ts:deepMerge`、`state/mvu.ts:deepMergeInitVars`（心跳 47 新增）
 - **对照表已补**（2026-09-11 心跳 47，**判别性用例实测**，不靠读注释 —— 用
@@ -1027,8 +1071,44 @@
   与 `deepMergeInsert` 才是 existing 获胜。且 `deepMergeInitVars` 的代码注释
   （「与 th-shim 的 `deepMergeInsert` 同义」）**是对的**，原任务描述的猜测才是错的。
 - **结论**：收敛前必须先**按语义家族分组**（families-A incoming 3 份 / families-B existing 2 份），
-  不能四份合成一个函数——否则任一侧调用方行为会变。**属需专门一轮的重构，本轮不动**
-  （P3，不阻塞发布；且当前四份各自正确、无缺陷）。
+  不能四份合成一个函数——否则任一侧调用方行为会变。
+
+#### ✅ 落地结果（2026-09-11 心跳 59）
+
+**新建单实现源** `packages/src/dsht-plugin-shared/deep-merge.ts`（零 import / 零依赖，UI 与插件两层共用）：
+
+| 导出 | 语义 | 吸收的副本 |
+|---|---|---|
+| `deepMergeIncoming(low, high)` | **families-A**：incoming 获胜 | 3 份（逐字相同） |
+| `deepMergeExistingClone(existing, incoming)` | **families-B**：existing 获胜 + 补入值**深拷贝** | 1 份 |
+| `isMergeableObject` / `clonePlainTree` | 谓词与深拷贝（原先也在 `state/mvu.ts` 各存一份） | 2 份 |
+
+**5 个调用点全部改为别名/换参**（对外 API 名**一个没变**，调用方零改动）：
+
+| 原位置 | 现在 |
+|---|---|
+| `tavern-helper/variables.ts:deepMergeVars` | `export const deepMergeVars = deepMergeIncoming` |
+| `dsht-plugin-mvu/index.ts:deepMerge` | `export const deepMerge = deepMergeIncoming` |
+| `th-shim.ts:deepMergeAssign` | `export const deepMergeAssign = deepMergeIncoming` |
+| `th-shim.ts:deepMergeInsert` | 保留为 `deepMergeIncoming(vars, existing)`（**换参写法**，非第 5 份实现） |
+| `state/mvu.ts:deepMergeInitVars` | `export const deepMergeInitVars = deepMergeExistingClone` |
+
+**新增 `tests/deep-merge.spec.ts`（17 条）**，钉住三件事：
+① **等价性**（3 个历史名 × 5 组用例逐例等于 `deepMergeIncoming`）；
+② **家族方向**（同一输入下 families-A 与 families-B **结论必须相反**——「不可合一」的机器判据）；
+③ **引用语义差异**（`deepMergeInitVars` 深拷贝 vs `deepMergeInsert` 共享 `incoming` 子树）。
+
+**负控（真跑，非口头）**：把 `deepMergeExistingClone` 临时改成 `deepMergeIncoming` →
+**11 条转红**，其中包含**既有的 `mvu.spec.ts` 用例**（老测试也能抓住家族接错）→ 还原。
+
+**验收**：`typecheck` 三段式 **0 错**（顺带被 `typecheck:tests` 抓出我自己测试里 1 处
+`unknown` 收窄）；全量单测 **52 文件 / 1095 全绿**（+17）；产物已重建。
+
+**本次新发现（已写进代码注释与测试）**：families-B 内部还有**第二层差异**——
+`deepMergeInitVars` 与 `deepMergeInsert` **结果形状相同、引用语义相反**
+（前者深拷贝，后者共享 `vars` 子树引用）。**只写 `toEqual` 的测试发现不了这个差异**，
+故两者**仍不可合一**：`deepMergeInsert` 保留换参写法。
+⇒ T-35 的最终形态是 **「1 个文件 / 2 个函数 / 3 处别名 / 1 处换参」**，而不是「1 个函数」。
 
 ---
 
@@ -1036,6 +1116,7 @@
 
 | # | 项 | 说明 |
 |---|---|---|
+| T-62 | 🆕 **`src/*/lib/*.js` 是「孤儿派生产物」**（心跳 59 发现） | `src/<plugin>/lib/index.js` 受版本控制、且历史提交里**与源码成对更新**（如 `3ffc1f9` 同时改 `src/dsh-plugin/index.ts` 与 `lib/index.js`），但**逐行核查所有构建脚本后确认：无任何路径消费它们** —— `build-plugins.sh:build_node_plugin` 是**直接从 `src/<pkg>/index.ts` 编译到 staging**（`$NM/<pkg>/lib/index.js`），`build-wb.sh` 同理；唯一例外是 `src/dsht-plugin-mobile/lib/index.js`（被 `build-plugins.sh:96` 拷贝）与 `src/dsht-rp-ui/lib/client.js`（由 `build-rp-ui.mjs` 生成并下游消费）。<br>⇒ 现状是**第三种状态**：既没被 `.gitignore`，也没被生成流程维护 —— `src/dsht-plugin-mvu/lib/index.js` 自 09-08 起陈旧至今。**且不可逐字节复现**（同源码两次构建字节数不同：882,361 vs 884,675 B，L52）。<br>**故本轮有意不重建**（重建只制造无意义 churn、且无收益）；**建议**：要么全部 `.gitignore` 掉，要么明确纳入构建。属 T-25 大扫除范畴。**已核验：不影响出货** —— APK 内插件取自 staging，本轮已三层核验新鲜。 |
 | T-28 | Tier 2 TH 长尾 API（约 50 项记名 stub 之外） | ⏳ **未做**（设计如此）：不支持的 API 挂 stub → `console.warn` 记名 + `Promise.reject`（`th-shim.ts:392/1847`），**诚实失败而非假成功**。真 TH 长尾面（rebind 家族 / createOrReplacePreset / QuickReply 系）待「第三次冒同类问题」再升时间盒 |
 | T-29 | EJS 完整语法（当前子集：无函数调用/箭头函数/模板字符串/正则字面量） | ✅ **已核验达标 + 已补测试固化**（2026-09-11）：判据是「显式报错，非静默失败」而非「支持全部语法」。**实证（`prompt-template.spec.ts` 新增 5 条）**：subset 对 4 类不支持语法**全部显式抛错**——函数调用 `trailing tokens`、箭头函数 `unexpected char`、模板串 `unexpected char`、正则字面量 `unexpected token`；批次入口 `renderMessages` 单条失败**保留原文 + 打 `ejsError` 标记**（实测 `rendered:1 / skipped:1`，生产路径 `dsh-plugin/index.ts:3982` 取 `r.messages[k]?.mes` 故不静默清空）。**完整语法另有引擎**：`engine:'sandbox'`（node `vm`）**新增 5 条测试**固化——模板字符串（`v=1`）、正则字面量（`true`）、模板内定义函数（`12`）、内建 `Math.max`（`2`）、箭头函数（既有测例 `messages.map(m => m.role).join("/")` → `user/assistant`）。唯一边界：**上下文经 vm 传入的函数不可克隆**（`cb(2)` → `ok:false, kind:'runtime-error'`）——属 vm 机制固有，非语法缺口，且失败分类显式 |
 | T-30 | 采样参数长尾（topP/topK/minP/penalties/seed…） | 🚧 **宿主阻塞**：`dsh-llm-*` 适配器只透传 `temperature/max_tokens/stop` + `reasoningEffort`（H-②，`AUDIT_TASKLIST.md:257`）。**预设值已正确持久化**（`sampling.topP: 0.88` 实证），等宿主开放白名单即可生效 |
