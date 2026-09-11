@@ -862,6 +862,41 @@ describe('shim：Mvu.parseMessage 与 state/mvu.ts 差分（T-19）', () => {
   })
 })
 
+describe('shim：deleteVariable 契约（T-21）', () => {
+  /** 驱动一次 deleteVariable：vars:get → vars:delete → vars:get */
+  async function runDelete(f: FakeFrame, path: string, before: unknown, after: unknown): Promise<unknown> {
+    runScript(f, `window.__r = null; deleteVariable(${JSON.stringify(path)}).then(function (v) { window.__r = v; });`)
+    resolveCall(f, 0, before)
+    await settled(f)
+    resolveCall(f, 1, null)
+    await settled(f)
+    resolveCall(f, 2, after)
+    await settled(f)
+    return vm.runInContext('window.__r', f.ctx)
+  }
+
+  it('命中删除：delete_occurred=true，variables 为删除后的树', async () => {
+    const f = makeFrame('s1')
+    const r = await runDelete(f, 'a.b', { a: { b: 1, c: 2 } }, { a: { c: 2 } }) as Record<string, unknown>
+    expect(r['delete_occurred']).toBe(true)
+    expect(r['variables']).toEqual({ a: { c: 2 } })
+  })
+
+  it('路径本就不存在：delete_occurred=false（脚本据此判定"没删掉"）', async () => {
+    const f = makeFrame('s1')
+    const r = await runDelete(f, 'a.zzz', { a: { b: 1 } }, { a: { b: 1 } }) as Record<string, unknown>
+    expect(r['delete_occurred']).toBe(false)
+  })
+
+  it('lodash 下标路径 a.list[0] 也要判对（真 TH 用 lodash 路径）', async () => {
+    const f = makeFrame('s1')
+    // 删掉唯一元素 → 下标 0 不再存在。若路径切分只按 '.'（旧实现），
+    // "list[0]" 会被当成单个键名 → 恒判"不存在" → delete_occurred 恒 false。
+    const r = await runDelete(f, 'a.list[0]', { a: { list: ['x'] } }, { a: { list: [] } }) as Record<string, unknown>
+    expect(r['delete_occurred']).toBe(true)
+  })
+})
+
 describe('shim：世界书只读（桥）', () => {
   it('getWorldbooks → wb:list，解包 name 数组', async () => {
     const f = makeFrame('s1')

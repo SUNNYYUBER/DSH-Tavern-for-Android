@@ -6549,9 +6549,35 @@ function insertVariables(vars, option) { return call('vars:merge', [guardOption(
 // {variables, delete_occurred} \u53CC\u5B57\u6BB5\u2014\u2014\u539F\u5B9E\u73B0\u53EA\u56DE {variables}\uFF0C\u811A\u672C\u8BFB
 // res.delete_occurred \u6052 undefined\uFF08\u5224\u5B9A"\u662F\u5426\u771F\u7684\u5220\u6389\u4E86"\u6C38\u8FDC\u5931\u8D25\uFF09\u3002
 // host \u4FA7 vars:delete \u8FD4\u56DE\u66F4\u65B0\u540E\u7684 {variables}\uFF1B\u6B64\u5904\u5BF9\u6BD4\u5220\u9664\u524D\u540E\u8DEF\u5F84\u5B58\u5728\u6027\u5F97\u51FA delete_occurred\u3002
+//
+// \u3010T-21 \u7EED\u4FEE 2026-09-11\u3011\u8DEF\u5F84\u5207\u5206\u5FC5\u987B\u4E0E host \u540C\u53E3\u5F84\uFF08lodash \u98CE\u683C\uFF09\u3002
+// \u539F\u5B9E\u73B0\u53EA\u6309 '.' \u5207 \u2192 "a.list[0]" \u88AB\u5F53\u6210\u5355\u4E2A\u952E\u540D "list[0]"\uFF0C\u6052\u5224"\u4E0D\u5B58\u5728" \u2192
+// delete_occurred **\u6C38\u8FDC\u662F false**\uFF08\u811A\u672C\u636E\u6B64\u5224\u5B9A"\u6CA1\u5220\u6389"\u2192 \u8BEF\u91CD\u8BD5\uFF09\u3002
+// \u73B0\u955C\u50CF host \u7684 lodashPathToPointer \u5206\u8BCD\uFF08\u4E0B\u6807\u5F62\u6001 a.b[0].c \u4E0E a["b"] \u90FD\u652F\u6301\uFF09\u3002
+function dshtPathSegs(path) {
+  var p = String(path == null ? '' : path);
+  if (p.startsWith('/')) {
+    // JSONPointer\uFF1A~/ \u53CD\u8F6C\u4E49\uFF08\u4E0E host decodeSeg \u5BF9\u5E94\uFF09
+    return p.split('/').filter(function (s) { return s.length > 0; })
+      .map(function (s) { return s.replace(/~1/g, '/').replace(/~0/g, '~'); });
+  }
+  var segs = [];
+  var re = /[^.[\\]]+|\\[(\\d+|"(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*')\\]/g;
+  var m;
+  while ((m = re.exec(p)) !== null) {
+    var seg = m[0];
+    if (seg.charAt(0) === '[') {
+      seg = seg.slice(1, -1);
+      if ((seg.charAt(0) === '"' && seg.charAt(seg.length - 1) === '"') ||
+          (seg.charAt(0) === "'" && seg.charAt(seg.length - 1) === "'")) seg = seg.slice(1, -1);
+    }
+    if (seg) segs.push(seg);
+  }
+  return segs;
+}
 function dshtPathExists(tree, path) {
   if (!tree || typeof tree !== 'object') return false;
-  var segs = String(path == null ? '' : path).split('.').filter(function (s) { return s !== ''; });
+  var segs = dshtPathSegs(path);
   if (segs.length === 0) return false;
   var cur = tree;
   for (var i = 0; i < segs.length; i++) {

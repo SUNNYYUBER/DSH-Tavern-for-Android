@@ -696,9 +696,35 @@ function insertVariables(vars, option) { return call('vars:merge', [guardOption(
 // {variables, delete_occurred} 双字段——原实现只回 {variables}，脚本读
 // res.delete_occurred 恒 undefined（判定"是否真的删掉了"永远失败）。
 // host 侧 vars:delete 返回更新后的 {variables}；此处对比删除前后路径存在性得出 delete_occurred。
+//
+// 【T-21 续修 2026-09-11】路径切分必须与 host 同口径（lodash 风格）。
+// 原实现只按 '.' 切 → "a.list[0]" 被当成单个键名 "list[0]"，恒判"不存在" →
+// delete_occurred **永远是 false**（脚本据此判定"没删掉"→ 误重试）。
+// 现镜像 host 的 lodashPathToPointer 分词（下标形态 a.b[0].c 与 a["b"] 都支持）。
+function dshtPathSegs(path) {
+  var p = String(path == null ? '' : path);
+  if (p.startsWith('/')) {
+    // JSONPointer：~/ 反转义（与 host decodeSeg 对应）
+    return p.split('/').filter(function (s) { return s.length > 0; })
+      .map(function (s) { return s.replace(/~1/g, '/').replace(/~0/g, '~'); });
+  }
+  var segs = [];
+  var re = /[^.[\\]]+|\\[(\\d+|"(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*')\\]/g;
+  var m;
+  while ((m = re.exec(p)) !== null) {
+    var seg = m[0];
+    if (seg.charAt(0) === '[') {
+      seg = seg.slice(1, -1);
+      if ((seg.charAt(0) === '"' && seg.charAt(seg.length - 1) === '"') ||
+          (seg.charAt(0) === "'" && seg.charAt(seg.length - 1) === "'")) seg = seg.slice(1, -1);
+    }
+    if (seg) segs.push(seg);
+  }
+  return segs;
+}
 function dshtPathExists(tree, path) {
   if (!tree || typeof tree !== 'object') return false;
-  var segs = String(path == null ? '' : path).split('.').filter(function (s) { return s !== ''; });
+  var segs = dshtPathSegs(path);
   if (segs.length === 0) return false;
   var cur = tree;
   for (var i = 0; i < segs.length; i++) {
