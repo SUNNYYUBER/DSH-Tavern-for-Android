@@ -11,9 +11,10 @@
 |---|---|
 | 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v272**，阶段 0/1/2/3/4 已全部推完） |
 | 仓库最新产物 | **x86_64 debug sentinel v271（196,839,148 B）/ arm64 release sentinel v272（128,365,172 B）**，9-12 00:06 构建，新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中 |
+| 设备侧 | **已装 v271**（`files/dsh-runtime/.installed-v271`，心跳 60 完成）；装机后 `stage4-regression` **20/21 → attach 后 21/21**；插件**双副本 md5 全一致** + APK 载荷三方一致（无第 ⑦ 类断链） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
 | 单测 | **1095 项全绿（52 文件）** · `typecheck` 三段式 **0 错**（心跳 59 复跑确认） |
-| 未提交改动 | 心跳 59 的源码/测试/工具/文档（本轮提交） |
+| 未提交改动 | 心跳 60 的设备探针与文档（本轮提交）；**并发实例正改 `rpc.ts`（T-57 修复），我方一份没碰** |
 | 发布闸门 | 🔴 **未达标**（T-25/T-61：受控面扫出 **306 项命中**，含 **1 条真实 API 密钥**）⇒ **现在不能公开**；仓库无远端、从未推送，故非对外事故 |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
@@ -1112,10 +1113,50 @@
 
 ---
 
+### T-63　🆕 **卡脚本 `importFromModule` 请求的 4 个 ST 内部模块全部 404**（心跳 60 定性：**缺口真实、当前未可达**）
+- **背景**：卡用 `importFromModule(container, [{items, from}])`（`tmp/t37-inject.js:103-127`）注入
+  `<script type="module">`，内含**静态 import**；调用点在 `$(async () => { await fetch('/version') … })`
+  就绪块内（`:2204-2243`）。
+- **判据 A（缺口存在）** ✅ **成立**：基准 `SillyTavern-reference/public/` 四个模块**都在**
+  （`script.js` 507,531 B / `scripts/openai.js` 306,691 B / `scripts/preset-manager.js` / `scripts/utils.js`）；
+  我方实机 `GET /script.js`、`/scripts/{openai,utils,preset-manager}.js` → **全部 404**。
+- **判据 B（当前可达性）** ❌ **尚未可达**：7 个脚本宿主帧（`title="TH 脚本：…"`、`ctxMembers: 9`）
+  里 `window.versionNumber` **全为 `undefined`** —— 而它由 `importFromModule` **前一行**显式写入
+  ⇒ 那个 `$(async () => {…})` 块**从未执行** ⇒ `importFromModule` 尚未被调用 ⇒ 当前**无 import 失败**。
+  ⚠️ **有时效性**：T-42/T-60 当初就是靠 `versionNumber === 11800` 验证修复的 ⇒ 该块**执行过**。
+- **一旦可达的后果**（两档，均无崩溃）：
+  有守卫的 5 处（`:510/539/550/1347/1914`，`?.`）→ **静默降级**；
+  无守卫的 4 处（`:1843/3025/3039/2254`）→ 理论 `ReferenceError`，但全部落在
+  「永不触发的 `module_imported` 处理器」或「首行即 `if (!promptManager) return` 的钩子」内 ⇒ 不可达。
+  净后果 = **SPreset / MacroNest / ChatSquash / 结构化消息注入 / 预设重命名 sanitize 等卡侧功能整体静默缺失**。
+- **可修边界（关键：ES 静态 import 是原子的）**：
+
+| 模块 | 可忠实实现 | 依据 |
+|---|---|---|
+| `./script` → `displayVersion` | ✅ | 基准即 `'SillyTavern ' + pkgVersion`（`script.js:506`）；我方 `/version` 已返 `pkgVersion` |
+| `./script` → `streamingProcessor` | ✅（初值语义） | 基准初值就是 `null`（`script.js:455`），live binding |
+| `./scripts/utils` → 2 个纯函数 | ✅ | 纯函数，可逐字移植 |
+| `./scripts/preset-manager` → `getPresetManager` | ⚠️ 需真实现 | 需 ST PromptManager 契约的预设管理器 |
+| `./scripts/openai` → `promptManager`/`Message`/`MessageCollection`/`sendOpenAIRequest` | ❌ **不可**（预可见成本内） | 需重实现 ST 前端 prompt manager + 消息模型 + 生成入口 |
+
+  ⇒ **`STVersionImports` 只依赖 `./script`** ⇒ **可独立修好**（成本小、语义忠实）；
+  **`SPresetImports` 横跨四模块** ⇒ 只要 `openai`/`preset-manager` 不能真实现，它**永远不可能成功**
+  ⇒ **单独补 `utils` 是无效功**（还制造"我修过了"的假象）。
+- **明确不做**：给 `./scripts/openai` 塞**空壳导出** —— 那会让 import 成功、`module_imported` 发射、
+  卡随后 patch 一个**我们伪造的** `promptManager` ⇒ 把「静默缺失」换成「错误地看起来能用」，
+  **比现状更糟**（与 T-42 拒绝的 C 方案同型）。
+- **落点（若日后修 `STVersionImports` 这一半）**：`dsht-plugin/index.ts:7378` 已有同机制范例
+  （`ctx.webServer.register({ kind:'exact', path:'/version' })`），新增 `/script.js` 走同一注册面。
+- **定性证据**：`stage3-device/hb60/T63-ST-MODULE-GAP.md`（全判据 + 实机输出）
+- **沉淀**：LEARNINGS **L83**（缺口"存在"≠缺口"可达"；静态 import 原子性）· **L84**（定锚须用显式 `window` 变量）
+
+---
+
 ## 7. 长尾 / 观察项（P3，不阻塞发布）
 
 | # | 项 | 说明 |
 |---|---|---|
+| T-63 | 🆕 **卡脚本请求的 4 个 ST 内部模块全 404**（心跳 60） | 见上方完整条目。**缺口真实（基准有、我方 404），但当前未可达**（`window.versionNumber` 全 `undefined` ⇒ 就绪块未执行）。**分界线清楚**：`STVersionImports` 单独可修；`SPresetImports` 需重实现 ST prompt manager ⇒ **不做空壳** |
 | T-62 | 🆕 **`src/*/lib/*.js` 是「孤儿派生产物」**（心跳 59 发现） | `src/<plugin>/lib/index.js` 受版本控制、且历史提交里**与源码成对更新**（如 `3ffc1f9` 同时改 `src/dsh-plugin/index.ts` 与 `lib/index.js`），但**逐行核查所有构建脚本后确认：无任何路径消费它们** —— `build-plugins.sh:build_node_plugin` 是**直接从 `src/<pkg>/index.ts` 编译到 staging**（`$NM/<pkg>/lib/index.js`），`build-wb.sh` 同理；唯一例外是 `src/dsht-plugin-mobile/lib/index.js`（被 `build-plugins.sh:96` 拷贝）与 `src/dsht-rp-ui/lib/client.js`（由 `build-rp-ui.mjs` 生成并下游消费）。<br>⇒ 现状是**第三种状态**：既没被 `.gitignore`，也没被生成流程维护 —— `src/dsht-plugin-mvu/lib/index.js` 自 09-08 起陈旧至今。**且不可逐字节复现**（同源码两次构建字节数不同：882,361 vs 884,675 B，L52）。<br>**故本轮有意不重建**（重建只制造无意义 churn、且无收益）；**建议**：要么全部 `.gitignore` 掉，要么明确纳入构建。属 T-25 大扫除范畴。**已核验：不影响出货** —— APK 内插件取自 staging，本轮已三层核验新鲜。 |
 | T-28 | Tier 2 TH 长尾 API（约 50 项记名 stub 之外） | ⏳ **未做**（设计如此）：不支持的 API 挂 stub → `console.warn` 记名 + `Promise.reject`（`th-shim.ts:392/1847`），**诚实失败而非假成功**。真 TH 长尾面（rebind 家族 / createOrReplacePreset / QuickReply 系）待「第三次冒同类问题」再升时间盒 |
 | T-29 | EJS 完整语法（当前子集：无函数调用/箭头函数/模板字符串/正则字面量） | ✅ **已核验达标 + 已补测试固化**（2026-09-11）：判据是「显式报错，非静默失败」而非「支持全部语法」。**实证（`prompt-template.spec.ts` 新增 5 条）**：subset 对 4 类不支持语法**全部显式抛错**——函数调用 `trailing tokens`、箭头函数 `unexpected char`、模板串 `unexpected char`、正则字面量 `unexpected token`；批次入口 `renderMessages` 单条失败**保留原文 + 打 `ejsError` 标记**（实测 `rendered:1 / skipped:1`，生产路径 `dsh-plugin/index.ts:3982` 取 `r.messages[k]?.mes` 故不静默清空）。**完整语法另有引擎**：`engine:'sandbox'`（node `vm`）**新增 5 条测试**固化——模板字符串（`v=1`）、正则字面量（`true`）、模板内定义函数（`12`）、内建 `Math.max`（`2`）、箭头函数（既有测例 `messages.map(m => m.role).join("/")` → `user/assistant`）。唯一边界：**上下文经 vm 传入的函数不可克隆**（`cb(2)` → `ok:false, kind:'runtime-error'`）——属 vm 机制固有，非语法缺口，且失败分类显式 |
