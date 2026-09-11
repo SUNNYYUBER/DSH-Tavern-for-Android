@@ -501,28 +501,25 @@
   （读文件 + 模板替换 + 缺文件即抛错，**不假装成功**）。
 - **状态**：⏳ 随 T-42 一并决策。
 
-### T-49　🆕 **「编辑楼层」与「变体（swipe）切换」在 UI 面没有任何入口**（心跳 51 量出，需产品决策）
-- **量法（只读，不改状态）**：设备侧全 DOM 枚举 —— `document.querySelectorAll('*')` 共 **176** 个带
-  `title`/`aria-label`/`data-testid` 的元素，逐条按正则过滤：
-  - `/编辑|edit/i` → **命中 0 个**（唯一命中是一条无关的技能描述文本 "file editing"）
-  - `/变体|variant|swipe/i` → **命中 0 个**
-  - `/回退|撤销|rollback|regenerate/i` → **命中 2 个**：`重新生成最后一条回复（…）/dsht-rp-regenerate`、`↺ 撤销/重置状态`
-  - 酒馆面 → `📖 剧情控制台` / `🌊 ExampleGame 世界书控制` / `当前状态（MVU 变量）` / `导入` **全部命中**
-  - 悬停验证：对 6 个消息节点派发 `pointerover/mouseover/mouseenter/pointermove` 后
-    按钮总数 **134 → 134 不变** → 排除"hover 才渲染"的解释
-  - 容器验证：`[role=menu|listbox]` 与 class 含 menu/dropdown 的容器 **0 个** → 排除上下文菜单
-  - 视图验证：当前确实是 RP 会话视图（RP 脚本 pill `dsht-rp-script-pill` 挂在
-    `dsht-rp-script-pillbar` → `wSkVaW_composerStack` 里），不是走错页面
-- **为什么算差异而不是"我们没做"**：**引擎在、入口不在** ——
-  `stage4-regression` 里 `variant/groups` 返回 **200 groups=1**（变体数据面可用），
-  TH 写桥 `th-edit` / `th-append` 也已实现（心跳 49 修过它的 `stream` 字段缺陷）。
-  即：**能改、能存、能读，但用户点不到**。
-- **基准**：TT（TauriTavern）有编辑楼层与 swipe 切换（Tavern 核心交互）→ 按 **L36**（跟基准一致不能少）
-  属**功能差异**，不是"有意精简"。
-- **状态**：⏳ **登记 + 待决策**（补 UI 入口 / 显式登记为已知差异）。**不自行补** ——
-  UI 入口涉及"用 DSH 原生消息操作栏 还是 做 DSHT 自己的消息操作栏"，是方向性选择。
-- **判据（做完的标志）**：设备侧全 DOM 过滤能命中 ≥1 个「编辑」入口与 ≥1 个「变体」入口，
-  且点击后真能走到 `th-edit` / `variant/*` 路由（实测闭环，非"按钮在"）。
+### T-49　🟠→❌ **「编辑楼层」与「变体（swipe）切换」零入口** —— 心跳 52 实测**推翻**，判定为**非缺陷**
+
+> **结论**：心跳 51 的「0 命中」是**测量口径的假阴性**，不是产品缺口。两项都**存在且已接槽位**。
+
+| 半边 | 心跳 51 的判定 | 心跳 52 的实测取证 | 最终判定 |
+|---|---|---|---|
+| **编辑楼层** | 「`编辑\|edit` **0 命中**」 | user 行的操作条里**就在**：`<button class="dsht-rp-rollback-btn" data-testid="dsht-rp-edit" title="编辑这条已发送的消息（就近截断后以新文本重新发送）">✎ 编辑</button>`（`RpNativeChat.tsx:1899-1903`）。**实测闭环 PASS**：点它 → 就地编辑器出现（`dsht-rp-edit-area` 预填原文 11 字 `hb52 GMT 实证` + `保存并重发` / `取消`）→ 点取消 → 还原；**全程零请求、零数据变更** | **存在且可用** |
+| **变体（swipe）** | 「`变体\|variant\|swipe` **0 命中**」 | 组件 `RpVariantActions` **已注册**到 `conversation.chat.assistant-actions` 席位（`index.tsx:300-306`，同席位的 `dsht-rp-regen-btn` 实测**在 DOM 里** ⇒ 槽位可用）。`RpNativeChat.tsx:1594`：`group === undefined \|\| group.members.length < 2 \|\| idx < 0` → 返回 `null`。设备当前 `variant/groups` = **`groups=1`** → **按设计隐藏**（只有 1 个变体时没有"切"这件事） | **按设计隐藏，非缺陷** |
+
+- **为什么心跳 51 会误判**：① 探针只枚举**带 `title`/`aria-label`** 的元素，而"是否存在入口"是**DOM 存在性**问题，两者不等价；② 聊天视图是**窗口化**的（`chat-windowing.ts`，实测 DOM 里只有 **1** 个 `.dsht-rp-user-row`），操作条**只在 user 行上**——采样时刻若 user 行未挂载，就得到干净但不成立的"0 命中"（与 **L44**「枚举器的取法覆盖面就是结论的有效边界」同源，**L53 家族**）。
+- **残留（低优先，非阻塞）**：变体条在 **≥2 个变体**时的渲染**尚未实机验证过**（需要先在会话里造出第二个变体 = 会动数据，故本轮**没做**）。判据：造 ≥2 变体后，设备 DOM 应出现 `.dsht-rp-variant-bar`（`title="历史变体（重 roll / swipe）"`、`aria-label="上一个变体"`），点击后真走到 `variant/switch`。
+- **探针留档**：`stage3-device/hb52/hb52-edit-entry-probe.js`（可复跑，非破坏性）。
+
+- **历史口径（心跳 51，已被上表推翻，保留以便回溯）**：曾用「枚举 176 个带 `title`/`aria-label` 的元素 →
+  `/编辑|edit/i` 命中 0、`/变体|variant|swipe/i` 命中 0」判定"零入口"，并据此认为"引擎在、入口不在"
+  （`variant/groups` 数据面可用、`th-edit`/`th-append` 写桥已实现）。**该推理链本身没错，错在测量前提**：
+  ① 它测的是 **title/aria-label 字符串**，而问题问的是 **DOM 存在性**；② 视图**窗口化**（实测当前 DOM 只有
+  **1** 个 `.dsht-rp-user-row`），操作条只在 user 行上 → user 行未挂载时必然"干净地"命中 0。
+  **元教训**：`0 命中` 必须先回答"**样本里本来该有它吗**"，否则得到的是"没找到"而不是"不存在"（L44 家族）。
 
 ### T-50　✅ **设备时区偏移式命名（`GMT` → `+00:00`）致「一条消息都发不出去」**（心跳 52 已修 + 实机闭环）
 
