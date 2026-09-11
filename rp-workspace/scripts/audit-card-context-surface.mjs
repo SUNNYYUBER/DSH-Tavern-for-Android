@@ -195,6 +195,12 @@ function main() {
   let inScope = 0
   let outOfScope = 0
   for (const file of scripts) {
+    // 路径按**当前工作目录**解析：从别处调用容易写成 rp-workspace/tmp/… 而实际在仓库根 tmp/…
+    if (!fs.existsSync(file)) {
+      console.error(`\n[script] FATAL 找不到脚本文件：${file}`)
+      console.error('         —— 路径按「当前工作目录」解析；例如卡脚本在仓库根 tmp/ 下时应写 ../tmp/t37-inject.js')
+      process.exit(2)
+    }
     const { aliases, paths } = readScriptAccesses(file)
     console.log(`\n=== ${file} ===`)
     console.log(`[script] 绑定别名：${aliases.join(', ') || '(无)'}；访问路径 ${paths.size} 条`)

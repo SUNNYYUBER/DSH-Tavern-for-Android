@@ -402,6 +402,16 @@
 - **剩余 6 个缺口（登记，非本轮范围）**：`reloadCurrentChat`(7 次) / `substituteParams`(4) + `substituteParamsExtended`(2)
   / `getCurrentChatId`(2) / `renderExtensionTemplateAsync`(1) —— 四项都需要**宿主页 ↔ 插件桥**（当前宿主门面无法访问桥）；
   `streamingProcessor`(1) **不是缺口**（卡脚本写的是 `|| null` 兜底，`undefined` 即正确语义，属枚举器**过度报告**）。
+- **📌 心跳 50 补记（把"需要建桥"降级为"接现成桥"）**：复核后确认**桥早就存在**，缺的只是**接线**——
+  ① 通道：`src/client/rpc.ts` 已导出 `rpApi`（同源 `POST /dsht-rp/*`）/ `thApi` / `dshRpc`，
+  且**宿主页就在这条通道上**（`installHostSillyTavern` 由 `src/client/index.tsx:123` 调用，
+  该文件本身就在能 `fetch('/dsht-rp/…')` 的 DSH 原生前端上下文里）；
+  ② 挂点：`buildHostStContext(src: HostStContextSource)`（`host-vendor.ts:305`）**本来就是参数化的**，
+  已有 `getSnapshot` / `uuid` 两个可选注入项 → 按同一模式再加 `bridge` 提供者即可，**不需新架构**；
+  ③ 因此下轮的做法是：在 `index.tsx` 的 `installHostSillyTavern({…})` 调用点注入四个提供者
+  （`getCurrentChatId` 同步取值 / `reloadCurrentChat` 走既有会话重载 / `substituteParams(Extended)` 路由到
+  **我方既有宏引擎**（**禁止另写一份**，否则就是与基准的第 N 份漂移实现）/ `renderExtensionTemplateAsync` 走扩展模板文件读+替换），
+  每项**逐条对质基准 `st-context.js` / `script.js`** 后再落，配套单测 + `--selftest` 式正控。
 
 ### T-45　🆕 观察：WebView 启动竞态 → 停在 `chrome-error://chromewebdata/` 且**不自动重试**（心跳 50）
 - **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在
