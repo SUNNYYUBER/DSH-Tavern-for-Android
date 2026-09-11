@@ -17,7 +17,7 @@
  */
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { ensureStyle } from './style.ts'
-import { installHostVendor, installHostFontAwesome, installHostToastr, installHostSillyTavern } from './host-vendor.ts'
+import { installHostVendor, installHostFontAwesome, installHostToastr, installHostSillyTavern, ensureStRegexAnchor } from './host-vendor.ts'
 import { RpOverlay, RP_OPEN_EVENT } from './RpOverlay.tsx'
 import { RpAssistantNodeView, RpRegenerateAction, RpUserNodeView, RpVariantActions, notifyDisplayMutation } from './RpNativeChat.tsx'
 import { RpPresetSwitch } from './RpPresetSwitch.tsx'
@@ -123,6 +123,13 @@ export function apply(ctx: {
   // 宿主 toastr：真 TH predefine.js 把父页 toastr 合并进脚本全局——脚本的 toastr 弹窗
   // 必须出现在可见宿主页（iframe 内弹窗不可见）。缺 toastr 全局则脚本通知静默丢失。
   installHostToastr()
+  // 常驻 ST 正则面板锚点（心跳 57）：卡的宿主脚本对 `#saved_regex_scripts` 建**无条件**
+  // MutationObserver（`inject.js:3884-3889`），元素缺席即抛并中断其 bootstrap 后续三行。
+  // 必须**常驻**（不依赖用户打开我方正则面板）——基准侧该元素由 ST 扩展 `init()` 在页面加载时
+  // 渲染进扩展设置容器。详见 host-vendor.ts 的 `ensureStRegexAnchor` 注释。
+  if (ensureStRegexAnchor()) {
+    console.info('[dsht-rp-ui] 已补常驻锚点 #saved_regex_scripts（第三方卡脚本的 DOM 存在性检查依赖）')
+  }
   // 宿主 SillyTavern 门面（T-37）：真 ST 宿主页有 globalThis.SillyTavern = {libs, getContext}
   //（SillyTavern/public/script.js:292）。卡的宿主注入脚本（TH 同源形态，外链 inject.js）
   // 首行就 `SillyTavern.getContext()` → 缺它直接 ReferenceError 且整段脚本作废。

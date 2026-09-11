@@ -10,7 +10,7 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
-> 最后更新：2026-09-11（心跳 56 —— **继续逐条核验 ✅ 声明**：T-29 补 10 条测试固化 + 7 项证据载体实跑核实）
+> 最后更新：2026-09-11（心跳 57 —— **T-42「前线」根因修正：我方宿主页缺 ST 标准 `/version` 端点，所有卡的版本分叉静默走错分支**；已按基准一组三件修复）
 
 ## 一句话现状
 
@@ -65,6 +65,83 @@
 | **P-1** | 更新开关要用**哪个 GitHub 仓库**（公开 or 私有？影响鉴权） | 需你定；**公开**最简单（无需 token） | 阶段三发布前必须定；代码已就绪，只差填地址 |
 
 | ~~**T-49**~~ ❌ | ~~「改楼层」和「换变体（swipe）」在界面上根本点不到~~ | **心跳 52 实测推翻 = 非缺陷**：**编辑入口本来就在** —— user 气泡操作条里有 `✎ 编辑`（`data-testid=dsht-rp-edit`），实测点开就地编辑器（预填原文）+ 取消还原，全程零请求零数据变更；**变体条**也已接槽位，只是「只有 1 个变体时按设计返回 null」（当前 `groups=1`）。心跳 51 的「0 命中」是**窗口化 + 只采样 title/aria-label** 造成的假阴性 | — |
+
+## 心跳 57 做了什么（**把「当前前线」T-42 的根因往前推一层：真根不是 DOM，是缺一个标准端点**）
+
+> 一句话：**前面 5 个心跳把 T-42 当成"要不要补 ST 面板 DOM"的产品决策在等你拍板 —— 其实那是个伪选择。
+> 真正的根是我方宿主页缺 ST 标准的 `/version` 端点，导致所有卡的版本分叉静默走错分支。**
+
+### 发现路径（不再盯着报错，而是回到"卡为什么走这条路"）
+
+T-37 → T-40 → T-41 → T-42 一直是"修一个、错误往前移一个"的串行链（L35）。
+本轮不再等第四次报错，而是**回到卡脚本最早执行的那几行**逐行读：
+
+```js
+// tmp/t37-inject.js:2210-2218（卡的宿主注入脚本，页面加载即跑）
+await fetch('/version').then(res => res.json())
+  .then(data => { const v = data.pkgVersion.split('.')
+    window.versionNumber = +v[0]*10000 + +v[1]*100 + +v[2] })
+  .catch(() => { window.versionNumber = 10000 })          // ← 取不到 = 静默落回旧版
+```
+
+该脚本内 `versionNumber >= 11305` 出现 **20+ 处**；其中正则绑定那处原文注释写着
+`11305+ has built-in regex binding; ST is source of truth, only sync FROM ST`。
+**基准（TauriTavern）** `src/compat-version.js:1` 声明 `SILLYTAVERN_COMPAT_VERSION = '1.18.0'`
+→ 卡得 **11800** → **走新版路径**。
+
+### 实机取证（决定性）
+
+| 判据 | 修复前 | 修复后 |
+|---|---|---|
+| `GET /version` | **404**（空体、非 JSON） | **200** `{"agent":"SillyTavern:1.18.0:DSHTavern","pkgVersion":"1.18.0",…}` |
+| 卡的取版本代码（逐字复刻） | 落 `catch` → `versionNumber = 10000` | **`versionNumber = 11800`**，分支 `NEW(builtin-regex)` |
+| `ctx.chatCompletionSettings` 的键 | `prompts` / `prompt_order` / `preset_settings_openai` | 多出 **`extensions`** |
+| 卡的取法 `extensions.regex_scripts` | **属性访问先抛** | **不抛**（`cardReadThrows: false`） |
+
+⇒ 结论：**这不是产品选择，是 L36「跟基准一致既不能少也不能多」的「少了」一侧。**
+
+### 修复（**一组三件 + 一个常驻锚点**，缺一则只是"换个坑"，见 L71）
+
+| # | 落地 | 位置 |
+|---|---|---|
+| ① | `GET /version`（返回 `pkgVersion: '1.18.0'`，与基准逐字同值） | `dsh-plugin/index.ts`（`kind:'exact'`，path `/version`）；常量单源 `dsht-plugin-shared/st-compat.ts` |
+| ② | `chatCompletionSettings.extensions.regex_scripts`（ST 1.13.5+ 预设内嵌正则通道，**真数据**） | `dsht-plugin-tavern-helper/facade.ts` 的 `/context`；单源 `buildStRegexScripts` / `toStRegexScript` —— **顺带补上原本漏输出的必填 `id`**（卡按 `s.id` 做增删匹配），并收敛掉 `presetExport` 里那份重复实现（L61） |
+| ③ | 宿主门面保证 `extensions` **恒存在**（给空对象而非省略键） | `dsht-rp-ui/src/client/host-vendor.ts`；类型 `th-shim.ts` |
+| ④ | **常驻**锚点 `#saved_regex_scripts`（`ensureStRegexAnchor()`，幂等、hidden、**故意不带 class**） | `host-vendor.ts` + `index.tsx` 启动时调用 |
+
+**为什么锚点必须"常驻"**：卡的 observer 是**无条件**的（`inject.js:3884-3889`），
+而卡脚本的执行时机（卡被激活）与我方正则面板的挂载时机（用户切到那个 tab）**不同步** ——
+放在面板组件里则"用户没打开过面板"照样抛。基准侧该元素由 ST 扩展 `init()` 在**页面加载时**
+渲染进扩展设置容器，不依赖用户操作。
+
+**为什么这**不是**「只补空容器」的半吊子（T-42 的选项 C）**：选项 C 的前提是**卡走旧版路径**
+（那时它要往容器里渲染自己的行，空容器 = 假挂载）；而修好 `/version` 之后卡走**新版路径**，
+它**主动不渲染**（`inject.js:4196` 的 `if (versionNumber >= 11305) return;`），
+所以这个版本下它的**正确内容就是空**。数据走 `extensions.regex_scripts`（真数据），
+用户可见的正则管理由我方 `RegexPanel` 承担 —— 两条通道都真实存在。
+
+### 验收
+
+- `typecheck` 三段式 **0 错** · 单测 **51 文件 / 1062 全绿**（+25）
+  - `st-compat.spec.ts`（新增）：黄金母版钉住 `1.18.0` 与阈值边界
+    （`'1.13.5' → 11305` 恰好命中 / `'1.13.4' → 11304` 差一 / 解析失败 → 10000 与卡的 catch 同值）
+  - `facade.spec.ts`：`/context` 的 `extensions.regex_scripts` 三种状态 + 白名单 + **确定性兜底 id** + 非 TH snake_case 形状
+  - `host-st-facade.spec.ts`：空壳也必须带 `extensions`、卡的取法**不抛**、锚点幂等 + **不带 class**（承重断言）
+- 实机（x86_64 v267 装机 + 热推双副本后复验）：上表四行判据全过
+
+### 沉淀
+
+LEARNINGS **L71**（第三方脚本「取不到就静默降级」= 版本分叉陷阱：缺一个基准端点，整批分支悄悄走错，
+且**每一层都显示正常**）· **L72**（「兜底路径不可达」第三次重演；判据是"取值会不会先抛"，
+不是"有没有兜底"）。
+
+### 副作用（顺带修正的历史结论）
+
+**T-42 / T-48 的选项 A/B 撤销** —— 它们的前提（"卡需要 ST 旧版正则面板 DOM"）是**版本分叉走错**的产物。
+`renderExtensionTemplateAsync('regex','editor')` 只在卡的**旧版**面板路径里被调用，新版路径不再走。
+删掉的一项决策负担；`T-46`（iframe 门面窄）与 `T-47`（角色列表模型）**不受影响，仍待拍板**。
+
+---
 
 ## 心跳 56 做了什么（**继续逐条核验 ✅ 声明，并把「核验结论」落成可复跑的判据**）
 

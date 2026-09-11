@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   __resetFacadeDegradedWarnings, __resetHostStCaches, buildHostStContext, defaultUuidv4, installHostSillyTavern,
+  ensureStRegexAnchor,
 } from '../src/dsht-rp-ui/src/client/host-vendor.ts'
 import type { ThContextSnapshot } from '../src/dsht-rp-ui/src/client/th-shim.ts'
 
@@ -53,6 +54,34 @@ describe('host ST 门面：空壳形态（RP 未打开 / 快照缺失也必须�
     expect(typeof ccs.preset_settings_openai).toBe('object')
   })
 
+  /**
+   * 【心跳 57】`chatCompletionSettings.extensions` 恒存在。
+   * 卡脚本取 `ctx.chatCompletionSettings.extensions.regex_scripts` —— `extensions` 缺席时
+   * **属性访问先抛 TypeError**，其后的 `&&` 短路轮不到（`inject.js:3567-3569`；
+   * 与 T-40 的 `eventTypes` 同型：「看似有兜底的代码，兜底路径不可达」）。
+   */
+  it('chatCompletionSettings.extensions 恒存在（卡属性访问先抛的防线）', () => {
+    const ccs = buildHostStContext().chatCompletionSettings as Record<string, unknown>
+    expect(ccs.extensions).toBeDefined()
+    expect(typeof ccs.extensions).toBe('object')
+    // 决定性：直接按卡的取法读一遍，不得抛
+    expect(() => {
+      const c = ccs.extensions as { regex_scripts?: unknown }
+      void c.regex_scripts
+    }).not.toThrow()
+  })
+
+  it('快照的 extensions 非对象（null / 字符串）→ 降级为空对象而不是原样透出', () => {
+    const bad = buildHostStContext({
+      getSnapshot: () => snap({ chatCompletionSettings: { extensions: null } as never }),
+    }).chatCompletionSettings as Record<string, unknown>
+    expect(bad.extensions).toEqual({})
+    const bad2 = buildHostStContext({
+      getSnapshot: () => snap({ chatCompletionSettings: { extensions: 'nope' } as never }),
+    }).chatCompletionSettings as Record<string, unknown>
+    expect(bad2.extensions).toEqual({})
+  })
+
   it('extensionSettings 与 extension_settings 是同一引用（对齐真 ST getContext 形状）', () => {
     const ctx = buildHostStContext()
     expect(ctx.extensionSettings).toBe(ctx.extension_settings)
@@ -73,6 +102,23 @@ describe('host ST 门面：字段透传（有快照时）', () => {
     expect(ctx.nameOverride).toBe('小玉')
     expect((ctx.chat as unknown[]).length).toBe(1)
     expect(ctx.chatLength).toBe(1)
+  })
+
+  it('chatCompletionSettings.extensions 透传（预设正则原样到卡，不被快照重建抹掉）', () => {
+    const ctx = buildHostStContext({
+      getSnapshot: () => snap({
+        chatCompletionSettings: {
+          prompts: [], prompt_order: [],
+          extensions: { regex_scripts: [{ id: 'p1', scriptName: '甲' }, { id: 'p2', scriptName: '乙' }] },
+        } as never,
+      }),
+    })
+    const ext = (ctx.chatCompletionSettings as Record<string, unknown>).extensions as {
+      regex_scripts?: Array<Record<string, unknown>>
+    }
+    expect(ext.regex_scripts).toHaveLength(2)
+    expect(ext.regex_scripts![0].id).toBe('p1')
+    expect(ext.regex_scripts![1].scriptName).toBe('乙')
   })
 
   it('promptManager 两法可调：getPromptOrderForCharacter / getPromptOrderItems', () => {
@@ -352,5 +398,66 @@ describe('host ST 门面：name1 / name2 / groupId / groups', () => {
     // 卡的用法形态：if (ctx.groupId) → 走 else；groups?.find(...) 返回 undefined
     expect(ctx.groupId ? 'group' : 'character').toBe('character')
     expect((ctx.groups as Array<{ id: string }>).find(g => g.id === 'x')).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 心跳 57：常驻 ST 正则面板锚点 `#saved_regex_scripts`
+// 卡的宿主脚本对它建**无条件** MutationObserver（`inject.js:3884-3889`），
+// 元素缺席即抛 TypeError 并中断 bootstrap 后续三行（ChatSquash / MacroNest / 工具注册）。
+// ---------------------------------------------------------------------------
+
+/** 最小假 Document（node 单测环境无 DOM） */
+function fakeDoc(anchorExists: boolean): { doc: Document; appended: Array<Record<string, unknown>> } {
+  const appended: Array<Record<string, unknown>> = []
+  const doc = {
+    body: { appendChild: (el: Record<string, unknown>): void => { appended.push(el) } },
+    getElementById: (id: string): unknown => (anchorExists && id === 'saved_regex_scripts' ? {} : null),
+    createElement: (): Record<string, unknown> => {
+      const el: Record<string, unknown> = { id: '', attrs: {} as Record<string, string> }
+      el.setAttribute = (k: string, v: string): void => { (el.attrs as Record<string, string>)[k] = v }
+      return el
+    },
+  } as unknown as Document
+  return { doc, appended }
+}
+
+describe('host ST 门面：常驻 ST 正则面板锚点（心跳 57）', () => {
+  it('无 DOM 环境（node）不抛、返回 false', () => {
+    expect(ensureStRegexAnchor(undefined)).toBe(false)
+  })
+
+  it('已存在则不动（幂等：不重复 append）', () => {
+    const { doc, appended } = fakeDoc(true)
+    expect(ensureStRegexAnchor(doc)).toBe(false)
+    expect(appended).toHaveLength(0)
+  })
+
+  it('不存在则创建：id 正确 + hidden + 自述属性', () => {
+    const { doc, appended } = fakeDoc(false)
+    expect(ensureStRegexAnchor(doc)).toBe(true)
+    expect(appended).toHaveLength(1)
+    const el = appended[0]
+    expect(el.id).toBe('saved_regex_scripts')
+    const attrs = el.attrs as Record<string, string>
+    expect(attrs.hidden).toBe('')
+    expect(attrs['data-dsht-anchor']).toBe('st-regex-scripts')
+    expect(typeof attrs['data-dsht-note']).toBe('string')
+  })
+
+  it('**故意不带 class** —— 否则会触发卡往锚点注入它自己的按钮（假入口）', () => {
+    // 卡的 injectBindButtons 取法是 `$('.regex_settings').find('#saved_regex_scripts')`：
+    // 一旦有 .regex_settings 祖先，它就会遍历 children 并注入「绑定到预设」按钮，
+    // 而锚点里没有它期望的行 → 用户点到「Script not found」。故此断言是**承重的**。
+    const { doc, appended } = fakeDoc(false)
+    ensureStRegexAnchor(doc)
+    expect(appended[0].className).toBeUndefined()
+    expect('class' in appended[0]).toBe(false)
+  })
+
+  it('body 缺失（早期调用）时安全返回 false', () => {
+    const doc = { body: null, getElementById: () => null, createElement: () => ({}) } as unknown as Document
+    expect(() => ensureStRegexAnchor(doc)).not.toThrow()
+    expect(ensureStRegexAnchor(doc)).toBe(false)
   })
 })

@@ -187,7 +187,18 @@ export interface ThContextSnapshot {
   character?: { name?: string } | null
   /** 当前角色绑定的 primary 世界书名（宿主从 rp/workspaces 取；getCharWorldbookNames 同步读） */
   characterLorebook?: string | null
-  chatCompletionSettings?: { prompts?: ThPresetPrompt[]; prompt_order?: ThPromptOrder[] }
+  /**
+   * `chatCompletionSettings.extensions.regex_scripts` = ST 1.13.5+ 的**预设内嵌正则**通道。
+   * 宿主脚本按 `versionNumber >= 11305` 分叉后只认它（真 ST 原文注释
+   * 「11305+ has built-in regex binding; ST is source of truth」），
+   * 形状 = ST 内部 RegexScript（camelCase，含必填 `id`）——**不是** TH 公开 API 的
+   * `TavernRegex`（snake_case，见 `tavern_regex.d.ts`），两者不可混用。
+   */
+  chatCompletionSettings?: {
+    prompts?: ThPresetPrompt[]
+    prompt_order?: ThPromptOrder[]
+    extensions?: { regex_scripts?: Array<Record<string, unknown>> }
+  }
   /** 当前 RP 工作区 slug（replaceTavernRegexes character 作用域需要） */
   slug?: string | null
   messages?: ThChatMessage[]

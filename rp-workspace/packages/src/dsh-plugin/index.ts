@@ -69,6 +69,10 @@ import { planSlotSections, SLOT_ORDERS, type SlotBatch, type SlotSection } from 
 import { relateVersions, parseVersion } from '../dsht-plugin-shared/version-compare.ts'
 // T-27：更新源响应归一化 + 下载资产挑选（形状适配层单独成模块，配单测钉死两种字段形态）
 import { guessUpdateKind, normalizeUpdateFeed, pickDownloadAsset } from '../dsht-plugin-shared/update-feed.ts'
+// 【心跳 57】ST 兼容版本声明（单源）—— 宿主页 `/version` 端点。卡的宿主脚本用它做版本分叉
+//（`fetch('/version')` → `window.versionNumber` → `>= 11305` 走新版路径），缺该端点会被
+// **静默**降级到旧版路径（`.catch(() => 10000)`）→ 去找 ST 旧版 DOM，在 DSH 宿主页必然失败。
+import { stVersionPayload, SILLYTAVERN_COMPAT_VERSION } from '../dsht-plugin-shared/st-compat.ts'
 // T3.2：会话长期记忆（rp-memory 最小闭环）——核心逻辑纯函数化便于单测，这里只做接线
 import {
   appendMemory, deleteMemoryEntry, formatMemoryTime, isValidMemorySessionId, loadMemory,
@@ -7279,6 +7283,46 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       },
     })
     console.log('[dsht-rp] data plane on webServer route /dsht-rp/*')
+    /**
+     * ---- GET /version：ST 的**标准版本端点**（真实缺陷修复，心跳 57）----
+     *
+     * 路径不在 `/dsht-rp` 命名空间里 —— 因为这是 ST 的约定路径，第三方代码按字面请求它：
+     * 卡的宿主注入脚本 `inject.js:2210-2218` 就是
+     * `fetch('/version').then(r => r.json()).then(d => window.versionNumber =
+     *   +v[0]*10000 + +v[1]*100 + +v[2]).catch(() => window.versionNumber = 10000)`。
+     *
+     * 实机取证（心跳 57）：`GET /version → 404`（空体、非 JSON）→ 落 `catch` → `versionNumber = 10000`
+     * → 该卡脚本内 **20+ 处** `versionNumber >= 11305` 分叉**全部走旧版分支**，其中正则绑定那处
+     * 原文注释即「11305+ has built-in regex binding; ST is source of truth, only sync FROM ST」。
+     * 于是它去找 ST 旧版正则面板的 DOM（`#saved_regex_scripts` 等 17 个 id），DSH 宿主页一个都没有
+     * → 首个异常中断整个 bootstrap（`ChatSquash()` / `MacroNest()` / 工具注册全不执行）。
+     *
+     * 基准对照：TauriTavern `src/compat-version.js:1` `SILLYTAVERN_COMPAT_VERSION = '1.18.0'`
+     * 由其 `/version` 返回（`src/tauri-bridge.js:162-171`）→ 卡得 11800 → 走**新版**路径。
+     * 属 L36「跟基准一致**既不能少也不能多**」的「少了」一侧。
+     *
+     * 信任栅栏沿用 `/dsht-rp/*` 同一 `isTrusted`（loopback Host）；本端点**只读常量、无副作用**。
+     */
+    const disposeVersion = ctx.webServer.register({
+      kind: 'exact',
+      path: '/version',
+      handler: (rawReq: unknown, rawRes: unknown) => {
+        const req = rawReq as { method?: string; headers: Record<string, unknown> }
+        const res = rawRes as { writeHead: (code: number, headers?: Record<string, string | number>) => void; end: (b?: string) => void }
+        if (req.method !== 'GET' && req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' })
+          return res.end(JSON.stringify({ error: 'GET only' }))
+        }
+        if (!isTrusted(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' })
+          return res.end(JSON.stringify({ error: 'forbidden' }))
+        }
+        // no-store：页面 reload 后必须重新取，且不得把版本号钉在旧值上
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+        res.end(JSON.stringify(stVersionPayload()))
+      },
+    })
+    console.log(`[dsht-rp] ST compat /version on webServer route /version (pkgVersion=${SILLYTAVERN_COMPAT_VERSION})`)
     // 0.1.2 token 落盘（绕行 stdout 静默，2026-09-04 真机实证）：卓易通/鸿蒙上 node
     // 的 stdout 管道可能整段丢失（端口开放、进程活着、stdout 零行）——NodeService 的
     // stdout 捕获链拿不到 launch token，MainActivity 永等。本插件进程内直接把
@@ -7311,7 +7355,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
     // 插件卸载时撤路由（effect disposer）
     const effectFn = (ctx as unknown as { effect?: (fn: () => () => void) => unknown }).effect
     if (typeof effectFn === 'function') {
-      effectFn.call(ctx, () => () => { dispose() })
+      effectFn.call(ctx, () => () => { dispose(); disposeVersion() })
     }
   }
 }

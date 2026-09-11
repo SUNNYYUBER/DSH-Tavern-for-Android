@@ -444,6 +444,14 @@ export function buildHostStContext(src: HostStContextSource = {}): Record<string
       prompt_order: promptOrder,
       // 脚本对它做 `!==` 身份比较（见文件头 ⚠️）——必须始终存在且引用稳定
       preset_settings_openai: rawSettings.preset_settings_openai ?? {},
+      // 【心跳 57】`extensions.regex_scripts` 恒存在（真 ST 1.13.5+ 的预设内嵌正则通道）。
+      // 缺它时卡脚本 `ctx.chatCompletionSettings.extensions.regex_scripts` 会**属性访问先抛**
+      // TypeError，而 `&&` 短路保护轮不到（`inject.js:3567-3569`，与 T-40 `eventTypes` 同型）。
+      // 给**空对象**而非省略：空对象的 `regex_scripts` 是 undefined（= 无预设正则的正常状态），
+      // 取值不抛；而整个键缺席会让任何直接读 `.extensions.xxx` 的脚本炸在取值上。
+      extensions: (rawSettings.extensions !== null && typeof rawSettings.extensions === 'object')
+        ? rawSettings.extensions
+        : {},
     },
     // 真 ST 的 getContext() 含 extensionSettings（= extension_settings 引用）
     extensionSettings: ext,
@@ -542,6 +550,52 @@ export function buildHostStContext(src: HostStContextSource = {}): Record<string
     //（实测用法 `context.groups?.find(g => g.id === context.groupId)` 在 groupId 恒 null 时不可达）。
     groups: [] as unknown[],
   }
+}
+
+/**
+ * 常驻 ST 正则面板锚点 `#saved_regex_scripts`（幂等；已存在则不动）。
+ *
+ * ## 为什么必须是「常驻」而不是「面板挂载时才在」（心跳 57 实测驱动的修正）
+ *
+ * 卡的宿主注入脚本对它建的是**无条件** MutationObserver（`inject.js:3884-3889`）：
+ * `const observerTarget = $('#saved_regex_scripts'); observer.observe(observerTarget[0], …)`
+ * —— 元素缺席 → `[0]` 是 `undefined` → 抛 TypeError → **中断卡 bootstrap 的后续三行**
+ * （`ChatSquash()` / `MacroNest()` / `syncSPresetToolRegistrations()` 全不执行）。
+ *
+ * 卡脚本的执行时机（卡被激活）与我方正则面板的挂载时机（用户切到该 tab）**不同步** ——
+ * 若把锚点放在面板组件里，则「用户没打开过正则面板」时仍然抛。
+ * 基准侧同要素总是存在：ST 扩展 `init()` 在**页面加载时**就把 `dropdown.html`
+ *（`extensions/regex/dropdown.html:96`，TT 对应 `:101`）渲染进扩展设置容器，
+ * **不依赖用户打开面板**。
+ *
+ * ## 为什么这**不是**「只补一个空容器」的半吊子修复
+ *
+ * 在 `versionNumber >= 11305`（= 基准状态，我方 `/version` 已修）下，卡**主动不往这里渲染**：
+ * `inject.js:4196` 的 `if (versionNumber >= 11305) return;`（原文注释
+ * 「ST is source of truth, only sync FROM ST」）。故这个版本下它的**正确内容就是空**。
+ * 卡的正则数据走 `chatCompletionSettings.extensions.regex_scripts`（`/context` 已提供真数据），
+ * 用户可见的正则管理由我方 `RegexPanel` 承担 —— 两条通道都真实存在，
+ * 这里只是第三方脚本做 DOM 存在性检查所需的**锚点**。
+ *
+ * ⚠️ **故意不带 `.regex_settings` 祖先 class**：卡的 `injectBindButtons()` 取法是
+ * `$('.regex_settings').find('#saved_regex_scripts')`，缺该祖先即空集 →
+ * 它不会往锚点里注入自己的按钮（否则会造出「点了报 Script not found」的假入口 = 新造静默失败）。
+ *
+ * 返回是否**真的创建了**（false = 已存在或没有 DOM，两种情况都不需要动作）。
+ */
+export function ensureStRegexAnchor(
+  doc: Document | undefined = typeof document !== 'undefined' ? document : undefined,
+): boolean {
+  if (doc === undefined || doc.body === null || doc.body === undefined) return false
+  if (doc.getElementById('saved_regex_scripts') !== null) return false
+  const el = doc.createElement('div')
+  el.id = 'saved_regex_scripts'
+  el.setAttribute('hidden', '')
+  // 自述属性：排查时能一眼看出这个节点是我方为兼容第三方脚本补的锚点，不是某个面板的容器
+  el.setAttribute('data-dsht-anchor', 'st-regex-scripts')
+  el.setAttribute('data-dsht-note', 'ST 正则扩展面板脚本列表锚点；仅满足第三方脚本的 DOM 存在性检查')
+  doc.body.appendChild(el)
+  return true
 }
 
 /**

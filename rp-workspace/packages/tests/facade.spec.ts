@@ -13,8 +13,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  buildStPromptView, chatMessages, flushEntryPuts, loreEntryToSt, presetLoad, presetNames, presetPut,
-  regexesGet, regexesReplace, stEntryToLore, variableSchemaRegister, worldbookEntryPut, worldbookGet, worldbookList,
+  buildStPromptView, chatMessages, context, flushEntryPuts, loreEntryToSt, presetLoad, presetNames, presetPut,
+  regexesGet, regexesReplace, stEntryToLore, toStRegexScript, buildStRegexScripts,
+  variableSchemaRegister, worldbookEntryPut, worldbookGet, worldbookList,
 } from '../src/dsht-plugin-tavern-helper/facade.ts'
 import { emptyPreset, type RPPreset } from '../src/preset/schema.ts'
 import { validateSchemaSubset } from '../src/dsht-plugin-shared/schema.ts'
@@ -515,5 +516,106 @@ describe('门面：variables/schema 注册（TH registerVariableSchema 契约）
     })
     expect(r.status).toBe(200)
     expect((r.body as { issues?: unknown[] }).issues).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 心跳 57：`chatCompletionSettings.extensions.regex_scripts`（ST 1.13.5+ 预设内嵌正则通道）
+//
+// 为什么值得单独钉：卡的宿主脚本按 `versionNumber >= 11305` 分叉后**只认这一处**
+// （真 ST 原文注释「11305+ has built-in regex binding; ST is source of truth」），
+// 且取法是 `ctx.chatCompletionSettings.extensions.regex_scripts` ——
+// `extensions` 缺席时**属性访问先抛 TypeError**，其后的 `&&` 短路与非空判断全都轮不到
+// （与 T-40 的 `eventTypes` 同型：看似有兜底的代码，兜底路径不可达）。
+// ---------------------------------------------------------------------------
+
+describe('门面：context 的 chatCompletionSettings.extensions.regex_scripts（心跳 57）', () => {
+  it('预设无 regex.json → extensions.regex_scripts 存在且为空数组（键**必须存在**）', async () => {
+    await seedJson('rp-presets/p-a/preset.json', testPreset())
+    await seedJson('rp/state/sid-1.json', { presetId: 'p-a' })
+    const r = await context(home, { sessionId: 'sid-1', slug: '' })
+    expect(r.status).toBe(200)
+    const ccs = (r.body as { chatCompletionSettings?: Record<string, unknown> }).chatCompletionSettings
+    expect(ccs).toBeTruthy()
+    // 决定性：不是「undefined 也能跑」，而是「必须存在，否则取值先抛」
+    expect(ccs!.extensions).toBeTruthy()
+    expect((ccs!.extensions as { regex_scripts?: unknown }).regex_scripts).toEqual([])
+  })
+
+  it('预设内嵌正则 → ST 内部 RegexScript 形状（camelCase + 必填 id）', async () => {
+    await seedJson('rp-presets/p-a/preset.json', testPreset())
+    await seedJson('rp-presets/p-a/regex.json', { scripts: [script('p1', '预设正则甲'), script('p2', '预设正则乙')] })
+    await seedJson('rp/state/sid-1.json', { presetId: 'p-a' })
+    const r = await context(home, { sessionId: 'sid-1', slug: '' })
+    const ccs = (r.body as { chatCompletionSettings?: Record<string, unknown> }).chatCompletionSettings
+    const list = (ccs!.extensions as { regex_scripts?: Array<Record<string, unknown>> }).regex_scripts
+    expect(list).toHaveLength(2)
+    expect(list![0].id).toBe('p1')
+    expect(list![0].scriptName).toBe('预设正则甲')
+    expect(list![0].findRegex).toBe('find-p1')
+    // 顺序保持（卡按列表顺序渲染/排序）
+    expect(list![1].id).toBe('p2')
+  })
+
+  it('**不是** TH 公开 API 的 snake_case 形状（两套契约不可混用）', async () => {
+    await seedJson('rp-presets/p-a/preset.json', testPreset())
+    await seedJson('rp-presets/p-a/regex.json', { scripts: [script('p1', '甲')] })
+    await seedJson('rp/state/sid-1.json', { presetId: 'p-a' })
+    const r = await context(home, { sessionId: 'sid-1', slug: '' })
+    const ccs = (r.body as { chatCompletionSettings?: Record<string, unknown> }).chatCompletionSettings
+    const one = ((ccs!.extensions as { regex_scripts?: Array<Record<string, unknown>> }).regex_scripts)![0]
+    expect(one.script_name).toBeUndefined()
+    expect(one.find_regex).toBeUndefined()
+    expect(one.trim_strings).toBeUndefined()
+  })
+
+  it('会话无预设 → extensions 仍在（降级路径不得让键消失）', async () => {
+    const r = await context(home, { sessionId: 'sid-none', slug: '' })
+    expect(r.status).toBe(200)
+    const ccs = (r.body as { chatCompletionSettings?: Record<string, unknown> }).chatCompletionSettings
+    expect((ccs!.extensions as { regex_scripts?: unknown }).regex_scripts).toEqual([])
+  })
+})
+
+describe('门面：buildStRegexScripts / toStRegexScript（单源映射）', () => {
+  it('坏 regex.json / 非数组 scripts → 空数组（不抛、不返 null 让调用方各自猜）', async () => {
+    await mkdir(join(home, 'rp-presets', 'p-bad'), { recursive: true })
+    await writeFile(join(home, 'rp-presets', 'p-bad', 'regex.json'), '{不是 JSON', 'utf8')
+    expect(await buildStRegexScripts(home, 'p-bad')).toEqual([])
+    await seedJson('rp-presets/p-shape/regex.json', { scripts: '不是数组' })
+    expect(await buildStRegexScripts(home, 'p-shape')).toEqual([])
+    expect(await buildStRegexScripts(home, '')).toEqual([]) // 空 presetId → 空
+  })
+
+  it('白名单外字段被剔除（内部字段不得漏进 ST 形状）', () => {
+    const out = toStRegexScript({
+      id: 'x1', scriptName: '甲', findRegex: 'a', replaceString: 'b',
+      placement: [2], disabled: false,
+      _dshtScope: 'preset', 内部私有: 1, somethingElse: 'leak',
+    }, 0)
+    expect(out.id).toBe('x1')
+    expect(out.scriptName).toBe('甲')
+    expect(out._dshtScope).toBeUndefined()
+    expect(out['内部私有']).toBeUndefined()
+    expect(out.somethingElse).toBeUndefined()
+  })
+
+  it('缺 id 时给**确定性**兜底（不生成随机值 → 同一文件两次读取结果相同）', async () => {
+    const bare = { scriptName: '无 id' }
+    expect(toStRegexScript(bare, 3).id).toBe('rx-local-3')
+    expect(toStRegexScript(bare, 3).id).toBe('rx-local-3')
+    // 走完整链两次也应一致（幂等；随机 id 会让每次快照都"变"→ 门面身份不稳）
+    await seedJson('rp-presets/p-noid/regex.json', { scripts: [{ scriptName: '无 id' }] })
+    const a = await buildStRegexScripts(home, 'p-noid')
+    const b = await buildStRegexScripts(home, 'p-noid')
+    expect(a).toEqual(b)
+    expect(a[0].id).toBe('rx-local-0')
+  })
+
+  it('非对象元素被过滤（防 null / 数组元素把 map 打炸）', async () => {
+    await seedJson('rp-presets/p-mix/regex.json', { scripts: [null, 'str', { id: 'ok', scriptName: '好' }] })
+    const out = await buildStRegexScripts(home, 'p-mix')
+    expect(out).toHaveLength(1)
+    expect(out[0].id).toBe('ok')
   })
 })

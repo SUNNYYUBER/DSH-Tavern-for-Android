@@ -136,6 +136,70 @@ export function buildStPromptView(preset: RPPreset): { prompts: StPrompt[]; prom
   return { prompts, prompt_order: [{ character_id: 100001, order }] }
 }
 
+/**
+ * ST 内部 `RegexScript` 的字段白名单（**camelCase**，`extensions.regex_scripts` 的元素形状）。
+ *
+ * ⚠️ 与 TH 公开 API `getTavernRegexes()` 的 `TavernRegex`（**snake_case**）是两套不同契约
+ * ——后者见 T-20 与 `tmp/tt-data/.../@types/function/tavern_regex.d.ts:30-57`。**不可混用**：
+ * 此处的消费方是 ST 前端自身（`extensions.regex` / `chatCompletionSettings.extensions.regex_scripts`），
+ * 例如卡 `inject.js`（`scriptName` / `findRegex` / `placement` / `markdownOnly` …）。
+ *
+ * `id` 在列表中**必填**：卡脚本按 `s.id` 做增删匹配
+ *（`_.remove(extensions.regex, s => s.id === scriptId)`，`inject.js:4170`；DOM 行 id 也是它）。
+ */
+const ST_REGEX_SCRIPT_FIELDS = [
+  'id',
+  'scriptName',
+  'findRegex',
+  'replaceString',
+  'trimStrings',
+  'placement',
+  'disabled',
+  'markdownOnly',
+  'promptOnly',
+  'runOnEdit',
+  'substituteRegex',
+  'minDepth',
+  'maxDepth',
+] as const
+
+/**
+ * 单条转换：白名单取字段 + `id` 兜底（**确定性**，便于幂等与测试）。
+ * `id` 缺失时给 `rx-local-<index>`（不生成随机值 → 同一文件两次读取结果相同）。
+ */
+export function toStRegexScript(script: Record<string, unknown>, index: number): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key of ST_REGEX_SCRIPT_FIELDS) {
+    if (script[key] !== undefined) out[key] = script[key]
+  }
+  if (typeof out.id !== 'string' || out.id.length === 0) out.id = `rx-local-${index}`
+  return out
+}
+
+/**
+ * 预设作用域正则 → ST `extensions.regex_scripts` 形状（单源）。
+ *
+ * 数据来源：`rp-presets/<presetId>/regex.json` 的 `scripts[]`（预设内嵌正则，ST 预设
+ * `extensions.regex_scripts` 的等价物）。无文件 / 坏 JSON = **无内嵌正则**（返回空数组，
+ * 只有不存在或格式正确两种状态，**不返 null 让调用方各自猜**）。
+ */
+export async function buildStRegexScripts(dshHome: string, presetId: string): Promise<Array<Record<string, unknown>>> {
+  if (!presetId) return []
+  let raw: unknown
+  try {
+    raw = JSON.parse(await readFile(homePath(dshHome, `rp-presets/${presetId}/regex.json`), 'utf8'))
+  } catch {
+    return [] // 无 regex.json = 该预设无内嵌正则（正常的常见状态）
+  }
+  const scripts = (raw !== null && typeof raw === 'object' && !Array.isArray(raw))
+    ? (raw as { scripts?: unknown }).scripts
+    : undefined
+  if (!Array.isArray(scripts)) return []
+  return scripts
+    .filter((s): s is Record<string, unknown> => s !== null && typeof s === 'object' && !Array.isArray(s))
+    .map((s, i) => toStRegexScript(s, i))
+}
+
 // ---------------------------------------------------------------------------
 // 预设解析（rp-presets 清单 / 会话有效预设 / displayName 匹配）
 // ---------------------------------------------------------------------------
@@ -300,6 +364,13 @@ export async function context(dshHome: string, body: Record<string, unknown>): P
   }
   const view = preset !== null ? buildStPromptView(preset) : { prompts: [], prompt_order: [] }
   const characterName = slug ? await characterNameOf(dshHome, slug) : ''
+  // 【心跳 57】预设内嵌正则（ST 1.13.5+ 的 `extensions.regex_scripts` 通道）。
+  // 卡/扩展脚本按 `versionNumber >= 11305` 分叉后**只认这一处**
+  //（`inject.js:3566` 原注释：「11305+ has built-in regex binding; ST is source of truth,
+  // only sync FROM ST」）。缺这个键 → 卡在 `ctx.chatCompletionSettings.extensions.regex_scripts`
+  // 处**属性访问先抛 TypeError**（`inject.js:3567-3569`；与 T-40 的 `eventTypes` 同型缺陷：
+  // 看似有 `&&` 短路保护，但 `undefined.xxx` 的取值本身先抛，右侧永远轮不到）。
+  const regexScripts = await buildStRegexScripts(dshHome, presetId ?? '')
   return {
     status: 200,
     body: {
@@ -309,7 +380,11 @@ export async function context(dshHome: string, body: Record<string, unknown>): P
       // ST getContext().name1 = 用户名（脚本读它当玩家名；飞讯 getPlayerName 等）。
       // ST 迁移会话的用户名取消息流的 name（'User'）；DSH 无独立 persona 存储，恒一致。
       name1: 'User',
-      chatCompletionSettings: { prompts: view.prompts, prompt_order: view.prompt_order },
+      chatCompletionSettings: {
+        prompts: view.prompts,
+        prompt_order: view.prompt_order,
+        extensions: { regex_scripts: regexScripts },
+      },
     },
   }
 }
@@ -368,28 +443,10 @@ export async function presetExport(dshHome: string, body: Record<string, unknown
   const hit = presetId ? (await listPresets(dshHome)).find(p => p.id === presetId) : undefined
   if (!hit) return { status: 404, body: { error: `preset not found: ${name}` } }
   const view = buildStPromptView(hit.preset)
-  const regexScripts: Array<Record<string, unknown>> = []
-  try {
-    const parsed = JSON.parse(await readFile(homePath(dshHome, `rp-presets/${hit.id}/regex.json`), 'utf8')) as {
-      scripts?: Array<Record<string, unknown>>
-    }
-    for (const s of Array.isArray(parsed?.scripts) ? parsed.scripts : []) {
-      regexScripts.push({
-        scriptName: s.scriptName,
-        findRegex: s.findRegex,
-        replaceString: s.replaceString,
-        trimStrings: s.trimStrings,
-        placement: s.placement,
-        disabled: s.disabled,
-        markdownOnly: s.markdownOnly,
-        promptOnly: s.promptOnly,
-        runOnEdit: s.runOnEdit,
-        substituteRegex: s.substituteRegex,
-        minDepth: s.minDepth,
-        maxDepth: s.maxDepth,
-      })
-    }
-  } catch { /* 无 regex.json = 无内嵌正则 */ }
+  // 【心跳 57】改为复用单源 `buildStRegexScripts`（此前是内联的第二份实现，
+  // 且**漏输出 `id`** —— 而 `id` 是 ST 内部 RegexScript 的列表必填字段，卡脚本按它做增删匹配。
+  // 同一语义两份实现 = L61「改了一处不等于修好一个功能」，故收敛为一处。）
+  const regexScripts = await buildStRegexScripts(dshHome, hit.id)
   return {
     status: 200,
     body: {
