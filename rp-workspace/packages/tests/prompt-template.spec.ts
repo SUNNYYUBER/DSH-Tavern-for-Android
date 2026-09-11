@@ -80,6 +80,31 @@ describe('EJS 子集：表达式求值边界', () => {
   })
 })
 
+describe('T-29 子集引擎：不支持语法必须「显式抛错」而非静默失败', () => {
+  it('函数调用 → 抛错（trailing tokens）', () => {
+    expect(() => renderEjsSubset('<%= arr.join(",") %>', { arr: [1, 2] })).toThrow(/trailing tokens/)
+  })
+  it('箭头函数 → 抛错（unexpected char）', () => {
+    expect(() => renderEjsSubset('<%= xs.map(x => x) %>', { xs: [1] })).toThrow(/unexpected char/)
+  })
+  it('模板字符串 → 抛错（unexpected char）', () => {
+    expect(() => renderEjsSubset('<%= `v=${a}` %>', { a: 1 })).toThrow(/unexpected char/)
+  })
+  it('正则字面量 → 抛错（unexpected token）', () => {
+    expect(() => renderEjsSubset('<%= /a/.test("a") %>', {})).toThrow(/unexpected token/)
+  })
+  it('renderMessages fail-soft：单条失败保留原文 + ejsError 标记，不静默清空', () => {
+    const r = renderMessages('', {}, [
+      { mes: '<%= /a/.test("a") %>' },
+      { mes: '正常消息' },
+    ])
+    expect(r.messages[0].mes).toBe('<%= /a/.test("a") %>')
+    expect(r.messages[0].ejsError).toBe(true)
+    expect(r.rendered).toBe(1)
+    expect(r.skipped).toBe(1)
+  })
+})
+
 describe('is_ejs_processed 标记', () => {
   it('布尔 true 与 [true] 两种形态都识别；extra 嵌套也识别', () => {
     expect(isEjsProcessed({ is_ejs_processed: true })).toBe(true)

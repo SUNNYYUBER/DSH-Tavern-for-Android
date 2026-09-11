@@ -35,6 +35,30 @@ describe('EJS 沙箱：完整 JS 能力（子集做不到的）', () => {
   })
 })
 
+describe('T-29 沙箱引擎：完整 JS 语法实测（子集做不到的）', () => {
+  it('模板字符串', () => {
+    expect(renderEjsSandbox('<% const v = 1 %><%= `v=${v}` %>', {})).toEqual({ ok: true, text: 'v=1' })
+  })
+
+  it('正则字面量', () => {
+    expect(renderEjsSandbox('<%= /a/.test("a") %>', {})).toEqual({ ok: true, text: 'true' })
+  })
+
+  it('模板内定义函数并调用', () => {
+    expect(renderEjsSandbox('<% function f(x) { return x * 2 } %><%= f(6) %>', {}))
+      .toEqual({ ok: true, text: '12' })
+  })
+
+  it('内建 Math 可用（仅 Math.random 被替换为抛错）', () => {
+    expect(renderEjsSandbox('<%= Math.max(1, 2) %>', {})).toEqual({ ok: true, text: '2' })
+  })
+
+  it('边界：上下文经 vm 传入的函数不可克隆 → 显式 runtime-error', () => {
+    expect(renderEjsSandbox('<%= cb(2) %>', { cb: (x: number) => x }))
+      .toEqual({ ok: false, kind: 'runtime-error' })
+  })
+})
+
 describe('EJS 沙箱：隔离与资源上限', () => {
   it('无 require/process/module/fetch，Date 置 undefined', () => {
     const r = renderEjsSandbox('<%= typeof process %>|<%= typeof require %>|<%= typeof module %>|<%= typeof fetch %>|<%= typeof Date %>', {})

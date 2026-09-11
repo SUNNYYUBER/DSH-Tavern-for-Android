@@ -12,8 +12,8 @@
 | 源码 runtime | **0.1.5-rc.1**（sentinel v250，46 个心跳已推完阶段 0/1/2/3/4） |
 | 你手机上的包 | **arm64-release，9-11 11:0x 构建 = 0.1.5-rc.1**（sentinel v250） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1024 项全绿（50 文件）** · `typecheck` 三段式 **0 错**（心跳 55 复跑确认） |
-| 未提交改动 | 心跳 55 的源码/文档/工具（待提交） |
+| 单测 | **1037 项全绿（50 文件）** · `typecheck` 三段式 **0 错**（心跳 56 复跑确认） |
+| 未提交改动 | 心跳 53–56 的源码/文档/工具（待提交） |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
 - **心跳 55 · 实例B** = **修掉一个"死了 8 个心跳"的功能级缺陷**：
@@ -829,7 +829,7 @@
 | # | 项 | 说明 |
 |---|---|---|
 | T-28 | Tier 2 TH 长尾 API（约 50 项记名 stub 之外） | ⏳ **未做**（设计如此）：不支持的 API 挂 stub → `console.warn` 记名 + `Promise.reject`（`th-shim.ts:392/1847`），**诚实失败而非假成功**。真 TH 长尾面（rebind 家族 / createOrReplacePreset / QuickReply 系）待「第三次冒同类问题」再升时间盒 |
-| T-29 | EJS 完整语法（当前子集：无函数调用/箭头函数/模板字符串/正则字面量） | ✅ **已核验达标**（2026-09-11）：判据是「显式报错，非静默失败」而非「支持全部语法」。**实证**：subset 对 4 类不支持语法**全部显式抛错**（函数调用 `trailing tokens`、箭头 `unexpected char: =`、模板串 `unexpected char: \``、正则 `unexpected token: /`）；批次入口 `renderMessages` 单条失败**保留原文 + 打 `ejsError` 标记**（不静默清空）。**完整语法另有引擎**：`engine:'sandbox'`（node `vm`）实测支持箭头函数（`2,4,6`）、模板字符串（`v=1`）、正则字面量（`true`）、模板内定义函数（`12`）、内建 `Math`。唯一边界：**上下文经 vm 传入的函数不可克隆**（`cb(2)` → `runtime-error`）——属 vm 机制固有，非语法缺口，且**失败分类显式**（`ok:false, kind:'runtime-error'`） |
+| T-29 | EJS 完整语法（当前子集：无函数调用/箭头函数/模板字符串/正则字面量） | ✅ **已核验达标 + 已补测试固化**（2026-09-11）：判据是「显式报错，非静默失败」而非「支持全部语法」。**实证（`prompt-template.spec.ts` 新增 5 条）**：subset 对 4 类不支持语法**全部显式抛错**——函数调用 `trailing tokens`、箭头函数 `unexpected char`、模板串 `unexpected char`、正则字面量 `unexpected token`；批次入口 `renderMessages` 单条失败**保留原文 + 打 `ejsError` 标记**（实测 `rendered:1 / skipped:1`，生产路径 `dsh-plugin/index.ts:3982` 取 `r.messages[k]?.mes` 故不静默清空）。**完整语法另有引擎**：`engine:'sandbox'`（node `vm`）**新增 5 条测试**固化——模板字符串（`v=1`）、正则字面量（`true`）、模板内定义函数（`12`）、内建 `Math.max`（`2`）、箭头函数（既有测例 `messages.map(m => m.role).join("/")` → `user/assistant`）。唯一边界：**上下文经 vm 传入的函数不可克隆**（`cb(2)` → `ok:false, kind:'runtime-error'`）——属 vm 机制固有，非语法缺口，且失败分类显式 |
 | T-30 | 采样参数长尾（topP/topK/minP/penalties/seed…） | 🚧 **宿主阻塞**：`dsh-llm-*` 适配器只透传 `temperature/max_tokens/stop` + `reasoningEffort`（H-②，`AUDIT_TASKLIST.md:257`）。**预设值已正确持久化**（`sampling.topP: 0.88` 实证），等宿主开放白名单即可生效 |
 | T-31 | 表格记忆长尾（E7 自定义渲染占位符 / E9 编辑器 / E12 设置导入导出） | ⏳ **未做**（V0.3-FREEZE §5 明列的冻结长尾） |
 | T-32 | `st-migration` skill 契约漂移复核 + 配探测脚本 | ✅ **契约漂移已复核并修正**（2026-09-11，心跳 45）：`references/session-jsonl-contract.md` 仍在教**已被 0.1.5 禁止**的 `assistant/message` replace 链（21/80 会话因此打不开的根源），已改为 user 标记 + append；补 `startSeq/endSeq` 字段名、source 白名单、user/message 必须包 step、官方不变量、**会话世代读法**、存量修复三重链。探针脚本暂缺（改由 `verify-session-pipeline.mjs` + 契约测试覆盖） |
