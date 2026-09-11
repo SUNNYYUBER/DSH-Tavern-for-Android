@@ -24,7 +24,7 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { scanSessionHeaders, pickCurrentSessionFilename, currentSessionLogPath } from '../src/dsht-plugin-shared/session-surgery.ts'
-import { readSurgicalPayload, readSurgicalAnchor, assistantSettlement } from '../src/dsht-plugin-shared/session-write.ts'
+import { readSurgicalPayload, readSurgicalAnchor, assistantSettlement, boundAppend } from '../src/dsht-plugin-shared/session-write.ts'
 import { extractFloorsFromEvents } from '../src/dsht-plugin-memory/index.ts'
 
 // ---------------------------------------------------------------- ① 世代
@@ -286,5 +286,43 @@ describe('assistantSettlement（官方 settlement 三件套单源）', () => {
     expect(d.turn).toBe(7)
     expect(d.step).toBe(3)
     expect(d.stream).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------- ④ 官方方法绑定
+/**
+ * 心跳 55 实机缺陷（`/rp/session-regenerate` 恒 500 且零事件写入）：
+ * 官方 `Session` 是「实例字段 + this」实现（`this.log`，dsh-session/lib/index.js:457/1075），
+ * 因此 `const f = live.append; f(...)` 这种**方法引用提取**会丢接收者 →
+ * `TypeError: Cannot read properties of undefined (reading 'log')`。
+ *
+ * 心跳 47 的「纯类型层收窄」重构引入的两处 detach 正是此形态（注释还写着"运行时语义不变"）。
+ * 本组用例把「提取必须绑定」钉成断言：正控（boundAppend 可用）+ 负控（裸提取必炸）。
+ */
+describe('boundAppend —— 官方会话方法禁止 detach（心跳 55）', () => {
+  /** 忠实复刻官方形状：方法内部读 this.log */
+  class FakeSession {
+    log: unknown[] = []
+    append(type: string, data: unknown): unknown {
+      // 官方 append 内部即 this.log.push（dsh-session/lib/index.js:1075）
+      this.log.push({ type, data })
+      return 'ok'
+    }
+  }
+
+  it('正控：boundAppend 后调用可用，且 this 指向原会话', () => {
+    const s = new FakeSession()
+    const f = boundAppend(s as unknown as Parameters<typeof boundAppend>[0])
+    expect(f('compaction/prune', { n: 1 })).toBe('ok')
+    expect(s.log).toHaveLength(1)
+  })
+
+  it('🔴 负控：裸提取（= s.append）调用必炸，且错误信息与设备报错逐字一致', () => {
+    const s = new FakeSession()
+    const detached = s.append // 心跳 47 的写法
+    expect(() => detached('compaction/prune', { n: 1 })).toThrowError(
+      "Cannot read properties of undefined (reading 'log')",
+    )
+    expect(s.log).toHaveLength(0) // 关键：零写入 —— 与设备实测一致
   })
 })

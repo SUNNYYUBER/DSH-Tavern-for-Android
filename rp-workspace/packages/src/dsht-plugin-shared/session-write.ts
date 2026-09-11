@@ -123,6 +123,29 @@ function isInvalidSurfaceOp(e: unknown): boolean {
   return msg.includes('invalid replace surfaceOp')
 }
 
+/**
+ * 取出官方 live 会话的 `append` 并 **绑定接收者**。
+ *
+ * 【为什么必须有这个单源函数】官方 `Session` 的方法全都是「实例字段 + `this`」实现：
+ *   `dsh-session/lib/index.js:457  this.log = log`（构造器）
+ *   `dsh-session/lib/index.js:1075 this.log.push(...)`（append 内部）
+ * 所以 `const f = live.append; f(...)` 这种**方法引用提取**会把 `this` 变成 `undefined`，
+ * 立刻抛 `TypeError: Cannot read properties of undefined (reading 'log')`。
+ *
+ * 【为什么单独抽出来】心跳 47 的「纯类型层收窄」重构（提交 `801d47d`）为了绕开
+ * TS2722/TS18048，把两处 `live.append(...)` 改写成 `const liveAppend = live.append` +
+ * `liveAppend(...)`，注释写着「运行时语义不变」——**实际是语义变更**：
+ * 回退（`/rp/session-rollback`）与重新生成（`/rp/session-regenerate`）两条 live 路径
+ * **整段 500 且零事件写入**（HTTP 500 `Cannot read properties of undefined (reading 'log')`），
+ * 直到心跳 55 才由设备端 POST 复现抓出。教训：**「提取方法引用」永远不是纯类型操作**。
+ *
+ * 【口径】凡需要把官方会话方法存进局部变量/传参的，一律经本函数（或显式 `.bind(x)`），
+ * 禁止裸写 `const f = obj.method`；静态审计见 `scripts/audit-method-binding.mjs`。
+ */
+export function boundAppend(session: AppendableSession): AppendableSession['append'] {
+  return session.append.bind(session)
+}
+
 /** 供测试重置缓存 */
 export function __resetSurfaceOpStyleForTest(): void { opStyle = 'current' }
 

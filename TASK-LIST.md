@@ -12,10 +12,19 @@
 | 源码 runtime | **0.1.5-rc.1**（sentinel v250，46 个心跳已推完阶段 0/1/2/3/4） |
 | 你手机上的包 | **arm64-release，9-11 11:0x 构建 = 0.1.5-rc.1**（sentinel v250） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1022 项全绿（50 文件）** · `typecheck` 三段式 **0 错**（心跳 54 复跑确认） |
-| 未提交改动 | 无（心跳 54 的文档与工具已提交） |
+| 单测 | **1024 项全绿（50 文件）** · `typecheck` 三段式 **0 错**（心跳 55 复跑确认） |
+| 未提交改动 | 心跳 55 的源码/文档/工具（待提交） |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
+- **心跳 55 · 实例B** = **修掉一个"死了 8 个心跳"的功能级缺陷**：
+  `/rp/session-regenerate`（↻ 重新生成）与 `/rp/session-rollback`（↩ 回退到此处）两条 **live 写入路径**
+  **恒 500 且零事件写入**。根因 = **心跳 47** 为绕开 TS 收窄告警把 `live.append(...)` 写成
+  `const liveAppend = live.append`（**方法引用被提取 → `this` 丢失 → 官方读 `this.log` 抛错**），
+  注释还写着「纯类型层修正，运行时语义不变」。**`tsc` / 1024 单测 / 21 项设备回归三处全绿**，
+  只有"在副本上跑一次真写"才照得出来。
+  已修（单源 `boundAppend()`）+ **三重防线**（静态闸门 `scripts/audit-method-binding.mjs` /
+  单测负控 / 设备闭环），真机两条路由同时转 **200** 并落盘，取证后已**精确还原**用户会话。
+  沉淀 LEARNINGS **L65–L68**。双架构 APK 重打。详见 **T-54**。
 - **心跳 54 · 实例B** = **阶段二长尾「UI 面」逐项走通 + 把 D-5b 从「待拍板」变成「有数字可拍板」**：
   ① UI 面五项（**编辑 / 回退 / 变体 / 世界书 / MVU**）逐项实测，**全程零写入**（动作前后 3 个落盘文件
   md5 完全一致）、**未捕获异常 / console 错误 = 0**；**`stage4-regression` 首次 21/21 全过**
@@ -638,6 +647,48 @@
 - **注意（避免造出假待办）**：编辑面板会**忠实预填存储原文**（含包装），这是**基线语义**
   （ST 编辑亦显示原始 `mes`），且**修复后的新消息不再带包装** → 属本条的下游症状，**不是独立缺陷**。
 
+### T-54　🔴→✅ **「重新生成 / 回退」两条 live 写入路径恒 500（死了 8 个心跳）**（心跳 55 修 + 真机闭环）
+- **现象**：点「↻ 重新生成」→ 确认 → 弹 `重新生成失败：Cannot read properties of undefined (reading 'log')`；
+  「↩ 回退到此处」同病。直接 POST 得 **HTTP 500 `{"error":"Cannot read properties of undefined (reading 'log')"}`**，
+  且**会话文件 md5 一字未变** ⇒ **零事件写入，功能完全不可用**。
+- **根因（file:line）**：官方 `Session` 的方法都是「实例字段 + `this`」写法
+  —— `dsh-session/lib/index.js:457 this.log = log`、`:1075 this.log.push(...)`。
+  **心跳 47**（提交 `801d47d`）为绕开 TS2722/TS18048，把两处 `live.append(...)` 改成
+  `const liveAppend = live.append` + `liveAppend(...)`（`dsh-plugin/index.ts:5222` 回退 / `:5402` 重新生成），
+  注释写着「**纯类型层修正，运行时语义不变**」——**实际是语义变更**：方法引用被提取后 `this === undefined`
+  → 任何调用都抛「读 `this.log`」。**从心跳 47 到心跳 55 共 8 个心跳恒 500**，
+  而 `tsc` / 单测 / `stage4-regression` 21/21 **三处全绿**（L59 又一实例）。
+- ✅ **定位（零重建成本，L66）**：把设备报错原文当**可判等指纹**，离线用官方 `Session` 造同形对象
+  逐条逼近路由调用序列 → 一次运行得到**逐字相同**的报错，并给出决定性对照
+  **绑定调用 `[ok]` / 提取后调用 `[THROW]`**（`stage3-device/hb55/hb55-detach-probe.mjs`）。
+  弯路警示：先 grep 自己源码的 `.log` 属性读取（0 处）会得出"不是我们的代码"——
+  实际是**官方代码**在读 `this.log`，因为 `this` 被我们弄丢了。
+- ✅ **修复**：新增单源 `boundAppend()`（`dsht-plugin-shared/session-write.ts`，带完整成因注释）
+  作为「提取官方会话方法」的**唯一合法出口**；两处 detach 改为 `boundAppend(liveWritable)`
+  （并把 `liveWritable` 声明上移以避开 TDZ）。
+- ✅ **三重防线**：
+  1. **静态闸门** `scripts/audit-method-binding.mjs` —— 扫全仓 `const X = recv.member`，
+     命中「this 依赖成员白名单」（`append`/`flush`/`eventAt`/`snapshotEvents`/`emit`/`on`/…）即违约；
+     自身先过**正控/负控/零控**（L44），并带 `--verify-lib` 用官方库反向核对白名单未过期。
+     实跑：**82 个 `.ts` / 99 条候选 / 高危 0**。
+  2. **单测负控**：断言裸提取必炸、报错与设备报错**逐字相同**、且**零写入**（+2 条）。
+  3. **设备闭环**（L68：备份 → 真写 → 三件取证 → 还原 → 重启）。
+- ✅ **实机验收（两条路由同时转绿）**：
+
+  | 路由 | 修复前 | 修复后 |
+  |---|---|---|
+  | `/rp/session-regenerate` | 500 + 零写入 | **200** `{"logical":true,"replaced":6,"lastUserText":"…"}` |
+  | `/rp/session-rollback` | 500 + 零写入 | **200** `{"logical":true,"replaced":6,"truncatedTo":302}` |
+
+  落盘物证 314→316 行、md5 变更、新增 `compaction/prune seq 313 shadowedSeqs [303,304,305,306,307,309]`
+  + 合法形态标记；logcat `session-regenerate … anchor=302 replace[303,309] n=6` 与**离线复现逐字一致**。
+  取证后**已精确还原**（md5 回到 `04eacf…` / 314 行 / `.bak` 已删 / 重启对齐内存态）。
+- **纪律（L67，本轮代价 = 8 个心跳）**：UI 面回归若以「零写入 / md5 不变」为验收判据，
+  **必须再配一条在副本上跑真写的用例**；否则「读侧全绿」会掩盖写侧已死。
+- **交付**：三闸门 `typecheck` 0 错 · 单测 **50 文件 / 1024 全绿** ·
+  双架构 APK `x86_64 debug 196,836,000 B` / `arm64 release 128,362,024 B`，
+  两包内插件均核出 `boundAppend`×3、负控（旧写法）0 命中。沉淀 **L65–L68**。
+
 ### T-45　🆕→✅ **主框架加载失败后无自愈路径 → 永久停在启动屏**（心跳 50 登记 / **心跳 53 定性并修复**）
 - **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在
   `Webpage not available`（`chrome-error://chromewebdata/`），**此后不再重试**，`SillyTavern`/UI 全无。
@@ -808,6 +859,7 @@ T-27 代码已就绪，只差更新源地址（需你决定公开/私有仓库�
 | **补丁标记静态审计** | `node scripts/audit-patch-markers.py`（AST 解析；查"marker 有没有写进替换串"这类幂等检测失效） |
 | **前后端路由契约审计** | `node scripts/audit-route-contract.mjs`（前端 POST × 服务端挂载区；`-v` 列全部；`DSHT_AUDIT_SRC=` 可做负向对照） |
 | **类型闸门（core + UI）** | `npm run typecheck`（= `typecheck:core && typecheck:ui`，**双绿**）；两次正控已验闸门会 report |
+| **方法绑定审计** | `node scripts/audit-method-binding.mjs`（查 `const X = recv.method` 这类**提取后丢接收者**的写法；`--selftest` 正/负/零控，`--verify-lib` 反向核对白名单；`-v` 列全部候选） |
 | **构建期 vendor 依赖** | `node scripts/vendor-deps.mjs [--check]`（版本锚定表 = `scripts/vendor-deps.json`；缺失即自愈；构建前自动跑） |
 | 插件构建 | `scripts/build-plugins.sh` |
 | 一键升级 | `scripts/upgrade-runtime.sh` |

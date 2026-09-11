@@ -57,7 +57,7 @@ import { scanSessionHeaders as scanSessionHeadersShared, normalizeSnapshotMessag
 // （0.1.5 把 start/end 改成 startSeq/endSeq，且禁止 assistant/message 做 replace 节点）
 import {
   appendReplace, replaceRange, isReplaceOp, markerSource, readMarker, readLegacySourceKeys, readSurgicalAnchor,
-  sanitizeEnvelope, planAssistantRewrite, assistantSettlement, type AppendableSession, type SurgicalMarkerPayload,
+  sanitizeEnvelope, planAssistantRewrite, assistantSettlement, boundAppend, type AppendableSession, type SurgicalMarkerPayload,
 } from '../dsht-plugin-shared/session-write.ts'
 // 【阶段3 2026-09-10】存量 v0 会话 → 0.1.5 可迁移形态（8 类不合规的纯函数重写器）
 import { repairSessionForV3 } from '../dsht-plugin-shared/session-repair.ts'
@@ -5217,13 +5217,17 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               // ST「回退」同语义）。掩码 rolledBackTo = anchor-1 → UI 连锚一起隐藏。
               const includeAnchor = payload.includeAnchor === true
               if (live !== undefined && typeof live.append === 'function' && Array.isArray(live.surface?.nodes)) {
-                // 【心跳 47】把守卫收窄结果固化为非可选局部：闭包（async () => …）内 TS 会丢弃对
-                // `live.append` / `live.surface` 的收窄（TS2722 / TS18048）。纯类型层修正，运行时语义不变。
-                const liveAppend = live.append
                 const liveNodes = live.surface.nodes
                 // 【心跳 47】本块的内联类型把 `append` 声明为**可选**（守卫已证实它是函数），
                 // 而 `appendReplace` 需要「必需 append」的 AppendableSession → 断言收敛一次。
                 const liveWritable = live as unknown as AppendableSession
+                // 【心跳 47】守卫收窄结果固化为非可选局部：闭包（async () => …）内 TS 会丢弃对
+                // `live.append` / `live.surface` 的收窄（TS2722 / TS18048）。
+                // 【心跳 55 修正】这不是「纯类型层」修正——裸写 `= live.append` 会 **丢失接收者**，
+                // 官方 Session 的 append 读 `this.log`（dsh-session/lib/index.js:457/1075），
+                // detach 即 `TypeError: Cannot read properties of undefined (reading 'log')`。
+                // 必须经 boundAppend 绑定（详见 dsht-plugin-shared/session-write.ts）。
+                const liveAppend = boundAppend(liveWritable)
                 // ---- live：逻辑回退（官方原语）——【鲁棒轮】per-session 串行（withLiveSurgery），
                 // 防 await replayUndoLog 窗口内并发请求捕获过期视图 → 错位 replace ----
                 return await withLiveSurgery(sessionId, async () => {
@@ -5397,13 +5401,16 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 | { surface?: { nodes?: number[] }; events?: Record<string | number, { type?: unknown; time?: unknown; data?: { content?: unknown; source?: { kind?: unknown } } | undefined }> | Map<string | number, { type?: unknown; time?: unknown; data?: { content?: unknown; source?: { kind?: unknown } } | undefined }>; append?: (type: string, data: unknown, opts?: { surfaceOp?: { op: 'replace'; start: number; end: number }; sourceEventSeqs?: number[] }) => unknown }
                 | undefined
               if (live !== undefined && typeof live.append === 'function' && Array.isArray(live.surface?.nodes)) {
-                // 【心跳 47】守卫收窄固化（闭包内 TS 会丢弃对 live.append / live.surface 的收窄，
-                // 报 TS2722 / TS18048）。纯类型层修正，运行时语义不变。
-                const liveAppend = live.append
                 const liveNodes = live.surface.nodes
                 // 【心跳 47】本块的内联类型把 `append` 声明为**可选**（守卫已证实它是函数），
                 // 而 `appendReplace` 需要「必需 append」的 AppendableSession → 断言收敛一次。
                 const liveWritable = live as unknown as AppendableSession
+                // 【心跳 47】守卫收窄固化（闭包内 TS 会丢弃对 live.append / live.surface 的收窄，
+                // 报 TS2722 / TS18048）。
+                // 【心跳 55 修正】必须 **bind**：官方 Session.append 读 `this.log`，
+                // `const f = live.append; f(...)` 会 detach → `Cannot read properties of undefined (reading 'log')`
+                // （设备实证：本路由 500 且零事件写入）。
+                const liveAppend = boundAppend(liveWritable)
                 // live：找事件流里最后一条真 user 消息——【鲁棒轮】per-session 串行（同 rollback）
                 return await withLiveSurgery(sessionId, async () => {
                 const evList: Array<{ seq: number; time?: number; text: string }> = []
