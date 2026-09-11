@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  expandTavernMacros, parseVarPath, readVarPath, toPointer, writeVarPath,
+  expandTavernMacros, parseVarPath, readVarPath, registerMacro, toPointer, unregisterMacro, writeVarPath,
   type TavernMacroContext,
 } from '../src/dsht-plugin-shared/macros.ts'
 import {
@@ -75,6 +75,19 @@ describe('宏引擎：随机/稳定/骰子', () => {
   it('random 值域内（,: 与 :: 两种分隔）', () => {
     expect(['a', 'b', 'c']).toContain(expandTavernMacros('{{random:a,b,c}}', ctx()).text)
     expect(['x', 'y']).toContain(expandTavernMacros('{{random::x::y}}', ctx()).text)
+  })
+  // 心跳 51 补：`splitMacroList` 的 `\,` 转义此前**零测试覆盖**（源码里靠一对 NUL 哨兵实现，
+  // 而该哨兵曾以**裸 NUL 字节**形式落在源码里 → git 把整个宏引擎文件判为二进制、diff 不可评审。
+  // 已改为等价的 `\0` 转义写法；这两条测试既钉住转义语义，也证明改写前后行为一致）。
+  it('逗号分隔支持 `\\,` 转义（单元素内含逗号）', () => {
+    // 决定性用例：只有一项且项内含逗号 → 若转义失效会退化成 ['a','b']，结果只会是 'a' 或 'b'
+    expect(expandTavernMacros('{{random:a\\,b}}', ctx()).text).toBe('a,b')
+    // 混合：三项，中间那项自带逗号 → 结果值域必须包含 'b,c'
+    expect(['a', 'b,c', 'd']).toContain(expandTavernMacros('{{random:a,b\\,c,d}}', ctx()).text)
+  })
+  it('`::` 形态优先，不做 `\\,` 还原（与基准 `splitMacroList` 的分支顺序一致）', () => {
+    // 含 `::` 时直接按 `::` 切分，逗号与反斜杠都保持原样
+    expect(expandTavernMacros('{{random::a\\,b::c}}', ctx()).text).toMatch(/^(a\\,b|c)$/)
   })
   it('pick 同文本同位置稳定；换种子独立', () => {
     const text = '{{pick::A::B::C}}-{{pick::A::B::C}}'
@@ -346,5 +359,69 @@ describe('agent 预设适配：模块化内容块 → DSH skills', () => {
     expect(blocks).toHaveLength(1)
     expect(blocks[0].label).toBe('画画手册')
     expect(blocks[0].content).toContain('# IMG_SKILL：画图=启用')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// T-44 / 心跳 51：动态宏（dynamicMacros）与 postProcess（substituteParams 语义）
+// 基准：`MacroEngine.#resolveMacro`（public/scripts/macros/engine/MacroEngine.js:178-228）
+//       `MacroEnvBuilder`（…/MacroEnvBuilder.js:152/161-163）
+// ---------------------------------------------------------------------------
+describe('宏引擎：dynamicMacros（ST substituteParams 的 additionalMacro）', () => {
+  it('字符串形态直出；函数形态收到 args 与 ctx', () => {
+    const dyn = { greet: '你好', shout: (args: string) => `!${args}!` }
+    expect(expandTavernMacros('{{greet}}|{{shout::嘿}}', ctx({ dynamicMacros: dyn })).text).toBe('你好|!嘿!')
+  })
+
+  it('键大小写不敏感（基准在装配阶段就 key.toLowerCase() 归一）', () => {
+    expect(expandTavernMacros('{{DYN}}', ctx({ dynamicMacros: { Dyn: 'V' } })).text).toBe('V')
+    expect(expandTavernMacros('{{dyn}}', ctx({ dynamicMacros: { DYN: 'V' } })).text).toBe('V')
+  })
+
+  it('动态宏**优先于**已注册宏（基准：命中即 defOverride 覆盖注册表）', () => {
+    // 负控：不传 dynamicMacros 时应回落到注册表值
+    const NAME = 't44RegOverride'
+    try {
+      registerMacro(NAME, 'REG')
+      expect(expandTavernMacros(`{{${NAME}}}`, ctx()).text).toBe('REG')
+      expect(expandTavernMacros(`{{${NAME}}}`, ctx({ dynamicMacros: { [NAME]: 'DYN' } })).text).toBe('DYN')
+    } finally { unregisterMacro(NAME) }
+  })
+
+  it('函数抛错 → 保留原文（不炸整段）', () => {
+    const dyn = { boom: () => { throw new Error('x') } }
+    expect(expandTavernMacros('a{{boom}}b', ctx({ dynamicMacros: dyn })).text).toBe('a{{boom}}b')
+  })
+
+  it('未传 dynamicMacros 时行为不变（向后兼容）', () => {
+    expect(expandTavernMacros('{{user}}', ctx()).text).toBe('旅行者')
+    expect(expandTavernMacros('{{nope}}', ctx()).text).toBe('{{nope}}')
+  })
+})
+
+describe('宏引擎：postProcess（ST postProcessFn）', () => {
+  it('逐个已解析宏结果加工（不是加工整段文本）', () => {
+    const r = expandTavernMacros('{{char}} 与 {{user}}', ctx({ postProcess: v => `[${v}]` }))
+    // 若错加工整段会得到 "[丰川祥子 与 旅行者]"；正确为两个独立包裹
+    expect(r.text).toBe('[丰川祥子] 与 [旅行者]')
+  })
+
+  it('未识别宏**不**经 postProcess（基准：未知宏在 executeMacro 之前就 return raw）', () => {
+    const r = expandTavernMacros('{{unknownMacro}}', ctx({ postProcess: v => `ESCAPED(${v})` }))
+    expect(r.text).toBe('{{unknownMacro}}')
+    expect(r.unknownMacros).toEqual(['{{unknownMacro}}'])
+  })
+
+  it('钩子抛错 → 返回未加工结果（基准 catch 后 return result）', () => {
+    const r = expandTavernMacros('{{char}}', ctx({ postProcess: () => { throw new Error('boom') } }))
+    expect(r.text).toBe('丰川祥子')
+  })
+
+  it('注释宏属于**已注册**宏（基准 core-macros.js:282 注册 // ），故会经 postProcess', () => {
+    expect(expandTavernMacros('{{// c}}ok', ctx({ postProcess: v => `[${v}]` })).text).toBe('[]ok')
+  })
+
+  it('未传 postProcess 时行为不变（向后兼容）', () => {
+    expect(expandTavernMacros('{{char}}', ctx()).text).toBe('丰川祥子')
   })
 })

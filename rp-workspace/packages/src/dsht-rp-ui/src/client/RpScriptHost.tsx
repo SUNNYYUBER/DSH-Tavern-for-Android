@@ -30,6 +30,7 @@ import { rpApi } from './rpc.ts'
 import { useRpSlug } from './RpStateFloat.tsx'
 import { registerOwnFloatResolver } from './script-ui-guard.ts'
 import { notifyDisplayMutation } from './RpNativeChat.tsx'
+import { refreshHostMacroEnv } from './host-macro-bridge.ts'
 import {
   buildIframeDocument, deepMergeAssign, deepMergeInsert, getButtonEventId, handleBridgeCall,
   parseIncomingMessage, type ScriptStatus, type SessionScript, type ThBridgeDeps, type ThChatMessage,
@@ -207,9 +208,35 @@ export const TH_HOST_EVENT = 'dsht-rp-ui:th-host-event'
  */
 let lastContextSnapshot: ThContextSnapshot | null = null
 
+/** 最近一次装载过上下文快照的 RP 会话 id（宿主门面 `chatId`/`getCurrentChatId` 的取数点，T-44）。
+ *  与 `lastContextSnapshot` 同生命周期：会话关闭（destroy）时清空。 */
+let lastActiveSessionId: string | null = null
+
 /** 读最近一次会话上下文快照（RP 从未打开过 → null，门面退化为形状完整的空壳） */
 export function getLastRpContextSnapshot(): ThContextSnapshot | null {
   return lastContextSnapshot
+}
+
+/**
+ * 读当前活跃 RP 会话 id（无 → null）。宿主门面 `getCurrentChatId()` / `chatId` 用它。
+ * 真 ST 的对应物是 `characters[this_chid]?.chat`（`script.js:540-547`）——都是
+ * 「当前打开的那个聊天的标识」，脚本只拿它做真值判定与身份比较。
+ */
+export function getActiveRpSessionId(): string | null {
+  return lastActiveSessionId
+}
+
+/**
+ * 重载当前 RP 会话的上下文（宿主门面 `reloadCurrentChat` 的落点，T-44）。
+ * 重新拉 `/context` + `/chat/messages` 并推给全部帧（脚本帧 + 楼层帧）——
+ * 与真 ST `reloadCurrentChatUnsafe`（`script.js:1683-1700`：清空 → 重取 → 重印）
+ * 的**可观测效果**一致。显示面重渲染由 `RpNativeChat.notifyDisplayMutation()` 承担（调用点见 index.tsx）。
+ * @returns 是否真的触发了重载（false = 当前无活跃运行时 → 调用方据此出声降级）
+ */
+export function reloadActiveRpContext(): boolean {
+  let hit = false
+  for (const rt of runtimes.values()) { rt.loadContextSnapshot(); hit = true }
+  return hit
 }
 
 /** chat.nodes 迭代形状（key/kind 顶层 + data.finalNode.messageId 楼层解析 + data.blocks 流式文本源）
@@ -358,6 +385,12 @@ class SessionRuntime {
 
   destroy(): void {
     this.destroyed = true
+    // T-44：本运行时要退场 → 清掉「当前活跃会话」标记（宿主门面 getCurrentChatId 不该
+    // 继续报一个已经关掉的会话）与同步宏环境（否则会用旧角色的身份做宏替换）
+    if (lastActiveSessionId === this.sessionId) {
+      lastActiveSessionId = null
+      refreshHostMacroEnv(null, null)
+    }
     this.mountGen += 1 // 【鲁棒轮】让 await 窗口内的旧 mountScript 续体全部放弃
     if (this.consoleNotifyTimer) { clearTimeout(this.consoleNotifyTimer); this.consoleNotifyTimer = 0 }
     for (const f of this.frames.values()) f.remove()
@@ -822,6 +855,10 @@ class SessionRuntime {
       // T-37：宿主页 SillyTavern.getContext() 读同一份快照（引用不变 → 门面记忆化命中，
       // 脚本里 `preset_settings_openai !== 上次` 的身份比较不会误判成「变了」）
       lastContextSnapshot = snapshot
+      // T-44：当前活跃会话 id（宿主门面 chatId/getCurrentChatId）
+      lastActiveSessionId = this.sessionId
+      // T-44：同步宏环境预热（身份/变量/自定义宏；单源复用显示期数据面，失败静默保留旧值）
+      refreshHostMacroEnv(this.slug, this.sessionId)
       for (const [scriptId, frame] of this.frames) {
         frame.contentWindow?.postMessage({
           '__dsht_th': true, secret: this.secret, scriptId,

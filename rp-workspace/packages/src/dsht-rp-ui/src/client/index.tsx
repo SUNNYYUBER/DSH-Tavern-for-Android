@@ -19,12 +19,13 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { ensureStyle } from './style.ts'
 import { installHostVendor, installHostFontAwesome, installHostToastr, installHostSillyTavern } from './host-vendor.ts'
 import { RpOverlay, RP_OPEN_EVENT } from './RpOverlay.tsx'
-import { RpAssistantNodeView, RpRegenerateAction, RpUserNodeView, RpVariantActions } from './RpNativeChat.tsx'
+import { RpAssistantNodeView, RpRegenerateAction, RpUserNodeView, RpVariantActions, notifyDisplayMutation } from './RpNativeChat.tsx'
 import { RpPresetSwitch } from './RpPresetSwitch.tsx'
 import { RpImportDockEntry } from './RpImportDock.tsx'
 import { RpGreetingDock } from './RpGreetingDock.tsx'
 import { RpStateFloat } from './RpStateFloat.tsx'
-import { RpScriptHost, RpScriptButtonsBar, getLastRpContextSnapshot } from './RpScriptHost.tsx'
+import { RpScriptHost, RpScriptButtonsBar, getActiveRpSessionId, getLastRpContextSnapshot, reloadActiveRpContext } from './RpScriptHost.tsx'
+import { hostSubstituteParams, hostSubstituteParamsExtended, getHostMacroEnv } from './host-macro-bridge.ts'
 import { RpTokenMeter } from './RpTokenMeter.tsx'
 import { installProcessFolder } from './ProcessFolder.ts'
 import { installScriptUiGuard } from './script-ui-guard.ts'
@@ -119,8 +120,34 @@ export function apply(ctx: {
   // 宿主 SillyTavern 门面（T-37）：真 ST 宿主页有 globalThis.SillyTavern = {libs, getContext}
   //（SillyTavern/public/script.js:292）。卡的宿主注入脚本（TH 同源形态，外链 inject.js）
   // 首行就 `SillyTavern.getContext()` → 缺它直接 ReferenceError 且整段脚本作废。
-  if (installHostSillyTavern({ getSnapshot: getLastRpContextSnapshot })) {
-    console.info('[dsht-rp-ui] host-vendor 补挂宿主全局: SillyTavern（getContext 快照驱动）')
+  // T-44（心跳 51）：除快照外再注入四个提供者 —— 卡脚本 `inject.js` 实际用到的
+  // `getCurrentChatId`(2 处) / `reloadCurrentChat`(7 处) / `substituteParams`(4) /
+  // `substituteParamsExtended`(2)（`streamingProcessor` 走门面内建 null，见 host-vendor.ts）。
+  if (installHostSillyTavern({
+    getSnapshot: getLastRpContextSnapshot,
+    // chatId / getCurrentChatId()：当前 RP 会话 id（无可返回 undefined，与基准同形）
+    getChatId: () => getActiveRpSessionId() ?? undefined,
+    // reloadCurrentChat：重取会话上下文（reloadActiveRpContext）+ 失效显示面缓存并重渲染
+    //（notifyDisplayMutation —— 其注释自述等价于真 TH builtin.reloadAndRenderChatWithoutEvents）。
+    // 无活跃会话时不触发任何缓存副作用，返回 false 让门面出声降级。
+    reloadChat: () => {
+      const hit = reloadActiveRpContext()
+      if (hit) notifyDisplayMutation()
+      return hit
+    },
+    // substituteParams / substituteParamsExtended 的单实现（宏语义在 dsht-plugin-shared/macros.ts）。
+    // **两者必须分别注入**：形参位置不同，混用会让 Extended 的 additionalMacro/postProcessFn
+    // 静默丢失（设备实测抓到过；见 HostStContextSource 的注释）。
+    substituteParams: hostSubstituteParams,
+    substituteParamsExtended: hostSubstituteParamsExtended,
+    // name1 / name2（真 ST 全局）：取同步宏环境里已水合的身份，**每次访问取活值**
+    //（宏环境由 loadContextSnapshot 触发异步水合，若在门面构建时读一次会一直陈旧）
+    getNames: () => {
+      const env = getHostMacroEnv()
+      return env === null ? {} : { name1: env.user, name2: env.char }
+    },
+  })) {
+    console.info('[dsht-rp-ui] host-vendor 补挂宿主全局: SillyTavern（getContext 快照驱动 + T-44 四提供者）')
   }
   // 批次修复 17：会话列表排序默认「手动排序」（用户定案：方便给角色卡排序）。
   // DSH ui-workspace 的视图 store 以整棵 state JSON 持久化到 localStorage（key=dsh.workspace.view.v5，

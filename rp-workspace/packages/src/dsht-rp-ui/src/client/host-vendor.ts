@@ -155,6 +155,40 @@ export interface HostStContextSource {
   getSnapshot?: () => ThContextSnapshot | null
   /** 注入 uuid 源（测试用；缺省走 crypto.randomUUID） */
   uuid?: () => string
+  /**
+   * 当前聊天标识（T-44）。真 ST：`chatId` = `characters[this_chid]?.chat` / 群聊 `chat_id`
+   * （`st-context.js:122-125`），`getCurrentChatId()` 返回同一值（`script.js:540-547`）。
+   * 我们的会话与聊天一一对应 → 返回**当前 RP 会话 id**；无会话 → `undefined`。
+   */
+  getChatId?: () => string | undefined
+  /**
+   * 重载当前聊天（T-44）。真 ST：`reloadCurrentChat` = `reloadChatMutex.update` →
+   * 清空 + 重取 + 重印 + `emit(CHAT_CHANGED)`（`script.js:1676-1700`）。
+   * 我们的等价物 = 重新拉会话上下文/消息 + 失效显示面缓存并重渲染
+   * （`RpNativeChat.notifyDisplayMutation`，注释自述「真 TH 的 builtin.reloadAndRenderChatWithoutEvents 走本通道」）。
+   * 返回是否真的触发了重载（false = 当前无 RP 会话）。
+   */
+  reloadChat?: () => boolean | Promise<boolean>
+  /**
+   * 同步宏展开（T-44）。`substituteParams` 与 `substituteParamsExtended` 都走这个提供者
+   * ——单实现，硬约束「禁止另写一份宏引擎」。实现见 `host-macro-bridge.ts`。
+   */
+  substituteParams?: (content: unknown, ...rest: unknown[]) => string
+  /**
+   * `substituteParamsExtended(content, additionalMacro, postProcessFn)`（T-44 续，心跳 51）。
+   * **必须与 `substituteParams` 分开注入**：两者的形参位置不同
+   *（`script.js:2756` vs `script.js:2922`）。把 Extended 的实参原样转给 `substituteParams`
+   * 会让 `additionalMacro` / `postProcessFn` **静默丢失** —— 设备实测：
+   * 第 2 参 `{}` 被当成 `options` 对象解析，于是 `dynamicMacros` 与 `postProcessFn` **双双失效且无任何报错**
+   *（卡的正则消毒静默不生效）。**该缺陷是被设备探针抓到的，不是被单测抓到的**（见下方单测补强说明）。
+   */
+  substituteParamsExtended?: (content: unknown, additionalMacro?: unknown, postProcessFn?: unknown) => string
+  /**
+   * 用户名 / 角色名（T-44 续，心跳 51）= 真 ST 的全局 `name1` / `name2`
+   * （`st-context.js:120-121` 直接返回它们）。**每次访问取活值**（宏环境异步水合，
+   * 若在门面构建时读一次会拿到空名并一直陈旧）。
+   */
+  getNames?: () => { name1?: string; name2?: string }
 }
 
 /** RFC4122 v4；宿主无 crypto.randomUUID 时用 Math.random 兜底（脚本只要求「能拿到一个 id」） */
@@ -302,6 +336,19 @@ export function flushHostExtensionSettings(): void {
  * 缺的数据字段保持 undefined / 空数组形状——**绝不因为缺数据抛错**，脚本首行就是
  * `for (const p of ctx.chatCompletionSettings.prompts)`）。
  */
+/** 门面成员降级告警去重（L42：**有意降级也必须出声**，否则排查线索为零） */
+const degradedWarned = new Set<string>()
+function warnFacadeDegraded(name: string, why: string): void {
+  if (degradedWarned.has(name)) return
+  degradedWarned.add(name)
+  console.warn(`[dsht-rp-ui] 宿主门面 ${name} 降级：${why}`)
+}
+
+/** 只测试用：清空降级告警去重表 */
+export function __resetFacadeDegradedWarnings(): void {
+  degradedWarned.clear()
+}
+
 export function buildHostStContext(src: HostStContextSource = {}): Record<string, unknown> {
   let snap: ThContextSnapshot | null = null
   try { snap = src.getSnapshot !== undefined ? src.getSnapshot() : null } catch { snap = null }
@@ -317,6 +364,79 @@ export function buildHostStContext(src: HostStContextSource = {}): Record<string
   const ext = readHostExtensionSettings()
   const i18n = getHostI18n()
   const tools = getHostToolManager()
+
+  // ---- T-44：四个提供者的取用包装（提供者缺失一律「出声降级」，绝不静默 no-op）----
+
+  /** 当前聊天标识：无会话 → undefined（= 基准两个分支都不命中的返回） */
+  const readChatId = (): string | undefined => {
+    try {
+      const v = src.getChatId !== undefined ? src.getChatId() : undefined
+      return (typeof v === 'string' && v.length > 0) ? v : undefined
+    } catch { return undefined }
+  }
+  /** 当前用户名 / 角色名（name1 / name2）。角色名回落快照里的 character.name，用户名无来源即 undefined */
+  const readNames = (): { name1?: string; name2?: string } => {
+    let n: { name1?: string; name2?: string } = {}
+    try { n = src.getNames !== undefined ? (src.getNames() ?? {}) : {} } catch { n = {} }
+    const name1 = (typeof n.name1 === 'string' && n.name1.length > 0) ? n.name1 : undefined
+    const name2 = (typeof n.name2 === 'string' && n.name2.length > 0)
+      ? n.name2
+      : (typeof charName === 'string' && charName.length > 0 ? charName : undefined)
+    return { name1, name2 }
+  }
+  /** reloadCurrentChat：异步；无提供者 → 出声降级并 resolve（保持基准「不 reject」形状） */
+  const callReloadChat = async (): Promise<void> => {
+    const fn = src.reloadChat
+    if (fn === undefined) {
+      warnFacadeDegraded('reloadCurrentChat', '未接线 reloadChat 提供者（当前无 RP 会话，或宿主未注入）')
+      return
+    }
+    try { await fn() } catch (e) {
+      console.warn('[dsht-rp-ui] reloadCurrentChat 失败:', (e as Error).message)
+    }
+  }
+  /** substituteParams / substituteParamsExtended 共用入口（单实现；求值体在 host-macro-bridge） */
+  const callSubstituteParams = (content: unknown, rest: readonly unknown[]): string => {
+    const asText = (): string => (typeof content === 'string' ? content : (content ? String(content) : ''))
+    const fn = src.substituteParams
+    if (fn === undefined) {
+      warnFacadeDegraded('substituteParams', '未接线 substituteParams 提供者（宏将原样保留）')
+      return asText()
+    }
+    try { return fn(content, ...rest) } catch (e) {
+      console.warn('[dsht-rp-ui] substituteParams 求值失败（原文透传）:', (e as Error).message)
+      return asText()
+    }
+  }
+  /**
+   * `substituteParamsExtended(content, additionalMacro, postProcessFn)`。
+   * 基准里它**就是** `substituteParams(content, {dynamicMacros: additionalMacro, postProcessFn})`
+   *（`script.js:2756-2757`，已标 deprecated）—— 故：
+   *  ① 有专用提供者 → 直接用它（形参位置由提供者自己保证）；
+   *  ② 只注入了 `substituteParams` → 按上面的等价关系**显式映射成 options**（**不能原样转发实参**：
+   *     第 2 参 `{}` 会被当成 options 对象，`additionalMacro`/`postProcessFn` 双双丢失，
+   *     设备实测过这条静默失败）；
+   *  ③ 都没有 → 出声降级 + 原文透传。
+   */
+  const callSubstituteParamsExtended = (content: unknown, additionalMacro?: unknown, postProcessFn?: unknown): string => {
+    const asText = (): string => (typeof content === 'string' ? content : (content ? String(content) : ''))
+    const ext = src.substituteParamsExtended
+    if (ext !== undefined) {
+      try { return ext(content, additionalMacro, postProcessFn) } catch (e) {
+        console.warn('[dsht-rp-ui] substituteParamsExtended 求值失败（原文透传）:', (e as Error).message)
+        return asText()
+      }
+    }
+    if (src.substituteParams !== undefined) {
+      return callSubstituteParams(content, [{
+        dynamicMacros: (additionalMacro ?? {}) as Record<string, unknown>,
+        postProcessFn: typeof postProcessFn === 'function' ? postProcessFn : undefined,
+      }])
+    }
+    warnFacadeDegraded('substituteParamsExtended', '未接线 substituteParams(Extended) 提供者（宏将原样保留）')
+    return asText()
+  }
+
   return {
     chatCompletionSettings: {
       ...rawSettings,
@@ -373,6 +493,54 @@ export function buildHostStContext(src: HostStContextSource = {}): Record<string
     isMobile: true,
     // extension_settings 的持久化入口（localStorage 同键；落盘后保持引用稳定）
     saveSettingsDebounced: (): void => saveHostExtensionSettingsDebounced(ext),
+
+    // ---- 心跳 51（T-44）：缺口 6 → 1 的「四个提供者接线」----
+    // 判据纪律：这里只补「真 ST 有、我们无」的成员（L36）；语义逐条对质基准源码，
+    // 不实现可实现的就**显式降级并出声**，不做静默假成功（L42）。
+
+    // ST：`chatId`（属性）与 `getCurrentChatId()`（函数）**并存且同值**
+    //（`st-context.js:122-125` + `script.js:540-547`）。缺失时返回 undefined——
+    // 与真 ST 在没有角色/群聊时的返回一致（`getCurrentChatId` 两个分支都不命中 → undefined）。
+    chatId: readChatId(),
+    getCurrentChatId: (): string | undefined => readChatId(),
+
+    // ST：`reloadCurrentChat = reloadChatMutex.update`（`script.js:1676`）——异步、串行化。
+    // 我们的等价物 = 重取会话上下文 + 失效显示面缓存并重渲染（见 HostStContextSource 注释）。
+    // 无提供者时**出声降级**（不静默 no-op）：给一次 console.warn，返回已 resolve 的 Promise
+    //（保持基准的「不 reject」形状，避免把卡脚本带进未捕获拒绝）。
+    reloadCurrentChat: (): Promise<void> => callReloadChat(),
+
+    // ST：`substituteParams(content, options)`（`script.js:2922`）与
+    // `substituteParamsExtended(content, additionalMacro, postProcessFn)`（`script.js:2756`）。
+    // 二者共用**同一引擎**，但**形参位置不同 → 必须分开注入**（否则 Extended 的第 2/3 参被
+    // 当成 options 对象而静默丢弃；设备实测抓到过，见 HostStContextSource 注释）。
+    substituteParams: (content: unknown, ...rest: unknown[]): string => callSubstituteParams(content, rest),
+    substituteParamsExtended: (content: unknown, additionalMacro?: unknown, postProcessFn?: unknown): string =>
+      callSubstituteParamsExtended(content, additionalMacro, postProcessFn),
+
+    // ST：`export let streamingProcessor = null`（`script.js:455`）——初值就是 null，
+    // 生成期间才被赋成流式处理器。我方生成走 DSH 原生通道，**没有**等价对象 →
+    // 如实给 `null`（= 基准的初值语义，不是"假装有"）。卡脚本对此已 null-guard
+    //（`inject.js:1347` `getContext()?.streamingProcessor || null`），行为一致。
+    streamingProcessor: null,
+
+    // ---- 心跳 51 续：`audit-card-context-surface.mjs` 扩域后量出的第二批缺口 ----
+    // 来源是 TH **扩展**形态的脚本（实测 `chat-history-backup/index.js` 用 `getContext()` 裸调用，
+    // 旧口径一条都提不出来 → 曾是假绿）。以下四项逐条对质基准后落地。
+
+    // ST：`name1` / `name2`（`st-context.js:120-121`）。用**访问器**而非普通属性：
+    // 宏环境是异步水合的，构建时读一次会拿到空名并一直陈旧到下一次快照推送。
+    get name1(): string | undefined { return readNames().name1 },
+    get name2(): string | undefined { return readNames().name2 },
+
+    // ST：`groupId: selected_group`（`st-context.js:121`）。ST 无群聊时该全局为 `null`
+    //（`script.js` 的 `selected_group = null`）——DSHT **没有群聊功能**，故如实恒为 `null`。
+    // 实测用法（`chat-history-backup/index.js:647/666`）是 `if (context.groupId)` 真值门
+    // → 恒走 else 分支，语义正确（不是"补个空壳"）。
+    groupId: null,
+    // ST：`groups`（群聊列表，`st-context.js` 返回体）。同样如实为空数组
+    //（实测用法 `context.groups?.find(g => g.id === context.groupId)` 在 groupId 恒 null 时不可达）。
+    groups: [] as unknown[],
   }
 }
 

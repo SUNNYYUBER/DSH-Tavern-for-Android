@@ -412,6 +412,94 @@
   （`getCurrentChatId` 同步取值 / `reloadCurrentChat` 走既有会话重载 / `substituteParams(Extended)` 路由到
   **我方既有宏引擎**（**禁止另写一份**，否则就是与基准的第 N 份漂移实现）/ `renderExtensionTemplateAsync` 走扩展模板文件读+替换），
   每项**逐条对质基准 `st-context.js` / `script.js`** 后再落，配套单测 + `--selftest` 式正控。
+- ✅ **心跳 51 收口（缺口 13 → 6 → 1，宿主门面 27 → 37 个成员）**：
+  - `getCurrentChatId` / `chatId` —— 新增 `getActiveRpSessionId()`（`RpScriptHost`），
+    会话 destroy 时清空（不报一个已关掉的会话）。基准两者**并存且同值**（`st-context.js:122-125`）。
+  - `reloadCurrentChat` —— `reloadActiveRpContext()`（重取 `/context` + `/chat/messages` 并推全部帧）
+    + `notifyDisplayMutation()`（失效显示缓存 + bump epoch 重渲染；其注释自述 = 真 TH
+    `builtin.reloadAndRenderChatWithoutEvents` 的等价通道）。**无提供者时出声降级**（不静默 no-op）。
+  - `substituteParams` / `substituteParamsExtended` —— 新建 `host-macro-bridge.ts`：
+    **单源复用既有宏引擎** `dsht-plugin-shared/macros.ts:expandTavernMacros`（零依赖纯函数，
+    可直接打进客户端 bundle），数据面复用 `display-compiler:loadDisplayRenderCtx`（身份/变量/自定义宏）
+    + 补三个作用域树（`/dsht-tavern-helper/variables?scope=…`）→ 落进**同步槽位**。
+    **双签名**都支持（options 对象 与 ST legacy 位置参数，卡实际用 `substituteParams(t, undefined, name2)`）。
+    环境未就绪 → **原文透传 + `console.warn` 一次**（不伪造身份）。
+  - `streamingProcessor` —— 如实 `null`（= 基准初值 `script.js:455`；卡已 null-guard）。
+  - 为支持 `dynamicMacros` / `postProcessFn`，**扩展共享引擎**（非另写一份）：
+    `TavernMacroContext` 加 `dynamicMacros`（键小写归一，命中即覆盖注册宏，`MacroEngine.js:178-220`）
+    与 `postProcess`（**只作用于已解析宏**——未知宏在基准里 `executeMacro` 之前就 return raw，
+    加工它会把 `{{未知}}` 也转义掉；钩子抛错返回未加工结果）。
+  - 剩余 **1 个**：`renderExtensionTemplateAsync` = **T-48**（与 T-42 同域）。
+- **📌 心跳 51 审计工具扩域（两次修工具，都是"防假绿"）**：
+  ① 只认 `SillyTavern.getContext()` → TH 扩展的**裸 `getContext()`** 取法一条都提不出来，
+  却打印 `✅ 全部具备`（**假绿**：`chat-history-backup/index.js` 有 16 处 getContext 报 0 条）→
+  补裸取法 + 零访问输出 **「⚠️ 不可判定」**（并在结论行分离计数），立刻量出 7 个真缺口；
+  ② `indexOf('return {')` 被**内层函数**的返回体劫持（加了 `readNames` 之后门面只解析出 2 个成员）→
+  改为**按括号深度定位函数体 + 深度 1 处找 return**。**这次没酿成假绿靠 `SURFACE_MIN_MEMBERS` floor**
+  （低于阈值 FATAL 而不给结论）。沉淀 **L47 / L48 / L49**。
+  并新增**分面差额**输出（宿主面 37 vs iframe 面 9），**不进退出码**（否则恒红 = 没有门，L14）。
+- 🔴 **📌 心跳 51 实机验收抓到的缺陷（单测抓不到，只有设备探针能抓）**：
+  `ctx.substituteParamsExtended('{{char}}', {}, wrap)` 在真机上**不套 `postProcessFn`**。
+  根因 = 实现把 Extended 的实参**原样转发**给 `substituteParams` 提供者 → 第 2 参 `{}` 被当成
+  **options 对象**解析 → `additionalMacro` 与 `postProcessFn` **双双静默丢失且无报错**
+  （卡的 `substituteParamsExtended(findRegex, {}, sanitizeRegexMacro)` 会丢掉正则消毒）。
+  基准事实（`script.js:2756-2757`）：`substituteParamsExtended` **就是**
+  `substituteParams(content, {dynamicMacros: additionalMacro, postProcessFn})`，**两者形参位置不同**
+  （`:2756` vs `:2922`），故**不能共用同一个提供者签名**。
+  ✅ 已修：`HostStContextSource` 拆出**专用** `substituteParamsExtended?` 提供者；门面三段式
+  （① 专用提供者存在 → 直接用；② 只有 `substituteParams` → **显式映射成 options**；③ 都没有 → 出声降级 + 原文透传）。
+  `hostSubstituteParamsExtended` 形参改为 `unknown` 并在边界做运行时归一（非对象 `additionalMacro` 忽略且留痕）。
+  ⚠️ **同时修正了原单测** —— 它原本断言「Extended 与 substituteParams **共用同一提供者**、实参原样转发」
+  （`expect(seen).toHaveLength(1)`），**把缺陷钉成了契约**。已重写为 6 条契约测试，含**负控**（断言**不得**原样转发）。
+  沉淀 **L50**。
+- **心跳 51 验收**：三闸门 **0 错**；**971 测试 / 49 文件全绿**（+48）；`stage4-regression` **21/21**；
+  设备探针 **11/11 PASS**（修复前 `B_ext_pp`/`E_ext_dyn`/`F_ext_dyn_nofn` 全 FAIL；新增 `\,` 转义真机返 `a,b`）。
+- **📌 心跳 51 顺带收口两处「防线之外」的退化**：
+  ① 🔴 **`macros.ts` 整个文件对 git 变成"二进制"** —— `\,` 转义用的哨兵以**裸 NUL 字节**落在源码里
+  （`git diff --stat` 回 `Bin 18333 -> 21642`、`grep -n` 只回 `Binary file`）→ **该文件此后所有改动都无法进 review**，
+  而它偏偏是全项目最核心的纯函数（宏引擎）。已改写为等价 `\0` 转义（运行时值不变），
+  **且先补两条决定性用例**（该哨兵此前**零覆盖**：单元素含逗号必须原样返回 `a,b`）。沉淀 **L51**。
+  ② 🔴 **`fetchScope` 的 `if (!r.ok) return {}` 是新造的静默失败**（服务端 5xx 与"确实没变量"在调用点等价）
+  → 改为按 `scope:原因` **去重出声告警**（L42）；设备包内核验新文案已进包。
+  ③ **注意 L52**：本轮 md5 产物对照被**并发实例的构建**污染（`lib/client.js` 13:40:25 vs 基线 13:40:20）
+  → 等价性结论改由「决定性单测 + 产物晚于源码 + 设备探针」支撑，**不可只看 md5**。
+
+### T-46　🆕 **iframe 门面显著窄于宿主门面**（心跳 51 量出，未定性为缺陷）
+- **量出的数**：卡脚本访问的 19 个真 ST 成员里，`th-shim.ts:buildStContextFacade()` **缺 16 个**
+  （`eventSource` / `eventTypes` / `t` / `callGenericPopup` / `POPUP_TYPE` / `isMobile` /
+  `substituteParams(Extended)` / `getCurrentChatId` / `reloadCurrentChat` / `streamingProcessor` / 工具注册三件 / …）；
+  iframe 面 9 个成员 vs 宿主面 37 个。
+- **为什么现在不修**：`th-shim.ts` 整段是**构建期拼进 iframe 的字符串**（`buildShimSource`），
+  **无法 `import`** 共享模块（T-41 已记录同一约束：要么改成「注入式装配」，要么在字符串里再抄一份 =
+  **违反单源纪律，不做**）。这是一次独立重构（与 T-41 同一课题）。
+- **触发条件**：出现**卡脚本在 iframe 内**用这些成员（尤其 `ctx.eventSource` / `ctx.substituteParams`）
+  的**实测报错**时再升。当前所有已知报错都在**宿主帧**，故不阻塞。
+- **下一步判据**：把 iframe 面的这些成员按「可经 postMessage 桥」/「必须同步」/「需要注入式装配」三类
+  先做一次可行性分档（**零风险静态工作**），再决定是否升。
+
+### T-47　🆕 **宿主门面仍缺的 3 个成员**（心跳 51 量出，属"需要数据模型决策"而非接线）
+- `characters`（4 次）/ `characterId`（12 次）/ `chatMetadata`（9 次）—— 来源是 TH 扩展形态脚本
+  `chat-history-backup/index.js` 的实测用法（`:647/666/671/1194/2545`）。
+- **为什么没顺手补**：
+  - `characters` + `characterId` 是**一对**，且基准语义是「角色数组 + 数组下标」，
+    而我们的模型是「一会话一角色，以 slug 标识」——**不能只补一个**（否则 `characters[characterId]` 落空，
+    这恰是"只补空容器 = 静默失败"的变体）。要么建一致的角色列表模型，要么显式登记为差异。
+  - `chatMetadata` 基准是**会被持久化的每聊天元数据对象**；我们**没有**这个存储
+    → 给 `{}` 会让脚本的写入**静默丢失**（比 `undefined` 更危险，脚本的 `if (ctx.chatMetadata)` 守卫会失效）。
+- **状态**：⏳ 登记，**不做**（需先定数据模型；且当前无实测触发——DSHT 目前只跑 TH **脚本**，
+  未跑扩展文件系统）。
+
+### T-48　🆕 `renderExtensionTemplateAsync`（最后一个宿主面缺口，**与 T-42 同域**）
+- **契约**：`renderExtensionTemplateAsync(extName, templateId, data, sanitize, localize)`
+  → 读 `scripts/extensions/<extName>/<templateId>.html` + 模板替换 + 消毒 + 本地化（`extensions.js:137`）。
+- **为什么它与 T-42 绑在一起**：卡里唯一的调用是 `renderExtensionTemplateAsync('regex', 'editor')`
+  （`inject.js:4555`）—— 要的是 **ST 正则扩展的 `editor.html`**，而"把 ST 正则面板搬进来"正是
+  **T-42 的 A 选项**。宿主换不出这个模板。
+- **降险事实**：该契约另有**独立消费者**——已装扩展 `chat-history-backup` 调
+  `renderExtensionTemplateAsync('third-party/chat-history-backup', 'settings')`，模板就是**它自己目录里的
+  `settings.html`**（已核实存在）。所以一旦 T-42 决定引入扩展文件存储，这个 API 应**通用实现**
+  （读文件 + 模板替换 + 缺文件即抛错，**不假装成功**）。
+- **状态**：⏳ 随 T-42 一并决策。
 
 ### T-45　🆕 观察：WebView 启动竞态 → 停在 `chrome-error://chromewebdata/` 且**不自动重试**（心跳 50）
 - **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在
