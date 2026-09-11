@@ -12,10 +12,17 @@
 | 源码 runtime | **0.1.5-rc.1**（sentinel v250，46 个心跳已推完阶段 0/1/2/3/4） |
 | 你手机上的包 | **arm64-release，9-11 11:0x 构建 = 0.1.5-rc.1**（sentinel v250） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1019 项全绿（50 文件）** |
-| 未提交改动 | 无（心跳 53 的审计修复已全部提交） |
+| 单测 | **1022 项全绿（50 文件）** · `typecheck` 三段式 **0 错**（心跳 54 复跑确认） |
+| 未提交改动 | 无（心跳 54 的文档与工具已提交） |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
+- **心跳 54 · 实例B** = **阶段二长尾「UI 面」逐项走通 + 把 D-5b 从「待拍板」变成「有数字可拍板」**：
+  ① UI 面五项（**编辑 / 回退 / 变体 / 世界书 / MVU**）逐项实测，**全程零写入**（动作前后 3 个落盘文件
+  md5 完全一致）、**未捕获异常 / console 错误 = 0**；**`stage4-regression` 首次 21/21 全过**
+  （长期悬置的 20/21 唯一失败项 = `variant/groups` 需 UI attach 会话，随 attach 闭合）。
+  仅剩**未覆盖**一处：变体**切换**的端到端（需构造 ≥2 变体才能触发 UI 变体条）。
+  ② **D-5b 只读报告产出**（新工具 `scripts/audit-dirty-floors.mjs`）→ 见 **T-53**。
+  沉淀 LEARNINGS **L62–L64**。**本心跳未改产品源码（唯一"缺陷"在探针自身），故无需重打 APK。**
 - **心跳 53** = **回头审「已修」标记本身**：§4 兼容面 7 项里 **5 项的 ✅ 与代码现状不符**
   （T-16 / T-17 / T-18 / T-19 / T-22），全部真修 + 补反控（每条 stash 源码后用例必转红）。
   沉淀 LEARNINGS **L61**：同一语义存在多份副本时，「改了一处」不等于「修好一个功能」。
@@ -115,7 +122,7 @@
 | T-18 | `{{match}}` 大小写不敏感 | ✅ 已修（2026-09-11 补齐主引擎） | **原声明不成立**：原写「v181 改 `/gi`」，但那次只改到 `th-shim.ts:1270` 的**同步路径**；主链路的 [engine.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/regex/engine.ts#L202) 一直是 `/g` → 大写 `{{MATCH}}` 在 prompt/display 主链路漏替换成字面量（display-compiler 已是 `/giu`，同一语义两处不一致）。<br>**并同批修 R4（trimStrings 作用点，属 T-18 同条审计项）**：基准 `filterString`（TT engine.js:613-621）只对**每个捕获组内容**过滤且 trimString 自身过宏；我们原实现对**替换后整串** split-join → 会把替换串里用户字面写的标记一并削掉。两处引擎均改为基准语义。<br>**顺带推翻一条被固化的错期望**：原测例名「`{{match}}` 引用与 trimStrings」断言 `'a foo b'`（即缺陷行为）——已按基准重写为 5 条。反控 5 例红 |
 | T-19 | shim `Mvu.parseMessage` 与 `state/mvu.ts` 不对称 | ✅ 已修（2026-09-11 真修） | **原声明不成立**：原写「直调 `state/mvu.ts` 的 `parseUpdateVariable`（同源，非各写一份）」——**不成立**。`th-shim.ts` 是**构建期注入的字符串**（`buildShimSource` 的模板串），**没有 import 能力**，实际是自写的一份简化版：只认 `<JSONPatch>` 子块，缺 `<initvar>` YAML 树与 `_.set/_.inc` 指令行；且用 `.match()` 单次匹配（多块只解析第一个）+ 无 op 白名单 + 无 `insert` 的 index 并入 + 无 `from`。本次按 `state/mvu.ts` 四来源逐条镜像为 [th-shim.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/th-shim.ts#L1780-L2010)，并加**差分测试**（同输入下 `Mvu.parseMessage` ≡ `parseUpdateVariable`，含 matchAll/白名单/insert/from 回归）6 例；反控 5 例红。<br>⚠️ 硬约束：两侧无法共享模块，改任一侧**必须同步另一侧**（已写进两侧注释） |
 | T-20 | `getTavernRegexes` 未对齐真 TH **snake_case** 形状 | ✅ 已修（2026-09-10，e78e433） | 出口/入口双向映射 + 契约测试 `th-regex-contract.spec.ts` |
-| T-21 | `getChatMessages` / `getWorldbook` / `deleteVariable` 字段透传 | ✅ 已修（2026-09-10，ae59380） | 逐项对真 TH 类型定义补齐 |
+| T-21 | `getChatMessages` / `getWorldbook` / `deleteVariable` 字段透传 | ✅ 已修（2026-09-11 补 `delete_occurred` 路径口径） | 逐项对真 TH 类型定义补齐。前两项有测试支撑、核验通过；**`delete_occurred` 另有缺陷**：值本身补上了（2026-09-10），但路径判存 [dshtPathExists](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/th-shim.ts#L699-L733) 只按 `.` 切分，而 host 用 **lodash 路径**（`a.list[0]`）→ 下标路径被当成单个键名、恒判"不存在" → **`delete_occurred` 对下标路径永远是 `false`**（脚本据此误判"没删掉"）。已镜像 host 的 `lodashPathToPointer` 分词（含 `a["b"]` 形态），差分用例 3 条，反控 1 例红 |
 | T-22 | `setglobalvar` 宏族 | ✅ 已修（2026-09-11 补宏形态） | **原声明不成立**：落点写 `th-shim.ts:1339+` 是**斜杠形态**（`/setglobalvar`，triggerSlash），而真卡（ExampleGame 等）用的是**宏形态** `{{setglobalvar::…}}`——该形态此前完全没有，整串被当未知宏原样留在提示词且**变量从不写入**。本次在 [macros.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-plugin-shared/macros.ts#L396-L416) 补齐 `set/add/inc/dec/getglobalvar` 五宏（TT `variables.js:250-259` 对照），写侧带 `scope:'global'` 并由两处落盘方分流到 `rp/variables/global.json`；测试 6 例，反控 5 例红 |
 
 ---
@@ -606,6 +613,30 @@
   —— 原子写的临时文件残留，**与本次 force-stop 压测吻合**（写盘途中被杀），非独立缺陷；
   若后续在不频繁强制停止的正常使用下再现，再查 `atomicWriteFile` 的清理路径。
 
+### T-53　🆕 **存量「脏楼层」清洗**（= D-5b；**只读报告已出，等你拍板**）　⏸ 待决策
+- **背景**：Kemini 预设的「aether opus正则一」是 `promptOnly: true` 的 ST 卡正则，
+  语义上**只该变换发往 LLM 的文本、绝不回写 chat 数组**（TT `script.js:5282-5312`）。
+  修复前它在 `pre-step` 就跑并被宿主落成 `user/message` 耐久事件 → 聊天记录被写成
+  `<interactive_input>\n…\n</interactive_input>`，UI 气泡显示包装标签 / `$1` 残留。
+  **源侧已修**（`dsh-plugin/index.ts:3610-3620`：promptOnly 推迟到 `llm/stream`，不落盘），
+  **但存量数据已被污染**。
+- ✅ **心跳 54 只读报告已产出**（`scripts/audit-dirty-floors.mjs`，**零写入**）：
+  - **扫描**：82 会话 / **1515** 条 `append-origin user/message`，**82/82 成功、0 失败**；
+  - **真脏 83 条**（`$1` 字面残留 **62**、嵌套包装 **1**），**受影响会话 13 个**；
+  - **设计用途快照 35 条**（`system-level` 23 / `runtime-ctx` 11 / `skill-list` 1）→ **非风险**；
+  - **assistant 提及该标签 192 条**（模型在"谈论"）→ **非风险**；
+  - **修复生效性**：最后一次污染 = **09-10 08:53 UTC**，最新消息 = **09-11 08:12 UTC**
+    → **23.3 小时零新增** ⇒ **行为已正确，残留纯属存量**。
+- **关键技术决定（写在这里，避免下一轮走弯路）**：
+  1. **不数原始事件**，走官方 0.1.5 迁移链 + `foldSurface` 还原 **surface 视图**
+     （单文件实测 **382 条 `compaction/prune`**；直接数事件会把污染面**大幅高估**）。
+  2. 分档**复用既有 `classify()`**（`tt-projection.ts:89`），**不自造第二套判据**
+     —— 首版自造口径把 **35 条设计用途**误判为脏（**L44/L62**），故脚本内置 `--selftest` **6/6**。
+- **拍板选项**：**A** 清洗（须写带 `.bak` + 幂等 + 收敛断言的写入器，**不可逆 → 先备份再在副本验证**）；
+  **B** 不清洗（旧会话保留可见残留，零成本）。
+- **推荐**：若你不在意旧会话观感 → **选 B**（该项可直接关闭）；若要干净的历史 → 选 A（按本项目铁律先出迁移方案）。
+- **注意（避免造出假待办）**：编辑面板会**忠实预填存储原文**（含包装），这是**基线语义**
+  （ST 编辑亦显示原始 `mes`），且**修复后的新消息不再带包装** → 属本条的下游症状，**不是独立缺陷**。
 
 ### T-45　🆕→✅ **主框架加载失败后无自愈路径 → 永久停在启动屏**（心跳 50 登记 / **心跳 53 定性并修复**）
 - **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在
