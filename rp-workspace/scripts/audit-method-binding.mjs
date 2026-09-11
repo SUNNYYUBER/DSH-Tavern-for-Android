@@ -60,6 +60,48 @@ const ALLOW = new Map([
 
 const EXTRACT_RE = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.([A-Za-z_$][\w$]*)\s*$/
 
+/**
+ * 【心跳 56 补】承接上面那条正则的**盲区**（已有实证：3 处真实写法被判 NO-MATCH）：
+ *   `const append = (session as { append?: … }).append`   ← 带类型断言
+ *   `const onEvt  = emitter!.on`                          ← 带非空断言
+ *   `const f      = (session).append`                     ← 带括号包裹
+ * 三种包装**都不改变 `this` 会丢**这个事实，但上面那条正则要求右侧是纯标识符链，
+ * 于是全部照不出来 —— 而它们恰恰是心跳 47 缺陷的同形写法。
+ * 做法：先宽松抓 `名字 = <任意右侧>`，再**剥掉包层**看接收者是否为纯标识符链。
+ * 剥不干净的（如 `foo().append`、`a[i].append`）一律**不报**（保守，宁缺勿滥；见 L44）。
+ */
+const LOOSE_DECL_RE = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?)\s*$/
+const IDENT_CHAIN_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/
+
+/** 剥掉类型断言 / 非空断言 / 括号包裹，直到露出纯标识符链；剥不干净回 undefined */
+function unwrapReceiver(raw) {
+  let s = raw.trim()
+  for (let i = 0; i < 8; i++) {
+    const before = s
+    const asWrap = /^\(\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s+as\s+[\s\S]+\)$/.exec(s)
+    if (asWrap !== null) s = asWrap[1]
+    const paren = /^\(\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\)$/.exec(s)
+    if (paren !== null) s = paren[1]
+    s = s.replace(/!\s*$/, '')
+    if (s === before) break
+  }
+  return IDENT_CHAIN_RE.test(s) ? s : undefined
+}
+
+/** 从一行声明里解析出「方法引用提取」：返回 { localName, recv, member } 或 null */
+function parseExtraction(line) {
+  const narrow = EXTRACT_RE.exec(line)
+  if (narrow !== null) return { localName: narrow[1], recv: narrow[2], member: narrow[3] }
+  if (/\.bind\s*\(/.test(line)) return null          // 已显式绑定 → 不算提取
+  const loose = LOOSE_DECL_RE.exec(line)
+  if (loose === null) return null
+  const rightmost = /^(.*)\.([A-Za-z_$][\w$]*)$/.exec(loose[2])
+  if (rightmost === null) return null
+  const recv = unwrapReceiver(rightmost[1])
+  if (recv === undefined) return null
+  return { localName: loose[1], recv, member: rightmost[2] }
+}
+
 /** 递归收集 .ts（跳过派生目录 lib/ 与 dist/） */
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -79,9 +121,9 @@ export function audit(files) {
   for (const f of files) {
     const lines = f.text.split('\n')
     for (let i = 0; i < lines.length; i++) {
-      const m = EXTRACT_RE.exec(lines[i])
+      const m = parseExtraction(lines[i])
       if (m === null) continue
-      const [, localName, recv, member] = m
+      const { localName, recv, member } = m
       const rec = { file: f.path, line: i + 1, localName, recv, member, code: lines[i].trim() }
       all.push(rec)
       if (!OFFICIAL_BOUND_MEMBERS.has(member)) continue
@@ -123,7 +165,28 @@ function selftest() {
   const okEmpty = audit([{ path: 'SELFTEST/empty.ts', text: '' }]).violations.length === 0
   console.log(`${okEmpty ? '[ok]' : '[FAIL]'} 零控：空文件 0 违约`)
 
-  return okBad && okGood && okEmpty
+  // 【心跳 56 补】包装形态覆盖：类型断言 / 非空断言 / 括号包裹 —— 都不改变 this 会丢
+  const wrapped = {
+    path: 'SELFTEST/wrapped.ts',
+    text: [
+      'function f(session: any, sessions: any, emitter: any) {',
+      '  const append = (session as { append?: unknown }).append',   // ← 必须被报
+      '  const onEvt = emitter!.on',                                 // ← 必须被报
+      '  const flush = (sessions).flush',                            // ← 必须被报
+      '  const ok = live.append.bind(live)',                         // ← 已绑定 → 不报
+      '  const val = foo().append',                                  // ← 接收者非标识符链 → 保守不报
+      '  const idx = arr[0].append',                                 // ← 同上 → 不报
+      '  const plain = msg.content',                                 // ← 不在名单 → 不报
+      '  return [append, onEvt, flush, ok, val, idx, plain]',
+      '}',
+    ].join('\n'),
+  }
+  const wFlagged = audit([wrapped]).violations.map(v => v.localName).sort()
+  const wWant = ['append', 'flush', 'onEvt']
+  const okWrapped = JSON.stringify(wFlagged) === JSON.stringify(wWant)
+  console.log(`${okWrapped ? '[ok]' : '[FAIL]'} 包装控：断言/非空/括号三种包装被报 ${JSON.stringify(wFlagged)}（期望 ${JSON.stringify(wWant)}）`)
+
+  return okBad && okGood && okEmpty && okWrapped
 }
 
 // ---------------------------------------------------------------- 官方库核对（可选）

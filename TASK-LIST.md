@@ -9,8 +9,8 @@
 
 | 事实 | 说明 |
 |---|---|
-| 源码 runtime | **0.1.5-rc.1**（sentinel v250，46 个心跳已推完阶段 0/1/2/3/4） |
-| 你手机上的包 | **arm64-release，9-11 11:0x 构建 = 0.1.5-rc.1**（sentinel v250） |
+| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v266**，阶段 0/1/2/3/4 已全部推完） |
+| 仓库最新产物 | **x86_64 debug sentinel v265（196,836,000 B）/ arm64 release sentinel v266（128,362,024 B）**，9-11 19:11 构建，载荷标记已解码核验 |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
 | 单测 | **1037 项全绿（50 文件）** · `typecheck` 三段式 **0 错**（心跳 56 复跑确认） |
 | 未提交改动 | 心跳 53–56 的源码/文档/工具（待提交） |
@@ -357,7 +357,17 @@
   （卡以为挂上了、用户看不到、正则也不生效）。**故不先做半吊子修复。**
 - **影响面**：该抛错会**中断卡 bootstrap 的后续三行** ——
   `ChatSquash()` / `MacroNest()` / `syncSPresetToolRegistrations()` 均不再执行。
-- **选项（需用户拍板，见决策点）**：
+- 🔴 **心跳 57 根因修正（决定性，前面 5 个心跳的"选项 A/B"是个伪选择）**：
+  这条缺陷**真正的根不在 DOM，而在更早的一层** —— 我方宿主页**没有 ST 标准的 `/version` 端点**
+  （实机 `GET /version → 404`）。卡的宿主脚本 `inject.js:2210-2218` 用
+  `fetch('/version').then(d => window.versionNumber = +v[0]*10000 + +v[1]*100 + +v[2]).catch(() => 10000)`
+  取版本，**取不到就静默落回 10000** → 该脚本内 **20+ 处** `versionNumber >= 11305` 分叉
+  **全部走旧版分支** → 才去找 ST **旧版**正则面板的 DOM（`#saved_regex_scripts` 等 17 个 id）。
+  **基准（TauriTavern）**：`src/compat-version.js:1` `SILLYTAVERN_COMPAT_VERSION = '1.18.0'`
+  → 卡得 11800 → **走新版路径**（原文注释「11305+ has built-in regex binding; ST is source of truth,
+  only sync FROM ST」）。→ 属 L36「跟基准一致**既不能少也不能多**」的「少了」一侧，
+  **不是产品决策，是缺陷**。详见 **T-56** 与 LEARNINGS **L71/L72**。
+- **选项（原口径，已被上条修正取代；保留以便回溯）**：
   - **A**：提供 ST 拓展面板挂载点（`#saved_regex_scripts` 等）**并**把 ST 全局正则
     （`extension_settings.regex`）真接进我方正则引擎 → 真修，工作量中等偏大。
   - **B**：不补，登记为已知差异 → 卡的上述核心功能保持缺失。
@@ -674,6 +684,15 @@
      命中「this 依赖成员白名单」（`append`/`flush`/`eventAt`/`snapshotEvents`/`emit`/`on`/…）即违约；
      自身先过**正控/负控/零控**（L44），并带 `--verify-lib` 用官方库反向核对白名单未过期。
      实跑：**82 个 `.ts` / 99 条候选 / 高危 0**。
+     ⚠️ **心跳 56 补记（闸门自己的覆盖盲区）**：原正则要求右侧是**纯标识符链**，
+     于是 `const append = (session as {…}).append` 这类**带类型断言**的提取（L70 同族包装）
+     全部判为 NO-MATCH —— 而它们与心跳 47 的缺陷**同形**（`this` 一样会丢）。
+     **正控实证**：用三种包装（`as` / `!` / 括号）各写一条坏样例，旧版闸门**一条都不报**（实测 NO-MATCH）。
+     ✅ 已修：新增 `parseExtraction()`（宽松抓 + **剥包层**看接收者是否为标识符链），
+     自检扩为**四控**（正控 / 负控 / 零控 / **包装控**），候选 **99 → 135 条**（多抓出 36 条此前漏掉的）。
+     并**消掉了仓库里那 3 处真实提取**（`dsh-plugin:294` 的 `flush`、`prompt-template:293` 的 `eventAt`、
+     `:301` 的 `append`）—— 它们靠手动 `.call(recv, …)` 而**行为本正确**，但形态本身即风险面，
+     按脚本自带纪律（「不要往 ALLOW 里加，改写法」）改为**在访问点直接调用**。
   2. **单测负控**：断言裸提取必炸、报错与设备报错**逐字相同**、且**零写入**（+2 条）。
   3. **设备闭环**（L68：备份 → 真写 → 三件取证 → 还原 → 重启）。
 - ✅ **实机验收（两条路由同时转绿）**：
@@ -707,6 +726,33 @@
   还原后复原；apply 模式（幂等）与 `--check` 双模式均复跑通过。
 - **一般规则（L69）**：判「某个改写是否生效」必须看「**改写引入的新东西在不在**」，
   **不能**看「原文里的东西还在不在」——**锚点只能判"可打"，不能判"已打"**。
+
+### T-56　🔴→✅ **宿主页缺 ST 标准 `/version` 端点 → 所有卡的版本分叉静默走错**（心跳 57 发现并修）
+
+- **发现方式**：审 T-42 的"前线"时不再盯着报错本身，而是**回到卡脚本取版本的那一行** ——
+  静态读到 `inject.js:2210-2218` 的 `fetch('/version')`，随即实机验证该端点。
+- **实机取证**：`GET /version → 404`（空体、非 JSON）→ 卡落 `.catch(() => 10000)`
+  → `window.versionNumber = 10000` → 脚本内 **20+ 处** `versionNumber >= 11305` 分叉**全部走旧版**。
+- **基准对照（L36 三问）**：① 基准有吗？**有** —— TT `src/compat-version.js:1`
+  `SILLYTAVERN_COMPAT_VERSION = '1.18.0'`，由 `src/tauri-bridge.js:162-171` 的 `/version` 返回；
+  ② 差异在哪一侧？**我方**（缺端点）；③ 基准会不会同报？**不会**（卡在基准上得 11800 走新版）
+  → 判定为**真缺陷**，且**不需要产品决策**（前面 T-42 的 A/B 选项是个伪选择）。
+- **为什么这条比 T-42 的报错更根本**：这条链上每一层都"正常" —— fetch 没报错（catch 吞了）、
+  版本号是合法数字、分叉是合法布尔。**没有任何一处日志说"我降级了"**。T-42 的 DOM 报错只是**症状**。
+- ✅ **修复（一组三件，缺一则只是"换个坑"，见 L71）**：
+  | # | 落地 | 位置 |
+  |---|---|---|
+  | ① | `GET /version` 路由（返回 `pkgVersion: '1.18.0'`，与基准逐字同值） | `dsh-plugin/index.ts`（`kind:'exact'`, path `/version`）；常量单源 `dsht-plugin-shared/st-compat.ts` |
+  | ② | `chatCompletionSettings.extensions.regex_scripts`（ST 1.13.5+ 预设内嵌正则通道，真数据） | `dsht-plugin-tavern-helper/facade.ts` 的 `/context`；单源 `buildStRegexScripts` + `toStRegexScript`（**顺带补上原本漏输出的必填 `id`**，并收敛掉 `presetExport` 里那份重复实现） |
+  | ③ | 宿主门面保证 `extensions` **恒存在**（给空对象而非省略键） | `dsht-rp-ui/src/client/host-vendor.ts`；类型 `th-shim.ts` |
+  | ④ | `#saved_regex_scripts` 锚点（**故意不挂 `.regex_settings` 祖先**，以免触发卡往我方行注入它自己的按钮） | `dsht-rp-ui/src/client/RegexPanel.tsx` |
+- **判据**：`typecheck` 三段式 0 错 · 单测 **51 文件 / 1057 全绿**（+20，其中 `st-compat.spec.ts` 用
+  黄金母版钉住 `1.18.0` 与阈值 11305 的边界 11304/11305）· 实机 `/version → 200 pkgVersion 1.18.0`。
+- **沉淀**：LEARNINGS **L71**（缺基准端点 = 版本分叉陷阱）/ **L72**（「兜底路径不可达」第三次重演）。
+- **残留**：卡的 `#saved_regex_scripts` 后续消费（`injectBindButtons` 往行里注入"绑定到预设"按钮）
+  **不实现** —— 因为 ST 1.13.5+ 下卡自身不做这件事，基准同样不做（L36「不能多」）。
+  T-42/T-48 的其余部分据此**降级为非缺陷**（`renderExtensionTemplateAsync('regex','editor')`
+  只在卡的旧版面板路径里被调用，新版路径不再走）。
 
 ### T-45　🆕→✅ **主框架加载失败后无自愈路径 → 永久停在启动屏**（心跳 50 登记 / **心跳 53 定性并修复**）
 - **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在

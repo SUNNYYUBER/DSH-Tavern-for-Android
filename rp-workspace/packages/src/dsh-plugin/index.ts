@@ -291,9 +291,13 @@ export function scanSurfaceHistory(session: LikeSession, claimed: LikeMessage[],
  * 200ms 批窗口内进程被杀（Android LMK SIGKILL）即丢标记（回退成功但重启后消失）。
  * 失败必须上抛（调用方 500），禁止静默假成功。 */
 export async function flushLiveSession(sessions: unknown, session: unknown): Promise<boolean> {
-  const flush = (sessions as { flush?: (s: unknown) => Promise<boolean> | undefined }).flush
-  if (typeof flush !== 'function') return false
-  const ok = await flush.call(sessions, session)
+  // 【心跳 56】原写作 `const flush = (sessions as {...}).flush` + `flush.call(sessions, session)`：
+  // 行为本正确（手动绑定了接收者），但**提取形态本身正是心跳 47 缺陷的同形写法**——
+  // 一旦后续有人把 `.call(sessions, …)` 改成 `flush(…)`，`this` 立刻丢、功能静默死。
+  // 改为在访问点直接调用（不把方法存进变量），从形态上消除风险。
+  const sessionsObj = sessions as { flush?: (s: unknown) => Promise<boolean> | undefined }
+  if (typeof sessionsObj.flush !== 'function') return false
+  const ok = await sessionsObj.flush.call(sessionsObj, session)
   if (ok === false) throw new Error('session flush 失败（写盘未耐久）——数据仍在内存，请重试或反馈')
   return true
 }

@@ -290,16 +290,23 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
       const sessions = (ctx as { sessions?: { get?: (id: string) => unknown; flush?: (s: unknown) => Promise<boolean> } }).sessions
       const session = sessions?.get?.(sessionId)
       if (!session) return sendJson(res, 409, { error: 'session not live（B8 永久写回仅支持已打开的会话）' })
-      const sAt = (session as { eventAt?: (q: number) => { type?: string; data?: unknown } | undefined }).eventAt
-      const ev = typeof sAt === 'function' ? sAt.call(session, seq) : undefined
+      // 【心跳 56】原写作 `const sAt = (session as {...}).eventAt` + `sAt.call(session, seq)`：
+      // 行为本正确，但提取形态本身即心跳 47 缺陷的同形写法（后续把 `.call` 简化掉就立刻炸）。
+      // 改为在访问点直接调用，从形态上消除风险。
+      const sessionObj = session as { eventAt?: (q: number) => { type?: string; data?: unknown } | undefined }
+      const ev = typeof sessionObj.eventAt === 'function' ? sessionObj.eventAt.call(sessionObj, seq) : undefined
       if (!ev || ev.type !== 'assistant/message') return sendJson(res, 400, { error: `seq=${seq} 不是 assistant/message` })
       const msg = (ev.data as { message?: Record<string, unknown> } | undefined)?.message
       if (!msg) return sendJson(res, 400, { error: '事件缺 message 字段' })
       if ((msg.source as Record<string, unknown> | undefined)?.ejsProcessed === true) {
         return sendJson(res, 200, { ok: true, note: '已处理（幂等跳过）' })
       }
-      const append = (session as { append?: (t: string, d: unknown, o?: unknown) => unknown }).append
-      if (typeof append !== 'function') return sendJson(res, 500, { error: 'session.append 不可用' })
+      // 【心跳 56】原写作 `const append = (session as {...}).append`，随后**只用于类型检查**、
+      // 真正调用走下面的 `live.append`（即该提取是死变量）。但它的形态会误导后人照抄成
+      // `append(...)` → 丢 this（心跳 47 的同形缺陷）。改为就地判型，不留提取。
+      if (typeof (session as { append?: (t: string, d: unknown, o?: unknown) => unknown }).append !== 'function') {
+        return sendJson(res, 500, { error: 'session.append 不可用' })
+      }
       // 【阶段3 2026-09-10 重写】0.1.5 禁止 assistant/message 做 replace 节点
       // （带 sourceEventSeqs 抛「embeds its source stream」，不带抛「missing shadowed node」
       // ——官方设计死锁）。改走官方 compaction 同款形态：
