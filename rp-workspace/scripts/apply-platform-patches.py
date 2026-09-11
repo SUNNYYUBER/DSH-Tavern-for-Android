@@ -41,7 +41,14 @@ NM = os.path.join(DST, "node_modules", "@deepseek-ai")
 STUBS = os.path.join(WS, "stubs")
 
 # ---------------------------------------------------------------- 统计
-STATS = {"applied": 0, "skipped": 0, "failed": 0, "checked": 0}
+# 【心跳 55】补 two 个计数器，让「已打补丁」与「未打但可打」不再挤在同一个数字里：
+#   patched  显式放在文件里的 marker 命中（= 该补丁**确实生效**）
+#   pending  锚点命中但 marker 缺失（= **尚未打**，apply 模式会自动补上）
+# 背景：原先 `--check` 只报「N 项检查，0 项失败」，而 patch() 的「已打」分支只加 skipped
+# 不加 checked → 汇总恒为「0 项检查」。更严重的是**锚点命中即报 ✓**：像 F2（flock，
+# 决定"消息能不能发出去"）这类「锚点在补丁前后都存在」的补丁，**标记被抹掉后仍报 ✓ / exit 0**
+# —— 闸门把「补丁丢了」读成「一切正常」（本项目的假绿族）。
+STATS = {"applied": 0, "skipped": 0, "failed": 0, "checked": 0, "patched": 0, "pending": 0}
 
 
 def log(msg):
@@ -74,6 +81,12 @@ def patch(path, marker, pattern, repl, expected, label):
     if marker_hits >= expected:
         log("  · %s：已打补丁，跳过" % label)
         STATS["skipped"] += 1
+        STATS["patched"] += 1
+        # 【心跳 55 修】「已打补丁」本身就是**一次有效校验**（marker 在 = 该补丁确实生效），
+        # 但原实现只加 skipped、不加 checked → `--check` 的汇总恒输出
+        # 「0 项检查，0 项失败」：明细行说"检查了 21 项"，汇总说"一项没查"。
+        if CHECK_ONLY:
+            STATS["checked"] += 1
         return True
     if marker_hits > 0:
         log("  ✗ %s：半打状态（标记 %d/%d）" % (label, marker_hits, expected))
@@ -83,11 +96,16 @@ def patch(path, marker, pattern, repl, expected, label):
     hits = len(re.findall(pattern, text))
     if CHECK_ONLY:
         ok = hits == expected
-        log("  %s %s：期望 %d 处，实际 %d 处" % ("✓" if ok else "✗", label, expected, hits))
         STATS["checked"] += 1
-        if not ok:
-            STATS["failed"] += 1
-        return ok
+        if ok:
+            # 锚点命中≠补丁已生效：这类补丁（如 F2 flock）的锚点在补丁前后都存在，
+            # 必须**显式**报成「未打」，不能与「已打」共用一个 ✓。
+            log("  ⚠ %s：**未打补丁**（锚点命中 %d/%d，apply 模式会补上）" % (label, hits, expected))
+            STATS["pending"] += 1
+            return True
+        log("  ✗ %s：锚点形态不符（期望 %d 处，实际 %d 处）——DSH 升级后产物形态变了？" % (label, expected, hits))
+        STATS["failed"] += 1
+        return False
 
     if hits != expected:
         log("  ✗ %s：命中数不符（期望 %d，实际 %d）—— DSH 升级后产物形态变了？" % (label, expected, hits))
@@ -561,7 +579,11 @@ patch(
 # ============================================================ 汇总
 print("\n" + "=" * 72)
 if CHECK_ONLY:
-    print("检查完成：%d 项检查，%d 项失败" % (STATS["checked"], STATS["failed"]))
+    print("检查完成：%d 项检查 —— 已打补丁 %d，未打可打 %d，跳过 %d，失败 %d"
+          % (STATS["checked"], STATS["patched"], STATS["pending"], STATS["skipped"], STATS["failed"]))
+    if STATS["pending"] > 0:
+        print("⚠ 有 %d 项补丁**尚未打到该 runtime**（apply 模式会自动补上；"
+              "若本意是「检查该 runtime 的补丁是否完好」，请按上表 ⚠/✗ 逐项确认）" % STATS["pending"])
 else:
     print("应用完成：%d 处已打，%d 项跳过，%d 项失败" % (STATS["applied"], STATS["skipped"], STATS["failed"]))
 print("=" * 72)
