@@ -194,6 +194,7 @@ readFile(join(root, targetProject, h.sdir, 'session.jsonl'))   ← 必然 ENOENT
 | **决断性回归**（造 symlink 形态会话 → 冷启） | `repair-session-cwd: repaired=1 skipped=0 errors=0`、目录已搬、header 已改写、**`node exited with code` 计数 = 0** |
 | **全树不变量审计**（新闸门 `audit-cwd-projectkey.mjs`，逐字照抄官方 `projectKey`） | **85/85 一致 / 0 违反** |
 | 负控（把 Fix 1 改回硬编码） | **正好 4 条单测转红** |
+| **阶段二「快照去重」回归**（在 v276 上复跑） | 新会话第 2 轮 **0 重复组**（`llm-232.json`，`messages=7`）⇒ 心跳 61 的修复**在新构建上仍生效** |
 | `stage4-regression` | **21/21**（新建 live 会话制造 attach 态跑通，**用完已 `mv` 走**） |
 
 ### 5. 沉淀与新登记
