@@ -10,7 +10,24 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
-> 最后更新：2026-09-12（心跳 63B —— **全语料普查：T-46/T-47 的决策输入从「1 张卡 / 3 个成员」换成「设备上全部真实脚本 / 15 个成员」**：
+> 最后更新：2026-09-12（心跳 63C —— **把「不可判定」当线索而不是结论：又挖出三个整类漏检，宿主面缺口 15 → 18 个成员、覆盖率 13/54 → 50/54**：
+> ① **动因**：63B 的「41 个不可判定」逐个回看 `getContext` 原文 ⇒ 8 个含它、其中 **5 个有确定可修**的取法（判据纪律：正控只能证明"已想到的形态能识别" ⇒ **发现整类漏检只能换语料**）。
+> ② **三个整类漏检**（全有真实语料实证 + 正控 + 反控）：**A 可选调用 `getContext?.()`**（`酒馆思维链清洗.js:14 const context = getST()?.getContext?.()` —— 该文件 **6 处 getContext 一条都提不出来**；难点：别名绑定不能用「GT 紧跟 `=`」，中间隔着 `getST()?.` ⇒ 改**本行前缀回看**）·
+> **B 字符串下标 `globalThis["SillyTavern"]`**（`傻瓜版导入脚本2_0.js:591`；旧 GT 要求 `SillyTavern` 是**标识符**）·
+> **C 同文件自定义的 ST 转发方法 `this.getContext()`**（`:587-596` 体内 `globalThis["SillyTavern"]` → `global.getContext()`；同文件 **6 处** `this.getContext()?.xxx` 含 `onlineStatus`/`chat`/`chatCompletionSettings`/`extensionPrompts` —— 此前全不可见，因为它恰好落在"防 `canvas.getContext` 误捕"的**既有反控**里）。
+> 新判据是**自证式**的：存在无参 `getContext()` 方法**且其配平函数体内出现 `SillyTavern`**（canvas 的带实体参数、体内也不可能有）⇒ 新反控 `class Painter{getContext(){return this.el.getContext('2d')}}` 必须为空（**PASS**）。附带：`CHAIN` 支持下标成员 `?.["extensionPrompts"]`。
+> ③ **覆盖率口径两态 → 三态**：`paths.size===0` 现按「全篇有没有 `SillyTavern` / 无参 `getContext()`」**可判定地**分成「✅ 已判定不取 ctx」**32 个**（典型 `_自动刷新楼层.js:66-75` 只用 `typeof SillyTavern !== 'undefined'` 做**宿主存在性探测**）与「⚠️ 不可判定」**4 个**（成员访问在**调用方**）。
+> 判据**不剥注释**（保守方向）；`canvas.getContext('2d')` 带参 ⇒ 正确落「不取」。**覆盖率 13/54 → 50/54**。
+> ④ **新增「存在性守卫」维度**（决定"会崩"还是"静默降级"）：同一批 `getTokenCountAsync` 访问里 `if (typeof context?.x !== "function") return void 0` 有守卫、`await SillyTavern.x(...)`（压成一行）无守卫。
+> **`getTokenCountAsync` 6 文件里 5 个有守卫**；而 `characterId`/`characters`/`chatMetadata`/`onlineStatus`/`powerUserSettings`/`extensionPrompts` **零守卫 ⇒ 撞上就抛**。
+> ⑤ **结果：18 个成员**（🆕 `extensionPrompts`(4 文件/4 次) · `getPresetManager` · `variables`，均经 `st-context.js:151/:286/:256` 核对）；
+> **交叉验证：剔掉 9 个禁用脚本后 18 个缺口一个不少**（启用中 14 个已核验脚本**全部**命中 ⇒ 不是边角料造成的）。
+> ⑥ 🔴 **纠一个档位误判**：`onlineStatus` **不是连接状态** —— `script.js:600 export let online_status='no_connection'` + `:7093-7097`（唯一写入点）+ `:6995 model = online_status` + `chat-templates.js:189 online_status.startsWith('koboldcpp/ggml-model-')`
+> ⇒ 它是**当前 AI 后端的在线标识 / 模型名**，编一个 `'online'` 就是**制造假信息** ⇒ 从 A 档移入 **B 档**；
+> `powerUserSettings` 也移入 B 档（子路径**不止** `persona_description` 还有 `reasoning`，且 `酒馆思维链清洗.js:15-19` 会**写** `reasoning.auto_parse/prefix/suffix`，而"写进去谁读"在我方**无消费者**）⇒ **A 档收缩到只剩 `saveChat`**（基准 `saveChat: saveChatConditional`，`script.js:9352` **无参 async** ⇒ 出声 no-op + resolve）。
+> ⑦ **C 档（生成栈）紧张度下降**：6 个生成栈成员里 **4 个有守卫**（`getTokenCountAsync` 5/6 · `generateRaw` 2/2 · `executeSlashCommandsWithOptions` 1/1 · `generateQuietPrompt` 1/1）⇒ 缺失只**静默降级**不抛 ⇒ T-48 式「完整实现 = 无效功」的结论**更有底气**。
+> ⑧ **交付**：`audit-card-context-surface.mjs` 第三次扩域（**10 正控 + 2 反控全 PASS**，既有 4 条正控输出**逐字不变**）· 新工具 `stage3-device/hb63/aggregate-enabled.mjs` · 报告 `stage3-device/hb63/T46-CORPUS-CENSUS-2.md` · 沉淀 **L99 / L100**；**功能源码未改动 ⇒ APK 沿用 v280 / v281**。
+> 前一轮：2026-09-12（心跳 63B —— **全语料普查：T-46/T-47 的决策输入从「1 张卡 / 3 个成员」换成「设备上全部真实脚本 / 15 个成员」**：
 > ① **动因**：T-46 的分档与 T-47 的成员登记此前都基于**极小样本**（1 张卡 + 一个 TT 扩展）—— skill §6 明确要求「接新卡第一件事 = 跑穷举，别再逐次撞墙」。
 > ② **语料（设备实测拉取，非抽样）**：`find files/.dsh -name tavern-helper-scripts.json` → **19 个文件**（12 角色卡 + 7 预设）→ 抽取 **54 个脚本 / 6,664,607 B ≈ 6.5 MB / 启用 45 · 禁用 9**。
 > ③ **先修审计器自己的两个整类漏检**（不改则普查没有分辨力）：旧口径对 54 个文件只能核验 **9 个**、45 个「不可判定」，漏的是 ——

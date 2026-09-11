@@ -158,6 +158,34 @@ export function topLevelReturnBrace(text, fnIdx) {
   return -1
 }
 
+/**
+ * 取 `{` 起**配平**的块内文本（不含最外层花括号）；配平失败返 `null`。
+ * 【心跳 63C】用于判断「同文件自定义的 `getContext()` 方法是不是 ST 转发」——
+ * 判据必须看**函数体**，不能只看签名（签名里没有信息）。
+ */
+export function balancedBody(text, braceIdx) {
+  if (text[braceIdx] !== '{') return null
+  let depth = 0
+  let inStr = null
+  for (let i = braceIdx; i < text.length; i++) {
+    const c = text[i]
+    const prev = text[i - 1]
+    if (inStr !== null) {
+      if (c === inStr && prev !== '\\') inStr = null
+      continue
+    }
+    if (c === '"' || c === "'" || c === '`') { inStr = c; continue }
+    if (c === '/' && text[i + 1] === '/') { const nl = text.indexOf('\n', i); i = nl < 0 ? text.length - 1 : nl; continue }
+    if (c === '/' && text[i + 1] === '*') { const e = text.indexOf('*/', i); i = e < 0 ? text.length - 1 : e + 1; continue }
+    if (c === '{' || c === '[' || c === '(') { depth++; continue }
+    if (c === '}' || c === ']' || c === ')') {
+      depth--
+      if (depth === 0) return text.slice(braceIdx + 1, i)
+    }
+  }
+  return null
+}
+
 /** 真 ST `getContext()` 顶层成员（权威面） */
 export function readStSurface(file = ST_REF) {
   const text = fs.readFileSync(file, 'utf8')
@@ -192,12 +220,35 @@ export function readScriptAccesses(file) {
 export function readScriptAccessesFromText(text) {
   /** member → 访问点行号列表 */
   const paths = new Map()
+  /**
+   * 【心跳 63C】该文件**是否可能**取 ST 上下文（= 是否出现任何 ST 上下文取法的名字）。
+   *
+   * 为什么需要它：`paths.size === 0` 此前一律报「不可判定」，但这两件事必须分开 ——
+   *   · **全篇没有 `SillyTavern` 也没有无参 `getContext()`** ⇒ 该文件**确定不取 ctx**，
+   *     这是**可判定**的结论（任何 ctx 取法都必然要提这两个名字之一），不该说"不可判定"；
+   *   · 出现了名字却提不出成员 ⇒ 才是真「不可判定」（成员访问在调用方 = 数据流边界）。
+   * 实证（心跳 63C 全语料）：31/36 个"不可判定"其实是**确定不取 ctx**（如
+   * `_自动刷新楼层.js` 只用 `typeof SillyTavern !== 'undefined'` 做**宿主存在性探测**）。
+   * ⚠️ 判据刻意**不剥注释**：注释里提到的 `SillyTavern` 会让文件落回「不可判定」= **保守方向**
+   *（宁可少给结论，不可把真取 ctx 的文件误判成"不取"）。`canvas.getContext('2d')` 带实体参数
+   * ⇒ 两条 `getContext` 判据都不命中 ⇒ 正确落"不取 ctx"（实测 `悬浮球.js`）。
+   */
+  const touchesSt = /\bSillyTavern\b/.test(text)
+    || /(?<![\w$.])getContext\s*\(\s*\)/.test(text)
+    || /\.\s*getContext\s*\?\s*\.\s*\(\s*\)/.test(text)
   const add = (path, idx) => {
     const line = text.slice(0, idx).split('\n').length
     if (!paths.has(path)) paths.set(path, [])
     paths.get(path).push(line)
   }
-  const CHAIN = String.raw`(?:\??\.[A-Za-z_$][\w$]*)`
+  // 【心跳 63C】CHAIN 增加**下标成员**（`?.["extensionPrompts"]` / `["chatMetadata"]`）——
+  // 实证 `傻瓜版导入脚本2_0.js:829` 写作 `this.getContext()?.["extensionPrompts"]`，
+  // 旧 CHAIN 只认点号 ⇒ 该成员整类不可见。三种写法（`.x` / `?.["x"]` / `["x"]`）统一收。
+  const CHAIN = String.raw`(?:\??\.\s*[A-Za-z_$][\w$]*|\??\.\s*\[\s*['"][A-Za-z_$][\w$]*['"]\s*\]|\??\s*\[\s*['"][A-Za-z_$][\w$]*['"]\s*\])`
+  /** 成员链规范化：`?.["x"]` / `.x` / `["x"]` → `.x`（调用方再 `slice(1)`） */
+  const normPath = (s) =>
+    s.replace(/\?\./g, '.').replace(/\?\s*\[/g, '[')
+      .replace(/\[\s*['"]/g, '.').replace(/['"]\s*\]/g, '').replace(/\.\./g, '.')
 
   // 1) const ctx = SillyTavern.getContext()
   //
@@ -219,6 +270,58 @@ export function readScriptAccessesFromText(text) {
   const aliases = new Set()
   for (let m; (m = aliasRe.exec(text)) !== null;) aliases.add(m[1])
 
+  // 1b) 【心跳 63C】**可选调用** `X?.getContext?.()`
+  //
+  // 整类此前漏掉：GT 的 `getContext\s*\(\s*\)` 夹不住 `?.`（`getContext?.()`）。
+  // 实证 `酒馆思维链清洗.js:14` —— `const context = getST()?.getContext?.();`
+  // （该文件 6 处 getContext 在旧口径下**一条访问都提不出来**，整份脚本被判「不可判定」）。
+  // ⚠️ 别名绑定必须用**本行前缀回看**，不能让 GT 紧跟 `=`：`=` 与 `getContext` 之间隔着 `getST()?.`。
+  const optRe = /\.\s*getContext\s*\?\s*\.\s*\(\s*\)/g
+  for (let m; (m = optRe.exec(text)) !== null;) {
+    const chain = new RegExp(String.raw`^((?:${CHAIN})+)\??`).exec(text.slice(m.index + m[0].length))
+    if (chain) {
+      const p = normPath(chain[1])
+      if (p.length > 1) add(p.slice(1), m.index)
+    }
+    const lineStart = text.lastIndexOf('\n', m.index) + 1
+    const asg = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^\n;]*$/.exec(text.slice(lineStart, m.index))
+    if (asg) aliases.add(asg[1])
+  }
+
+  // 1c) 【心跳 63C】**下标形态**的 ST 全局与直取：`globalThis["SillyTavern"]` / `window['SillyTavern'].chat`
+  //
+  // 旧 GT 要求 `SillyTavern` 是**标识符**，字符串下标整类漏掉。
+  // 实证 `傻瓜版导入脚本2_0.js:591` —— `const global = globalThis["SillyTavern"];`
+  const subRe = /\[\s*['"]SillyTavern['"]\s*\]/g
+  for (let m; (m = subRe.exec(text)) !== null;) {
+    const mem = /^\s*\.\s*([A-Za-z_$][\w$]*)/.exec(text.slice(m.index + m[0].length))
+    if (mem && mem[1] !== 'getContext') add(mem[1], m.index)
+  }
+
+  // 1d) 【心跳 63C】同文件**自定义的 ST 转发方法** `getContext()`
+  //
+  // 判据（**自证**，不是推测）：存在名为 `getContext` 的**无参**方法/函数定义，且其**函数体**内出现
+  // `SillyTavern` —— canvas 的 `getContext(w, h)` 带实体参数、体内也不可能出现 `SillyTavern`，
+  // 故不会误捕（反控见 selftest probe8）。
+  // 实证 `傻瓜版导入脚本2_0.js:587-596` 定义 → 同文件 **6 处** `this.getContext()?.xxx`
+  // （含 `onlineStatus` / `chat` / `chatCompletionSettings` / `extensionPrompts`）此前全部不可见。
+  let customCtxAlias = false
+  const defRe = /\bgetContext\s*\(\s*\)\s*\{/g
+  for (let m; (m = defRe.exec(text)) !== null;) {
+    const body = balancedBody(text, m.index + m[0].length - 1)
+    if (body !== null && /SillyTavern/.test(body)) { customCtxAlias = true; break }
+  }
+  if (customCtxAlias) {
+    // 方法体自证是 ST 转发 ⇒ 同文件所有 `getContext()` 调用都算 ST 取法
+    const callRe = new RegExp(String.raw`\b(?:(?:this|self)\s*\.\s*)?getContext\s*\(\s*\)((?:${CHAIN})+)\??`, 'g')
+    for (let m; (m = callRe.exec(text)) !== null;) {
+      const p = normPath(m[1])
+      if (p.length > 1) add(p.slice(1), m.index)
+    }
+    const bindRe = new RegExp(String.raw`\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:(?:this|self)\s*\.\s*)?getContext\s*\(\s*\)`, 'g')
+    for (let m; (m = bindRe.exec(text)) !== null;) aliases.add(m[1])
+  }
+
   // 2) const { a, b: c } = SillyTavern.getContext() / = getContext()
   const destrRe = new RegExp(String.raw`\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(?:${GT})`, 'g')
   for (let m; (m = destrRe.exec(text)) !== null;) {
@@ -231,7 +334,7 @@ export function readScriptAccessesFromText(text) {
   // 3) SillyTavern.getContext().a.b / getContext().a.b
   const inlineRe = new RegExp(String.raw`(?:${GT})((?:${CHAIN})+)\??`, 'g')
   for (let m; (m = inlineRe.exec(text)) !== null;) {
-    const path = m[1].replace(/\?\./g, '.')
+    const path = normPath(m[1])
     add(path.slice(1), m.index)
   }
 
@@ -239,7 +342,7 @@ export function readScriptAccessesFromText(text) {
   for (const alias of aliases) {
     const re = new RegExp(String.raw`\b${alias}((?:${CHAIN})+)\??`, 'g')
     for (let m; (m = re.exec(text)) !== null;) {
-      const path = m[1].replace(/\?\./g, '.')
+      const path = normPath(m[1])
       add(path.slice(1), m.index)
     }
   }
@@ -260,7 +363,21 @@ export function readScriptAccessesFromText(text) {
     add(m[1], m.index)
   }
 
-  return { aliases: [...aliases], paths }
+  /**
+   * 【心跳 63C】被**存在性守卫**包裹过的成员名（`typeof ctx?.x === 'function'` / `!== 'undefined'`）。
+   *
+   * 为什么这一维决定优先级：一个"缺口"会不会**抛异常**，取决于脚本自己有没有守。
+   * 实证（心跳 63C，`getTokenCountAsync` 6 文件 / 13 次）：
+   *   · `if (typeof context?.getTokenCountAsync !== "function") return void 0;` → **已守卫**，缺了只静默降级
+   *   · `typeof SillyTavern.getTokenCountAsync === "function" && lastText`   → **已守卫**
+   *   · `await SillyTavern.getTokenCountAsync(...)`（压缩成一行、无守卫）    → **会抛 TypeError**
+   * ⇒ 只报"缺口数"会把"会崩的"与"静默降级的"混在一起，让优先级排序失真（L98 的另一面）。
+   */
+  const guarded = new Set()
+  const guardRe = /\btypeof\s+[^\n;{}]*?\.\s*([A-Za-z_$][\w$]*)\s*(?:!==|===|!=|==)/g
+  for (let m; (m = guardRe.exec(text)) !== null;) guarded.add(m[1])
+
+  return { aliases: [...aliases], paths, touchesSt, guarded }
 }
 
 // ------------------------------------------------------------------ 主流程
@@ -331,7 +448,73 @@ function selftest() {
   console.log(`[selftest] 反控 canvas/同名 getContext → 「${probe4Got}」`)
   if (!probe4Ok) console.log(`[selftest] 期望 → 空`)
 
+  // 【心跳 63C】三类新取法的正控 + 一条新反控（全是真实语料逼出来的形态）
+  const probe5 = `const context = getST()?.getContext?.(); const c2 = context?.powerUserSettings?.reasoning;`
+  const probe5Want = 'powerUserSettings.reasoning'
+  const probe5Got = [...readScriptAccessesFromText(probe5).paths.keys()].sort().join(',')
+  const probe5Ok = probe5Got === probe5Want
+  console.log(`[selftest] 可选调用 getContext?.() → ${probe5Got}`)
+  if (!probe5Ok) console.log(`[selftest] 期望 → ${probe5Want}`)
+
+  const probe6 = `const g = globalThis["SillyTavern"]; g.getContext(); const x = globalThis["SillyTavern"].chat;`
+  const probe6Want = 'chat'
+  const probe6Got = [...readScriptAccessesFromText(probe6).paths.keys()].sort().join(',')
+  const probe6Ok = probe6Got === probe6Want
+  console.log(`[selftest] 下标 globalThis["SillyTavern"].x → ${probe6Got}`)
+  if (!probe6Ok) console.log(`[selftest] 期望 → ${probe6Want}`)
+
+  const probe7 = `
+    class C {
+      getContext() {
+        const g = globalThis["SillyTavern"];
+        return typeof g?.getContext === "function" ? g.getContext() : void 0;
+      }
+      read() {
+        const s = this.getContext()?.chatCompletionSettings;
+        const st = this.getContext()?.onlineStatus;
+        return this.getContext()?.["extensionPrompts"];
+      }
+    }
+  `
+  const probe7Want = 'chatCompletionSettings,extensionPrompts,onlineStatus'
+  const probe7Got = [...readScriptAccessesFromText(probe7).paths.keys()].sort().join(',')
+  const probe7Ok = probe7Got === probe7Want
+  console.log(`[selftest] 自定义 ST 转发方法 this.getContext()?.x → ${probe7Got}`)
+  if (!probe7Ok) console.log(`[selftest] 期望 → ${probe7Want}`)
+
+  // 反控（心跳 63C）：canvas 包装类的 `getContext()` 体内**不可能**出现 SillyTavern
+  // ⇒ 自定义转发方法的自证判据不得把它拉进来（否则会造出假访问）
+  const probe8 = `
+    class Painter {
+      getContext() { return this.el.getContext('2d') }
+      draw() { const c = this.getContext(); c.clearRect(0, 0, 1, 1) }
+    }
+  `
+  const probe8Got = [...readScriptAccessesFromText(probe8).paths.keys()].sort().join(',')
+  const probe8Ok = probe8Got === ''
+  console.log(`[selftest] 反控 canvas 包装类 → 「${probe8Got}」`)
+  if (!probe8Ok) console.log(`[selftest] 期望 → 空`)
+
+  // 【心跳 63C】三分法的两条判据：`touchesSt` 决定「不取 ctx（可判定）」还是「不可判定（真边界）」
+  const probe9 = `const a = 1; canvas.getContext('2d').fillRect(0,0,1,1); helper.getContext();`
+  const probe9Ok = readScriptAccessesFromText(probe9).touchesSt === false
+  console.log(`[selftest] 不取 ctx 判定（canvas 带参/无参同名 API）→ touchesSt=${readScriptAccessesFromText(probe9).touchesSt}`)
+  if (!probe9Ok) console.log(`[selftest] 期望 → touchesSt=false`)
+
+  const probe10 = `if (typeof SillyTavern !== 'undefined') { init() }`
+  const probe10Ok = readScriptAccessesFromText(probe10).touchesSt === true
+  console.log(`[selftest] 宿主存在性探测（不取 ctx）→ touchesSt=${readScriptAccessesFromText(probe10).touchesSt}`)
+  if (!probe10Ok) console.log(`[selftest] 期望 → touchesSt=true`)
+
+  // 【心跳 63C】存在性守卫提取（决定"会崩"还是"静默降级"）
+  const probe11 = `if (typeof ctx?.getTokenCountAsync !== "function") return; if (typeof SillyTavern.chat === 'function') {}`
+  const probe11Got = [...readScriptAccessesFromText(probe11).guarded].sort().join(',')
+  const probe11Ok = probe11Got === 'chat,getTokenCountAsync'
+  console.log(`[selftest] 存在性守卫 typeof → ${probe11Got}`)
+  if (!probe11Ok) console.log(`[selftest] 期望 → chat,getTokenCountAsync`)
+
   const allOk = ok && probeOk && probe2Ok && probe3Ok && probe4Ok
+    && probe5Ok && probe6Ok && probe7Ok && probe8Ok && probe9Ok && probe10Ok && probe11Ok
   console.log(`[selftest] ${allOk ? 'PASS' : 'FAIL'}`)
   return allOk ? 0 : 1
 }
@@ -380,6 +563,7 @@ function main() {
   let outOfScope = 0
   let judgedFiles = 0
   let uninspected = 0
+  let notStFiles = 0
   for (const file of scripts) {
     // 路径按**当前工作目录**解析：从别处调用容易写成 rp-workspace/tmp/… 而实际在仓库根 tmp/…
     if (!fs.existsSync(file)) {
@@ -387,16 +571,20 @@ function main() {
       console.error('         —— 路径按「当前工作目录」解析；例如卡脚本在仓库根 tmp/ 下时应写 ../tmp/t37-inject.js')
       process.exit(2)
     }
-    const { aliases, paths } = readScriptAccesses(file)
+    const { aliases, paths, touchesSt, guarded } = readScriptAccesses(file)
     console.log(`\n=== ${file} ===`)
     console.log(`[script] 绑定别名：${aliases.join(', ') || '(无)'}；访问路径 ${paths.size} 条`)
-    // L44 同型防线：**一条访问都没提出来 ≠ 全部具备**。这时本工具对这个文件"不可判定"
-    //（该文件可能根本不取 ctx，也可能取法超出本工具口径）——必须显式说出来，
-    // 否则「✅」会被读成"已核验通过"，实为"压根没检查"。此类文件不计入 gaps，但计入 uninspected。
+    // L44 同型防线：**一条访问都没提出来 ≠ 全部具备**。此时按「是否出现 ST 上下文取法的名字」
+    // 分成两个**确定**的结论（心跳 63C）——「不取 ctx」是可判定的，「不可判定」才是真边界。
     if (paths.size === 0) {
+      if (!touchesSt) {
+        notStFiles++
+        console.log('  ✅ 已判定：该文件**不取** ST 上下文（全篇无 `SillyTavern`、无无参 `getContext()`）')
+        continue
+      }
       uninspected++
-      console.log('  ⚠️ 不可判定：未识别到任何 `SillyTavern.getContext()` / `getContext()` 成员访问')
-      console.log('     —— 可能是该文件不取 ctx，也可能是取法超出本工具口径（勿读成「已具备」）')
+      console.log('  ⚠️ 不可判定：出现了 ST 上下文取法的名字，但提不出任何成员访问')
+      console.log('     —— 成员访问大概发生在**调用方**（脚本把整个 ctx 转发出去）= 数据流边界（勿读成「已具备」）')
       continue
     }
     judgedFiles++
@@ -422,9 +610,10 @@ function main() {
       console.log('  ✅ 卡脚本访问的**全部**真 ST 成员，我方宿主面均已具备')
     } else {
       gaps += missing.length
-      console.log(`  ❌ 缺口 ${missing.length} 个（真 ST 有、我方宿主面无）—— 这些是**还没撞到的墙**：`)
+      console.log(`  ❌ 缺口 ${missing.length} 个（真 ST 有、我方**任意门面都无**）—— 这些是**还没撞到的墙**：`)
       for (const m of missing) {
-        console.log(`     · ${m.head}  （访问 ${m.lines.length} 次，行 ${[...new Set(m.lines)].slice(0, 8).join('/')}）`)
+        const g = guarded.has(m.head) ? '  ⚠️ 本文件有 typeof 守卫（缺它=静默降级，不抛）' : ''
+        console.log(`     · ${m.head}  （访问 ${m.lines.length} 次，行 ${[...new Set(m.lines)].slice(0, 8).join('/')}）${g}`)
         if (m.subs.size > 0) console.log(`         子路径：${[...m.subs].slice(0, 10).join(', ')}`)
       }
     }
@@ -442,7 +631,9 @@ function main() {
       }
     }
   }
-  console.log(`\n[surface] 结论：缺口 ${gaps} 个（已核验文件 ${judgedFiles} 个；不可判定 ${uninspected} 个）`)
+  console.log(`\n[surface] 结论：缺口 ${gaps} 个`)
+  console.log(`[surface] 文件分账（共 ${scripts.length}）：已核验 ${judgedFiles} · 已判定不取 ctx ${notStFiles} · 不可判定 ${uninspected}`)
+  console.log(`[surface] 覆盖率（已判定 / 全量）= ${judgedFiles + notStFiles} / ${scripts.length}`)
   if (uninspected > 0) {
     console.log(`[surface] ⚠️ 有 ${uninspected} 个文件「不可判定」——不要把它读成"已具备"（L44）`)
   }
