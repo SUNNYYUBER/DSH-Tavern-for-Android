@@ -10,7 +10,16 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
-> 最后更新：2026-09-12（心跳 61B —— **实机验收时挖出一个会让 app 无限 crash-loop 的「会话目录不变量」缺陷，三层缺陷链里有两层是我方自己造的**：
+> 最后更新：2026-09-12（心跳 62 —— **把 T-65 的「建议」变成上线：在「插件树加载期」之前插进一道壳侧静态预检，并用设备四段验收证明它在承重**：
+> ① **动因（L88）**：我方修复器全在**插件体内**，而 T-65 的损坏发生在 `[cordis.init]` 插件树加载**期**（`assertStoredIdentity`）⇒ 修复器根本轮不到执行；比插件树更早的位置只有两处 —— 更外层进程（Kotlin）与 node 启动参数，二者叠加 = `NODE_OPTIONS="… --import file://<abs>/dsht-preflight/lib/index.js"`（官方源**零修改**）。
+> ② **新交付 `dsht-preflight`**：纯文件扫描 `sessions/<project>/<sid>/session[.vN].jsonl`，按 `header.cwd`/`header.id` 重算期望目录名（逐字照抄官方 `projectKey`/`encodeSegment`，**只按字面值、绝不 realpath**）→ 不符则 `rename` 搬正（**只搬，不写一个字节文件内容**）；目标已存在 → **隔离**到 `sessions/` **之外**的 `sessions-quarantine/`；rename 失败 → 目录原封不动（rename 原子）；一切异常 **fail-open**。
+> ③ **两道闸**：入口闸（`argv[1]` 必须是 DSH 主入口 —— 因 `NODE_OPTIONS` 会被子进程继承）+ **反控闸 `DSHT_PREFLIGHT_DISABLE=1`**。
+> ④ **设备四段闭环（全实测）**：① 基线 `扫描 81 个会话目录：ok=80 搬迁=1 隔离=0 不可读=0 失败=0`；② 反控（挪走产物 + 造违反态）`node exited with code 计数 = 2 / corrupt session log = 10`，决定性原文 `failed to apply loader entry workspace (@deepseek-ai/dsh-workspace): corrupt session log "…/--hb62-wrong--/dsht-welcome/session.jsonl": header id "dsht-welcome" and cwd identify "…/--data-data-…-rp-_start--/dsht-welcome/session.jsonl"`；③ 正控（放回产物）`repaired --hb62-wrong--/dsht-welcome → --data-data-…-_start--/dsht-welcome`、**`node exited with code = 0`**、`corrupt session log = 0`、端口 3080 起；④ 收场全树对质 `{"scanned":81,"repaired":[],"skipped":[],"errors":[]}`、sessions 顶层回 **26（= 基线）**。
+> ⑤ **交付**：`typecheck` 三段式 0 错 · 单测 **54 文件 / 1141 全绿**（+25）· 双架构 APK **v278（x86_64 debug 196,844,623 B）/ v279（arm64 release 128,370,848 B）**、`check-apk-payload.py` 双架构均命中预检产物 · `stage4-regression` **20/21**（唯一失败 `variant/groups` = 探针未 attach，与基线同）。
+> ⑥ **顺带定性一条（→ L94）**：验收收场 `mv` 掉 `sessions/` 顶层空壳 project 目录 ⇒ **59 秒后** node 被 `ENOENT: scandir …/sessions/--hb62-wrong--` 打死；读官方源码得根因 = **两段式枚举只守护第一段**（`listProjectDirs` 吞 ENOENT、`listSessionDirs` **不吞**，`Fiber._reload` 路径无 catch）⇒ 纪律「**`sessions/` 顶层 project 目录运行期只读**，要改必须先 `force-stop` 或改到 `sessions/` 之外」。
+> ⑦ 并纠正一处误记（→ **L95**）：先前记的「node 健康 ~55s 后被 watchdog 重启」经时间线对齐证明是**我自己**的收场动作，与预加载无关。）
+>
+> 前一轮：2026-09-12（心跳 61B —— **实机验收时挖出一个会让 app 无限 crash-loop 的「会话目录不变量」缺陷，三层缺陷链里有两层是我方自己造的**：
 > ① **触发源**：`/rp/home` 交出**非规范**形态 `/data/user/0/<pkg>/files/.dsh` —— 官方 `projectKey()` 把 `/`/`\`/`:` 全折叠成 `-`，
 > 而 Android 上 `/data/user/0/<pkg>` 与 `/data/data/<pkg>` 是**同一目录的两个路径形态** ⇒ 拼出**不兼容的目录名**；
 > `RpOverlay.tsx:73/:330` 拿它拼 `session.create` 的 cwd ⇒ **每次 UI 新建会话都写出非规范 cwd**；
@@ -128,6 +137,75 @@
 | **P-1** | 更新开关要用**哪个 GitHub 仓库**（公开 or 私有？影响鉴权） | 需你定；**公开**最简单（无需 token） | 阶段三发布前必须定；代码已就绪，只差填地址 |
 
 | ~~**T-49**~~ ❌ | ~~「改楼层」和「换变体（swipe）」在界面上根本点不到~~ | **心跳 52 实测推翻 = 非缺陷**：**编辑入口本来就在** —— user 气泡操作条里有 `✎ 编辑`（`data-testid=dsht-rp-edit`），实测点开就地编辑器（预填原文）+ 取消还原，全程零请求零数据变更；**变体条**也已接槽位，只是「只有 1 个变体时按设计返回 null」（当前 `groups=1`）。心跳 51 的「0 命中」是**窗口化 + 只采样 title/aria-label** 造成的假阴性 | — |
+
+## 心跳 62 做了什么（**把「修复不了的那一类损坏」变成「根本不会发生」：在插件树之前插进一道壳侧静态预检**）
+
+> 一句话：**T-65 的损坏发生在「插件树加载期」，而我方所有修复器都在插件体**内** —— 位置不对，再正确也救不了场。**
+> 本轮换位置：把预检塞进 **node 启动参数**（`--import`），比插件树更早执行，官方源**零修改**。
+> ⚠️ 没有用户可见症状（这是**防御性**工作），因此验收不靠"体验变好"，而靠**反控**：
+> 挪走产物 → 症状必须复现；放回 → 必须自愈。
+
+### 1. 位置穷举（官方源零修改的前提下，比插件树更早的只有两处）
+
+| 候选 | 是否可行 | 结论 |
+|---|---|---|
+| 更外层进程（Kotlin `NodeService`） | 可行，但**只能注入参数**，做不了文件系统动作 | **采用**（作为注入点） |
+| node 启动参数 `NODE_OPTIONS=--import <file://abs>` | 可行；`--import` 在主入口**求值之前**执行，且会**等其顶层 await** 完成 | **采用**（作为执行点） |
+| 插件体内（已有的 `repair-sessions` / `repair-session-cwd`） | 已经存在，但**轮不到执行** | ✗（L88） |
+
+实现：`NodeService.kt` 新增 `preflightOption()`，在原有 `--max-old-space-size=2048` 之后追加
+` --import file://<runtimeDir>/node_modules/dsht-preflight/lib/index.js`，**产物不存在时不注入**
+（fail-open），产物缺失由构建断言 A8 兜底。
+
+### 2. 新交付 `dsht-preflight`（`packages/src/dsht-preflight/index.ts`）
+
+- **只做一件事**：把「目录名 ≠ `projectKey(header.cwd)`」的会话目录**搬正**，让 app 起得来。
+- **算法**：扫 `sessions/<project>/<sid>/session[.vN].jsonl`；读头部前 4096 字节取 `header.cwd` / `header.id`；
+  用**逐字照抄官方**的 `projectKey` / `encodeSegment` 重算期望目录；不符则 `rename`。
+- **三条安全边界**（对应单测三组）：
+  1. **方向**：只按 `header.cwd` **字面值**搬，**绝不 `realpath` 规范化**（否则 `/data/user/0/…` 与 `/data/data/…` 会被判成同一个，反而把 T-65 的缺陷掩盖掉）；
+  2. **不可逆动作最小化**：**只做一次 `rename`，不写一个字节文件内容**；目标已存在 → **隔离**到 `sessions/` **之外**的 `sessions-quarantine/<stamp>/…`；rename 失败 → 目录**原封不动**（rename 原子 ⇒ 状态不比此前更坏）；
+  3. **fail-open**：顶层 `await`，任何异常都**不许拦住启动**。
+- **两道闸**：入口闸（`process.argv[1]` 必须以 `/@deepseek-ai/dsh/lib/bin.js` 结尾 —— 因为 `NODE_OPTIONS` 会被**子进程继承**）+ **反控闸 `DSHT_PREFLIGHT_DISABLE=1`**。
+- **可观测**：覆盖式 `dsht-preflight-status.json`（定长三态：`scanned/ok/repaired/quarantined/unreadable/failed`，**app 起不来时也能读到**）+ 追加式 `dsht-preflight.log`（仅当真动过手或出现 unreadable/failed）。
+
+### 3. 宿主机制烟雾测试先行（L93 —— 5 秒省掉一整轮安装循环）
+
+三组对照，**在宿主 node 上跑**（假主入口 + 临时 `$DSH_HOME`）：
+
+| 组 | 结果 |
+|---|---|
+| 带 `--import` | `扫描 1 个会话目录：ok=0 搬迁=1`；假主入口看到的是**已搬迁后**的树 ⇒ **顺序成立** |
+| 不带 `--import` | NOT-MOVED |
+| `DSHT_PREFLIGHT_DISABLE=1` | NOT-MOVED |
+
+### 4. 设备四段验收（全实测，hb62）
+
+| 段 | 关键读数 |
+|---|---|
+| **① 基线** | `preflight: …/dsht-preflight/lib/index.js (exists=true)`；解压完成后**预检真的在设备上跑了**：`扫描 81 个会话目录：ok=80 搬迁=1 隔离=0 不可读=0 失败=0` |
+| **② 反控**（挪走产物 + 造违反态） | `node exited with code 计数 = 2` · `corrupt session log = 10`；原文 `failed to apply loader entry workspace (@deepseek-ai/dsh-workspace): corrupt session log "…/--hb62-wrong--/dsht-welcome/session.jsonl": header id "dsht-welcome" and cwd identify "…/--data-data-…-rp-_start--/dsht-welcome/session.jsonl"`；预检状态 ts **未刷新**（证明不跑预检 ⇒ 必崩） |
+| **③ 正控**（放回产物） | `repaired --hb62-wrong--/dsht-welcome → --data-data-…-_start--/dsht-welcome` · **`node exited with code = 0`** · `corrupt session log = 0` · 端口 3080 起 · `bin.js (exists=true)` |
+| **④ 收场** | 插件体内修复器全树对质 `{"scanned":81,"repaired":[],"skipped":[],"errors":[]}`；sessions 顶层回 **26（= 基线）**；残余临时区已清 |
+
+> ⚠️ **教训（→ L94）**：收场那一步 `mv` 掉 `sessions/` 顶层空壳 project 目录，**59 秒后**把 node 打死了
+> （`ENOENT: scandir …/sessions/--hb62-wrong--`，栈在 `Fiber._reload` → `[cordis.init]`）。
+> 读官方源码得根因 = **两段式枚举只守护第一段**：`listProjectDirs` 吞 ENOENT、`listSessionDirs` **不吞**，
+> 而 `Fiber._reload` 路径上没有任何 catch ⇒ 未捕获 ⇒ `node exit 1`。
+> **纪律**：`sessions/` 顶层 project 目录**运行期只读**；要改必须 `force-stop` 先，或改到 `sessions/` **之外**
+> （预检的隔离区 `sessions-quarantine/` 正是这么设计的）。
+> 同时纠正一处误记（→ L95）：先前记的「node 健康 ~55s 后被 watchdog 重启」经**时间线对齐**后证明是**我自己**的收场动作，与预加载无关。
+
+### 5. 闸门与交付
+
+- **新增断言 A8**：`dsht-preflight` 产物存在 + 含 `sessions-quarantine` + 含 `DSHT_PREFLIGHT_DISABLE`；
+  **新增断言 A9**：`NodeService.kt` 必须引用 `dsht-preflight` 且含 `--import` —— 防「产物进包但没人加载它」这种**空防线**。
+  A8/A9 正控各 2 命中、负控（抹掉后）双双 **0**。
+- `typecheck` 三段式 **core / ui / tests 全 0 错**；全量单测 **54 文件 / 1141 全绿**（+25）；
+  A7 方法绑定审计 PASS（85 个 `.ts` / 136 候选 / 高危 0）。
+- 双架构 APK：`x86_64 debug` **196,844,623 B sentinel v278** / `arm64 release` **128,370,848 B sentinel v279**；
+  `check-apk-payload.py` 双架构均命中 `node_modules/dsht-preflight/lib/index.js`。
+- `stage4-regression` **20/21**（唯一失败 `variant/groups` = 探针未 attach，与基线同）。
 
 ## 心跳 61B 做了什么（**实机验收时挖出一个会让 app 无限 crash-loop 的「会话目录不变量」缺陷**）
 

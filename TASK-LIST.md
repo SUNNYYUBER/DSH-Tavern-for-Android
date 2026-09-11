@@ -9,16 +9,25 @@
 
 | 事实 | 说明 |
 |---|---|
-| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v277**，阶段 0/1/2/3/4 已全部推完） |
-| 仓库最新产物 | **x86_64 debug sentinel v276（196,840,019 B）/ arm64 release sentinel v277（128,366,044 B）**，9-12 03:1x 构建（心跳 61B 的 cwd 修复），新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中（md5 `6e86d7abce2b50a9b031d6562b0409ae`） |
-| 设备侧 | **已装 v276**（心跳 61B 完成）；实机取证：`/rp/home` 返**规范形态** `/data/data/…` · 冷启动 symlink 回归 `repaired=1 skipped=0 errors=0` · **`node exited with code` 计数 0** · 全树不变量审计 **85/85 / 0 违反**；插件**三方 md5 全一致**（无第 ⑦ 类断链） |
+| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v279**，阶段 0/1/2/3/4 已全部推完） |
+| 仓库最新产物 | **x86_64 debug sentinel v278（196,844,623 B）/ arm64 release sentinel v279（128,370,848 B）**，9-12 05:3x 构建（心跳 62 的壳侧预检），新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中（`node_modules/dsht-preflight/lib/index.js`） |
+| 设备侧 | **已装 v278**（心跳 62 完成）；实机取证：`preflight: … (exists=true)` + **预检真的跑了**（`扫描 81 个会话目录：ok=80 搬迁=1 隔离=0 不可读=0 失败=0`）· **四段闭环**（反控 `node exited=2 / corrupt session log=10` → 正控 `node exited=0 / corrupt=0 / 端口 3080 起`）· 收场全树 `{"scanned":81,"repaired":[],"errors":[]}` · sessions 顶层 26（= 基线） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1116 项全绿（53 文件）** · `typecheck` 三段式 **0 错**（心跳 61B 复跑确认） |
-| 设备回归 | `stage4-regression` **21/21**（心跳 61B 复跑；attach 态由新建 live 会话制造，**跑完已 `mv` 走**） |
-| 未提交改动 | 心跳 61B 的插件源码修复（`index.ts` / `session-surgery.ts`）+ 单测 + 文档回写（本轮提交）；**并发实例正改 `rpc.ts`/`NodeService.kt`/`dsht-rp-ui/lib/*`（T-57 修复），我方一份没碰** |
+| 单测 | **1141 项全绿（54 文件）** · `typecheck` 三段式 **0 错**（心跳 62 复跑确认） |
+| 设备回归 | `stage4-regression` **20/21**（心跳 62 复跑；唯一失败 `variant/groups` = 探针未 attach，与基线一致） |
+| 未提交改动 | 心跳 62 的**新增** `packages/src/dsht-preflight/` + `tests/preflight.spec.ts` + `NodeService.kt` 注入 + 两个构建脚本 + 文档回写（本轮提交）；**并发实例仍在改** `rpc.ts`/`dsht-rp-ui/lib/*`/`host-vendor.ts` 一族（T-57 修复），我方**一份没碰** |
 | 发布闸门 | 🔴 **未达标**（T-25/T-61 心跳 61 复跑：受控面 **616 文件 / 合计 305 项**）⇒ **现在不能公开**；<br>✅ **`SECRET` 已由 1 → 0**（🔴 发布阻断项清除，但⚠️ 属**并发实例**在 `DSH Android Roleplay App Plan.md` 的**未提交**改动）<br>⚠️ **且密钥仍在本地 git 历史里**（仓库无远端、117 个提交从未推送 ⇒ 非对外事故）—— **P0 历史重写未做**；剩余 `WXID 16 / LOCALPATH 70 / SERVER 11 / PAYLOAD 8 / WORDLIST 200` |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
+- **心跳 62** = **把 T-65 的「建议」变成上线**：T-65 的损坏发生在 `[cordis.init]` **插件树加载期**，而我方修复器
+  **全在插件体内**（L88：位置不对，再正确也救不了场）⇒ 换位置：把预检塞进 **node 启动参数**
+  （`NODE_OPTIONS=--import file://<abs>/dsht-preflight/lib/index.js`，官方源**零修改**）。
+  新交付 `dsht-preflight`（纯文件扫描 + `rename` 搬正 + 目标冲突则**隔离到 `sessions/` 之外** + 一切异常 fail-open），
+  带**入口闸**（`argv[1]` 必须是 DSH 主入口，因 `NODE_OPTIONS` 会被子进程继承）与**反控闸** `DSHT_PREFLIGHT_DISABLE=1`。
+  **设备四段闭环**：基线（预检真跑了 `81 个 → ok=80 搬迁=1`）→ 反控（`node exited=2 / corrupt=10`）→
+  正控（`node exited=0 / corrupt=0 / repaired=1`）→ 收场（全树 0 待修、顶层回 26）。
+  单测 **1141 全绿（+25）** · 双架构 APK **v278/v279** · 新增构建断言 **A8/A9**（防「产物进包但没人加载它」这种空防线）。
+  沉淀 **L94/L95**。详见 **T-67**（已做）与 **T-68**（新登记：运行期动 `sessions/` 顶层会打死 node）。
 - **心跳 61B** = **实机验收时挖出一个会让 app 无限 crash-loop 的「会话目录不变量」缺陷（三层链，其中两层是我方自造）**：
   `/rp/home` 交出非规范路径形态 `/data/user/0/<pkg>/…`（触发源）+ `repairSessionCwds` **先 rename 目录、后按硬编码
   `session.jsonl` 读文件**（0.1.5 世代不存在该文件 ⇒ `ENOENT` 被吞 ⇒ **半修复态、永不收敛**）+ 插件树**加载期**
@@ -319,7 +328,7 @@
   1. **基准源**：真 ST 宿主页有 `globalThis.SillyTavern = { libs, getContext }`
      （`SillyTavern-reference/public/script.js:292`「API OBJECT FOR EXTERNAL WIRING」），TT 同。
   2. **触发源**：设备 CDP `Runtime.exceptionThrown` → `ReferenceError: SillyTavern is not defined`
-     @ `https://jnai2d9kgnbs6xzx5c.com/regex_bind/inject.js:55`（**宿主帧**，非 iframe）。
+     @ `〈该卡外链托管域〉/regex_bind/inject.js:55`（**宿主帧**，非 iframe；域名按 T-25 脱敏）。
      抓下该脚本（220KB）逐条枚举取用面：`SillyTavern.getContext` **11 处**，首行即
      `const ctx = SillyTavern.getContext(); for (const p of ctx.chatCompletionSettings.prompts)`；
      另有 `ctx.chat?.[…]`（取 `.mes/.is_user/.is_system/.swipe_id`）、`const { uuidv4 } = …`。
@@ -1292,18 +1301,85 @@ symlink 形态冷启动回归 `repaired=1 skipped=0 errors=0` + **`node exited w
 
 ---
 
-### T-67　🆕 **建议：壳侧 pre-boot 静态预检**（心跳 61B 提出，**未做**）
+### T-67　✅ **壳侧 pre-boot 静态预检**（心跳 61B 提出 → **心跳 62 落地并设备闭环**）
 
 **动因（L88）**：我方所有会话修复器都在**插件体内**（`dsh-plugin/index.ts` 启动即修），
 而 T-65 的损坏发生在 **`[cordis.init]` 插件树加载期** ⇒ **修复器根本轮不到执行**，
 整个 app 起不来，连一个能打日志的插件都没有。
 
-**建议做法**：在 node 起插件树**之前**（Android 壳侧 `NodeService.kt` 的 pre-boot 阶段，
-或 runtime 的一个极早入口）用**纯文件扫描**判定「每个会话目录名 == `projectKey(header.cwd)`」：
+**最终做法（与"建议"的三处偏离，都有实测理由）**：
 
-- 只读 `session*.jsonl` 的**首行 header**（不需完整加载日志）
-- 不符则**隔离**（`mv` 到 `sessions/.quarantine/<ts>/`）**而非修复** —— 保证 app 一定起得来
-- 或至少把不符项写成一条**在 app 起不来时也能读到**的文件（供外部排查）
+| 建议 | 最终 | 为什么改 |
+|---|---|---|
+| 隔离（而非修复） | **搬正（`rename`）+ 冲突才隔离** | 搬正是**唯一的 rename**、不写文件内容 ⇒ 与前一轮 L87「不可逆动作最后做」不冲突；实测能让用户**恢复访问自己的会话**，而隔离会让会话"消失"，代价更大 |
+| 落在"壳侧 pre-boot 阶段" | 落在 **node 启动参数**（`--import`） | 壳侧只能注入参数、做不了文件系统动作；`--import` 在主入口求值**之前**跑且会等其**顶层 await** ⇒ 正好卡在插件树之前（顺序已用假下游消费者验证） |
+| 写"app 起不来时也能读到"的文件 | 落地为 `dsht-preflight-status.json`（**覆盖式、定长三态**）+ 追加式 `.log` | 覆盖式保证"最后一次运行的状态"永远可读；日志只在**真动过手**时追加，不产生噪声 |
+
+**实现**：`rp-workspace/packages/src/dsht-preflight/index.ts`（17.6 KB）—— 逐字照抄官方
+`projectKey` / `encodeSegment`（**只按 `header.cwd` 字面值，绝不 realpath**）；运行时显式 `path.posix`；
+目标已存在 → 隔离到 `sessions/` **之外**的 `sessions-quarantine/<stamp>/`；rename 失败 → 目录**原封不动**；
+一切异常 **fail-open**（顶层 await，绝不许拦住启动）。
+注入点：`NodeService.kt` 的 `preflightOption()`（产物不存在则**不注入**）。
+
+**两道闸（L92）**：入口闸 `process.argv[1]` 必须以 `/@deepseek-ai/dsh/lib/bin.js` 结尾
+（因 `NODE_OPTIONS` 会被**子进程继承**）+ **反控闸 `DSHT_PREFLIGHT_DISABLE=1`**。
+
+**验收（全实测）**：
+- **宿主机制烟雾测试**三组对照全过（带/不带 `--import`、`DISABLE=1`）—— 见 L93
+- **单测 25 条**（`tests/preflight.spec.ts`）：方向 / 失败模式 / 反控 + `FakeFs` 故障注入 +
+  真 fs 端到端 + **与官方实现逐输入等价性对质**
+- **设备四段**：① 基线 `扫描 81 个会话目录：ok=80 搬迁=1 隔离=0 不可读=0 失败=0`；
+  ② 反控（挪走产物 + 造违反态）`node exited=2 / corrupt session log=10`，原文
+  `failed to apply loader entry workspace: corrupt session log "…/--hb62-wrong--/dsht-welcome/session.jsonl"`；
+  ③ 正控（放回产物）`node exited=0 / corrupt=0` · `repaired --hb62-wrong--/… → --data-data-…-_start--/…` · 端口 3080 起；
+  ④ 收场 `{"scanned":81,"repaired":[],"skipped":[],"errors":[]}` · 顶层回 26（= 基线）
+- **构建断言**：新增 **A8**（产物存在 + 含 `sessions-quarantine` + 含 `DSHT_PREFLIGHT_DISABLE`）与
+  **A9**（`NodeService.kt` 必须引用 `dsht-preflight` 且含 `--import` —— 防"产物进包但没人加载它"这种**空防线**）；
+  正控各 2 命中、负控双双 0
+- **交付**：`typecheck` 三段式 0 错 · 单测 **54 文件 / 1141 全绿** ·
+  APK `x86_64 debug v278` / `arm64 release v279` · `stage4-regression` **20/21**（与基线同）
+
+**证据**：`stage3-device/hb62/`（`preflight-smoke.sh` / `hb62-device-verify.sh` / `hb62-repair-audit.js` + 两份日志）
+
+---
+
+### T-68　🆕 **运行期移动 `sessions/` 顶层 project 目录 ⇒ 下一次 reload 打死 node**（心跳 62 顺带定性）
+
+**症状**：心跳 62 收场把测试造出的空壳 project 目录 `mv` 出 `sessions/`，**59 秒后** node 崩：
+
+```
+Error: dsh: plugin tree failed to load: … failed to apply loader entry workspace
+       (@deepseek-ai/dsh-workspace): ENOENT: no such file or directory,
+       scandir '…/files/.dsh/sessions/--hb62-wrong--'
+  at async Proxy.listSessionDirs (dsh-session-persistence-jsonl/lib/index.js:3272:19)
+  at async Proxy.listArtifacts   (…:2867:22)
+  at async WorkspaceRegistry.listStoredHeaders (dsh-workspace/lib/index.js:730:11)
+  at async [cordis.init] (dsh-workspace/lib/index.js:348:65)
+  at async Fiber._reload (cordis/lib/index.js:1355:5)
+```
+
+**根因（官方源码，读出来的不是猜的）**：`dsh-session-persistence-jsonl` 的**两段式枚举不对称** ——
+
+```js
+async listProjectDirs(signal) {
+  try { … return readdir(this.root) … }
+  catch (error) { if (isENOENT(error)) return []; throw error }   // ← 有守卫
+}
+async listSessionDirs(project, signal) {
+  const entries = await readdir(project, …)                       // ← 无守卫
+}
+```
+
+⇒ 枚举两趟之间发生删除时，第二趟必然 ENOENT 上抛；`Fiber._reload` 路径上**没有任何 catch**
+⇒ 未捕获 ⇒ `node exit 1`。**启动时不会命中**（要么 root 都不在 → 被吞；要么都在），
+**只有运行期会命中** —— 也就是唯一危险的那种。
+
+**处置**：① **不改官方源**（合规红线）⇒ 登记为**上游缺陷候选**，可上行反馈；
+② **我方纪律（已写进验收脚本与 LEARNINGS L94）**：`sessions/` 顶层 project 目录**运行期只读**，
+要改必须 ① 先 `am force-stop`，或 ② 改在 **pre-boot 预检**里做（那只在插件树加载**之前**跑，天然安全），
+或 ③ 改到 `sessions/` **之外**（预检的 `sessions-quarantine/` 正是这么设计的）；
+③ 已核查我方产品代码：`repairSessionCwds` 只 `rename`**会话目录**（不是 project 目录），空壳 project 目录
+仍存在 ⇒ `readdir` 可成功，**不触发**本条。
 
 ---
 
@@ -1313,7 +1389,8 @@ symlink 形态冷启动回归 `repaired=1 skipped=0 errors=0` + **`node exited w
 |---|---|---|
 | T-64 | ✅ **新会话第 2 轮陈旧快照副本**（心跳 61 已修） | 见上方完整条目。根因 = 去重**触发器自指短路**（`dupSigs === 0` 早退，恰好挡掉 `freshSigs` 这条本该生效的判据）。已抽纯函数 `decideShadowTrigger` + 补第三条判据 `freshStaleSigs`，负控 2 条转红，实机第 2 轮 **0 重复组** |---|---|---|
 | T-65 | ✅ **「UI 新建的会话」致 app 冷启无限 crash-loop**（心跳 61B 已修） | 见上方完整条目。三层链 = `/rp/home` 非规范路径形态（触发源）+ 修复器硬编码 `session.jsonl` 致**半修复态**（②）+ 插件树加载期抛错（后果）。已修 + 新闸门 `audit-cwd-projectkey.mjs`（不变量审计 85/85） |
-| T-67 | 🆕 **建议：壳侧 pre-boot 静态预检**（心跳 61B 提出，未做） | 见上方完整条目。动因 = 我方修复器全在**插件体内**，救不了「插件树加载期就崩」的损坏（L88）。建议在起插件树前做纯文件扫描 + **隔离**（而非修复） |
+| T-67 | ✅ **壳侧 pre-boot 静态预检**（心跳 61B 提出，**心跳 62 落地 + 设备四段闭环**） | 见上方完整条目。做法 = `NODE_OPTIONS=--import file://…/dsht-preflight/lib/index.js`（官方源零修改）+ 纯文件扫描 + `rename` 搬正（目标冲突则隔离到 `sessions/` 之外）+ 反控闸 `DSHT_PREFLIGHT_DISABLE=1`；新增构建断言 **A8/A9** |
+| T-68 | 🆕 **运行期移动 `sessions/` 顶层 project 目录 ⇒ 下一次 reload 打死 node**（心跳 62 顺带定性） | 见上方完整条目。根因 = 官方 `listProjectDirs` 有 ENOENT 守卫、`listSessionDirs` **没有**，而 `Fiber._reload` 路径无 catch。**不改官方源**（合规红线）⇒ 登记为**上游缺陷候选** + 我方纪律「`sessions/` 顶层运行期只读」。**已核查不影响出货**（`repairSessionCwds` 只动会话目录，project 目录仍存在） |
 | T-63 | 🆕 **卡脚本请求的 4 个 ST 内部模块全 404**（心跳 60） | 见上方完整条目。**缺口真实（基准有、我方 404），但当前未可达**（`window.versionNumber` 全 `undefined` ⇒ 就绪块未执行）。**分界线清楚**：`STVersionImports` 单独可修；`SPresetImports` 需重实现 ST prompt manager ⇒ **不做空壳** |
 | T-62 | 🆕 **`src/*/lib/*.js` 是「孤儿派生产物」**（心跳 59 发现） | `src/<plugin>/lib/index.js` 受版本控制、且历史提交里**与源码成对更新**（如 `3ffc1f9` 同时改 `src/dsh-plugin/index.ts` 与 `lib/index.js`），但**逐行核查所有构建脚本后确认：无任何路径消费它们** —— `build-plugins.sh:build_node_plugin` 是**直接从 `src/<pkg>/index.ts` 编译到 staging**（`$NM/<pkg>/lib/index.js`），`build-wb.sh` 同理；唯一例外是 `src/dsht-plugin-mobile/lib/index.js`（被 `build-plugins.sh:96` 拷贝）与 `src/dsht-rp-ui/lib/client.js`（由 `build-rp-ui.mjs` 生成并下游消费）。<br>⇒ 现状是**第三种状态**：既没被 `.gitignore`，也没被生成流程维护 —— `src/dsht-plugin-mvu/lib/index.js` 自 09-08 起陈旧至今。**且不可逐字节复现**（同源码两次构建字节数不同：882,361 vs 884,675 B，L52）。<br>**故本轮有意不重建**（重建只制造无意义 churn、且无收益）；**建议**：要么全部 `.gitignore` 掉，要么明确纳入构建。属 T-25 大扫除范畴。**已核验：不影响出货** —— APK 内插件取自 staging，本轮已三层核验新鲜。 |
 | T-28 | Tier 2 TH 长尾 API（约 50 项记名 stub 之外） | ⏳ **未做**（设计如此）：不支持的 API 挂 stub → `console.warn` 记名 + `Promise.reject`（`th-shim.ts:392/1847`），**诚实失败而非假成功**。真 TH 长尾面（rebind 家族 / createOrReplacePreset / QuickReply 系）待「第三次冒同类问题」再升时间盒 |
@@ -1348,8 +1425,8 @@ symlink 形态冷启动回归 `repaired=1 skipped=0 errors=0` + **`node exited w
 【待你执行】把 arm64 包装真机，验三条基线（启动 / 打开旧聊天 / 发消息）
 【待外部条件】T-25 大扫除（需先解冻 RP 数据）→ T-27 更新渠道（需提供目标 GitHub 仓库）
 【随时可做】T-28~T-33 长尾（不阻塞发布）
-【实机已验】T-59（D-6 工具修剪）/ T-60（T-42 extension_settings.regex）——
-   单测+反控+**设备实测**三重齐备（见各自段落）
+【实机已验】T-59（D-6 工具修剪）/ T-60（T-42 extension_settings.regex）/ **T-67（壳侧 pre-boot 静态预检，
+四段闭环：反控复现 → 正控自愈）** —— 单测+反控+**设备实测**三重齐备（见各自段落）
 ```
 
 **卡点提示**：T-25 大扫除在「T-04 装机验证通过 + 差异收敛」前**不能动**（数据冻结）；

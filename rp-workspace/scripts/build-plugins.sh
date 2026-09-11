@@ -80,6 +80,15 @@ else
   say "  · 源码不存在，跳过"
 fi
 
+# ---------------------------------------------------------------- 4b. dsht-preflight（T-67）
+# **不是 cordis 插件**：不进 profile 的 insert 列表，由 NodeService 通过
+# `NODE_OPTIONS=--import <runtime>/node_modules/dsht-preflight/lib/index.js` 在 DSH 主入口
+# (`@deepseek-ai/dsh/lib/bin.js`) **之前**预加载 —— 用来在「插件树加载期」之前修掉
+# 「会话目录名 ≠ projectKey(header.cwd)」这种会把 app 打成无限 crash-loop 的存量损坏（L88）。
+# 用 doc 侧已有机制（`extractFn` 等价性对质）保证它引用的 projectKey/encodeSegment 与官方一致。
+say "[4b/7] dsht-preflight（壳侧 pre-boot 静态预检，走 NODE_OPTIONS --import）"
+build_node_plugin "dsht-preflight" "src/dsht-preflight/index.ts"
+
 # ---------------------------------------------------------------- 7. dsht-rp-ui client → 并入 rp-plugin
 say "[5/7] dsht-rp-ui client bundle（并入 dsht-rp-plugin）"
 ( cd "$PKG" && "$NODE" "$WS/scripts/build-rp-ui.mjs" ) || die "build-rp-ui.mjs 失败"
@@ -107,7 +116,7 @@ say "  ✓ app.js $(( $(stat -c%s "$RP/assets/app.js") / 1024 )) KB"
 # ---------------------------------------------------------------- 汇总
 say ""
 say "=== 部署结果 ==="
-for p in dsht-rp-plugin dsht-plugin-mvu dsht-plugin-tavern-helper dsht-plugin-prompt-template dsht-plugin-memory dsht-plugin-mobile dsht-plugin-undo; do
+for p in dsht-rp-plugin dsht-plugin-mvu dsht-plugin-tavern-helper dsht-plugin-prompt-template dsht-plugin-memory dsht-plugin-mobile dsht-plugin-undo dsht-preflight; do
   if [ -f "$NM/$p/lib/index.js" ]; then
     printf "  %-32s %8s B\n" "$p" "$(stat -c%s "$NM/$p/lib/index.js")"
   else

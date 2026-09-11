@@ -18,9 +18,9 @@ ESB="$WS/packages/node_modules/esbuild/bin/esbuild"
 PKG="$WS/packages"
 DST="$WS/dsh-runtime-android"
 ANDROID="$WS/android"
-ADB="C:/Users/Administrator/.android/sdk/platform-tools/adb.exe"
+ADB="$HOME/.android/sdk/platform-tools/adb.exe"
 export JAVA_HOME="/c/Program Files/Eclipse Adoptium/jdk-21.0.12.8-hotspot"
-PY="C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe"
+PY="$HOME/.workbuddy/binaries/python/versions/3.13.12/python.exe"
 
 say() { echo "[build-wb] $*"; }
 die() { echo "[build-wb][FATAL] $*" >&2; exit 1; }
@@ -79,7 +79,8 @@ build_one() {
   #  ⚠️ 不要"顺手"把它加进 pluginRows —— 会与 rp-plugin 的路由功能重复注册。
   #  这里保留在构建列表里只是为了产物形式统一；后续若确认无用应整体删除（含源码）。
   for p in dsht-rp-plugin dsht-plugin-mvu dsht-plugin-tavern-helper \
-           dsht-plugin-prompt-template dsht-plugin-memory dsht-plugin-mobile dsht-plugin-undo; do
+           dsht-plugin-prompt-template dsht-plugin-memory dsht-plugin-mobile dsht-plugin-undo \
+           dsht-preflight; do
     [ -f "$DST/node_modules/$p/lib/index.js" ] || { NEED=1; say "  产物缺失: $p"; break; }
   done
   if [ "$NEED" = "0" ]; then
@@ -98,6 +99,25 @@ build_one() {
   else
     say "  ✓ 插件已就位且不比源码旧（跳过构建）"
   fi
+
+  # A8 —— 壳侧 pre-boot 预检产物必须**在包里且来自本轮源码**（T-67，心跳 62 新增）。
+  # 背景：`dsht-preflight` 不是 cordis 插件 —— 它不被 profile 引用，只被 NodeService 的
+  # `NODE_OPTIONS=--import` 指向。所以「插件存在即跳过」类的静默漏打包**不会**被任何
+  # 既有断言发现：包照出、app 照起，而预检根本没进包（本项目第 ⑦ 类断链的同族）。
+  # 判据同上（A2 手法）：产物里的**新东西**必须在（`sessions-quarantine` 是 T-67 才有的标识符）。
+  say "[A8] dsht-preflight 产物存在 + 含本轮标识符"
+  PRE="$DST/node_modules/dsht-preflight/lib/index.js"
+  [ -f "$PRE" ] || die "A8: dsht-preflight 产物缺失（$PRE）—— 预检不会进包，crash-loop 防线为空"
+  grep -aq "sessions-quarantine" "$PRE" || die "A8: 产物无 T-67 标识符 sessions-quarantine（产物陈旧或源码不对）"
+  grep -aq "DSHT_PREFLIGHT_DISABLE" "$PRE" || die "A8: 产物无应急/反控开关 DSHT_PREFLIGHT_DISABLE"
+
+  # A9 —— 接线断言（T-67）。A8 只证明"产物进包了"；**产物在包里但没人加载它**是一种
+  # 完全静默的空防线：包照出、app 照起、crash-loop 照旧。判据必须落在**加载侧**（NodeService.kt）。
+  say "[A9] NodeService.kt 必须真的加载 dsht-preflight（否则预检是死的）"
+  grep -aq "dsht-preflight" "$ANDROID/app/src/main/java/com/dshtavern/app/NodeService.kt" \
+    || die "A9: NodeService.kt 未引用 dsht-preflight —— 产物进包但不会被加载 = 空防线"
+  grep -aq -- '--import' "$ANDROID/app/src/main/java/com/dshtavern/app/NodeService.kt" \
+    || die "A9: NodeService.kt 未注入 --import —— 预检不会在 DSH 主入口之前执行"
 
   say "[A3] NodeService.kt 无 BOM 检查"
   [ "$("$PY" -c "print(open(r'$ANDROID/app/src/main/java/com/dshtavern/app/NodeService.kt','rb').read()[:3]==b'\xef\xbb\xbf')")" = "False" ] \

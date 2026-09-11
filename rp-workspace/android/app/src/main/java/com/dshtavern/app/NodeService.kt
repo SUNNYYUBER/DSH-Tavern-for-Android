@@ -36,7 +36,7 @@ class NodeService : Service() {
         private const val RUNTIME_DIR = "dsh-runtime"
         private const val RUNTIME_ZIP = "dsh-runtime.zip"
         /** 解压哨兵：§4.16.2 前端 dsht-rp-ui client 变更随 runtime.zip 重发布 → v97（覆盖安装强制重解压） */
-        private const val RUNTIME_SENTINEL = ".installed-v266"
+        private const val RUNTIME_SENTINEL = ".installed-v279"
         private const val DSH_PORT = 3080
         private const val OUTPUT_CAP = 200
         private const val PROOT_ROOTFS_DIR = "proot-rootfs"
@@ -511,13 +511,37 @@ class NodeService : Service() {
         }
     }
 
+    /**
+     * 【T-67 / 心跳 62】pre-boot 静态预检的 NODE_OPTIONS 片段。
+     *
+     * **为什么必须放在这一层**：`dsh-workspace` 在 **`[cordis.init]` 插件树加载期**枚举会话
+     * header（`listStoredHeaders` → `listArtifacts` → `assertStoredIdentity`），一旦某个会话
+     * 目录名 ≠ `projectKey(header.cwd)` 就抛 `corrupt session log` → `plugin tree failed to load`
+     * → node exit 1 → 本文件 watchdog 每 3 秒重启一次 → **无限 crash-loop，整机不可用**。
+     * 我方所有会话修复器都住在**插件体内**，这一层根本够不着（LEARNINGS **L88**）。
+     *
+     * **为什么用 `--import` 而不是改官方入口**：官方源零修改是合规红线。`--import` 让 node 在
+     * 主入口求值**之前**先跑我们的模块（`dsht-preflight` 内部用顶层 await，故不存在
+     * "预检还在搬目录、插件树已经开始枚举"的竞态）。
+     *
+     * `file://` 前缀用字符串拼而非 `File.toURI()`：后者产出 `file:/data/…`（单斜杠形态），
+     * URL 解析虽能归一化，但没必要赌传输层的宽容度 —— 用规范的三斜杠形态。
+     * 产物不存在时返回空串（**fail-open**）：预检缺失只该意味着"防线为空"，
+     * 绝不该让 app 起不来（`build-wb.sh` 的 **A8** 断言负责让它不会静默缺失）。
+     */
+    private fun preflightOption(preflight: File): String =
+        if (preflight.exists()) " --import file://${preflight.absolutePath}" else ""
+
     /** 启动 node 并守护：进程退出后 3 秒重启，直到服务销毁。 */
     private fun startNodeForever() {
         val nodeBin = File(applicationInfo.nativeLibraryDir, "libnode.so")
         val runtimeDir = File(filesDir, RUNTIME_DIR)
         val entry = File(runtimeDir, "node_modules/@deepseek-ai/dsh/lib/bin.js")
+        // 【T-67 / 心跳 62】壳侧 **pre-boot 静态预检**产物路径（见下方 NODE_OPTIONS 注释）。
+        val preflight = File(runtimeDir, "node_modules/dsht-preflight/lib/index.js")
         recordLine("nodeBin: ${nodeBin.absolutePath} (exists=${nodeBin.exists()})")
         recordLine("entry: ${entry.absolutePath} (exists=${entry.exists()})")
+        recordLine("preflight: ${preflight.absolutePath} (exists=${preflight.exists()})")
         recordLine("LD path: ${applicationInfo.nativeLibraryDir}:${File(runtimeDir, "lib").absolutePath}")
         check(nodeBin.exists()) { "libnode.so missing in ${applicationInfo.nativeLibraryDir}" }
         check(entry.exists()) { "dsh bin.js missing in ${runtimeDir.path}" }
@@ -550,7 +574,8 @@ class NodeService : Service() {
                             // 用户最大会话 12.38MB jsonl（320 条消息、单条内嵌状态栏 HTML +
                             // MVU 变量，对象树膨胀 10x+）→ 512 必挂（"历史加载失败"真机回归
                             // 实证）、1024 临界 → 2048 给足余量（12GB RAM 设备安全）。
-                            put("NODE_OPTIONS", "--max-old-space-size=2048")
+                            put("NODE_OPTIONS",
+                                "--max-old-space-size=2048" + preflightOption(preflight))
                             put("TMPDIR", cacheDir.absolutePath)
                             // PRoot 真隔离：JS 补丁层（dsh-sandbox-local DSHT-ANDROID-PROOT）读这些 env 组装 proot argv；
                             // 缺失/探测失败时 JS 层自动回退 warn+fs 边界（见 build-dsht.ps1 Step 3.5）
