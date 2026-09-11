@@ -792,6 +792,76 @@ describe('shim：P1/P2 长尾 API', () => {
   })
 })
 
+describe('shim：Mvu.parseMessage 与 state/mvu.ts 差分（T-19）', () => {
+  /** 铺一段覆盖四来源的 assistant 文本 */
+  const SAMPLE = [
+    '<UpdateVariable>',
+    '<initvar>',
+    'stat_data:',
+    '  好感度: 42',
+    '  位置: 今州城',
+    '</initvar>',
+    '_.set(stat_data.天气, "晴");',
+    '_.inc(stat_data.好感度, 3);',
+    '<JSONPatch>[{"op":"replace","path":"/stat_data/位置","value":"北门"}]</JSONPatch>',
+    '</UpdateVariable>',
+  ].join('\n')
+
+  it('四来源齐出：initvar 树 + _.set/_.inc 指令 + JSONPatch 子块', () => {
+    const f = makeFrame('s1')
+    const shim = vm.runInContext(`Mvu.parseMessage(${JSON.stringify(SAMPLE)})`, f.ctx) as unknown[]
+    // initvar 叶（stat_data.好感度 / stat_data.位置）+ _.set + _.inc + JSONPatch
+    expect(shim.length).toBe(5)
+    expect(shim).toContainEqual({ op: 'replace', path: '/stat_data/好感度', value: 42 })
+    expect(shim).toContainEqual({ op: 'replace', path: '/stat_data/位置', value: '今州城' })
+    expect(shim).toContainEqual({ op: 'replace', path: '/stat_data/天气', value: '晴' })
+    expect(shim).toContainEqual({ op: 'delta', path: '/stat_data/好感度', value: 3 })
+  })
+
+  it('与 state/mvu.ts parseUpdateVariable 逐条等价（同输入同输出）', async () => {
+    const { parseUpdateVariable } = await import('../src/state/mvu.ts')
+    const f = makeFrame('s1')
+    const shim = vm.runInContext(`Mvu.parseMessage(${JSON.stringify(SAMPLE)})`, f.ctx) as unknown[]
+    expect(shim).toEqual(parseUpdateVariable(SAMPLE))
+  })
+
+  it('单个 <UpdateVariable> 内多个 <JSONPatch> 全部解析（matchAll 回归）', () => {
+    const text = '<UpdateVariable><JSONPatch>[{"op":"add","path":"/a","value":1}]</JSONPatch>'
+      + '<JSONPatch>[{"op":"add","path":"/b","value":2}]</JSONPatch></UpdateVariable>'
+    const f = makeFrame('s1')
+    const shim = vm.runInContext(`Mvu.parseMessage(${JSON.stringify(text)})`, f.ctx) as unknown[]
+    expect(shim).toEqual([
+      { op: 'add', path: '/a', value: 1 },
+      { op: 'add', path: '/b', value: 2 },
+    ])
+  })
+
+  it('op 白名单：非法 op（test/拼错）被丢弃，不得变真实写', () => {
+    const text = '<UpdateVariable><JSONPatch>[{"op":"test","path":"/a","value":1},'
+      + '{"op":"apend","path":"/b","value":2}]</JSONPatch></UpdateVariable>'
+    const f = makeFrame('s1')
+    expect(vm.runInContext(`Mvu.parseMessage(${JSON.stringify(text)})`, f.ctx)).toEqual([])
+  })
+
+  it('insert 的 index 并入 path；from 字段透传', () => {
+    const text = '<UpdateVariable><JSONPatch>[{"op":"insert","path":"/list","index":1,"value":"x"},'
+      + '{"op":"move","from":"/a","path":"/b"}]</JSONPatch></UpdateVariable>'
+    const f = makeFrame('s1')
+    expect(vm.runInContext(`Mvu.parseMessage(${JSON.stringify(text)})`, f.ctx)).toEqual([
+      { op: 'insert', path: '/list/1', value: 'x' },
+      { op: 'move', path: '/b', from: '/a' },
+    ])
+  })
+
+  it('块外裸 <JSONPatch> 兜底；空文本返回空数组', () => {
+    const f = makeFrame('s1')
+    expect(vm.runInContext(`Mvu.parseMessage('<JSONPatch>[{"op":"add","path":"/x","value":9}]</JSONPatch>')`, f.ctx))
+      .toEqual([{ op: 'add', path: '/x', value: 9 }])
+    expect(vm.runInContext(`Mvu.parseMessage('')`, f.ctx)).toEqual([])
+    expect(vm.runInContext(`Mvu.parseMessage(null)`, f.ctx)).toEqual([])
+  })
+})
+
 describe('shim：世界书只读（桥）', () => {
   it('getWorldbooks → wb:list，解包 name 数组', async () => {
     const f = makeFrame('s1')

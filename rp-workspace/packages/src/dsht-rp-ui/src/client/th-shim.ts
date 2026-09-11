@@ -1778,38 +1778,235 @@ function dshtFormatArg(a) {
 
 // ---- D6 window.Mvu（MVU 框架顶层面；真 TH 由 MVU bundle 挂到 parent）----
 // getMvuData → mvu 桥（GET /dsht-mvu/variables 的 variables 树；message 类型同源返回——
-// 无每消息变量树，诚实限制）；replaceMvuData → /dsht-mvu/variables/register {replace:true}；
-// parseMessage → state/mvu.ts parseUpdateVariable 同款提取（<UpdateVariable> 内 <JSONPatch> 数组）。
-function dshtParseJsonPatches(seg) {
-  var m = seg.match(/<JSONPatch>\\s*([\\s\\S]*?)\\s*<\\/JSONPatch>/i);
-  if (!m) return [];
-  try {
-    var arr = JSON.parse(m[1]);
-    if (!Array.isArray(arr)) return [];
-    var out = [];
-    for (var i = 0; i < arr.length; i++) {
-      var p = arr[i];
-      if (!p || typeof p !== 'object') continue;
-      var patch = { op: String(p.op || 'add').toLowerCase(), path: String(p.path || '') };
-      if (p.value !== undefined) patch.value = p.value;
-      if (patch.path.length > 0) out.push(patch);
-    }
-    return out;
-  } catch (e) { return []; }
+// 无每消息变量树，诚实限制）；replaceMvuData → /dsht-mvu/variables/register {replace:true}。
+//
+// 【T-19 2026-09-11 真修】parseMessage 全量对齐 state/mvu.ts 的 parseUpdateVariable。
+// 此前 TASK-LIST 声称「直调 state/mvu.ts（同源，非各写一份）」——**不成立**：本 shim 是
+// **构建期注入的字符串**（buildShimSource 的模板串），根本没有 import 能力，实际是自写的
+// 一份简化版，只认 <JSONPatch> 子块。写的时候还抄进了 state/mvu.ts 早已修掉的两个缺陷：
+//   ① 用 .match() 单次匹配 → 一个 <UpdateVariable> 里多个 <JSONPatch> 只解析第一个，
+//      其余静默丢失（2026-09-09 鲁棒轮已在 state/mvu.ts 改成 matchAll）；
+//   ② 无 op 白名单 / 无 insert 的 index 并入 / 无 from 字段。
+// 现按 state/mvu.ts 四来源逐条镜像：JSONPatch 子块 / <initvar> YAML 树 / _.set 系指令行 /
+// 块外裸 JSONPatch。改动任一侧时**必须同步两处**（无法共享模块的硬约束）。
+var DSHT_PATCH_OPS = { add: 1, replace: 1, remove: 1, delta: 1, move: 1, copy: 1, insert: 1 };
+function dshtEncodeSeg(seg) { return String(seg).replace(/~/g, '~0').replace(/\\//g, '~1'); }
+function dshtStripQuotes(s) {
+  var t = String(s == null ? '' : s).trim();
+  if (t.length >= 2) {
+    var a = t.charAt(0), b = t.charAt(t.length - 1);
+    if ((a === '"' && b === '"') || (a === "'" && b === "'") || (a === '“' && b === '”')) return t.slice(1, -1);
+  }
+  return t;
 }
-function dshtParseUpdateVariable(text) {
+/** 宽松取值：JSON.parse 成功即用，否则去引号按字符串（state/mvu.ts parseLooseValue） */
+function dshtParseLooseValue(s) {
+  var t = dshtStripQuotes(s);
+  try { return JSON.parse(t); } catch (e) { return t; }
+}
+/** JSONPatch 子块提取（matchAll 合并全部块；op 白名单；insert 的 index 并入 path；from 透传） */
+function dshtParseJsonPatches(text) {
+  var blocks = [], m;
+  var re = /<JSONPatch>\\s*([\\s\\S]*?)\\s*<\\/JSONPatch>/gi;
+  while ((m = re.exec(text)) !== null) blocks.push(m[1]);
+  if (blocks.length === 0) return [];
+  var out = [];
+  for (var i = 0; i < blocks.length; i++) {
+    var arr;
+    try { arr = JSON.parse(blocks[i]); } catch (e) { continue; }
+    if (!Array.isArray(arr)) continue;
+    for (var j = 0; j < arr.length; j++) {
+      var p = arr[j];
+      if (!p || typeof p !== 'object') continue;
+      var opRaw = (p.op === undefined ? 'add' : String(p.op)).toLowerCase();
+      if (!DSHT_PATCH_OPS[opRaw]) continue; // 白名单外丢弃（"test"/拼错的 "apend" 不得变真实写）
+      var path = String(p.path === undefined ? '' : p.path);
+      if (opRaw === 'insert' && typeof p.index === 'number' && p.index % 1 === 0 && !/\\/\\d+$/.test(path)) {
+        path = path.replace(/\\/+$/, '') + '/' + p.index;
+      }
+      if (path.length === 0) continue;
+      var patch = { op: opRaw, path: path };
+      if (p.from !== undefined) patch.from = String(p.from);
+      if (p.value !== undefined) patch.value = p.value;
+      out.push(patch);
+    }
+  }
+  return out;
+}
+/** initvar 叶值解析（引号优先；数字/bool/null 识别） */
+function dshtParseYamlValue(raw) {
+  var v = String(raw == null ? '' : raw).trim();
+  var quoted = dshtStripQuotes(v);
+  if (quoted !== v) return quoted;
+  try { return JSON.parse(v); } catch (e) { /* 非 JSON，继续 */ }
+  if (/^-?\\d+(\\.\\d+)?$/.test(v)) return Number(v);
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  if (v === 'null' || v === '~') return null;
+  return v;
+}
+/** 轻量 YAML 树解析（initvar 用；缩进嵌套 + 一层 "- item" 数组；容忍全角冒号） */
+function dshtParseYamlLite(src) {
+  var raw = String(src).split(/\\r?\\n/), lines = [];
+  for (var i = 0; i < raw.length; i++) {
+    var l = raw[i].replace(/\\t/g, '  ');
+    var t = l.trim();
+    if (t !== '' && t.charAt(0) !== '#' && t !== '---') lines.push(l);
+  }
+  if (lines.length === 0) return null;
+  var root = {}, stack = [{ indent: -1, obj: root }], pending = null, curArr = null;
+  for (var k = 0; k < lines.length; k++) {
+    var line = lines[k];
+    var indent = line.length - line.replace(/^\\s+/, '').length;
+    var s = line.trim();
+    if (curArr && indent < curArr.indent) curArr = null;
+    if (pending) {
+      if (indent > pending.indent) {
+        if (s.indexOf('- ') === 0) {
+          var arr0 = [];
+          pending.container[pending.key] = arr0;
+          curArr = { indent: indent, arr: arr0 };
+          var item0 = s.slice(2).trim();
+          if (item0) arr0.push(dshtParseYamlValue(item0));
+          pending = null;
+          continue;
+        }
+        var child = {};
+        pending.container[pending.key] = child;
+        stack.push({ indent: pending.indent, obj: child });
+        pending = null;
+      } else {
+        pending.container[pending.key] = {};
+        pending = null;
+      }
+    }
+    if (s.indexOf('- ') === 0) {
+      if (curArr && indent >= curArr.indent) {
+        var item = s.slice(2).trim();
+        if (item) curArr.arr.push(dshtParseYamlValue(item));
+      }
+      continue;
+    }
+    var ci = s.search(/[:：]/);
+    if (ci < 0) continue;
+    var key = s.slice(0, ci).trim().replace(/^["'“]|["'”]$/g, '');
+    var rawVal = s.slice(ci + 1).trim();
+    if (!key) continue;
+    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) stack.pop();
+    var top = stack[stack.length - 1].obj;
+    if (rawVal === '') { pending = { indent: indent, container: top, key: key }; continue; }
+    top[key] = dshtParseYamlValue(rawVal);
+  }
+  if (pending) pending.container[pending.key] = {};
+  return root;
+}
+/** initvar 树叶子展开（嵌套对象递归；叶子 = 标量/数组；顶层键的 add/replace 判定向下传递） */
+function dshtFlattenYamlLeaves(obj, prefix, op) {
+  var out = [], keys = Object.keys(obj);
+  for (var i = 0; i < keys.length; i++) {
+    var vv = obj[keys[i]];
+    var path = prefix + '/' + dshtEncodeSeg(keys[i]);
+    if (vv !== null && typeof vv === 'object' && !Array.isArray(vv)) {
+      var sub = dshtFlattenYamlLeaves(vv, path, op);
+      for (var j = 0; j < sub.length; j++) out.push(sub[j]);
+    } else {
+      out.push({ op: op, path: path, value: vv });
+    }
+  }
+  return out;
+}
+/** <initvar> YAML 树 → set 型补丁序列（顶层键不存在则 add——initvar 的初始化语义） */
+function dshtParseInitVarPatches(src, state) {
+  var out = [], m;
+  var re = /<initvar[^>]*>([\\s\\S]*?)<\\/initvar>/gi;
+  while ((m = re.exec(src)) !== null) {
+    var tree = dshtParseYamlLite(m[1]);
+    if (!tree) continue;
+    var keys = Object.keys(tree);
+    for (var i = 0; i < keys.length; i++) {
+      var sub2 = tree[keys[i]];
+      var op = (state && !Object.prototype.hasOwnProperty.call(state, keys[i])) ? 'add' : 'replace';
+      var path = '/' + dshtEncodeSeg(keys[i]);
+      if (sub2 === null || typeof sub2 !== 'object' || Array.isArray(sub2)) {
+        out.push({ op: op, path: path, value: sub2 });
+        continue;
+      }
+      var leaves = dshtFlattenYamlLeaves(sub2, path, op);
+      if (leaves.length === 0) out.push({ op: op, path: path, value: {} });
+      else for (var j = 0; j < leaves.length; j++) out.push(leaves[j]);
+    }
+  }
+  return out;
+}
+/** 引号感知的顶层逗号切分（半角/全角逗号；引号内逗号不切） */
+function dshtSplitTopLevelArgs(s) {
+  var out = [], cur = '', q = null;
+  for (var i = 0; i < s.length; i++) {
+    var ch = s.charAt(i);
+    if (q) { cur += ch; if (ch === q) q = null; continue; }
+    if (ch === '"' || ch === "'") { q = ch; cur += ch; continue; }
+    if (ch === '“') { q = '”'; cur += ch; continue; }
+    if (ch === ',' || ch === '，') { out.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur.trim() !== '' || out.length > 0) out.push(cur);
+  return out;
+}
+/** 点号路径 → JSONPointer（stat_data.好感度 → /stat_data/好感度；已 / 开头原样） */
+function dshtDotToPointer(dotPath) {
+  var p = dshtStripQuotes(dotPath);
+  if (!p) return '';
+  if (p.charAt(0) === '/') return p;
+  var segs = p.split('.'), kept = [];
+  for (var i = 0; i < segs.length; i++) { var t = segs[i].trim(); if (t) kept.push(dshtEncodeSeg(t)); }
+  return kept.length > 0 ? '/' + kept.join('/') : '';
+}
+/** _.set/_.add/_.inc/_.dec 指令行（set→replace；add/inc/dec→delta；容忍全角括号/分号/引号） */
+function dshtParseUnderscoreCommands(text) {
+  var out = [], lines = String(text).split(/\\r?\\n/);
+  for (var i = 0; i < lines.length; i++) {
+    var m = /^\\s*_\\s*\\.\\s*(set|add|inc|dec)\\s*[（(](.*)[)）]\\s*;?\\s*$/.exec(lines[i].trim());
+    if (!m) continue;
+    var kind = m[1].toLowerCase();
+    var parts = dshtSplitTopLevelArgs(m[2]), kept = [];
+    for (var j = 0; j < parts.length; j++) { var t = parts[j].trim(); if (t !== '') kept.push(t); }
+    if (kept.length === 0) continue;
+    var path = dshtDotToPointer(kept[0]);
+    if (!path) continue;
+    if (kind === 'set' || kind === 'add') {
+      if (kept.length < 2) continue;
+      out.push({ op: kind === 'set' ? 'replace' : 'delta', path: path, value: dshtParseLooseValue(kept.slice(1).join(',')) });
+    } else {
+      var step = kept.length >= 2 ? Number(dshtStripQuotes(kept[1])) : 1;
+      var n = isFinite(step) ? step : 1;
+      out.push({ op: 'delta', path: path, value: kind === 'inc' ? n : -n });
+    }
+  }
+  return out;
+}
+/** 四来源全量解析（与 state/mvu.ts parseUpdateVariable 逐条等价） */
+function dshtParseUpdateVariable(text, state) {
   var out = [], covered = [], m;
   var re = /<UpdateVariable>([\\s\\S]*?)<\\/UpdateVariable>/gi;
   while ((m = re.exec(text)) !== null) {
-    out = out.concat(dshtParseJsonPatches(m[1]));
+    var src = m[1], x;
+    var a = dshtParseJsonPatches(src); for (x = 0; x < a.length; x++) out.push(a[x]);
+    var b = dshtParseInitVarPatches(src, state); for (x = 0; x < b.length; x++) out.push(b[x]);
+    var c = dshtParseUnderscoreCommands(src); for (x = 0; x < c.length; x++) out.push(c[x]);
     covered.push([m.index, re.lastIndex]);
   }
-  // 块外裸 <JSONPatch> 兜底（与 state/mvu.ts 同款：只在覆盖区间之外的文本上解析）
+  // 块外裸 <JSONPatch> 兜底（只在覆盖区间之外的文本上解析，避免与块内重复）
   var outside = '', start = 0, i2;
   for (i2 = 0; i2 < covered.length; i2++) { outside += text.slice(start, covered[i2][0]); start = covered[i2][1]; }
   outside += covered.length > 0 ? text.slice(start) : text;
-  if (covered.length === 0) out = out.concat(dshtParseJsonPatches(text));
-  else if (outside.length > 0) out = out.concat(dshtParseJsonPatches(outside));
+  var y;
+  if (covered.length === 0) {
+    var a2 = dshtParseJsonPatches(text); for (y = 0; y < a2.length; y++) out.push(a2[y]);
+    var b2 = dshtParseInitVarPatches(text, state); for (y = 0; y < b2.length; y++) out.push(b2[y]);
+    var c2 = dshtParseUnderscoreCommands(text); for (y = 0; y < c2.length; y++) out.push(c2[y]);
+  } else if (outside.length > 0) {
+    var a3 = dshtParseJsonPatches(outside); for (y = 0; y < a3.length; y++) out.push(a3[y]);
+  }
   return out;
 }
 var mvuBusListeners = {};

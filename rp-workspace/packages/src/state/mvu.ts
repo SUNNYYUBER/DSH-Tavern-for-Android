@@ -75,6 +75,13 @@ export function parseJsonPatches(text: string): StatePatch[] {
  * 【实机审计修复 2026-09-05】从 assistant 消息全文提取全部 UpdateVariable 补丁
  * （多个块合并；块内三种来源共存解析：initvar YAML 树 / _.set 系指令行 / JSONPatch 子块；
  * 块外裸 JSONPatch 兜底；可选传入当前 state 供 initvar 判定顶层键 add/replace）。
+ *
+ * ⚠️【T-19 2026-09-11】**本函数有一份必须手工同步的镜像**：脚本 iframe 的 shim
+ * （`dsht-rp-ui/src/client/th-shim.ts` 的 `dshtParseUpdateVariable`）。shim 是**构建期
+ * 注入的字符串**（`buildShimSource` 模板串），没有 import 能力，无法共享本模块——
+ * 两侧各写一份是硬约束。改这里（或改那边）时**必须同步另一侧**，否则 iframe 内卡脚本
+ * 看到的解析结果与宿主引擎分叉（曾因此漏掉 initvar/_.set 两类来源）。
+ * 差分测试：`tests/th-script-runtime.spec.ts` 的「Mvu.parseMessage 与 state/mvu.ts 差分」。
  */
 export function parseUpdateVariable(text: string, state?: Record<string, unknown>): StatePatch[] {
   const out: StatePatch[] = []

@@ -7631,38 +7631,235 @@ function dshtFormatArg(a) {
 
 // ---- D6 window.Mvu\uFF08MVU \u6846\u67B6\u9876\u5C42\u9762\uFF1B\u771F TH \u7531 MVU bundle \u6302\u5230 parent\uFF09----
 // getMvuData \u2192 mvu \u6865\uFF08GET /dsht-mvu/variables \u7684 variables \u6811\uFF1Bmessage \u7C7B\u578B\u540C\u6E90\u8FD4\u56DE\u2014\u2014
-// \u65E0\u6BCF\u6D88\u606F\u53D8\u91CF\u6811\uFF0C\u8BDA\u5B9E\u9650\u5236\uFF09\uFF1BreplaceMvuData \u2192 /dsht-mvu/variables/register {replace:true}\uFF1B
-// parseMessage \u2192 state/mvu.ts parseUpdateVariable \u540C\u6B3E\u63D0\u53D6\uFF08<UpdateVariable> \u5185 <JSONPatch> \u6570\u7EC4\uFF09\u3002
-function dshtParseJsonPatches(seg) {
-  var m = seg.match(/<JSONPatch>\\s*([\\s\\S]*?)\\s*<\\/JSONPatch>/i);
-  if (!m) return [];
-  try {
-    var arr = JSON.parse(m[1]);
-    if (!Array.isArray(arr)) return [];
-    var out = [];
-    for (var i = 0; i < arr.length; i++) {
-      var p = arr[i];
-      if (!p || typeof p !== 'object') continue;
-      var patch = { op: String(p.op || 'add').toLowerCase(), path: String(p.path || '') };
-      if (p.value !== undefined) patch.value = p.value;
-      if (patch.path.length > 0) out.push(patch);
-    }
-    return out;
-  } catch (e) { return []; }
+// \u65E0\u6BCF\u6D88\u606F\u53D8\u91CF\u6811\uFF0C\u8BDA\u5B9E\u9650\u5236\uFF09\uFF1BreplaceMvuData \u2192 /dsht-mvu/variables/register {replace:true}\u3002
+//
+// \u3010T-19 2026-09-11 \u771F\u4FEE\u3011parseMessage \u5168\u91CF\u5BF9\u9F50 state/mvu.ts \u7684 parseUpdateVariable\u3002
+// \u6B64\u524D TASK-LIST \u58F0\u79F0\u300C\u76F4\u8C03 state/mvu.ts\uFF08\u540C\u6E90\uFF0C\u975E\u5404\u5199\u4E00\u4EFD\uFF09\u300D\u2014\u2014**\u4E0D\u6210\u7ACB**\uFF1A\u672C shim \u662F
+// **\u6784\u5EFA\u671F\u6CE8\u5165\u7684\u5B57\u7B26\u4E32**\uFF08buildShimSource \u7684\u6A21\u677F\u4E32\uFF09\uFF0C\u6839\u672C\u6CA1\u6709 import \u80FD\u529B\uFF0C\u5B9E\u9645\u662F\u81EA\u5199\u7684
+// \u4E00\u4EFD\u7B80\u5316\u7248\uFF0C\u53EA\u8BA4 <JSONPatch> \u5B50\u5757\u3002\u5199\u7684\u65F6\u5019\u8FD8\u6284\u8FDB\u4E86 state/mvu.ts \u65E9\u5DF2\u4FEE\u6389\u7684\u4E24\u4E2A\u7F3A\u9677\uFF1A
+//   \u2460 \u7528 .match() \u5355\u6B21\u5339\u914D \u2192 \u4E00\u4E2A <UpdateVariable> \u91CC\u591A\u4E2A <JSONPatch> \u53EA\u89E3\u6790\u7B2C\u4E00\u4E2A\uFF0C
+//      \u5176\u4F59\u9759\u9ED8\u4E22\u5931\uFF082026-09-09 \u9C81\u68D2\u8F6E\u5DF2\u5728 state/mvu.ts \u6539\u6210 matchAll\uFF09\uFF1B
+//   \u2461 \u65E0 op \u767D\u540D\u5355 / \u65E0 insert \u7684 index \u5E76\u5165 / \u65E0 from \u5B57\u6BB5\u3002
+// \u73B0\u6309 state/mvu.ts \u56DB\u6765\u6E90\u9010\u6761\u955C\u50CF\uFF1AJSONPatch \u5B50\u5757 / <initvar> YAML \u6811 / _.set \u7CFB\u6307\u4EE4\u884C /
+// \u5757\u5916\u88F8 JSONPatch\u3002\u6539\u52A8\u4EFB\u4E00\u4FA7\u65F6**\u5FC5\u987B\u540C\u6B65\u4E24\u5904**\uFF08\u65E0\u6CD5\u5171\u4EAB\u6A21\u5757\u7684\u786C\u7EA6\u675F\uFF09\u3002
+var DSHT_PATCH_OPS = { add: 1, replace: 1, remove: 1, delta: 1, move: 1, copy: 1, insert: 1 };
+function dshtEncodeSeg(seg) { return String(seg).replace(/~/g, '~0').replace(/\\//g, '~1'); }
+function dshtStripQuotes(s) {
+  var t = String(s == null ? '' : s).trim();
+  if (t.length >= 2) {
+    var a = t.charAt(0), b = t.charAt(t.length - 1);
+    if ((a === '"' && b === '"') || (a === "'" && b === "'") || (a === '\u201C' && b === '\u201D')) return t.slice(1, -1);
+  }
+  return t;
 }
-function dshtParseUpdateVariable(text) {
+/** \u5BBD\u677E\u53D6\u503C\uFF1AJSON.parse \u6210\u529F\u5373\u7528\uFF0C\u5426\u5219\u53BB\u5F15\u53F7\u6309\u5B57\u7B26\u4E32\uFF08state/mvu.ts parseLooseValue\uFF09 */
+function dshtParseLooseValue(s) {
+  var t = dshtStripQuotes(s);
+  try { return JSON.parse(t); } catch (e) { return t; }
+}
+/** JSONPatch \u5B50\u5757\u63D0\u53D6\uFF08matchAll \u5408\u5E76\u5168\u90E8\u5757\uFF1Bop \u767D\u540D\u5355\uFF1Binsert \u7684 index \u5E76\u5165 path\uFF1Bfrom \u900F\u4F20\uFF09 */
+function dshtParseJsonPatches(text) {
+  var blocks = [], m;
+  var re = /<JSONPatch>\\s*([\\s\\S]*?)\\s*<\\/JSONPatch>/gi;
+  while ((m = re.exec(text)) !== null) blocks.push(m[1]);
+  if (blocks.length === 0) return [];
+  var out = [];
+  for (var i = 0; i < blocks.length; i++) {
+    var arr;
+    try { arr = JSON.parse(blocks[i]); } catch (e) { continue; }
+    if (!Array.isArray(arr)) continue;
+    for (var j = 0; j < arr.length; j++) {
+      var p = arr[j];
+      if (!p || typeof p !== 'object') continue;
+      var opRaw = (p.op === undefined ? 'add' : String(p.op)).toLowerCase();
+      if (!DSHT_PATCH_OPS[opRaw]) continue; // \u767D\u540D\u5355\u5916\u4E22\u5F03\uFF08"test"/\u62FC\u9519\u7684 "apend" \u4E0D\u5F97\u53D8\u771F\u5B9E\u5199\uFF09
+      var path = String(p.path === undefined ? '' : p.path);
+      if (opRaw === 'insert' && typeof p.index === 'number' && p.index % 1 === 0 && !/\\/\\d+$/.test(path)) {
+        path = path.replace(/\\/+$/, '') + '/' + p.index;
+      }
+      if (path.length === 0) continue;
+      var patch = { op: opRaw, path: path };
+      if (p.from !== undefined) patch.from = String(p.from);
+      if (p.value !== undefined) patch.value = p.value;
+      out.push(patch);
+    }
+  }
+  return out;
+}
+/** initvar \u53F6\u503C\u89E3\u6790\uFF08\u5F15\u53F7\u4F18\u5148\uFF1B\u6570\u5B57/bool/null \u8BC6\u522B\uFF09 */
+function dshtParseYamlValue(raw) {
+  var v = String(raw == null ? '' : raw).trim();
+  var quoted = dshtStripQuotes(v);
+  if (quoted !== v) return quoted;
+  try { return JSON.parse(v); } catch (e) { /* \u975E JSON\uFF0C\u7EE7\u7EED */ }
+  if (/^-?\\d+(\\.\\d+)?$/.test(v)) return Number(v);
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  if (v === 'null' || v === '~') return null;
+  return v;
+}
+/** \u8F7B\u91CF YAML \u6811\u89E3\u6790\uFF08initvar \u7528\uFF1B\u7F29\u8FDB\u5D4C\u5957 + \u4E00\u5C42 "- item" \u6570\u7EC4\uFF1B\u5BB9\u5FCD\u5168\u89D2\u5192\u53F7\uFF09 */
+function dshtParseYamlLite(src) {
+  var raw = String(src).split(/\\r?\\n/), lines = [];
+  for (var i = 0; i < raw.length; i++) {
+    var l = raw[i].replace(/\\t/g, '  ');
+    var t = l.trim();
+    if (t !== '' && t.charAt(0) !== '#' && t !== '---') lines.push(l);
+  }
+  if (lines.length === 0) return null;
+  var root = {}, stack = [{ indent: -1, obj: root }], pending = null, curArr = null;
+  for (var k = 0; k < lines.length; k++) {
+    var line = lines[k];
+    var indent = line.length - line.replace(/^\\s+/, '').length;
+    var s = line.trim();
+    if (curArr && indent < curArr.indent) curArr = null;
+    if (pending) {
+      if (indent > pending.indent) {
+        if (s.indexOf('- ') === 0) {
+          var arr0 = [];
+          pending.container[pending.key] = arr0;
+          curArr = { indent: indent, arr: arr0 };
+          var item0 = s.slice(2).trim();
+          if (item0) arr0.push(dshtParseYamlValue(item0));
+          pending = null;
+          continue;
+        }
+        var child = {};
+        pending.container[pending.key] = child;
+        stack.push({ indent: pending.indent, obj: child });
+        pending = null;
+      } else {
+        pending.container[pending.key] = {};
+        pending = null;
+      }
+    }
+    if (s.indexOf('- ') === 0) {
+      if (curArr && indent >= curArr.indent) {
+        var item = s.slice(2).trim();
+        if (item) curArr.arr.push(dshtParseYamlValue(item));
+      }
+      continue;
+    }
+    var ci = s.search(/[:\uFF1A]/);
+    if (ci < 0) continue;
+    var key = s.slice(0, ci).trim().replace(/^["'\u201C]|["'\u201D]$/g, '');
+    var rawVal = s.slice(ci + 1).trim();
+    if (!key) continue;
+    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) stack.pop();
+    var top = stack[stack.length - 1].obj;
+    if (rawVal === '') { pending = { indent: indent, container: top, key: key }; continue; }
+    top[key] = dshtParseYamlValue(rawVal);
+  }
+  if (pending) pending.container[pending.key] = {};
+  return root;
+}
+/** initvar \u6811\u53F6\u5B50\u5C55\u5F00\uFF08\u5D4C\u5957\u5BF9\u8C61\u9012\u5F52\uFF1B\u53F6\u5B50 = \u6807\u91CF/\u6570\u7EC4\uFF1B\u9876\u5C42\u952E\u7684 add/replace \u5224\u5B9A\u5411\u4E0B\u4F20\u9012\uFF09 */
+function dshtFlattenYamlLeaves(obj, prefix, op) {
+  var out = [], keys = Object.keys(obj);
+  for (var i = 0; i < keys.length; i++) {
+    var vv = obj[keys[i]];
+    var path = prefix + '/' + dshtEncodeSeg(keys[i]);
+    if (vv !== null && typeof vv === 'object' && !Array.isArray(vv)) {
+      var sub = dshtFlattenYamlLeaves(vv, path, op);
+      for (var j = 0; j < sub.length; j++) out.push(sub[j]);
+    } else {
+      out.push({ op: op, path: path, value: vv });
+    }
+  }
+  return out;
+}
+/** <initvar> YAML \u6811 \u2192 set \u578B\u8865\u4E01\u5E8F\u5217\uFF08\u9876\u5C42\u952E\u4E0D\u5B58\u5728\u5219 add\u2014\u2014initvar \u7684\u521D\u59CB\u5316\u8BED\u4E49\uFF09 */
+function dshtParseInitVarPatches(src, state) {
+  var out = [], m;
+  var re = /<initvar[^>]*>([\\s\\S]*?)<\\/initvar>/gi;
+  while ((m = re.exec(src)) !== null) {
+    var tree = dshtParseYamlLite(m[1]);
+    if (!tree) continue;
+    var keys = Object.keys(tree);
+    for (var i = 0; i < keys.length; i++) {
+      var sub2 = tree[keys[i]];
+      var op = (state && !Object.prototype.hasOwnProperty.call(state, keys[i])) ? 'add' : 'replace';
+      var path = '/' + dshtEncodeSeg(keys[i]);
+      if (sub2 === null || typeof sub2 !== 'object' || Array.isArray(sub2)) {
+        out.push({ op: op, path: path, value: sub2 });
+        continue;
+      }
+      var leaves = dshtFlattenYamlLeaves(sub2, path, op);
+      if (leaves.length === 0) out.push({ op: op, path: path, value: {} });
+      else for (var j = 0; j < leaves.length; j++) out.push(leaves[j]);
+    }
+  }
+  return out;
+}
+/** \u5F15\u53F7\u611F\u77E5\u7684\u9876\u5C42\u9017\u53F7\u5207\u5206\uFF08\u534A\u89D2/\u5168\u89D2\u9017\u53F7\uFF1B\u5F15\u53F7\u5185\u9017\u53F7\u4E0D\u5207\uFF09 */
+function dshtSplitTopLevelArgs(s) {
+  var out = [], cur = '', q = null;
+  for (var i = 0; i < s.length; i++) {
+    var ch = s.charAt(i);
+    if (q) { cur += ch; if (ch === q) q = null; continue; }
+    if (ch === '"' || ch === "'") { q = ch; cur += ch; continue; }
+    if (ch === '\u201C') { q = '\u201D'; cur += ch; continue; }
+    if (ch === ',' || ch === '\uFF0C') { out.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  if (cur.trim() !== '' || out.length > 0) out.push(cur);
+  return out;
+}
+/** \u70B9\u53F7\u8DEF\u5F84 \u2192 JSONPointer\uFF08stat_data.\u597D\u611F\u5EA6 \u2192 /stat_data/\u597D\u611F\u5EA6\uFF1B\u5DF2 / \u5F00\u5934\u539F\u6837\uFF09 */
+function dshtDotToPointer(dotPath) {
+  var p = dshtStripQuotes(dotPath);
+  if (!p) return '';
+  if (p.charAt(0) === '/') return p;
+  var segs = p.split('.'), kept = [];
+  for (var i = 0; i < segs.length; i++) { var t = segs[i].trim(); if (t) kept.push(dshtEncodeSeg(t)); }
+  return kept.length > 0 ? '/' + kept.join('/') : '';
+}
+/** _.set/_.add/_.inc/_.dec \u6307\u4EE4\u884C\uFF08set\u2192replace\uFF1Badd/inc/dec\u2192delta\uFF1B\u5BB9\u5FCD\u5168\u89D2\u62EC\u53F7/\u5206\u53F7/\u5F15\u53F7\uFF09 */
+function dshtParseUnderscoreCommands(text) {
+  var out = [], lines = String(text).split(/\\r?\\n/);
+  for (var i = 0; i < lines.length; i++) {
+    var m = /^\\s*_\\s*\\.\\s*(set|add|inc|dec)\\s*[\uFF08(](.*)[)\uFF09]\\s*;?\\s*$/.exec(lines[i].trim());
+    if (!m) continue;
+    var kind = m[1].toLowerCase();
+    var parts = dshtSplitTopLevelArgs(m[2]), kept = [];
+    for (var j = 0; j < parts.length; j++) { var t = parts[j].trim(); if (t !== '') kept.push(t); }
+    if (kept.length === 0) continue;
+    var path = dshtDotToPointer(kept[0]);
+    if (!path) continue;
+    if (kind === 'set' || kind === 'add') {
+      if (kept.length < 2) continue;
+      out.push({ op: kind === 'set' ? 'replace' : 'delta', path: path, value: dshtParseLooseValue(kept.slice(1).join(',')) });
+    } else {
+      var step = kept.length >= 2 ? Number(dshtStripQuotes(kept[1])) : 1;
+      var n = isFinite(step) ? step : 1;
+      out.push({ op: 'delta', path: path, value: kind === 'inc' ? n : -n });
+    }
+  }
+  return out;
+}
+/** \u56DB\u6765\u6E90\u5168\u91CF\u89E3\u6790\uFF08\u4E0E state/mvu.ts parseUpdateVariable \u9010\u6761\u7B49\u4EF7\uFF09 */
+function dshtParseUpdateVariable(text, state) {
   var out = [], covered = [], m;
   var re = /<UpdateVariable>([\\s\\S]*?)<\\/UpdateVariable>/gi;
   while ((m = re.exec(text)) !== null) {
-    out = out.concat(dshtParseJsonPatches(m[1]));
+    var src = m[1], x;
+    var a = dshtParseJsonPatches(src); for (x = 0; x < a.length; x++) out.push(a[x]);
+    var b = dshtParseInitVarPatches(src, state); for (x = 0; x < b.length; x++) out.push(b[x]);
+    var c = dshtParseUnderscoreCommands(src); for (x = 0; x < c.length; x++) out.push(c[x]);
     covered.push([m.index, re.lastIndex]);
   }
-  // \u5757\u5916\u88F8 <JSONPatch> \u515C\u5E95\uFF08\u4E0E state/mvu.ts \u540C\u6B3E\uFF1A\u53EA\u5728\u8986\u76D6\u533A\u95F4\u4E4B\u5916\u7684\u6587\u672C\u4E0A\u89E3\u6790\uFF09
+  // \u5757\u5916\u88F8 <JSONPatch> \u515C\u5E95\uFF08\u53EA\u5728\u8986\u76D6\u533A\u95F4\u4E4B\u5916\u7684\u6587\u672C\u4E0A\u89E3\u6790\uFF0C\u907F\u514D\u4E0E\u5757\u5185\u91CD\u590D\uFF09
   var outside = '', start = 0, i2;
   for (i2 = 0; i2 < covered.length; i2++) { outside += text.slice(start, covered[i2][0]); start = covered[i2][1]; }
   outside += covered.length > 0 ? text.slice(start) : text;
-  if (covered.length === 0) out = out.concat(dshtParseJsonPatches(text));
-  else if (outside.length > 0) out = out.concat(dshtParseJsonPatches(outside));
+  var y;
+  if (covered.length === 0) {
+    var a2 = dshtParseJsonPatches(text); for (y = 0; y < a2.length; y++) out.push(a2[y]);
+    var b2 = dshtParseInitVarPatches(text, state); for (y = 0; y < b2.length; y++) out.push(b2[y]);
+    var c2 = dshtParseUnderscoreCommands(text); for (y = 0; y < c2.length; y++) out.push(c2[y]);
+  } else if (outside.length > 0) {
+    var a3 = dshtParseJsonPatches(outside); for (y = 0; y < a3.length; y++) out.push(a3[y]);
+  }
   return out;
 }
 var mvuBusListeners = {};
