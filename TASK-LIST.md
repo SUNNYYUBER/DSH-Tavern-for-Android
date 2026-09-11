@@ -33,6 +33,10 @@
   md5 完全一致）、**未捕获异常 / console 错误 = 0**；**`stage4-regression` 首次 21/21 全过**
   （长期悬置的 20/21 唯一失败项 = `variant/groups` 需 UI attach 会话，随 attach 闭合）。
   仅剩**未覆盖**一处：变体**切换**的端到端（需构造 ≥2 变体才能触发 UI 变体条）。
+  → **心跳 57 续已闭环**：设备上此前**从未存在过**任何变体组（81 会话 `grep` **0 命中**）；
+  本轮走产品路由（`session.create` → `chat/append` A → `session-rollback` → `chat/append` B →
+  `variant/groups` 得 **2 成员组** → `variant/switch` **200**）第一次真正跑通，
+  写入形态经官方 `Session` 构造器判定**可加载**（含负控）。详见 **T-56 附录 / T-57**。
   ② **D-5b 只读报告产出**（新工具 `scripts/audit-dirty-floors.mjs`）→ 见 **T-53**。
   沉淀 LEARNINGS **L62–L64**。**本心跳未改产品源码（唯一"缺陷"在探针自身），故无需重打 APK。**
 - **心跳 53** = **回头审「已修」标记本身**：§4 兼容面 7 项里 **5 项的 ✅ 与代码现状不符**
@@ -552,6 +556,7 @@
 
 - **为什么心跳 51 会误判**：① 探针只枚举**带 `title`/`aria-label`** 的元素，而"是否存在入口"是**DOM 存在性**问题，两者不等价；② 聊天视图是**窗口化**的（`chat-windowing.ts`，实测 DOM 里只有 **1** 个 `.dsht-rp-user-row`），操作条**只在 user 行上**——采样时刻若 user 行未挂载，就得到干净但不成立的"0 命中"（与 **L44**「枚举器的取法覆盖面就是结论的有效边界」同源，**L53 家族**）。
 - **残留（低优先，非阻塞）**：变体条在 **≥2 个变体**时的渲染**尚未实机验证过**（需要先在会话里造出第二个变体 = 会动数据，故本轮**没做**）。判据：造 ≥2 变体后，设备 DOM 应出现 `.dsht-rp-variant-bar`（`title="历史变体（重 roll / swipe）"`、`aria-label="上一个变体"`），点击后真走到 `variant/switch`。
+  - **心跳 57 续进展（半闭环）**：**数据面已完全闭环** —— 用**一次性会话**（`session.create`，不碰用户数据）造出 2 成员组后 `variant/switch` 返 **200**，写入形态经官方构造器判定可加载（见 **T-57** 旁注）。**仅"UI 变体条 DOM 是否出现"这一半仍未直测**（需把变体条渲染与一个 live 会话的 `groups` 状态对齐观察，属低优先观感项）。
 - **探针留档**：`stage3-device/hb52/hb52-edit-entry-probe.js`（可复跑，非破坏性）。
 
 - **历史口径（心跳 51，已被上表推翻，保留以便回溯）**：曾用「枚举 176 个带 `title`/`aria-label` 的元素 →
@@ -753,6 +758,45 @@
   **不实现** —— 因为 ST 1.13.5+ 下卡自身不做这件事，基准同样不做（L36「不能多」）。
   T-42/T-48 的其余部分据此**降级为非缺陷**（`renderExtensionTemplateAsync('regex','editor')`
   只在卡的旧版面板路径里被调用，新版路径不再走）。
+
+### T-57　🆕 **`sessionController` 服务运行一段时间后不可用 → RP UI「打开角色会话」必然失败**（心跳 57 续发现，待定性）
+
+**证据（最小对照实验）**：同一份请求、同一页面、同一份源码，只改应用状态：
+
+| 应用状态 | `POST /api/session/list` | `POST /api/session/create` |
+|---|---|---|
+| 已运行约 30+ 分钟（期间页面 reload 过） | `200 {ok:false, error:{code:'gateway/service-unavailable', message:'typert gateway: session/list: active Service "sessionController" is unavailable'}}` | 同款错误 |
+| `am force-stop` + 重启后 75~90 秒 | `200 {ok:true, value:{items:[…82]}}` | `200 {ok:true, value:{sessionId:'…', agentPreset:'standard'}}` |
+
+**影响面**：RP UI 的「打开角色会话」是**唯一**依赖 `session.list` / `session.create` 的产品路径
+（`RpOverlay.tsx:334` 取最近会话续聊、`:345` 建新会话 + `open-chat`）。
+⇒ 在该状态下点角色卡**必然失败**。注意 `chatId` 仍可能有值（插件侧会话注册表还在），
+所以"界面看上去正常"与"这个入口能开新会话"是两件事。
+
+**待定性**：触发条件（时间？页面导航？原生对话视图 unmount？），以及是否应补"服务不可用 → 自动重载页面/重启服务"的自愈路径
+（可复用 **T-45** 已落地的带预算重载机制）。
+
+**探针**：`stage3-device/hb57/hb57-svc-liveness.js`（只读，不建会话）。
+
+---
+
+### T-58　🆕 **`session-regenerate` / `session-rollback` 的「非 live 分支」是破坏性文件截断**（心跳 57 续发现，待定性）
+
+**证据**：对**未挂载**的会话 `st-1w8aglg` 打 `/dsht-rp/rp/session-regenerate` →
+`200 {"truncated":1,"lastUserText":"…","variablesRestored":0,"fileSnapshots":{…}}`
+→ 该会话 `session.jsonl` 立刻被**截断重写**（md5 `68ddd464…` → `0c32e035…`、3779B 级变化），
+且**不产生变体标记**（后续 `variant/groups` 仍为 0）。
+live 分支返回的是**完全不同**的形状：`200 {"logical":true,"replaced":1,"truncatedTo":0}`（事件留在日志）。
+
+⇒ **同一端点、同一入参、同一 200，语义从"逻辑回退"变成"物理截断"**，判据只有会话是否挂载。
+本次因**先做了备份**（`stage3-device/hb57/variant-backup/hb57-variant-bak.tar`）才精确还原。
+
+**建议**：非 live 路径加显式门槛（未声明 `allowFileTruncation:true` 即拒收，或改为"返回 409 + 指引先 `open-chat`"）。
+**需先确认**产品路径是否会碰到它（前端是否可能在会话未 attach 时调这两个端点）——若会，则这是产品缺陷而非仅是探针风险。
+
+**沉淀**：LEARNINGS **L74**（写路由必须先问 liveness，别用"发一次看看返回什么"探写路由）。
+
+---
 
 ### T-45　🆕→✅ **主框架加载失败后无自愈路径 → 永久停在启动屏**（心跳 50 登记 / **心跳 53 定性并修复**）
 - **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在
