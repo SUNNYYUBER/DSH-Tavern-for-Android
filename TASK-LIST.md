@@ -824,8 +824,21 @@
 **反控**：还原旧 `dshRpc`（丢 code）→ 3 条立刻转红。
 **实机验证**（同设备，热推 client bundle 后）：真实业务错误信封 `http:200 / ok:false / hasCode:true /
 code:"gateway/arguments-invalid"` → `isServiceUnavailable 判别 = false`（**正确区分**，未把不可自愈的当可重试）。
-**复测**：应用运行 14min / reload 后 / **45m54s** 三轮均 `ok:true, itemCount=81` ——
-**未复现**心跳 57 的故障，与「依赖重载窗口内的瞬时态」这一机制解释一致（偶发、非定时）。
+**复测**：应用运行 14min / reload 后 / **45m54s** 三轮均 `ok:true, itemCount=81` —— **长时运行不复现**。
+
+**📌 触发窗口已由并发实例（心跳 60）抓到（本条与上表互补，不冲突）**：
+| 观测 | 结果 |
+|---|---|
+| 装包**前**（app 已跑 **69 分钟**） | `session.list` → `200 ok / 81` ⇒ **确证「长时运行不失效」** |
+| 装包**后** +2m33s / +2m43s / +2m55s | **三次采样均 `gateway/service-unavailable`** |
+| 装包后 **+3m07s** 起 | **自动恢复** |
+| 出错时的页面状态 | `readyState=complete`、宿主门面已 37 成员 ⇒ **「页面看着已就绪、宿主服务还没注册」** |
+
+⇒ **定性收敛为「启动/重载竞态窗口」**（不是长时退化）；与本文上面查到的机制一致：
+装包触发依赖服务重载 → `SessionController` 的 fiber 短暂离开 ACTIVE → 窗口内 `ctx.get` 空
+→ 依赖恢复后框架自动 `_reload()` → **+3m07s 自愈**。
+**关键佐证（零副作用 ⇒ 重试安全）**：`dsh-api-gateway/lib/index.js:747-748` 证明该错
+**在被调方法之前抛出**（方法体从未执行）⇒ 我方「短延迟重试一次」的修法**不会造成重复副作用**。
 **沉淀**：LEARNINGS **L80**。
 
 ---
