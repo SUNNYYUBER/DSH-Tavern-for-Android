@@ -122,6 +122,12 @@ export interface TavernMacroWrite {
   /** 规范 JSONPointer 形态 */
   path: string
   value: string
+  /**
+   * 【T-22 2026-09-11】目标作用域。缺省 = 由调用方按会话上下文决定（沿用旧行为）；
+   * `{{setglobalvar}}` 族显式标 `'global'`——它们语义上**只**写全局变量，与调用方
+   * 当前是否有 sessionId/slug 无关（ST：`setGlobalVariable` 直写 extension_settings.global）。
+   */
+  scope?: 'global' | 'character' | 'chat'
 }
 
 export interface TavernMacroResult {
@@ -206,6 +212,7 @@ const customMacros = new Map<string, string | CustomMacroHandler>()
 const CUSTOM_MACRO_NAME = /^[a-zA-Z][\w-]{0,63}$/
 const BUILTIN_MACRO_NAMES = new Set([
   'user', 'char', 'persona', 'noop', 'getvar', 'setvar', 'addvar', 'incvar', 'decvar',
+  'getglobalvar', 'setglobalvar', 'addglobalvar', 'incglobalvar', 'decglobalvar',
   'get_message_variable', 'get_chat_variable', 'get_character_variable', 'get_preset_variable', 'get_global_variable',
   'format_message_variable', 'format_chat_variable', 'format_character_variable', 'format_preset_variable', 'format_global_variable',
   'random', 'pick', 'roll', 'dice', 'time', 'date', 'datetime', 'weekday', 'isotime', 'isodate',
@@ -290,6 +297,20 @@ function expandOnce(
     if (local !== undefined) return local
     return ctx.getVar?.(path)
   }
+  /**
+   * 【T-22 2026-09-11】全局变量的**专用**读取（`{{getglobalvar}}` 族）。
+   * 与 `readVar` 的三级合并视图不同：global 族只认全局树（ST `getGlobalVariable` 读
+   * `extension_settings.variables.global[name]`，看不到 chat/character 作用域）。
+   * 本次展开内刚写过的值优先（顺序求值）；未注入 sync 读取器时回落合并视图，避免
+   * 无 scopeGet 的调用方（如组装期）恒读空。
+   */
+  const readGlobalVar = (path: string): unknown => {
+    const local = readVarPath(overlay, path)
+    if (local !== undefined) return local
+    const scoped = ctx.scopeGet?.('global', path)
+    if (scoped !== undefined) return scoped
+    return ctx.getVar?.(path)
+  }
   /** C2 类宏作用域读取：scopeGet(kind) → preset 缺档回落 global → 兜底 getVar（向后兼容） */
   const readScopeVar = (kind: 'chat' | 'character' | 'preset' | 'global', path: string): unknown => {
     let v = ctx.scopeGet?.(kind, path)
@@ -303,21 +324,36 @@ function expandOnce(
     return stringifyVar(v)
   }
   /** 数值写宏共用：读现值（非数按 0）→ 加 delta → 落 overlay + writes，输出空串 */
-  const addNumericVar = (path: string, delta: number): string => {
+  const addNumericVar = (path: string, delta: number, scope?: 'global'): string => {
     if (!path) return ''
-    const cur = Number(readVar(path))
+    const cur = Number(scope === 'global' ? readGlobalVar(path) : readVar(path))
     const next = (Number.isFinite(cur) ? cur : 0) + delta
-    const value = String(next)
-    const pointer = toPointer(path)
-    writeInto(overlay, path, value)
-    writes.push({ path: pointer, value })
-    ctx.setVar?.(pointer, value)
-    return ''
+    return writeVarMacro(path, String(next), scope)
   }
   const writeInto = (tree: Record<string, unknown>, path: string, value: unknown): void => {
     const next = writeVarPath(tree, path, value)
     for (const k of Object.keys(tree)) delete tree[k]
     Object.assign(tree, next)
+  }
+
+  /**
+   * 定点写入共用（setvar 与 T-22 的 setglobalvar 族）。
+   * `scope === 'global'` 时 writes 带显式作用域——落盘方据此写全局树，不受「当前有无
+   * sessionId/slug」影响（ST：`setGlobalVariable` 只写 `extension_settings.variables.global`）。
+   */
+  const writeVarMacro = (path: string, value: string, scope?: 'global'): string => {
+    if (!path) return ''
+    const pointer = toPointer(path)
+    writeInto(overlay, path, value)
+    writes.push(scope === undefined ? { path: pointer, value } : { path: pointer, value, scope })
+    ctx.setVar?.(pointer, value)
+    return ''
+  }
+  /** addvar 系的路径/增量拆分（`::` 或 `:` 分隔，与 setvar 同款容错） */
+  const splitVarArgs = (args: string): { path: string; rest: string } => {
+    const sep = args.indexOf('::') >= 0 ? '::' : ':'
+    const at = args.indexOf(sep)
+    return { path: (at >= 0 ? args.slice(0, at) : args).trim(), rest: at >= 0 ? args.slice(at + sep.length) : '' }
   }
 
   const result = text.replace(MACRO_PATTERN, (full, body: string, offset: number) => {
@@ -346,29 +382,40 @@ function expandOnce(
         return stringifyVar(readVar(args.trim()))
       case 'setvar': {
         // value = 第二个分隔符之后的全部（允许空值——初始化语义 {{setvar::think1::}}）
-        const innerSep = args.indexOf('::') >= 0 ? '::' : ':'
-        const innerAt = args.indexOf(innerSep)
-        const path = (innerAt >= 0 ? args.slice(0, innerAt) : args).trim()
-        const value = innerAt >= 0 ? args.slice(innerAt + innerSep.length).replace(/^\s+|\s+$/g, '') : ''
-        if (!path) return ''
-        const pointer = toPointer(path)
-        writeInto(overlay, path, value)
-        writes.push({ path: pointer, value })
-        ctx.setVar?.(pointer, value)
-        return ''
+        const { path, rest } = splitVarArgs(args)
+        return writeVarMacro(path, rest.replace(/^\s+|\s+$/g, ''))
       }
       case 'addvar': {
         // {{addvar::path::数}}：现值（非数按 0）加 delta，输出空串
-        const innerSep = args.indexOf('::') >= 0 ? '::' : ':'
-        const innerAt = args.indexOf(innerSep)
-        const path = (innerAt >= 0 ? args.slice(0, innerAt) : args).trim()
-        const delta = innerAt >= 0 ? Number(args.slice(innerAt + innerSep.length).trim()) : 0
+        const { path, rest } = splitVarArgs(args)
+        const delta = Number(rest.trim())
         return addNumericVar(path, Number.isFinite(delta) ? delta : 0)
       }
       case 'incvar':
         return addNumericVar(args.trim(), 1)
       case 'decvar':
         return addNumericVar(args.trim(), -1)
+
+      // 【T-22 2026-09-11】全局变量宏族——此前只落了斜杠形态（triggerSlash 里
+      // /setglobalvar），宏形态完全缺失：真卡（ExampleGame 等）大量用 {{setglobalvar::…}}，
+      // 缺失时整串被当未知宏原样留在提示词里且**变量从不写入**。
+      // 语义对齐基准（TT variables.js:250-259 + setGlobalVariable/getGlobalVariable）：
+      //   set/add/inc/dec → 写 global 树，输出空串；get → 只读 global 树。
+      case 'setglobalvar': {
+        const { path, rest } = splitVarArgs(args)
+        return writeVarMacro(path, rest.replace(/^\s+|\s+$/g, ''), 'global')
+      }
+      case 'addglobalvar': {
+        const { path, rest } = splitVarArgs(args)
+        const delta = Number(rest.trim())
+        return addNumericVar(path, Number.isFinite(delta) ? delta : 0, 'global')
+      }
+      case 'incglobalvar':
+        return addNumericVar(args.trim(), 1, 'global')
+      case 'decglobalvar':
+        return addNumericVar(args.trim(), -1, 'global')
+      case 'getglobalvar':
+        return stringifyVar(readGlobalVar(args.trim()))
 
       // C2 类宏（MVU 作用域变量）：get 走 scopeGet（保持 unknown 语义——未命中不吞原文由 stringifyVar 决定）
       case 'get_message_variable':

@@ -321,8 +321,13 @@ function compileScriptRegex(findRegex: string): RegExp | null {
   }
 }
 
-/** 替换串求值（dsh-tavern replacementFor L39-59）：{{match}} + $1..$99 捕获组 + trimStrings */
-function buildReplacement(script: RegexScript, match: string, captures: readonly string[]): string {
+/** 替换串求值（dsh-tavern replacementFor L39-59）：{{match}} + $1..$99 捕获组 + $<name> + trimStrings */
+function buildReplacement(
+  script: RegexScript,
+  match: string,
+  captures: readonly string[],
+  named: Record<string, string | undefined> | null,
+): string {
   let replacement = script.replaceString.replace(/\{\{match\}\}/giu, match)
   replacement = replacement.replace(/\$(\d{1,2})/gu, (token, digits: string) => {
     const index = Number(digits)
@@ -338,6 +343,10 @@ function buildReplacement(script: RegexScript, match: string, captures: readonly
     if (captures.length === 0) return match
     return token
   })
+  // 【T-17 补漏 2026-09-11】$<name> 具名捕获组引用。未命中的组按 ST 语义给空串。
+  if (named !== null) {
+    replacement = replacement.replace(/\$<([A-Za-z_$][\w$]*)>/gu, (_token, name: string) => named[name] ?? '')
+  }
   for (const trim of script.trimStrings) replacement = replacement.split(trim).join('')
   return replacement
 }
@@ -389,11 +398,14 @@ export function runDisplayScripts(
       }
       let matches = 0
       const next = text.replace(regex, (match: string, ...args: unknown[]) => {
-        const tail = typeof args.at(-1) === 'object' && args.at(-1) !== null ? 3 : 2
+        const last = args.at(-1)
+        const hasGroups = typeof last === 'object' && last !== null
+        const tail = hasGroups ? 3 : 2
+        const named = hasGroups ? (last as Record<string, string | undefined>) : null
         const captures = args.slice(0, args.length - tail)
           .map(value => (typeof value === 'string' ? value : ''))
         matches += 1
-        const replacement = buildReplacement(script, match, captures)
+        const replacement = buildReplacement(script, match, captures, named)
         const token = presentationToken(presentationParts.length)
         presentationParts.push(replacement)
         return token

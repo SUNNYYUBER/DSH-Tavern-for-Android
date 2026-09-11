@@ -143,6 +143,63 @@ describe('宏引擎：数值写宏（addvar/incvar/decvar）', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// T-22 全局变量宏族（{{setglobalvar}} 等）——真卡大量使用，此前只落了斜杠形态
+// ---------------------------------------------------------------------------
+
+describe('宏引擎：全局变量宏族（T-22）', () => {
+  const gctx = (over: Partial<TavernMacroContext> = {}): TavernMacroContext => ctx({
+    getVar: () => undefined,
+    scopeGet: (kind, path) => readVarPath(
+      kind === 'global' ? { sleep_var_zishu: '400字', gcount: '5' } : {},
+      path,
+    ),
+    ...over,
+  })
+
+  it('setglobalvar 输出空串并标 scope=global（次序求值可读回）', () => {
+    const r = expandTavernMacros('{{setglobalvar::sleep_var_wenfeng::文风设定：白描}}A{{getglobalvar::sleep_var_wenfeng}}', gctx())
+    expect(r.text).toBe('A文风设定：白描')
+    expect(r.writes).toEqual([{ path: '/sleep_var_wenfeng', value: '文风设定：白描', scope: 'global' }])
+    expect(r.unknownMacros).toEqual([])
+  })
+
+  it('setglobalvar 允许空值（初始化语义 {{setglobalvar::x::}}）', () => {
+    const r = expandTavernMacros('{{setglobalvar::init_only::}}', gctx())
+    expect(r.text).toBe('')
+    expect(r.writes).toEqual([{ path: '/init_only', value: '', scope: 'global' }])
+  })
+
+  it('getglobalvar 只读全局树，不落三级合并视图', () => {
+    // ctx.getVar 返回 { stat_data: {...}, location: '咖啡厅' }，但 scopeGet(global) 只有 sleep_var_*
+    const r = expandTavernMacros('{{getglobalvar::sleep_var_zishu}}|{{getglobalvar::location}}', gctx())
+    expect(r.text).toBe('400字|')
+  })
+
+  it('addglobalvar / incglobalvar / decglobalvar 在全局现值上加减', () => {
+    const add = expandTavernMacros('{{addglobalvar::gcount::3}}{{getglobalvar::gcount}}', gctx())
+    expect(add.text).toBe('8')
+    expect(add.writes).toEqual([{ path: '/gcount', value: '8', scope: 'global' }])
+    const inc = expandTavernMacros('{{incglobalvar::gcount}}{{getglobalvar::gcount}}', gctx())
+    expect(inc.text).toBe('6')
+    const dec = expandTavernMacros('{{decglobalvar::gcount}}{{getglobalvar::gcount}}', gctx())
+    expect(dec.text).toBe('4')
+  })
+
+  it('局部族（setvar 系）不带 scope，仍由调用方按会话就近落盘', () => {
+    const r = expandTavernMacros('{{setvar::local::1}}{{addvar::local::2}}', gctx())
+    expect(r.writes).toEqual([
+      { path: '/local', value: '1' },
+      { path: '/local', value: '3' },
+    ])
+  })
+
+  it('已注册为内置名：registerMacro 拒绝覆盖（与 getvar 同档）', () => {
+    expect(() => registerMacro('setglobalvar', 'x')).toThrow(/built-in/)
+    expect(() => registerMacro('getglobalvar', 'x')).toThrow(/built-in/)
+  })
+})
+
 describe('宏引擎：dice 别名与 ISO 时间', () => {
   it('{{dice::2d6}} 值域 2..12', () => {
     const r = expandTavernMacros('{{dice::2d6}}', ctx())

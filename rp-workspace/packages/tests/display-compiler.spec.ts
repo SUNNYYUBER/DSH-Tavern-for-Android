@@ -152,6 +152,13 @@ describe('私用区 token 隔离与还原', () => {
     expect(r.text).toBe('x <b>foo</b>[foobar][bar] y')
   })
 
+  // 【T-17 2026-09-11】display 半边同款：$<name> 具名组 + 未命中给空串。
+  it('$<name> 具名捕获组在 display 替换串里求值', () => {
+    const s = mkScript({ findRegex: '/(?<who>\\w+)-(?<what>[a-z]+)(?<miss>\\d+)?/g', replaceString: '[$<who>|$<what>|$<miss>]' })
+    expect(runDisplayScripts([s], 'a-b', null).text).toBe('[a|b|]')
+    expect(runDisplayScripts([s], 'x-y9', null).text).toBe('[x|y|9]')
+  })
+
   it('防空白守卫：替换后整轮为空 → 回退原文', () => {
     const s = mkScript({ findRegex: '/^[\\s\\S]*$/', replaceString: '' })
     const r = runDisplayScripts([s], '整轮正文', null)

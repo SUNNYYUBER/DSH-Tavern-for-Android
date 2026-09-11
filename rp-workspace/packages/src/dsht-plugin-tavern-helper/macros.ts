@@ -112,23 +112,41 @@ export async function runMacroExpand(
     stableSeed: sessionId ? `rp-${sessionId}` : slug ? `rp-${slug}` : 'rp-global',
   })
   if (r.writes.length > 0) {
-    const scope: MacroScope = sessionId ? 'chat' : slug ? 'character' : 'global'
-    let tree = await deps.loadScope(scope, slug, sessionId)
-    if (sessionId) {
-      // undo 日志：连续写同一路径时旧值应来自逐条演进中的树——逐条应用同时逐条记录
-      const seq = []
-      let evolving = tree
-      for (const w of r.writes) {
-        seq.push(makeUndoEntry(scope, slug, w.path, evolving))
-        evolving = setByPath(evolving, w.path, w.value)
+    // 【T-22 2026-09-11】按 write.scope 分流：{{setglobalvar}} 族显式标 'global'，
+    // 恒定落全局树（ST setGlobalVariable 只写 extension_settings.variables.global），
+    // 不随「当前会话/角色是否存在」漂移；其余写宏沿用 chat > character > global 就近落盘。
+    const globalWrites = r.writes.filter(w => w.scope === 'global')
+    const scopedWrites = r.writes.filter(w => w.scope !== 'global')
+    if (globalWrites.length > 0) {
+      let gtree = await deps.loadScope('global', '', '')
+      const gUndo = []
+      for (const w of globalWrites) {
+        gUndo.push(makeUndoEntry('global', '', w.path, gtree))
+        gtree = setByPath(gtree, w.path, w.value)
       }
-      await appendUndoEntries(deps.dshHome, sessionId, seq)
-      tree = evolving
-    } else {
-      for (const w of r.writes) tree = setByPath(tree, w.path, w.value)
+      if (sessionId) await appendUndoEntries(deps.dshHome, sessionId, gUndo)
+      await deps.beforeSave?.('global', '', '')
+      await deps.saveScope('global', '', '', gtree)
     }
-    await deps.beforeSave?.(scope, slug, sessionId)
-    await deps.saveScope(scope, slug, sessionId, tree)
+    if (scopedWrites.length > 0) {
+      const scope: MacroScope = sessionId ? 'chat' : slug ? 'character' : 'global'
+      let tree = await deps.loadScope(scope, slug, sessionId)
+      if (sessionId) {
+        // undo 日志：连续写同一路径时旧值应来自逐条演进中的树——逐条应用同时逐条记录
+        const seq = []
+        let evolving = tree
+        for (const w of scopedWrites) {
+          seq.push(makeUndoEntry(scope, slug, w.path, evolving))
+          evolving = setByPath(evolving, w.path, w.value)
+        }
+        await appendUndoEntries(deps.dshHome, sessionId, seq)
+        tree = evolving
+      } else {
+        for (const w of scopedWrites) tree = setByPath(tree, w.path, w.value)
+      }
+      await deps.beforeSave?.(scope, slug, sessionId)
+      await deps.saveScope(scope, slug, sessionId, tree)
+    }
   }
   return { result: r.text, writes: r.writes, unknownMacros: r.unknownMacros }
 }

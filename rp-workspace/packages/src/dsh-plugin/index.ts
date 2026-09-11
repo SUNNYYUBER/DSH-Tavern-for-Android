@@ -32,7 +32,7 @@ import type { LoreEntry } from '../lore/entry.ts'
 import { importCharacterJson } from '../import/character-card.ts'
 import { convertChatFile, exportSingleCardFiles, projectKey, chatSessionId, encodeSegment } from '../import/dsh-export.ts'
 import { writeCardTextChunks, bytesToBase64, makePlaceholderPng } from '../import/card-export.ts'
-import { runRegexScripts, PLACEMENT, type RegexScript } from '../regex/engine.ts'
+import { runRegexScripts, PLACEMENT, sanitizeRegexMacro, type RegexScript, type RegexContext } from '../regex/engine.ts'
 import { MacroEngine, type MacroContext } from '../macros/engine.ts'
 import { compileSlots, type CompiledSlot, type RPPreset } from '../preset/schema.ts'
 import { AGENT_COMPACT_PERSONA_MARKER, compilePreset, isDshtRpAgentComposition } from '../preset/compiler.ts'
@@ -1124,11 +1124,31 @@ export function applyPromptRegexes(
   scripts: RegexScript[],
   traceRegexHits: Array<{ scriptName: string; count: number }>,
   mode: 'persist' | 'prompt' = 'persist',
+  macroCtx?: { user?: string; char?: string },
 ): LikeMessage[] {
   if (scripts.length === 0) return messages
   // persist 模式排除 promptOnly（其结果不该改变聊天记录本体）；prompt 模式全收。
   const pool = mode === 'persist' ? scripts.filter(s => s.promptOnly !== true) : scripts
   if (pool.length === 0) return messages
+  // 【T-16 2026-09-11】substituteRegex 模式下 findRegex 要先做宏替换。此前**没有任何
+  // 调用方注入该回调** → `substituteRegex: 1/2` 的分支是死代码（真实数据里全 0，
+  // 故长期未被发现）。这里按 TT `resolveRegexString`（extensions/regex/engine.js:331-343）接上：
+  //   RAW(1)     → substituteParams(findRegex)
+  //   ESCAPED(2) → substituteParams(findRegex, {}, sanitizeRegexMacro)
+  // 即 ESCAPED 的转义作用在**每个已解析宏的值**上（TT 的 postProcessFn 语义），
+  // 不是对整串 findRegex 转义——后者会把用户的字面正则也一并毁掉。
+  const regexCtx: RegexContext = {
+    depth: null,
+    ...(macroCtx === undefined ? {} : {
+      substituteRegex: (raw: string, escaped: boolean): string =>
+        expandTavernMacros(raw, {
+          user: macroCtx.user ?? '用户',
+          char: macroCtx.char ?? '角色',
+          stableSeed: mode,
+          postProcess: escaped ? sanitizeRegexMacro : undefined,
+        }).text,
+    }),
+  }
   const total = messages.length
   return messages.map((m, idx) => {
     if (!Array.isArray(m.content)) return m
@@ -1142,7 +1162,7 @@ export function applyPromptRegexes(
     let changed = false
     const content = m.content.map(block => {
       if (block.type !== 'text' || typeof block.text !== 'string') return block
-      const r = runRegexScripts(pool, block.text, 'prompt', placement, { depth })
+      const r = runRegexScripts(pool, block.text, 'prompt', placement, { ...regexCtx, depth })
       if (r.hits.length > 0) {
         changed = true
         for (const h of r.hits) traceRegexHits.push({ scriptName: h.scriptName, count: h.count })
@@ -2613,24 +2633,47 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         getVar: path => readVarPath(chatVars, path) ?? readVarPath(charVars, path) ?? readVarPath(globalVars, path),
         stableSeed: sid ? `rp-${sid}` : `rp-${slug}`,
       })
-      if (r.writes.length > 0 && sid) {
-        const stateFile = join(dshHome, 'rp', 'state', `${sid}.json`)
-        let whole: Record<string, unknown> = {}
-        try {
-          const parsed = JSON.parse(await readFile(stateFile, 'utf8'))
-          if (parsed && typeof parsed === 'object') whole = parsed as Record<string, unknown>
-        } catch { /* 新会话状态文件 */ }
-        let vars = (whole.variables && typeof whole.variables === 'object' && !Array.isArray(whole.variables)
-          ? whole.variables : {}) as Record<string, unknown>
-        const undoSeq = []
-        for (const w of r.writes) {
-          undoSeq.push(makeUndoEntry('chat', '', w.path, vars))
-          vars = writeVarPath(vars, w.path, w.value)
+      if (r.writes.length > 0) {
+        // 【T-22 2026-09-11】按 write.scope 分流：{{setglobalvar}} 族显式标 'global'，
+        // 必须落到 rp/variables/global.json —— 不能因为「当前有 sid」就写进会话树
+        //（否则全局变量随会话各自为政，跨会话读不到）。
+        const globalWrites = r.writes.filter(w => w.scope === 'global')
+        const chatWrites = r.writes.filter(w => w.scope !== 'global')
+        if (globalWrites.length > 0) {
+          const globalFile = join(dshHome, 'rp', 'variables', 'global.json')
+          let gtree: Record<string, unknown> = {}
+          try {
+            const parsed = JSON.parse(await readFile(globalFile, 'utf8'))
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) gtree = parsed as Record<string, unknown>
+          } catch { /* 新全局变量文件 */ }
+          const gUndo = []
+          for (const w of globalWrites) {
+            gUndo.push(makeUndoEntry('global', '', w.path, gtree))
+            gtree = writeVarPath(gtree, w.path, w.value)
+          }
+          if (sid) await appendUndoEntries(dshHome, sid, gUndo)
+          await mkdir(dirname(globalFile), { recursive: true })
+          await writeFile(globalFile, JSON.stringify(gtree), 'utf8')
         }
-        await appendUndoEntries(dshHome, sid, undoSeq)
-        whole.variables = vars
-        await mkdir(dirname(stateFile), { recursive: true })
-        await writeFile(stateFile, JSON.stringify(whole), 'utf8')
+        if (chatWrites.length > 0 && sid) {
+          const stateFile = join(dshHome, 'rp', 'state', `${sid}.json`)
+          let whole: Record<string, unknown> = {}
+          try {
+            const parsed = JSON.parse(await readFile(stateFile, 'utf8'))
+            if (parsed && typeof parsed === 'object') whole = parsed as Record<string, unknown>
+          } catch { /* 新会话状态文件 */ }
+          let vars = (whole.variables && typeof whole.variables === 'object' && !Array.isArray(whole.variables)
+            ? whole.variables : {}) as Record<string, unknown>
+          const undoSeq = []
+          for (const w of chatWrites) {
+            undoSeq.push(makeUndoEntry('chat', '', w.path, vars))
+            vars = writeVarPath(vars, w.path, w.value)
+          }
+          await appendUndoEntries(dshHome, sid, undoSeq)
+          whole.variables = vars
+          await mkdir(dirname(stateFile), { recursive: true })
+          await writeFile(stateFile, JSON.stringify(whole), 'utf8')
+        }
       }
       let out = r.text
       // E8：表格宏（{{tableData}}/{{tablePrompt}}/{{GET::表名:行:列}}）——st-memory-enhancement
@@ -2794,7 +2837,11 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           const msgs = agent.session.deriveMessages() as unknown as LikeMessage[]
           if (msgs.length > 0) {
             const hits: Array<{ scriptName: string; count: number }> = []
-            const projected = applyPromptRegexes(msgs, pj.scripts, hits, 'prompt')
+            // findRegex 的宏替换（substituteRegex 1/2）需要身份宏；与快照展开同一来源
+            const regexIdentity = await resolveIdentity(dshHome, slug)
+            const projected = applyPromptRegexes(msgs, pj.scripts, hits, 'prompt', {
+              user: regexIdentity.user, char: regexIdentity.char || rp.macros.char,
+            })
             if (hits.length > 0) {
               // 只投影"确实被改写过"的那几条（未命中的层与原文一致，无需重复入 prompt）
               const changed: string[] = []
@@ -3881,7 +3928,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       ctx.emit(null, 'dsht-rp/turn', { sessionId: sessionIdForRegex, slug, turn: turnNo })
       let batch = await ctx.waterfall(null, 'dsht-rp/regex',
         { agent, sessionId: sessionIdForRegex, slug, turn: turnNo, messages: decision.messages, hits: regexHits },
-        (p: { messages: LikeDecision['messages'] }) => applyPromptRegexes(p.messages, regexScripts, regexHits, 'persist')) as LikeDecision['messages']
+        (p: { messages: LikeDecision['messages'] }) => applyPromptRegexes(
+          p.messages, regexScripts, regexHits, 'persist',
+          { user: userName, char: rp.macros.char || rp.characterName },
+        )) as LikeDecision['messages']
 
       // ---- B9 + B2（提示词模板生成期管线；rp/ejs-settings.json 驱动）----
       // B9 filter_chat_message：楼层里的 <% %> 模板语句剥除（不进模型上下文）；

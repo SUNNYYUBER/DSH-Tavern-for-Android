@@ -5,7 +5,7 @@
  * - markdownOnly（仅显示）/ promptOnly（仅提示词）/ 两者皆否（永久改写，编辑保存时执行）
  * - placement：1=用户输入 2=AI输出 3=slash命令 5=世界书 6=推理内容（ST SCRIPT_TYPES）
  * - minDepth/maxDepth：按消息深度过滤
- * - substituteRegex：findRegex 的宏替换模式（0=RAW 不替换 1=ESCAPED 转义后替换）
+ * - substituteRegex：findRegex 的宏替换模式（**0=NONE 1=RAW 2=ESCAPED**，见下）
  * - $1/$<name>/{{match}} 捕获组引用 + trimStrings 裁剪 + replaceString 二次宏求值（由调用方注入）
  */
 
@@ -46,7 +46,11 @@ export type RegexTiming = 'display' | 'prompt' | 'permanent'
 export interface RegexContext {
   /** 当前消息深度（0 = 最新）；null = 非消息上下文（如世界书内容） */
   depth: number | null
-  /** findRegex 宏替换回调（substituteRegex 模式用；不传则 RAW） */
+  /**
+   * findRegex 宏替换回调（substituteRegex 模式用；不传则不做宏替换）。
+   * `escaped: true` = ESCAPED 模式，回调须对**替换进来的值**做正则元字符转义
+   * （基准 `sanitizeRegexMacro`，TT engine.js:309-329）。
+   */
   substituteRegex?: (raw: string, escaped: boolean) => string
   /** replaceString 的宏求值回调（ST：replaceString 支持 {{macros}}） */
   substituteMacros?: (text: string) => string
@@ -93,6 +97,27 @@ function activeScripts(scripts: RegexScript[], timing: RegexTiming): RegexScript
   })
 }
 
+/**
+ * 正则元字符转义（基准 `sanitizeRegexMacro`，TT `extensions/regex/engine.js:309-329`）。
+ * 供 `substituteRegex === 2`（ESCAPED）模式用：宏**替换进来的值**必须转义，否则值里的
+ * `.`/`*`/`(` 等会变成正则语法，把 findRegex 改成另一条完全不同的正则。
+ * 控制字符按基准映射成 `\n`/`\r`/`\t`/`\v`/`\f`/`\0`（其余加反斜杠前缀）。
+ */
+export function sanitizeRegexMacro(x: unknown): string {
+  if (typeof x !== 'string') return ''
+  return x.replace(/[\n\r\t\v\f\0.^$*+?{}[\]\\/|()]/g, (s) => {
+    switch (s) {
+      case '\n': return '\\n'
+      case '\r': return '\\r'
+      case '\t': return '\\t'
+      case '\v': return '\\v'
+      case '\f': return '\\f'
+      case '\0': return '\\0'
+      default: return '\\' + s
+    }
+  })
+}
+
 /** placement 与 depth 过滤 */
 function appliesTo(script: RegexScript, placement: number, depth: number | null): boolean {
   if (!script.placement.includes(placement)) return false
@@ -125,11 +150,17 @@ export function runRegexScripts(
     if (!appliesTo(script, placement, ctx.depth)) continue
 
     let patternSource = script.findRegex
-    // substituteRegex：对 findRegex 做宏替换（1=ESCAPED 表示替换值要转义）
+    // 【T-16 2026-09-11 修正】substituteRegex 枚举此前是**反的**：写 1→转义、2→不转义，
+    // 而基准是 1=RAW（只做宏替换）、2=ESCAPED（宏替换后再转义正则元字符）——
+    // 见 TT `extensions/regex/engine.js:303-307` 的 `substitute_find_regex`
+    // {NONE:0, RAW:1, ESCAPED:2} 与 `resolveRegexString`（:331-343）：
+    //   NONE → 原样；RAW → substituteParamsExtended(findRegex)；
+    //   ESCAPED → substituteParamsExtended(findRegex, {}, sanitizeRegexMacro)。
+    // 0 = NONE：**不做宏替换**（此前 0 落到「都不匹配」分支，语义上恰好等价，故未暴露）。
     if (script.substituteRegex === 1 && ctx.substituteRegex) {
-      patternSource = ctx.substituteRegex(script.findRegex, true)
-    } else if (script.substituteRegex === 2 && ctx.substituteRegex) {
       patternSource = ctx.substituteRegex(script.findRegex, false)
+    } else if (script.substituteRegex === 2 && ctx.substituteRegex) {
+      patternSource = ctx.substituteRegex(script.findRegex, true)
     }
 
     // ST 字面量形态 /pattern/flags 剥壳（真实数据全是这形态；flags 并入，g/m 为基线）
@@ -157,8 +188,12 @@ export function runRegexScripts(
 
     let replaced = current.replace(regex, (...args) => {
       const match = args[0] as string
-      // 捕获组：args[1..n-3]（末两位为 offset 与整体 string）
-      const captures = args.slice(1, Math.max(1, args.length - 2)).map(a => (typeof a === 'string' ? a : ''))
+      // 捕获组：末两位为 offset 与整体 string；有具名组时末位再多一个 groups 对象
+      const last = args[args.length - 1]
+      const hasGroups = typeof last === 'object' && last !== null
+      const tail = hasGroups ? 3 : 2
+      const named = hasGroups ? (last as Record<string, string | undefined>) : null
+      const captures = args.slice(1, Math.max(1, args.length - tail)).map(a => (typeof a === 'string' ? a : ''))
       let replacement = script.replaceString
       // {{match}} 宏
       replacement = replacement.replace(/\{\{match\}\}/g, match)
@@ -177,6 +212,14 @@ export function runRegexScripts(
         if (captures.length === 0) return match
         return token
       })
+      // 【T-17 补漏 2026-09-11】$<name> 具名捕获组引用（此前只做 $N，头注释却声称支持 $<name>）。
+      // 未命中的组按 ST 语义给空串（非字面残留）。无具名组时整段原样保留。
+      if (named !== null) {
+        replacement = replacement.replace(/\$<([A-Za-z_$][\w$]*)>/gu, (token, name: string) => {
+          const v = named[name]
+          return v === undefined ? '' : v
+        })
+      }
       // trimStrings：从替换结果中移除指定片段
       for (const t of script.trimStrings) replacement = replacement.split(t).join('')
       return replacement

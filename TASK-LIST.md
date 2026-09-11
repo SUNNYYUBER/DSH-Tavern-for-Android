@@ -99,7 +99,7 @@
 
 | # | 缺口 | 状态 | 落点 |
 |---|---|---|---|
-| T-16 | substituteRegex 枚举 1↔2 颠倒 | ✅ 已修 | `regex/engine.ts` |
+| T-16 | substituteRegex 枚举 1↔2 颠倒 | ✅ 已修（2026-09-11 真修） | **原声明不成立**：枚举**一直是反的**（写 1→转义、2→不转义），基准 `substitute_find_regex` 是 `{NONE:0, RAW:1, ESCAPED:2}`（TT `extensions/regex/engine.js:303-307`）；且 `ctx.substituteRegex` 回调**从未被任何调用方注入** = 模式 1/2 全程死代码（真实数据里 substituteRegex 全为 0，故长期未暴露——实测 2 份真实 settings：9 条 + 21 条，`{"0":9}` / `{"0":21}`）。本次：[engine.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/regex/engine.ts#L126-L140) 纠正方向 + 新增基准同款 `sanitizeRegexMacro` 转义；[dsh-plugin/index.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsh-plugin/index.ts#L1131-L1151) 把回调接上（RAW=只替换，ESCAPED=每个已解析宏值过转义，对齐 TT `resolveRegexString`）。测试 6 例，反控 5 例红 |
 | T-17 | 正则 `$1/$<name>` 捕获组失效 | ✅ 已修（2026-09-11 补齐 `$<name>`） | **原声明不成立**：2026-09-09 只落了 `$1..$99` 数字组，`$<name>` 具名组从未实现（头注释却一直声称支持）→ 具名组字面残留。本次在 [engine.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/regex/engine.ts#L158-L195) 与 [display-compiler.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/display-compiler.ts#L323-L352) 两处补齐（含「组未命中给空串」ST 语义），正控 3 例 + 反控（stash 后 2 例红） |
 | T-18 | `{{match}}` 大小写不敏感 | ✅ 已修（v181，改 `/gi`） | `th-shim.ts:1086` |
 | T-19 | shim `Mvu.parseMessage` 与 `state/mvu.ts` 不对称 | ✅ 已修（已复核，2026-09-11） | `th-shim.ts` `Mvu.parseMessage` 直调 `state/mvu.ts` 的 `parseUpdateVariable`（同源，非各写一份） |
