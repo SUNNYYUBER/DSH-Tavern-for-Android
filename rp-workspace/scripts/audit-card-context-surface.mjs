@@ -206,13 +206,21 @@ export function readScriptAccessesFromText(text) {
   // 后的**裸调用** `const context = getContext()` —— 旧口径对这类文件一条访问都提不出来，
   // 于是打出「✅ 全部具备」的**假绿**（实测：chat-history-backup/index.js 有 16 处 getContext，
   // 旧口径报 0 条访问 / 0 缺口）。两种取法都必须收。
-  const GT = String.raw`(?:SillyTavern\s*\.\s*)?getContext\s*\(\s*\)`
-  const aliasRe = new RegExp(String.raw`\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*${GT}`, 'g')
+  //
+  // 【心跳 63 二次扩域（真实语料普查逼出来的）】两个此前**整类漏掉**的取法：
+  //   · 间接 `target.SillyTavern.getContext()` —— 旧 GT 只允许 `SillyTavern.` **紧贴**在
+  //     `getContext` 前，于是 `对话渲染系统 v7.1:134-135`（`target && target.SillyTavern &&
+  //     typeof target.SillyTavern.getContext === 'function'`）**3 处 getContext 一条都没提到**。
+  //   · 顶层直取 `SillyTavern.xxx`（不经 getContext）—— 由下方 5) 单独处理。
+  // ⚠️ 第二分支加 `(?<![\w$.])` 负向后顾：否则 `canvas.getContext()` 这类**同名无关 API**
+  // 也会被当成 ST 取法（`getContext('2d')` 因带实参本已不匹配，但 `foo.getContext()` 会）。
+  const GT = String.raw`(?:[\w$]+\s*\.\s*)*SillyTavern\s*\.\s*getContext\s*\(\s*\)|(?<![\w$.])getContext\s*\(\s*\)`
+  const aliasRe = new RegExp(String.raw`\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:${GT})`, 'g')
   const aliases = new Set()
   for (let m; (m = aliasRe.exec(text)) !== null;) aliases.add(m[1])
 
   // 2) const { a, b: c } = SillyTavern.getContext() / = getContext()
-  const destrRe = new RegExp(String.raw`\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*${GT}`, 'g')
+  const destrRe = new RegExp(String.raw`\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*(?:${GT})`, 'g')
   for (let m; (m = destrRe.exec(text)) !== null;) {
     for (const part of m[1].split(',')) {
       const name = part.split(':')[0].trim().replace(/^\.\.\./, '')
@@ -221,7 +229,7 @@ export function readScriptAccessesFromText(text) {
   }
 
   // 3) SillyTavern.getContext().a.b / getContext().a.b
-  const inlineRe = new RegExp(String.raw`${GT}((?:${CHAIN})+)\??`, 'g')
+  const inlineRe = new RegExp(String.raw`(?:${GT})((?:${CHAIN})+)\??`, 'g')
   for (let m; (m = inlineRe.exec(text)) !== null;) {
     const path = m[1].replace(/\?\./g, '.')
     add(path.slice(1), m.index)
@@ -235,6 +243,23 @@ export function readScriptAccessesFromText(text) {
       add(path.slice(1), m.index)
     }
   }
+
+  // 5) 顶层直取 `SillyTavern.<member>`（**不经 getContext**）
+  //
+  // 【心跳 63 新增】真 ST 的 `window.SillyTavern` 是 `st-context.js` 导出的那个对象 ——
+  // 它**既带 `getContext()` 也带全部直接成员**（= getContext 的展开），所以顶层直取
+  // 与 `getContext().x` 指向**同一个成员集合**，用同一份权威面判定即可。
+  // 真实语料实证（此前整类漏检 ⇒「缺口 0」是被低估的结论）：
+  //   · `格式肘击大师v1_3.js:72-73` → `SillyTavern.characterId` / `SillyTavern.characters`
+  //   · `梦鲸思客消息处理 2.4` → `SillyTavern.POPUP_RESULT` / `POPUP_TYPE` / `callGenericPopup` /
+  //     `chat` / `saveChat` / `stopGeneration` / `updateMessageBlock`
+  // `\b` 允许 `window.` / `target.` 前缀（这两种写法都出现过）；`getContext` 由上面 1)~4) 负责，跳过。
+  const topRe = /\bSillyTavern\s*\.\s*([A-Za-z_$][\w$]*)/g
+  for (let m; (m = topRe.exec(text)) !== null;) {
+    if (m[1] === 'getContext') continue
+    add(m[1], m.index)
+  }
+
   return { aliases: [...aliases], paths }
 }
 
@@ -276,8 +301,39 @@ function selftest() {
   console.log(`[selftest] readScriptAccesses → ${probeGot}`)
   if (!probeOk) console.log(`[selftest] 期望 → ${probeWant}`)
 
-  console.log(`[selftest] ${ok && probeOk ? 'PASS' : 'FAIL'}`)
-  return ok && probeOk ? 0 : 1
+  // 【心跳 63】两个新形态的正控 + 一个反控（同名无关 API 不得误捕）
+  const probe2 = `
+    const a = SillyTavern.characterId;
+    const b = SillyTavern.characters[0];
+    window.SillyTavern.chat.length;
+  `
+  const probe2Want = 'characterId,characters,chat'
+  const probe2Got = [...readScriptAccessesFromText(probe2).paths.keys()].sort().join(',')
+  const probe2Ok = probe2Got === probe2Want
+  console.log(`[selftest] 顶层直取 SillyTavern.x → ${probe2Got}`)
+  if (!probe2Ok) console.log(`[selftest] 期望 → ${probe2Want}`)
+
+  const probe3 = `
+    if (t && t.SillyTavern && typeof t.SillyTavern.getContext === 'function') { return t.SillyTavern.getContext() }
+    const c = t.SillyTavern.getContext(); c.stopGeneration();
+  `
+  const probe3Want = 'stopGeneration'
+  const probe3Got = [...readScriptAccessesFromText(probe3).paths.keys()].sort().join(',')
+  const probe3Ok = probe3Got === probe3Want
+  console.log(`[selftest] 间接 X.SillyTavern.getContext() → ${probe3Got}`)
+  if (!probe3Ok) console.log(`[selftest] 期望 → ${probe3Want}`)
+
+  // 反控：canvas 的同名 API 不得被当成 ST 取法（否则会造出假缺口/假访问）
+  const probe4 = `const g = canvas.getContext('2d'); g.fillRect(1,2,3,4); const h = thing.getContext(); h.clearRect(0,0,1,1);`
+  const probe4Want = ''
+  const probe4Got = [...readScriptAccessesFromText(probe4).paths.keys()].sort().join(',')
+  const probe4Ok = probe4Got === probe4Want
+  console.log(`[selftest] 反控 canvas/同名 getContext → 「${probe4Got}」`)
+  if (!probe4Ok) console.log(`[selftest] 期望 → 空`)
+
+  const allOk = ok && probeOk && probe2Ok && probe3Ok && probe4Ok
+  console.log(`[selftest] ${allOk ? 'PASS' : 'FAIL'}`)
+  return allOk ? 0 : 1
 }
 
 function main() {

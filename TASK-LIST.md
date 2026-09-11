@@ -20,6 +20,17 @@
 | 发布闸门 | 🔴 **未达标**（T-25/T-61 心跳 61 复跑：受控面 **616 文件 / 合计 305 项**）⇒ **现在不能公开**；<br>✅ **`SECRET` 已由 1 → 0**（🔴 发布阻断项清除，但⚠️ 属**并发实例**在 `DSH Android Roleplay App Plan.md` 的**未提交**改动）<br>⚠️ **且密钥仍在本地 git 历史里**（仓库无远端、117 个提交从未推送 ⇒ 非对外事故）—— **P0 历史重写未做**；剩余 `WXID 16 / LOCALPATH 70 / SERVER 11 / PAYLOAD 8 / WORDLIST 200` |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
+- **心跳 63B** = **全语料普查：把 T-46/T-47 的决策输入从「1 张卡 / 3 个成员」换成「设备上全部真实脚本 / 15 个成员」**。
+  设备实测拉取 **19 个 `tavern-helper-scripts.json`**（12 卡 + 7 预设）→ 抽取 **54 个脚本 / 6.5 MB / 启用 45**。
+  ⚠️ **先修了审计器自己的两个整类漏检**（不改就没有分辨力）：**A 顶层直取 `SillyTavern.x`**（不经 `getContext`）·
+  **B 间接 `X.SillyTavern.getContext()`** ⇒ 修后已核验 **9 → 13 文件**、缺口 **16 → 26**；
+  闸门 **4 正控 + 1 反控全 PASS**、原卡结论**逐字不变**。
+  **结果：宿主面缺口 15 个成员**（不是 3 个，且为下界）：`characterId`(31 次) / `characters`(23) / `chatMetadata`(13) /
+  `generateRaw`(6) / `getTokenCountAsync`(5) / **`powerUserSettings`**(2，全新) / `stopGeneration` / `updateMessageBlock` /
+  `generate` / `executeSlashCommandsWithOptions` / `messageFormatting` / `generateQuietPrompt` / `saveChat` / `mainApi` / `onlineStatus`。
+  触发者**不是扩展**（推翻 T-47 原判）而是 **DSHT 自己启用中的预设脚本 `🦊示例卡二~`**（主预设 V17.1 / Agent V14.7 各一份，`enabled=true`）。
+  ⇒ **T-46 的投影方案需重新计价**（投影不会自动补上宿主面缺的那 15 个），且其中 6 个属**生成栈**，是 T-42/T-48 同型「完整实现=无效功」候选
+  ⇒ 已在 **T-47** 出**四档处置**（可低成本补 / 需数据模型决策 / 生成栈先问死 / 相邻域）。
 - **心跳 63** = **T-46「可行性分档」收口 —— 结论是原判据本身错了**：T-46 长期挂着的理由是**假两难**
   （「补 iframe 成员 = 要么在模板串里**再抄一份**（违反单源纪律）要么**注入式装配**」）。
   回基准一读就解开了：真 TH `src/iframe/predefine.js:26-35` 用 `Object.defineProperty(window,'SillyTavern',
@@ -675,18 +686,84 @@ Object.defineProperty(window, 'SillyTavern', {
 **顺带查出的一处不一致**：`renderExtensionTemplateAsync`（心跳 62B 交付）只落在 `buildStContextFacade()` 面（getContext 口径），**没落 iframe 顶层** —— 与基准形态（顶层 ≡ `...getContext()`）和宿主面都不一致。采纳方案 A 则自动消解；采纳方案 B 需一并补上。
 
 **工具与纪律**：`rp-workspace/scripts/audit-iframe-surface-gap.mjs` **复用** `audit-card-context-surface.mjs` 的解析器（**不写第二份实现**）；为此给后者加了**导入守卫**（此前 `import` 即 `main()` + `process.exit` ⇒ 复用其解析器只能**复制一份实现** = 违反单源纪律）；加守卫后正控 `--selftest` **PASS**、反控 `--script` 输出与改动前**逐字相同**。
-### T-47　🆕 **宿主门面仍缺的 3 个成员**（心跳 51 量出，属"需要数据模型决策"而非接线）
-- `characters`（4 次）/ `characterId`（12 次）/ `chatMetadata`（9 次）—— 来源是 TH 扩展形态脚本
-  `chat-history-backup/index.js` 的实测用法（`:647/666/671/1194/2545`）。
-- **为什么没顺手补**：
-  - `characters` + `characterId` 是**一对**，且基准语义是「角色数组 + 数组下标」，
-    而我们的模型是「一会话一角色，以 slug 标识」——**不能只补一个**（否则 `characters[characterId]` 落空，
-    这恰是"只补空容器 = 静默失败"的变体）。要么建一致的角色列表模型，要么显式登记为差异。
-  - `chatMetadata` 基准是**会被持久化的每聊天元数据对象**；我们**没有**这个存储
-    → 给 `{}` 会让脚本的写入**静默丢失**（比 `undefined` 更危险，脚本的 `if (ctx.chatMetadata)` 守卫会失效）。
-- **状态**：⏳ 登记，**不做**（需先定数据模型；且当前无实测触发——DSHT 目前只跑 TH **脚本**，
-  未跑扩展文件系统）。
 
+#### ⚠️ 心跳 63B 追加：全语料普查 ⇒ **「升不升」的代价被重新计价**
+
+分档此前只跑了 **1 张卡**。按 skill §6「接新卡第一件事 = 跑穷举」把**设备上全部真实 TH 脚本**拉下来跑了一遍
+（19 个文件 → **54 个脚本 / 6.5 MB**），过程与结果两件都要看：
+
+1. **审计器自己有两个整类漏检**（先修，否则普查没有分辨力）：
+   **A 顶层直取 `SillyTavern.x`**（不经 `getContext`；实例 `格式肘击大师v1_3.js:72-73`）·
+   **B 间接 `X.SillyTavern.getContext()`**（实例 `对话渲染系统 v7.1:134-135`）。
+   修后**已核验文件 9 → 13**（+44%）、缺口 **16 → 26**；闸门 = **4 正控 + 1 反控全 PASS**、
+   原卡结论**逐字不变**。
+2. **普查结果：宿主面缺口是 15 个成员，不是 T-47 登记的 3 个**（且只是下界）。
+   ⇒ **投影（方案 A）不会自动补上这 15 个** —— 因为投影的上游就是宿主面本身。
+   ⇒ 「投影 + 宿主补齐」的真实工作量**大于**此前按"3 个"估的规模；其中 6 个属**生成管线/斜杠命令体系**
+   （`generate` / `generateRaw` / `generateQuietPrompt` / `stopGeneration` / `mainApi` /
+   `executeSlashCommandsWithOptions`），是 **T-42/T-48 同型的「完整实现 = 无效功」候选**，不能笼统"补齐"。
+   ⇒ 分档与四档处置见 **T-47**；证据全文 `stage3-device/hb63/T46-CORPUS-CENSUS.md`。
+
+---
+### T-47　🔴 **宿主门面缺口：是 15 个成员，不是 3 个**（心跳 51 量出 · **心跳 63B 全语料普查后大幅修正**）
+
+**心跳 51 的原始登记（已作废）**：`characters`(4) / `characterId`(12) / `chatMetadata`(9)，
+来源是 TH 扩展 `chat-history-backup/index.js`；理由写「当前无实测触发 —— DSHT 目前只跑 TH **脚本**，未跑扩展文件系统」。
+
+> ⚠️ **上面这段的两处都被推翻了**（心跳 63B）：
+> ① 缺的**不是 3 个**，是 **15 个**（且只是下界）；② 触发它的**不是扩展**，是 **DSHT 自己启用中的预设脚本**。
+
+#### 全语料普查（设备实测拉取，非抽样）
+
+```
+find files/.dsh -name tavern-helper-scripts.json  →  19 个文件（12 角色卡 + 7 预设）
+抽取 → 54 个脚本 / 6,664,607 B ≈ 6.5 MB / 启用 45 · 禁用 9
+```
+
+**宿主面缺口（只覆盖 13/54 可核验文件，故为下界）**：
+
+| # | 成员 | 文件 | 次数 | 判定提示 |
+|---|---|---|---|---|
+| 1 | `characterId` | 3 | **31** | 需与 `characters` **成对**（见下） |
+| 2 | `characters` | 3 | **23** | 同上 |
+| 3 | `chatMetadata` | 2 | **13** | 子路径 `file_name` / `chat_id` ⇒ 需定存储层 |
+| 4 | `generateRaw` | 2 | 6 | ⚠️ 生成管线，与 T-42/T-48 同型「完整实现 = 无效功」候选 |
+| 5 | `getTokenCountAsync` | 2 | 5 | 需 tokenizer ⇒ 同型候选 |
+| 6 | **`powerUserSettings`** | 2 | 2 | 🆕 全新项；子路径仅 `persona_description` ⇒ 可能**单字段低成本** |
+| 7 | `stopGeneration` | 2 | 2 | ⚠️ 生成管线 |
+| 8 | `updateMessageBlock` | 2 | 2 | 需 ST 消息 DOM |
+| 9 | `generate` | 2 | 2 | ⚠️ 生成管线 |
+| 10 | `executeSlashCommandsWithOptions` | 1 | 4 | ⚠️ 斜杠命令体系 |
+| 11 | `messageFormatting` | 1 | 3 | 与 T-42 正则域相邻 |
+| 12 | `generateQuietPrompt` | 1 | 2 | ⚠️ 生成管线 |
+| 13 | `saveChat` | 1 | 1 | 我方自管持久化 ⇒ 可 no-op 但**必须出声** |
+| 14 | `mainApi` | 1 | 1 | ⚠️ ST 内部 API 根对象 |
+| 15 | `onlineStatus` | 1 | 1 | 可能是**单字段**（连接状态字符串）低成本项 |
+
+**关键实例（*启用中*的脚本，不是边角料）**：`🦊示例卡二~` 在**主预设 V17.1 / Agent 预设 V14.7 各一份且 `enabled=true`**：
+
+```
+· characterId       （16 次）
+· characters        （11 次）
+· chatMetadata      （ 9 次）子路径：file_name, chat_id
+· powerUserSettings （ 1 次，行 6115）
+```
+
+iframe 面在同一批语料上缺 **25** 个成员（`name1` 5 文件 · `callGenericPopup`/`POPUP_TYPE`/`POPUP_RESULT` 各 4 · …）。
+
+#### 因此本项**不能笼统"补齐"**，须先分档
+
+| 档 | 成员 | 处置建议 |
+|---|---|---|
+| **A · 可低成本补** | `onlineStatus`(单字段) · `powerUserSettings.persona_description`(单字段) · `saveChat`(我方持久化自管 ⇒ 出声 no-op) | 直接补，代价小、语义明确 |
+| **B · 需数据模型决策** | `characters` + `characterId`（**必须成对**：基准是「角色数组 + 数组下标」，我方是「一会话一角色、以 slug 标识」）· `chatMetadata`（基准是**会被持久化的每聊天元数据**，我方无此存储） | **需拍板语义归属**；⚠️ 拒绝"给空容器"——会让卡的写入**静默消失**（本项目主力缺陷族） |
+| **C · 生成栈（同 T-42/T-48 型）** | `generate` · `generateRaw` · `generateQuietPrompt` · `stopGeneration` · `mainApi` · `executeSlashCommandsWithOptions` · `getTokenCountAsync` | 移植 = 移植 ST 生成栈与斜杠命令体系 ⇒ **先按 T-48 的办法用只读探针问死"完整实现是否无效功"**，再决定；不自造迷你实现 |
+| **D · 相邻域** | `updateMessageBlock` · `messageFormatting` | 与 T-42（正则/DOM）/ 显示管线相邻，随该域一起评 |
+
+**状态**：⏳ **登记 + 分档已出**；A 档可做（未做，因与 T-46 的投影决策耦合：投影会改变 iframe 面从哪取成员）。
+**B/C 档需拍板**。决策池保持 **2 项**（T-46+T-47 合并 · P-1），但 T-47 的内容已从"3 个成员"扩为"15 个 + 四档"。
+
+**证据全文**：`stage3-device/hb63/T46-CORPUS-CENSUS.md`
 ### T-48　✅ **部分收口** `renderExtensionTemplateAsync`（心跳 62；**完整实现判定为不做**）
 
 **契约（逐字对质基准）**：
