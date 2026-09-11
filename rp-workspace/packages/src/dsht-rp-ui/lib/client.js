@@ -4141,22 +4141,32 @@ function compileScriptRegex(findRegex) {
   }
 }
 function buildReplacement(script, match, captures, named) {
-  let replacement = script.replaceString.replace(/\{\{match\}\}/giu, match);
+  const filterTrim = (value) => {
+    let out = value;
+    for (const t of script.trimStrings) {
+      if (t === "") continue;
+      out = out.split(t).join("");
+    }
+    return out;
+  };
+  let replacement = script.replaceString.replace(/\{\{match\}\}/giu, "$0");
   replacement = replacement.replace(/\$(\d{1,2})/gu, (token, digits) => {
     const index = Number(digits);
-    if (index >= 1 && index <= captures.length) return captures[index - 1];
-    if (index === 0) return match;
+    if (index === 0) return filterTrim(match);
+    if (index >= 1 && index <= captures.length) return filterTrim(captures[index - 1]);
     if (digits.length === 2) {
       const fallback = Number(digits[0]);
-      if (fallback >= 1 && fallback <= captures.length) return captures[fallback - 1] + digits[1];
+      if (fallback >= 1 && fallback <= captures.length) return filterTrim(captures[fallback - 1]) + digits[1];
     }
-    if (captures.length === 0) return match;
+    if (captures.length === 0) return filterTrim(match);
     return token;
   });
   if (named !== null) {
-    replacement = replacement.replace(/\$<([A-Za-z_$][\w$]*)>/gu, (_token, name) => named[name] ?? "");
+    replacement = replacement.replace(/\$<([A-Za-z_$][\w$]*)>/gu, (_token, name) => {
+      const v = named[name];
+      return v === void 0 ? "" : filterTrim(v);
+    });
   }
-  for (const trim of script.trimStrings) replacement = replacement.split(trim).join("");
   return replacement;
 }
 function inDepth(script, depth) {

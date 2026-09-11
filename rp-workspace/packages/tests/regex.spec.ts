@@ -88,10 +88,39 @@ describe('placement 与 depth 过滤', () => {
 })
 
 describe('替换语义', () => {
-  it('{{match}} 引用与 trimStrings', () => {
+  // 【T-18 R4 2026-09-11】原测例断言 'a foo b'（= trim 作用于**替换后整串**，把用户字面
+  // 写的 `[`/`]` 一并削掉）—— 那是把我们的实现缺陷固化成了期望值（L50 同款）。
+  // 基准 `filterString`（TT engine.js:613-621）只对**每个捕获组内容**过滤，
+  // 故 replaceString `[{{match}}]` 且 trimStrings `['[',']']` 时，`[`/`]` 是字面量不受影响。
+  it('trimStrings 只作用于捕获组内容，不削替换串里的字面量（基准 filterString）', () => {
     const s = base({ promptOnly: true, findRegex: '(foo)', replaceString: '[{{match}}]', trimStrings: ['[', ']'] })
-    const r = runRegexScripts([s], 'a foo b', 'prompt', PLACEMENT.AI_OUTPUT)
-    expect(r.text).toBe('a foo b') // trim 掉括号后等于原值
+    expect(runRegexScripts([s], 'a foo b', 'prompt', PLACEMENT.AI_OUTPUT).text).toBe('a [foo] b')
+  })
+  it('trimStrings 命中捕获组内容时确实被削掉', () => {
+    const s = base({ promptOnly: true, findRegex: '\\[([^\\]]+)\\]', replaceString: '<$1>', trimStrings: ['[', ']'] })
+    // 捕获组内容 = '[提示]'（不含外层中括号）→ trim '[',']' 后为 '提示'
+    expect(runRegexScripts([s], 'x [提示] y', 'prompt', PLACEMENT.AI_OUTPUT).text).toBe('x <提示> y')
+  })
+  it('trimString 自身过宏求值（基准 substituteParams(trimString)）', () => {
+    const s = base({ promptOnly: true, findRegex: '(abc)', replaceString: '{{match}}', trimStrings: ['{{char}}'] })
+    const r = runRegexScripts([s], 'abc', 'prompt', PLACEMENT.AI_OUTPUT, {
+      depth: null, substituteMacros: (t: string) => t.replace('{{char}}', 'abc'),
+    })
+    expect(r.text).toBe('') // trimString '{{char}}' → 'abc' → 把 match 'abc' 削掉
+  })
+  it('replaceString 不含任何引用时 trimStrings 不生效（基准回调不触发）', () => {
+    const s = base({ promptOnly: true, findRegex: '(foo)', replaceString: 'X', trimStrings: ['X'] })
+    expect(runRegexScripts([s], 'a foo b', 'prompt', PLACEMENT.AI_OUTPUT).text).toBe('a X b')
+  })
+  // 【T-18 2026-09-11 补漏】基准 `/gi`：大写 `{{MATCH}}` 也要替换。此前主引擎是 `/g`，
+  // 只有 th-shim 同步路径改了 /gi —— 大写形态在 prompt/display 主链路漏替换成字面量。
+  it('{{MATCH}} 大写形态同样替换（大小写不敏感）', () => {
+    const s = base({ promptOnly: true, findRegex: '(foo)', replaceString: '<b>{{MATCH}}</b>' })
+    expect(runRegexScripts([s], 'a foo b', 'prompt', PLACEMENT.AI_OUTPUT).text).toBe('a <b>foo</b> b')
+  })
+  it('{{Match}} 混合大小写同样替换', () => {
+    const s = base({ promptOnly: true, findRegex: '(foo)', replaceString: '<b>{{Match}}</b>' })
+    expect(runRegexScripts([s], 'a foo b', 'prompt', PLACEMENT.AI_OUTPUT).text).toBe('a <b>foo</b> b')
   })
   it('无效正则跳过并记录 count=-1', () => {
     const s = base({ promptOnly: true, findRegex: '([unclosed' })

@@ -194,34 +194,57 @@ export function runRegexScripts(
       const tail = hasGroups ? 3 : 2
       const named = hasGroups ? (last as Record<string, string | undefined>) : null
       const captures = args.slice(1, Math.max(1, args.length - tail)).map(a => (typeof a === 'string' ? a : ''))
+      /**
+       * 【T-18 R4 2026-09-11 补漏】trimStrings 过滤。基准 `filterString`
+       * （TT `extensions/regex/engine.js:613-621`）作用点是**每个捕获组内容**，
+       * 而不是替换后的整串；且每个 trimString 自身先过宏求值
+       * （`substituteParams(trimString, {name2Override})`）。
+       *
+       * 此前我们把 trimStrings 放在替换**结束后**对整个 replacement 做 split-join，
+       * 两处都偏：① 会把用户字面写的括号/标记一并削掉（不是 trim 的语义）；
+       * ② trimString 里的宏永不展开。
+       * 顺带：基准在「replaceString 完全不含 $N/$<name>/{{match}}」时**不应用 trim**
+       * （`replaceAll` 回调一次都不跑）——下面的写法天然复现该行为。
+       */
+      const filterTrim = (value: string): string => {
+        let out = value
+        for (const t of script.trimStrings) {
+          const expanded = ctx.substituteMacros ? ctx.substituteMacros(t) : t
+          if (expanded === '') continue
+          out = out.split(expanded).join('')
+        }
+        return out
+      }
       let replacement = script.replaceString
-      // {{match}} 宏
-      replacement = replacement.replace(/\{\{match\}\}/g, match)
+      // 【T-18 2026-09-11 补漏】`{{match}}` 大小写不敏感（基准 TT engine.js:420/577 用 `/gi`）。
+      // 此前本行是 `/g` —— 与 display-compiler.ts 的 `/giu` 不一致，大写 `{{MATCH}}`
+      // 会漏替换并以字面量留在文本里。TASK-LIST 原先声称「v181 已改 /gi」，
+      // 但那次只改到了 th-shim 的同步路径，主引擎这条一直没跟上。
+      // 基准先把 `{{match}}` 归一成 `$0`，故两者走同一条过滤路径。
+      replacement = replacement.replace(/\{\{match\}\}/gi, '$0')
       // 【TT 对照修复 2026-09-09】$N 捕获组引用：函数形式 replace 的返回值不做 JS 的 $N
       // 特殊替换（原注释假设"JS 原生已处理"不成立）——$1 字面残留会把用户消息毁成
       // <interactive_input>$1</interactive_input>（wuwa 实测）。手动处理 $1..$99：
       replacement = replacement.replace(/\$(\d{1,2})/gu, (token, digits: string) => {
         const index = Number(digits)
-        if (index >= 1 && index <= captures.length) return captures[index - 1]
-        if (index === 0) return match
+        if (index === 0) return filterTrim(match)
+        if (index >= 1 && index <= captures.length) return filterTrim(captures[index - 1])
         if (digits.length === 2) {
           const fallback = Number(digits[0])
-          if (fallback >= 1 && fallback <= captures.length) return captures[fallback - 1] + digits[1]
+          if (fallback >= 1 && fallback <= captures.length) return filterTrim(captures[fallback - 1]) + digits[1]
         }
         // 无捕获组时 $N = 整个 match（ST/TT 行为）
-        if (captures.length === 0) return match
+        if (captures.length === 0) return filterTrim(match)
         return token
       })
       // 【T-17 补漏 2026-09-11】$<name> 具名捕获组引用（此前只做 $N，头注释却声称支持 $<name>）。
       // 未命中的组按 ST 语义给空串（非字面残留）。无具名组时整段原样保留。
       if (named !== null) {
-        replacement = replacement.replace(/\$<([A-Za-z_$][\w$]*)>/gu, (token, name: string) => {
+        replacement = replacement.replace(/\$<([A-Za-z_$][\w$]*)>/gu, (_token, name: string) => {
           const v = named[name]
-          return v === undefined ? '' : v
+          return v === undefined ? '' : filterTrim(v)
         })
       }
-      // trimStrings：从替换结果中移除指定片段
-      for (const t of script.trimStrings) replacement = replacement.split(t).join('')
       return replacement
     })
 

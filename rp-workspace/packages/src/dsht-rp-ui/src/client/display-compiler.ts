@@ -328,26 +328,39 @@ function buildReplacement(
   captures: readonly string[],
   named: Record<string, string | undefined> | null,
 ): string {
-  let replacement = script.replaceString.replace(/\{\{match\}\}/giu, match)
+  /** 【T-18 R4 2026-09-11】trimStrings 只作用于**捕获组内容**（基准 filterString，
+   *  TT engine.js:613-621），不是替换后的整串——后者会把替换串里用户字面写的
+   *  标记一并削掉。此前 display 半边与主引擎同款偏差。 */
+  const filterTrim = (value: string): string => {
+    let out = value
+    for (const t of script.trimStrings) {
+      if (t === '') continue
+      out = out.split(t).join('')
+    }
+    return out
+  }
+  let replacement = script.replaceString.replace(/\{\{match\}\}/giu, '$0')
   replacement = replacement.replace(/\$(\d{1,2})/gu, (token, digits: string) => {
     const index = Number(digits)
-    if (index >= 1 && index <= captures.length) return captures[index - 1]
-    if (index === 0) return match
+    if (index === 0) return filterTrim(match)
+    if (index >= 1 && index <= captures.length) return filterTrim(captures[index - 1])
     if (digits.length === 2) {
       const fallback = Number(digits[0])
-      if (fallback >= 1 && fallback <= captures.length) return captures[fallback - 1] + digits[1]
+      if (fallback >= 1 && fallback <= captures.length) return filterTrim(captures[fallback - 1]) + digits[1]
     }
     // 【TT 对照修复 2026-09-09】正则无捕获组时 $N = 整个 match（ST/TT 行为）。
     // 原实现返回字面 token：<interactive_input>$1</interactive_input> 类规则会把
     // 用户消息毁成字面 $1 残留（实测发送内容错误）。
-    if (captures.length === 0) return match
+    if (captures.length === 0) return filterTrim(match)
     return token
   })
   // 【T-17 补漏 2026-09-11】$<name> 具名捕获组引用。未命中的组按 ST 语义给空串。
   if (named !== null) {
-    replacement = replacement.replace(/\$<([A-Za-z_$][\w$]*)>/gu, (_token, name: string) => named[name] ?? '')
+    replacement = replacement.replace(/\$<([A-Za-z_$][\w$]*)>/gu, (_token, name: string) => {
+      const v = named[name]
+      return v === undefined ? '' : filterTrim(v)
+    })
   }
-  for (const trim of script.trimStrings) replacement = replacement.split(trim).join('')
   return replacement
 }
 
