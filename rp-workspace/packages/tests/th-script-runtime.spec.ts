@@ -750,7 +750,7 @@ describe('shim：P1/P2 长尾 API', () => {
     // position.type:'before_char'）——真 TH 契约见 JS-Slash-Runner @types/function/worldbook.d.ts：
     // keys_secondary{logic,keys} / scan_depth / position.type 为枚举字符串。
     expect(r['wb']).toEqual([{
-      uid: 0, content: '设定',
+      uid: 0, content: '设定', display_index: 0,
       strategy: {
         type: 'constant', keys: [],
         keys_secondary: { logic: 'and_any', keys: [] },
@@ -916,7 +916,7 @@ describe('shim：世界书只读（桥）', () => {
     // 【2026-09-08 对齐】条目带 TH WorldbookEntry 形状（strategy/position 对象）
     // 【T-21 2026-09-10 契约修正】原断言为修复前错误契约，按 worldbook.d.ts 更正。
     expect(vm.runInContext('window.__r', f.ctx)).toEqual([{
-      uid: 0, content: '设定',
+      uid: 0, content: '设定', display_index: 0,
       strategy: {
         type: 'constant', keys: [],
         keys_secondary: { logic: 'and_any', keys: [] },
@@ -932,6 +932,33 @@ describe('shim：世界书只读（桥）', () => {
     const err = await vm.runInContext(`createLorebookEntry('书', {}).catch(function (e) { return e; })`, f.ctx) as Error
     expect(String(err.message)).toContain('未在 DSH 移植中支持')
     expect(f.posted.filter(m => m.th === 'missing').map(m => m.api)).toContain('createLorebookEntry')
+  })
+
+  // 【T-21 2026-09-11】display_index：已废弃 LorebookEntry 契约的必填字段
+  // （lorebook_entry.d.ts:4），基准 lorebook_entry.ts:136 提供，
+  // 取值链 extensions.display_index ?? 数组下标（compatibility.ts:63）。
+  it('getLorebookEntries 每条带 display_index（缺省 = 数组下标）', async () => {
+    const f = makeFrame('s1')
+    runScript(f, `window.__r = null; getLorebookEntries('主世界书').then(function (e) { window.__r = e.map(function (x) { return x.display_index; }); });`)
+    resolveCall(f, 0, { book: { name: '主世界书', entries: [{ uid: 5 }, { uid: 9 }, { uid: 12 }] } })
+    await settled(f)
+    expect(vm.runInContext('window.__r', f.ctx)).toEqual([0, 1, 2])
+  })
+
+  it('display_index 优先取 extensions.display_index（基准 compatibility.ts:63）', async () => {
+    const f = makeFrame('s1')
+    runScript(f, `window.__r = null; getLorebookEntries('主世界书').then(function (e) { window.__r = e.map(function (x) { return x.display_index; }); });`)
+    resolveCall(f, 0, { book: { name: '主世界书', entries: [{ uid: 0, extensions: { display_index: 7 } }, { uid: 1 }] } })
+    await settled(f)
+    expect(vm.runInContext('window.__r', f.ctx)).toEqual([7, 1])
+  })
+
+  it('getWorldbook 同样带 display_index（与 getLorebookEntries 同源）', async () => {
+    const f = makeFrame('s1')
+    runScript(f, `window.__r = null; getWorldbook('主世界书').then(function (e) { window.__r = e.map(function (x) { return x.display_index; }); });`)
+    resolveCall(f, 0, { book: { name: '主世界书', entries: [{ uid: 0 }, { uid: 1 }] } })
+    await settled(f)
+    expect(vm.runInContext('window.__r', f.ctx)).toEqual([0, 1])
   })
 })
 

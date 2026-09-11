@@ -7198,8 +7198,21 @@ var TH_POS_ST_TO_TYPE = ['before_character_definition', 'after_character_definit
 // \u539F\u5B9E\u73B0\u53EA\u8865 strategy/position \u4E24\u5BF9\u8C61 \u2192 \u811A\u672C\u8BFB entry.recursion / entry.effect / entry.probability
 // \u6052 undefined\uFF08"\u7981\u6B62\u9012\u5F52""\u9ECF\u6027/\u51B7\u5374"\u7C7B\u5224\u5B9A\u9759\u9ED8\u5931\u6548\uFF09\u3002\u6B64\u5904\u4E00\u6B21\u8865\u9F50\uFF08\u5E42\u7B49\uFF1A\u5DF2\u6709\u5B57\u6BB5\u4E0D\u8986\u76D6\uFF09\u3002
 var TH_RECURSION_LOGIC = { 0: 'and_any', 1: 'and_all', 2: 'not_all', 3: 'not_any' };
-function thEnrichEntry(e) {
-  if (!e || typeof e !== 'object' || e.strategy) return e;
+// \u3010T-21 2026-09-11\u3011display_index\uFF1A**\u5DF2\u5E9F\u5F03**\u7684 LorebookEntry \u5951\u7EA6
+// \uFF08@types/function/lorebook_entry.d.ts:4\uFF09\u5FC5\u586B\u5B57\u6BB5\uFF0CgetLorebookEntries \u8BFB\u9762\u63D0\u4F9B
+// \uFF08\u57FA\u51C6 lorebook_entry.ts:136 display_index: entry.displayIndex\uFF09\u3002
+// \u53D6\u503C\u94FE\uFF08\u57FA\u51C6 util/compatibility.ts:63\uFF09\uFF1Aextensions.display_index ?? \u6570\u7EC4\u4E0B\u6807\u3002
+// \u539F\u5B9E\u73B0\u4ECE\u672A\u4EA7\u51FA\u8BE5\u5B57\u6BB5 \u2192 \u5361\u811A\u672C\u8BFB e.display_index \u6052 undefined\uFF08\u5217\u8868\u6392\u5E8F/\u53BB\u91CD\u7C7B\u903B\u8F91\u843D\u7A7A\uFF09\u3002
+function thDisplayIndex(e, index) {
+  var ext = (e && typeof e.extensions === 'object' && e.extensions !== null) ? e.extensions : null;
+  if (ext && typeof ext.display_index === 'number') return ext.display_index;
+  if (e && typeof e.displayIndex === 'number') return e.displayIndex;
+  return index;
+}
+function thEnrichEntry(e, index) {
+  if (!e || typeof e !== 'object') return e;
+  if (typeof e.display_index !== 'number') e.display_index = thDisplayIndex(e, typeof index === 'number' ? index : 0);
+  if (e.strategy) return e;
   var constant = e.constant === true;
   var selective = e.selective === true;
   var strategy = {
@@ -7244,7 +7257,7 @@ function getLorebookEntries(name) {
   return call('wb:get', [String(name)]).then(function (r) {
     var book = wbBookOf(r);
     var entries = (book && Array.isArray(book.entries)) ? book.entries : [];
-    return entries.map(thEnrichEntry);
+    return entries.map(function (e, i) { return thEnrichEntry(e, i); });
   });
 }
 // updateWorldbookWith\uFF08\u771F TH\uFF1Afn(entries) \u2192 \u8FD4\u56DE\u6539\u540E\u6570\u7EC4\uFF0C\u5DEE\u91CF\u843D\u76D8\uFF09\u3002\u4E16\u754C\u4E66\u63A7\u5236/\u98DE\u8BAF\u5199\u8DEF\u5F84\u3002

@@ -1345,8 +1345,21 @@ var TH_POS_ST_TO_TYPE = ['before_character_definition', 'after_character_definit
 // 原实现只补 strategy/position 两对象 → 脚本读 entry.recursion / entry.effect / entry.probability
 // 恒 undefined（"禁止递归""黏性/冷却"类判定静默失效）。此处一次补齐（幂等：已有字段不覆盖）。
 var TH_RECURSION_LOGIC = { 0: 'and_any', 1: 'and_all', 2: 'not_all', 3: 'not_any' };
-function thEnrichEntry(e) {
-  if (!e || typeof e !== 'object' || e.strategy) return e;
+// 【T-21 2026-09-11】display_index：**已废弃**的 LorebookEntry 契约
+// （@types/function/lorebook_entry.d.ts:4）必填字段，getLorebookEntries 读面提供
+// （基准 lorebook_entry.ts:136 display_index: entry.displayIndex）。
+// 取值链（基准 util/compatibility.ts:63）：extensions.display_index ?? 数组下标。
+// 原实现从未产出该字段 → 卡脚本读 e.display_index 恒 undefined（列表排序/去重类逻辑落空）。
+function thDisplayIndex(e, index) {
+  var ext = (e && typeof e.extensions === 'object' && e.extensions !== null) ? e.extensions : null;
+  if (ext && typeof ext.display_index === 'number') return ext.display_index;
+  if (e && typeof e.displayIndex === 'number') return e.displayIndex;
+  return index;
+}
+function thEnrichEntry(e, index) {
+  if (!e || typeof e !== 'object') return e;
+  if (typeof e.display_index !== 'number') e.display_index = thDisplayIndex(e, typeof index === 'number' ? index : 0);
+  if (e.strategy) return e;
   var constant = e.constant === true;
   var selective = e.selective === true;
   var strategy = {
@@ -1391,7 +1404,7 @@ function getLorebookEntries(name) {
   return call('wb:get', [String(name)]).then(function (r) {
     var book = wbBookOf(r);
     var entries = (book && Array.isArray(book.entries)) ? book.entries : [];
-    return entries.map(thEnrichEntry);
+    return entries.map(function (e, i) { return thEnrichEntry(e, i); });
   });
 }
 // updateWorldbookWith（真 TH：fn(entries) → 返回改后数组，差量落盘）。世界书控制/飞讯写路径。
