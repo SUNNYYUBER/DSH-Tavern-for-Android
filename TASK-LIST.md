@@ -9,16 +9,22 @@
 
 | 事实 | 说明 |
 |---|---|
-| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v274**，阶段 0/1/2/3/4 已全部推完） |
-| 仓库最新产物 | **x86_64 debug sentinel v273（196,840,085 B）/ arm64 release sentinel v274（128,366,108 B）**，9-12 02:46 / 02:53 构建，新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中（md5 `cf288b9b9cb56cf1be7ac55218c376fb`） |
-| 设备侧 | **已装 v273**（心跳 61 完成）；实机日志确认**新判据在设备上生效**（`本轮重注旧副本 1 组 → 去重启用`）；插件**三方 md5 全一致**（无第 ⑦ 类断链） |
+| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v277**，阶段 0/1/2/3/4 已全部推完） |
+| 仓库最新产物 | **x86_64 debug sentinel v276（196,840,019 B）/ arm64 release sentinel v277（128,366,044 B）**，9-12 03:1x 构建（心跳 61B 的 cwd 修复），新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中（md5 `6e86d7abce2b50a9b031d6562b0409ae`） |
+| 设备侧 | **已装 v276**（心跳 61B 完成）；实机取证：`/rp/home` 返**规范形态** `/data/data/…` · 冷启动 symlink 回归 `repaired=1 skipped=0 errors=0` · **`node exited with code` 计数 0** · 全树不变量审计 **85/85 / 0 违反**；插件**三方 md5 全一致**（无第 ⑦ 类断链） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1111 项全绿（53 文件）** · `typecheck` 三段式 **0 错**（心跳 61 复跑确认） |
-| 设备回归 | `stage4-regression` **21/21**（心跳 61 复跑） |
-| 未提交改动 | 心跳 61 的插件源码修复 + 单测 + 证据文档 + 文档回写（本轮提交）；**并发实例正改 `rpc.ts`/`NodeService.kt`/`dsht-rp-ui/lib/*`（T-57 修复），我方一份没碰** |
+| 单测 | **1116 项全绿（53 文件）** · `typecheck` 三段式 **0 错**（心跳 61B 复跑确认） |
+| 设备回归 | `stage4-regression` **21/21**（心跳 61B 复跑；attach 态由新建 live 会话制造，**跑完已 `mv` 走**） |
+| 未提交改动 | 心跳 61B 的插件源码修复（`index.ts` / `session-surgery.ts`）+ 单测 + 文档回写（本轮提交）；**并发实例正改 `rpc.ts`/`NodeService.kt`/`dsht-rp-ui/lib/*`（T-57 修复），我方一份没碰** |
 | 发布闸门 | 🔴 **未达标**（T-25/T-61 心跳 61 复跑：受控面 **616 文件 / 合计 305 项**）⇒ **现在不能公开**；<br>✅ **`SECRET` 已由 1 → 0**（🔴 发布阻断项清除，但⚠️ 属**并发实例**在 `DSH Android Roleplay App Plan.md` 的**未提交**改动）<br>⚠️ **且密钥仍在本地 git 历史里**（仓库无远端、117 个提交从未推送 ⇒ 非对外事故）—— **P0 历史重写未做**；剩余 `WXID 16 / LOCALPATH 70 / SERVER 11 / PAYLOAD 8 / WORDLIST 200` |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
+- **心跳 61B** = **实机验收时挖出一个会让 app 无限 crash-loop 的「会话目录不变量」缺陷（三层链，其中两层是我方自造）**：
+  `/rp/home` 交出非规范路径形态 `/data/user/0/<pkg>/…`（触发源）+ `repairSessionCwds` **先 rename 目录、后按硬编码
+  `session.jsonl` 读文件**（0.1.5 世代不存在该文件 ⇒ `ENOENT` 被吞 ⇒ **半修复态、永不收敛**）+ 插件树**加载期**
+  `assertStoredIdentity` 抛错 ⇒ `node exited with code 1` 无限循环。已修三件（纯度取 basename / 路径规范化 / 失败进 logcat）
+  + 新增不变量审计闸门（**85/85 / 0 违反**）+ 冷启动决断性回归（**node 退出计数 0**）+ 负控 4 条转红。
+  沉淀 **L87/L88/L89**。详见 **T-65**（已修）与 **T-67**（建议：壳侧 pre-boot 预检）。
 - **心跳 55 · 实例B** = **修掉一个"死了 8 个心跳"的功能级缺陷**：
   `/rp/session-regenerate`（↻ 重新生成）与 `/rp/session-rollback`（↩ 回退到此处）两条 **live 写入路径**
   **恒 500 且零事件写入**。根因 = **心跳 47** 为绕开 TS 收窄告警把 `live.append(...)` 写成
@@ -1239,11 +1245,75 @@ code:"gateway/arguments-invalid"` → `isServiceUnavailable 判别 = false`（**
 
 ---
 
+### T-65　🔴→✅ **「走 UI 新建的会话」会让 app 下次冷启无限 crash-loop**（心跳 61B 实机发现并修复）
+
+**症状**：装 v275 后冷启，logcat **刷屏** `node exited with code 1; restart in 3s`；
+栈顶 = `dsh-workspace` → `assertStoredIdentity` 抛 `corrupt session log`。
+栈里含 `Fiber._reload` ⇒ **首启可能侥幸通过、一次 fiber 重载就命中**
+（"我装了包能起来、你重启后起不来"这类最难查的形态）。
+
+**三层缺陷链**（每一层都能独立站住）：
+
+| # | 层 | 缺陷 | 归属 |
+|---|---|---|---|
+| ① | 触发源 | `/rp/home` 交出**非规范**路径形态 `/data/user/0/<pkg>/files/.dsh`；`RpOverlay.tsx:73/:330` 拿它拼 `session.create` 的 cwd | 我方 |
+| ② | 修复器 | `repairSessionCwds` **先 `rename` 目录、后按硬编码 `'session.jsonl'` 读文件** —— 0.1.5 世代是 `session.v3.jsonl`（`session.jsonl` 作为 **v0 被冻结保留、目录里不存在**）⇒ `ENOENT` 被 catch 吞成 `errors=1`，而**目录已搬走、header 未改** ⇒ **半修复态、永不收敛** | 我方 |
+| ③ | 后果 | 目录名 ≠ `projectKey(header.cwd)` ⇒ 插件树**加载期**抛错 ⇒ **crash-loop** | 官方校验（行为正确） |
+
+**根因佐证**：官方 `projectKey()` 把 `/` `\` `:` 折叠成 `-`；而 Android 上 `/data/user/0/<pkg>`
+与 `/data/data/<pkg>` 是**同一目录的两个路径形态**（bind mount，`readlink -f` 不改写），
+**字符串折叠结果却不同** ⇒ 目录名对不上。
+
+**取证**：`/rp/repair-session-cwd` 返
+`{"scanned":82,"repaired":[],"errors":["session-16e10fc9-…: ENOENT: … --data-data-…--/session-…/session.jsonl"]}`
+—— **目标路径已是规范形态**，反证目录确实已被搬走（= ②的现场指纹）。
+
+**修复三件**：
+
+1. **Fix 1（止血）** 抽纯函数 `relocatedSessionLogPath(root, targetProject, sdir, sourceFile)` ——
+   **从扫描结果 `SessionHeaderHit.file` 取 basename，绝不重拼 `session.jsonl`**
+   （`dsht-plugin-shared/session-surgery.ts`）
+2. **Fix 2（根因）** `/rp/home` 交出 `normAndroidPath()` **规范形态** ⇒ **消除新增来源**
+3. **Fix 3（可观测）** 失败明细 `console.log` 进 logcat（此前只有 `logLine`，**只进 200 行内存环形缓冲**）
+
+**验收（全实测）**：见 MASTER_TODO「心跳 61B 做了什么」。要点 ——
+symlink 形态冷启动回归 `repaired=1 skipped=0 errors=0` + **`node exited with code` 计数 0** ·
+全树不变量审计 **85/85 / 0 违反** · 负控 **正好 4 条转红** · 新增 **5 条单测** ·
+`stage4-regression` **21/21**。
+
+**新闸门**：`stage3-device/hb61b/audit-cwd-projectkey.mjs` —— 逐字照抄官方 `projectKey`，
+把「目录名必须 == `projectKey(header.cwd)`」变成**可复跑判据**（本轮最有复用价值的产出）。
+
+**沉淀**：LEARNINGS **L87**（半修复态比不修复更危险 —— 不可逆动作最后做）·
+**L88**（修复器的**位置/阶段**决定它能否救场）· **L89**（root shell 改应用文件必须改回应用 uid）。
+证据全文 `stage3-device/hb61b/HB61-CWD-REPAIR-EVIDENCE.md`。
+
+**残留（如实标注）**：Fix 2 只消除**新增**来源；**存量 / 意外非法态仍不可自愈**。
+
+---
+
+### T-67　🆕 **建议：壳侧 pre-boot 静态预检**（心跳 61B 提出，**未做**）
+
+**动因（L88）**：我方所有会话修复器都在**插件体内**（`dsh-plugin/index.ts` 启动即修），
+而 T-65 的损坏发生在 **`[cordis.init]` 插件树加载期** ⇒ **修复器根本轮不到执行**，
+整个 app 起不来，连一个能打日志的插件都没有。
+
+**建议做法**：在 node 起插件树**之前**（Android 壳侧 `NodeService.kt` 的 pre-boot 阶段，
+或 runtime 的一个极早入口）用**纯文件扫描**判定「每个会话目录名 == `projectKey(header.cwd)`」：
+
+- 只读 `session*.jsonl` 的**首行 header**（不需完整加载日志）
+- 不符则**隔离**（`mv` 到 `sessions/.quarantine/<ts>/`）**而非修复** —— 保证 app 一定起得来
+- 或至少把不符项写成一条**在 app 起不来时也能读到**的文件（供外部排查）
+
+---
+
 ## 7. 长尾 / 观察项（P3，不阻塞发布）
 
 | # | 项 | 说明 |
 |---|---|---|
 | T-64 | ✅ **新会话第 2 轮陈旧快照副本**（心跳 61 已修） | 见上方完整条目。根因 = 去重**触发器自指短路**（`dupSigs === 0` 早退，恰好挡掉 `freshSigs` 这条本该生效的判据）。已抽纯函数 `decideShadowTrigger` + 补第三条判据 `freshStaleSigs`，负控 2 条转红，实机第 2 轮 **0 重复组** |---|---|---|
+| T-65 | ✅ **「UI 新建的会话」致 app 冷启无限 crash-loop**（心跳 61B 已修） | 见上方完整条目。三层链 = `/rp/home` 非规范路径形态（触发源）+ 修复器硬编码 `session.jsonl` 致**半修复态**（②）+ 插件树加载期抛错（后果）。已修 + 新闸门 `audit-cwd-projectkey.mjs`（不变量审计 85/85） |
+| T-67 | 🆕 **建议：壳侧 pre-boot 静态预检**（心跳 61B 提出，未做） | 见上方完整条目。动因 = 我方修复器全在**插件体内**，救不了「插件树加载期就崩」的损坏（L88）。建议在起插件树前做纯文件扫描 + **隔离**（而非修复） |
 | T-63 | 🆕 **卡脚本请求的 4 个 ST 内部模块全 404**（心跳 60） | 见上方完整条目。**缺口真实（基准有、我方 404），但当前未可达**（`window.versionNumber` 全 `undefined` ⇒ 就绪块未执行）。**分界线清楚**：`STVersionImports` 单独可修；`SPresetImports` 需重实现 ST prompt manager ⇒ **不做空壳** |
 | T-62 | 🆕 **`src/*/lib/*.js` 是「孤儿派生产物」**（心跳 59 发现） | `src/<plugin>/lib/index.js` 受版本控制、且历史提交里**与源码成对更新**（如 `3ffc1f9` 同时改 `src/dsh-plugin/index.ts` 与 `lib/index.js`），但**逐行核查所有构建脚本后确认：无任何路径消费它们** —— `build-plugins.sh:build_node_plugin` 是**直接从 `src/<pkg>/index.ts` 编译到 staging**（`$NM/<pkg>/lib/index.js`），`build-wb.sh` 同理；唯一例外是 `src/dsht-plugin-mobile/lib/index.js`（被 `build-plugins.sh:96` 拷贝）与 `src/dsht-rp-ui/lib/client.js`（由 `build-rp-ui.mjs` 生成并下游消费）。<br>⇒ 现状是**第三种状态**：既没被 `.gitignore`，也没被生成流程维护 —— `src/dsht-plugin-mvu/lib/index.js` 自 09-08 起陈旧至今。**且不可逐字节复现**（同源码两次构建字节数不同：882,361 vs 884,675 B，L52）。<br>**故本轮有意不重建**（重建只制造无意义 churn、且无收益）；**建议**：要么全部 `.gitignore` 掉，要么明确纳入构建。属 T-25 大扫除范畴。**已核验：不影响出货** —— APK 内插件取自 staging，本轮已三层核验新鲜。 |
 | T-28 | Tier 2 TH 长尾 API（约 50 项记名 stub 之外） | ⏳ **未做**（设计如此）：不支持的 API 挂 stub → `console.warn` 记名 + `Promise.reject`（`th-shim.ts:392/1847`），**诚实失败而非假成功**。真 TH 长尾面（rebind 家族 / createOrReplacePreset / QuickReply 系）待「第三次冒同类问题」再升时间盒 |

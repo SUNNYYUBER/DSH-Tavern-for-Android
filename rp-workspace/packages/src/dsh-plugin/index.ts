@@ -52,7 +52,7 @@ import { loadSheets, renderTablePrompt, expandTableMacros } from '../dsht-plugin
 import { expandTavernMacros, readVarPath, writeVarPath, registerMacro, unregisterMacro, listCustomMacros, hydrateCustomMacros } from '../dsht-plugin-shared/macros.ts'
 import { appendUndoEntries, makeUndoEntry, replayUndoLog } from '../dsht-plugin-shared/undo.ts'
 import { restoreSnapshotsAfter, snapshotBeforeWrite, snapshotRestoreBoundary } from '../dsht-plugin-shared/file-snapshots.ts'
-import { scanSessionHeaders as scanSessionHeadersShared, normalizeSnapshotMessageRoles, repairDuplicateTurnStarts, currentSessionLogPath, canSurgicallyTruncate } from '../dsht-plugin-shared/session-surgery.ts'
+import { scanSessionHeaders as scanSessionHeadersShared, normalizeSnapshotMessageRoles, repairDuplicateTurnStarts, currentSessionLogPath, canSurgicallyTruncate, relocatedSessionLogPath } from '../dsht-plugin-shared/session-surgery.ts'
 // 【阶段3 2026-09-10】会话写入合法形态层：surfaceOp 字段名自适应 + 合法标记载体
 // （0.1.5 把 start/end 改成 startSeq/endSeq，且禁止 assistant/message 做 replace 节点）
 import {
@@ -2150,8 +2150,19 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         }
         // 整读单文件只发生在命中的少数待修复会话上；首行替换，事件行原样保留。
         // 【鲁棒轮收尾】原子发布 + .bak 备份（repairAllSessionSeqs 同款规范）——原裸
-        // writeFile 中途被杀 = torn session.jsonl 会话打不开。
-        const sessionPath = join(root, targetProject, h.sdir, 'session.jsonl')
+        // writeFile 中途被杀 = torn 日志，会话打不开。
+        // 【心跳 61 修复 · 严重】原为 `join(root, targetProject, h.sdir, 'session.jsonl')`
+        // —— **硬编码文件名**。0.1.5 世代起会话日志是 `session.v3.jsonl`（`session.jsonl`
+        // 作为 v0 历史世代被冻结保留、目录里根本不存在），于是 readFile 抛 ENOENT，
+        // 而此时**目录已经 rename 走了** ⇒ 落成半修复态：目录名 = projectKey(规范 cwd)、
+        // header.cwd 仍是 symlink 形态 ⇒ **违反官方 assertStoredIdentity 强不变量**
+        // （目录名必须 == projectKey(header.cwd)）＝ 会话打不开/丢失级；且因目录已搬走，
+        // 下一轮 targetProject === h.project 不再搬迁，只剩同一个 ENOENT ⇒ **永不收敛**。
+        // 修法：用扫描器已经算好的当前世代绝对路径 `h.file` 取 basename（scanner 侧
+        // `pickCurrentSessionFilename` 早已做对；`SessionHeaderHit.file` 的文档也明写
+        // 「读侧一律用这个，不要自己拼 session.jsonl」——这条约束此前只写在注释里）。
+        // 抽到 `relocatedSessionLogPath` 是为了让这条约束**可单测**（session-generation.spec.ts）。
+        const sessionPath = relocatedSessionLogPath(root, targetProject, h.sdir, h.file)
         const full = await readFile(sessionPath, 'utf8')
         const nl = full.indexOf('\n')
         await atomicWriteFile(`${sessionPath}.bak`, full)
@@ -2165,6 +2176,20 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       logLine(`repair-session-cwd: 修复 ${repaired.length}，跳过 ${skipped.length}，失败 ${errors.length}`)
       console.log(`[dsht-rp] repair-session-cwd: repaired=${repaired.length} skipped=${skipped.length} errors=${errors.length}`)
     }
+    // 【心跳 61 修复】逐会话留痕。此前只记**计数**——设备实测 `errors=1`，
+    // 但"哪个会话、什么错"在 logcat 里查不到（只能调 /rp/repair-session-cwd 才拿得到
+    // errors 数组），一个真实的数据一致性缺陷就这么以"errors=1"的形状挂在启动日志里。
+    // 姊妹函数 repairAllSessionSeqs 在心跳 49 已因同型问题改成"跳过/失败都留具体 id + 原因"
+    // ——本条是那次修复的漏网（L86 同族：有意 ≠ 可以静默；有计数 ≠ 可定位）。
+    for (const r of repaired) {
+      logLine(`repair-session-cwd: 修复 ${r.sessionId} —— ${r.from} → ${r.to}${r.moved ? '（已搬迁目录）' : ''}`)
+    }
+    for (const e of errors) logLine(`repair-session-cwd: 失败 ${e}`)
+    // 失败**额外**打一条 console.log（→ logcat）：`logLine` 只进内存环形缓冲（/rp/log 才读得到），
+    // 而 `errors` 是"数据一致性已经坏了"的信号 —— 本次正是靠它才发现
+    // 「目录已搬走、header.cwd 没改」这条会把 node 打成 crash-loop 的半修复态。
+    // 只对 errors 开 logcat 通道（正常路径零噪声），与"有意 ≠ 可以静默"同一条纪律。
+    for (const e of errors) console.log(`[dsht-rp] repair-session-cwd: 失败 ${e}`)
     return { scanned: headers.length, repaired, skipped, errors }
   }
 
@@ -6221,8 +6246,20 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               return send(200, { trace })
             }
             // ---- /rp/home：DSH_HOME 绝对路径（overlay 建 session 拼 cwd 用）----
+            // 【心跳 61 修复】返回**规范化**形态（`/data/user/0/<pkg>` → `/data/data/<pkg>`）。
+            // 原样透传 `DSH_HOME` 会让 overlay 用它拼出的 cwd 是 symlink 形态，而全项目
+            // 其余位置一律按 `normAndroidPath` 规范形态比对/落盘（`rpSlugFromCwd`、
+            // `ensureWelcomeWorkspace` 的 wsCwd、WorkspaceRegistry 的 realpath）——
+            // 结果：**每一次从 RP UI 新建会话都会写出一条非规范 cwd**，只能靠
+            // `repairSessionCwds` 在下次冷启动搬迁目录 + 改首行来收尾。而那条收尾路径
+            // 在 0.1.5 世代下有缺陷（见其上「心跳 61 修复 · 严重」），会把会话留在
+            // 「目录名 ≠ projectKey(header.cwd)」的非法态 ⇒ 打不开。
+            // 在源头规范化后：新建会话**当场**就满足 assertStoredIdentity，不再需要搬迁。
+            // 安全性：本值在客户端只用于 (a) 拼 `session.create` 的 cwd、(b) 设置面板显示/
+            // 复制路径；两处路径越界守卫（/rp/convert-chat、写文件路由）只接受**相对路径**
+            // （显式拒绝 `/` 开头），与这里给的绝对路径无交互 ⇒ 改动面仅此一处。
             if (sub === '/rp/home') {
-              return send(200, { dshHome })
+              return send(200, { dshHome: normAndroidPath(dshHome) })
             }
             // ---- §2.3 ③：/rp/chat-prefs → 聊天界面偏好（楼层号显示；前端徽章开关）----
             if (sub === '/rp/chat-prefs') {

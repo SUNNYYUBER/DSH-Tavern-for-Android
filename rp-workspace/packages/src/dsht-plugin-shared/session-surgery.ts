@@ -14,7 +14,7 @@
  */
 
 import { open, readdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 // @adapt contract:persistence.format
 /**
@@ -285,6 +285,21 @@ export async function currentSessionLogPath(dshHome: string, project: string, sd
   const dir = join(dshHome, 'sessions', project, sdir)
   const entries = await readdir(dir).catch(() => [] as string[])
   return join(dir, pickCurrentSessionFilename(entries))
+}
+
+/** 会话目录**搬迁到另一个 projectKey** 后的当前世代日志路径（纯函数）。
+ *
+ *  搬迁只换父目录，日志文件名不变 ⇒ 从扫描结果 `SessionHeaderHit.file` 取 basename 即可，
+ *  **绝不可重拼 `session.jsonl`**：0.1.5 世代下该文件不存在，重拼 = ENOENT。
+ *
+ *  为什么单独抽成函数（心跳 61）：设备实测的严重缺陷正是内联重拼造成的 ——
+ *  `repairSessionCwds` 先 `rename` 目录、再按硬编码 `'session.jsonl'` 读文件 ⇒ 抛 ENOENT
+ *  被外层 catch 吞成 `errors=1` ⇒ **目录已搬走、header.cwd 没改** ⇒
+ *  目录名 ≠ projectKey(header.cwd)，违反官方 `assertStoredIdentity` 强不变量（会话打不开）。
+ *  抽出来是为了让这条约束**可单测**，而不是只活在注释里。
+ */
+export function relocatedSessionLogPath(root: string, targetProject: string, sdir: string, sourceFile: string): string {
+  return join(root, targetProject, sdir, basename(sourceFile))
 }
 
 /** 扫 $DSH_HOME/sessions/<projectKey>/<sid>/ 当前世代日志首行 header（只读首行，大日志无压力） */

@@ -20,10 +20,11 @@
  * 本文件只做**纯函数 + 临时目录**断言，不依赖 DSH runtime。
  */
 import { describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rename, readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { scanSessionHeaders, pickCurrentSessionFilename, currentSessionLogPath } from '../src/dsht-plugin-shared/session-surgery.ts'
+import { basename, join } from 'node:path'
+import { scanSessionHeaders, pickCurrentSessionFilename, currentSessionLogPath, relocatedSessionLogPath } from '../src/dsht-plugin-shared/session-surgery.ts'
 import { readSurgicalPayload, readSurgicalAnchor, assistantSettlement, boundAppend } from '../src/dsht-plugin-shared/session-write.ts'
 import { canSurgicallyTruncate } from '../src/dsht-plugin-shared/session-surgery.ts'
 import { extractFloorsFromEvents } from '../src/dsht-plugin-memory/index.ts'
@@ -48,6 +49,70 @@ describe('pickCurrentSessionFilename（纯函数：目录条目 → 当前世代
   it('空目录 / 无关文件 → 回落到 session.jsonl（调用方再去 open 失败）', () => {
     expect(pickCurrentSessionFilename([])).toBe('session.jsonl')
     expect(pickCurrentSessionFilename(['.bak', 'session.jsonl.bak'])).toBe('session.jsonl')
+  })
+})
+
+// ------------------------------------------------- ①b 目录搬迁后的日志路径（心跳 61）
+
+describe('relocatedSessionLogPath（纯函数：搬迁到另一个 projectKey 后的当前世代日志路径）', () => {
+  const ROOT = '/data/user/0/com.dshtavern.app/files/.dsh/sessions'
+  const SRC = `${ROOT}/--data-user-0-com.dshtavern.app-files-.dsh-rp-rp-x--`
+  const DST = '--data-data-com.dshtavern.app-files-.dsh-rp-rp-x--'
+
+  // 平台无关：本函数关心的是「目标 projectKey + sdir + 当前世代文件名」这三段，
+  // 分隔符由 path.join 按平台决定（Windows 上会是 `\`），不构成被测语义。
+  const tail3 = (p: string): string => p.split(/[\\/]/).slice(-3).join('/')
+
+  // 正控：核心回归 —— 0.1.5 世代必须保留 v3 文件名，**绝不可重拼 session.jsonl**
+  it('v3 世代：搬迁后仍指向 session.v3.jsonl（回归：此前重拼 session.jsonl 导致 ENOENT + 半修复态）', () => {
+    expect(tail3(relocatedSessionLogPath(ROOT, DST, 'session-abc', join(SRC, 'session-abc', 'session.v3.jsonl'))))
+      .toBe(`${DST}/session-abc/session.v3.jsonl`)
+  })
+
+  it('只换 project 目录，sdir 与文件名原样保留（多世代取当前世代）', () => {
+    const out = relocatedSessionLogPath(ROOT, DST, 'st-asm3yf', join(SRC, 'st-asm3yf', 'session.v10.jsonl'))
+    expect(tail3(out)).toBe(`${DST}/st-asm3yf/session.v10.jsonl`)
+    expect(basename(out)).toBe('session.v10.jsonl')
+  })
+
+  it('v0 世代（无版本后缀）原样保留 session.jsonl', () => {
+    expect(tail3(relocatedSessionLogPath(ROOT, DST, 'dsht-welcome', join(SRC, 'dsht-welcome', 'session.jsonl'))))
+      .toBe(`${DST}/dsht-welcome/session.jsonl`)
+  })
+
+  it('未搬迁（target === source）时结果等于原路径 —— 保证「不搬迁也要能读」这条分支', () => {
+    const proj = '--data-data-com.dshtavern.app-files-.dsh-rp-rp-x--'
+    expect(tail3(relocatedSessionLogPath(ROOT, proj, 'session-abc', join(ROOT, proj, 'session-abc', 'session.v3.jsonl'))))
+      .toBe(`${proj}/session-abc/session.v3.jsonl`)
+  })
+
+  // 端到端（临时目录）：复刻 repairSessionCwds 的真实动作序列
+  //   ① 扫描拿到当前世代绝对路径 → ② rename 目录到目标 projectKey → ③ 按搬迁后路径读文件
+  // 旧实现第 ③ 步硬编码 'session.jsonl' ⇒ 该文件在 0.1.5 世代下不存在 ⇒ ENOENT
+  // ⇒ 目录已搬走、header.cwd 未改 ⇒ 目录名 ≠ projectKey(header.cwd)（会话打不开）。
+  it('端到端：搬目录后按搬迁路径能读到 v3 日志；旧实现的 session.jsonl 路径必须不存在', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsht-relocate-'))
+    const root = join(home, 'sessions')
+    const srcProject = '--data-user-0-pkg-files-.dsh-rp-rp-x--'
+    const dstProject = '--data-data-pkg-files-.dsh-rp-rp-x--'
+    await makeSession(home, srcProject, 'session-abc', 'session-abc', ['session.v3.jsonl'])
+
+    const hits = await scanSessionHeaders(home)
+    expect(hits).toHaveLength(1)
+    const h = hits[0]!
+    expect(h.project).toBe(srcProject)
+
+    // ② 模拟搬迁
+    await mkdir(join(root, dstProject), { recursive: true })
+    await rename(join(root, srcProject, h.sdir), join(root, dstProject, h.sdir))
+
+    // ③ 搬迁后路径可读（修复后行为）
+    const moved = relocatedSessionLogPath(root, dstProject, h.sdir, h.file)
+    expect(await readFile(moved, 'utf8')).toContain('"type":"session"')
+
+    // 负控：旧实现拼出来的路径（硬编码 session.jsonl）现在必须是 ENOENT
+    expect(existsSync(join(root, dstProject, h.sdir, 'session.jsonl'))).toBe(false)
+    await expect(readFile(join(root, dstProject, h.sdir, 'session.jsonl'), 'utf8')).rejects.toThrow(/ENOENT/)
   })
 })
 

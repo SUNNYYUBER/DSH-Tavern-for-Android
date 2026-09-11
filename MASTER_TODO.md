@@ -10,7 +10,24 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
-> 最后更新：2026-09-12（心跳 61 —— **把「上下文瘦身」最后一条结构性漏网路径补上**：
+> 最后更新：2026-09-12（心跳 61B —— **实机验收时挖出一个会让 app 无限 crash-loop 的「会话目录不变量」缺陷，三层缺陷链里有两层是我方自己造的**：
+> ① **触发源**：`/rp/home` 交出**非规范**形态 `/data/user/0/<pkg>/files/.dsh` —— 官方 `projectKey()` 把 `/`/`\`/`:` 全折叠成 `-`，
+> 而 Android 上 `/data/user/0/<pkg>` 与 `/data/data/<pkg>` 是**同一目录的两个路径形态** ⇒ 拼出**不兼容的目录名**；
+> `RpOverlay.tsx:73/:330` 拿它拼 `session.create` 的 cwd ⇒ **每次 UI 新建会话都写出非规范 cwd**；
+> ② **修复器半修复**：`repairSessionCwds` **先 `rename` 目录、后按硬编码 `'session.jsonl'` 读文件** ——
+> 0.1.5 世代是 `session.v3.jsonl`（`session.jsonl` 作为 **v0 被冻结保留、目录里不存在**）⇒ `ENOENT` 被 catch 吞成 `errors=1`，
+> 而目录**已经搬走**、header 没改 ⇒ **半修复态、永不收敛**；
+> ③ **后果**：`dsh-workspace` 在**插件树加载期**（`assertStoredIdentity`）抛 `corrupt session log` ⇒
+> `node exited with code 1; restart in 3s` **无限循环**；栈含 `Fiber._reload` ⇒ 首启可能侥幸通过、**一次 fiber 重载就命中**；
+> ④ **修复三件**：Fix 1 抽纯函数 `relocatedSessionLogPath`（取扫描结果 basename，**绝不重拼 `session.jsonl`**）·
+> Fix 2 `/rp/home` 交出 `normAndroidPath()` 规范形态（**根因修复**）· Fix 3 失败明细进 logcat（发现 `logLine` 只进内存环形缓冲）；
+> ⑤ **验收（全实测）**：新建会话 `repaired=[] errors=[]` · **决断性冷启动回归**（symlink 形态）`repaired=1 errors=0` +
+> **`node exited with code` 计数 0** · **全树不变量审计 85/85 / 0 违反**（新闸门 `audit-cwd-projectkey.mjs`）·
+> 负控正好 4 条转红 · `stage4-regression` **21/21**；
+> ⑥ 沉淀 **L87**（半修复态比不修复更危险 —— 不可逆动作最后做）/ **L88**（修复器的位置决定它能否救场）/
+> **L89**（root shell 改应用文件必须改回属主）；建议新登记 **T-67**（壳侧 pre-boot 静态预检））
+>
+> 前一轮：2026-09-12 02:5x（心跳 61 —— **把「上下文瘦身」最后一条结构性漏网路径补上**：
 > ① **活体取证在先**：纯 RPC 新建会话驱动 2 轮 → 第 2 轮请求 **79,994 字符 / 大块重复 ×2（逐字相同的 23,782 字符块）**，
 > 而同轮 `pre-step` 快照 + 会话 `.v3.jsonl`（seq=11 与 seq=25 **逐字相同**、签名同为 `wi-depth:0`）
 > 双重证明 = **我方注入的上一轮陈旧快照副本**（+42%）；
@@ -32,7 +49,7 @@
 > ③ **T-63 新登记**：卡脚本 `importFromModule` 的 4 个 ST 内部模块**全 404**（缺口真实、**当前不可达**），
 > 可修边界已划清 = `STVersionImports` 可独立修 / `SPresetImports` 需重实现 ST prompt manager，**不做空壳**）
 >
-> 更前一轮：2026-09-11（心跳 59 —— **发布前「一票否决项」T-25 出只读预检报告 + 把它变成可复跑闸门**：
+> 再前一轮：2026-09-11（心跳 59 —— **发布前「一票否决项」T-25 出只读预检报告 + 把它变成可复跑闸门**：
 > 受控面 609 文件扫描出 **306 项命中 / exit 1**（含 **1 条真实密钥**、16 条个人微信 ID、1.29MB 抓包正文），
 > 结论 = **现在不能公开**；同轮 **T-35 完成**（4 份 deep-merge 收敛为 1 文件/2 函数，含负控 11 条转红））
 
@@ -111,6 +128,84 @@
 | **P-1** | 更新开关要用**哪个 GitHub 仓库**（公开 or 私有？影响鉴权） | 需你定；**公开**最简单（无需 token） | 阶段三发布前必须定；代码已就绪，只差填地址 |
 
 | ~~**T-49**~~ ❌ | ~~「改楼层」和「换变体（swipe）」在界面上根本点不到~~ | **心跳 52 实测推翻 = 非缺陷**：**编辑入口本来就在** —— user 气泡操作条里有 `✎ 编辑`（`data-testid=dsht-rp-edit`），实测点开就地编辑器（预填原文）+ 取消还原，全程零请求零数据变更；**变体条**也已接槽位，只是「只有 1 个变体时按设计返回 null」（当前 `groups=1`）。心跳 51 的「0 命中」是**窗口化 + 只采样 title/aria-label** 造成的假阴性 | — |
+
+## 心跳 61B 做了什么（**实机验收时挖出一个会让 app 无限 crash-loop 的「会话目录不变量」缺陷**）
+
+> 一句话：**「走 UI 新建的会话，会让 app 下次冷启永远起不来」** —— 链条上三个环节，
+> **两个是我方自己造的**（一个在修复器的**写法**、一个在修复器的**位置**）。
+> ⚠️ **没有用户可见症状**：触发条件 = 「走 UI 新建会话」，我是**在验证新会话快照去重时才踩到**的。
+
+### 1. 🔴 症状链：`node exited with code 1; restart in 3s` 无限循环
+
+装完 v275 的第一次冷启，logcat 出现**重复到刷屏**的一行：
+
+```
+[dsh-workspace] corrupt session log: ... (目录名与 header.cwd 不匹配)
+node exited with code 1; restart in 3s
+```
+
+栈顶是 `assertStoredIdentity`，而它跑在 **`[cordis.init]` 的插件树加载期**
+（`listStoredHeaders` → `listArtifacts` → `readGenerationHeader`）。
+栈里含 `Fiber._reload` ⇒ **首启可能侥幸通过，一次 fiber 重载就命中** ——
+这正是"我装了包能起来、用户重启后起不来"这类最难查的形态。
+
+### 2. 三层缺陷链（**每一层都能独立站住**）
+
+| # | 层 | 缺陷 | 归属 |
+|---|---|---|---|
+| ① | 触发源 | `/rp/home` 交出**非规范**路径形态 `/data/user/0/<pkg>/files/.dsh`；`RpOverlay.tsx:73/:330` 拿它拼 `session.create` 的 cwd | 我方 |
+| ② | 修复器 | `repairSessionCwds` **先 `rename` 目录、后按硬编码 `'session.jsonl'` 读文件** | 我方 |
+| ③ | 后果 | 目录名 ≠ `projectKey(header.cwd)` → 插件树加载期抛错 → **crash-loop** | 官方校验（正确行为） |
+
+**①的机理**：官方 `projectKey(cwd)` 把所有 `/` `\` `:` 折叠成单个 `-`。
+Android 上 `/data/user/0/<pkg>` 与 `/data/data/<pkg>` 是**同一目录的两个路径形态**（bind mount，`readlink -f` 不改写），
+但**字符串折叠结果不同** ⇒ 目录名对不上。
+
+**②的机理（**本轮最值得记的一条**）**：0.1.5 世代会话日志叫 `session.v3.jsonl`；
+`session.jsonl` 作为 **v0 历史世代被冻结保留**、在目录里**根本不存在**。于是：
+
+```
+readFile(join(root, targetProject, h.sdir, 'session.jsonl'))   ← 必然 ENOENT
+  ⇒ 被 catch 吞成 errors=1
+```
+
+而**此刻目录已经被 rename 走了**、`header.cwd` 一个字没改 ⇒
+**半修复态**：`projectKey(目录名) ≠ projectKey(header.cwd)` 依旧成立，
+下次扫描又会"发现"它、又搬一次、又失败 —— **永不收敛**。
+
+### 3. ✅ 修复三件（一件是根因，两件是止血）
+
+| # | 修复 | 位置 |
+|---|---|---|
+| **Fix 1** | 抽纯函数 `relocatedSessionLogPath(root, targetProject, sdir, sourceFile)` —— **从扫描结果 `SessionHeaderHit.file` 取 basename，绝不重拼 `session.jsonl`** | `dsht-plugin-shared/session-surgery.ts` |
+| **Fix 2**（根因） | `/rp/home` 交出 `normAndroidPath()` **规范形态** ⇒ **消除新增来源** | `dsh-plugin/index.ts` |
+| **Fix 3** | 失败明细 `console.log` 进 logcat（此前只有 `logLine`） | `dsh-plugin/index.ts` |
+
+> **Fix 3 的由来**：排查时发现 `logLine` **只进 200 行内存环形缓冲**（走 `/rp/log` 端点），
+> `console.log` 才进 logcat。而当时只有 `errors=1` 这个**计数**、没有**明细**
+> ⇒ 「有计数、无明细」是排查断路，补一条 logcat 通道。
+
+### 4. ✅ 验收（全部实测，无一条推断）
+
+| 判据 | 结果 |
+|---|---|
+| `/rp/home` 形态 | `{"dshHome":"/data/data/com.dshtavern.app/files/.dsh"}` **规范** |
+| 新建会话落点 | 落 `--data-data-…--` 且 `repair.repaired=[] errors=[]`（**零需修复**） |
+| **决断性回归**（造 symlink 形态会话 → 冷启） | `repair-session-cwd: repaired=1 skipped=0 errors=0`、目录已搬、header 已改写、**`node exited with code` 计数 = 0** |
+| **全树不变量审计**（新闸门 `audit-cwd-projectkey.mjs`，逐字照抄官方 `projectKey`） | **85/85 一致 / 0 违反** |
+| 负控（把 Fix 1 改回硬编码） | **正好 4 条单测转红** |
+| `stage4-regression` | **21/21**（新建 live 会话制造 attach 态跑通，**用完已 `mv` 走**） |
+
+### 5. 沉淀与新登记
+
+- **L87**（**半修复态比不修复更危险 —— 多步修复要让「不可逆动作」最后做**）：
+  自检问句 = 「这一步失败了，对象处于什么状态？」答案「比之前更坏」⇒ 必须重排顺序。
+- **L88**（**修复器的「位置」决定它能否救场**）：我方修复器**全都在插件体内**，
+  而这次损坏发生在**插件树加载期** ⇒ 插件里的「启动即修」**根本轮不到执行**。
+- **L89**（设备端用 root shell 改应用文件，必须把属主**改回应用 uid**）：
+  `adb root` 下 `mv`/重定向会让文件属主变 `root` ⇒ 应用 `EACCES` ⇒ **同样 crash-loop**（本轮踩过）。
+- 🆕 **建议登记 T-67**：**壳侧 pre-boot 静态预检**（在 node 起插件树之前，用纯文件扫描判定
+  「会话目录名 == projectKey(header.cwd)」，不符则先隔离，避免整个 app 起不来）。
 
 ## 心跳 61 做了什么（**把「上下文瘦身」最后一条结构性漏网路径补上**）
 
