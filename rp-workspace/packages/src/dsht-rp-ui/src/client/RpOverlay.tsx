@@ -8,7 +8,7 @@
  * 禁止在本插件里自建聊天 UI。
  */
 import { useCallback, useEffect, useState } from 'react'
-import { dshRpc, rpApi, type RpWorkspaceInfo } from './rpc.ts'
+import { dshRpc, isServiceUnavailable, rpApi, type RpWorkspaceInfo } from './rpc.ts'
 import { RegexPanel } from './RegexPanel.tsx'
 import { PresetPanel } from './PresetPanel.tsx'
 import { BooksPanel } from './BooksPanel.tsx'
@@ -80,7 +80,10 @@ function AlternateGreetingsBlock({ ws, openSession, onClose }: {
       await openSession(created.sessionId)
       onClose()
     } catch (e) {
-      setStatus(`以此开场失败：${(e as Error).message}`)
+      // 【心跳 59 · T-57】同主路径：服务暂不可用给可操作提示（见 launchChar 的注释）
+      setStatus(isServiceUnavailable(e)
+        ? '以此开场失败：宿主会话服务暂时不可用（稍等片刻自行恢复）——请重试。'
+        : `以此开场失败：${(e as Error).message}`)
       setBusyIdx(null)
     }
   }
@@ -351,7 +354,12 @@ export function RpOverlay(props: RpOverlayInjected): JSX.Element | null {
       await props.openSession(sessionId) // 内部先 refresh 客户端 session 基线再 open
       setOpen(false) // 露出原生 conversation 主视图
     } catch (e) {
-      setError(`打开失败：${(e as Error).message}`)
+      // 【心跳 59 · T-57】区分「宿主服务暂不可用（等一下会自愈）」与其它失败：
+      // 前者给可操作的中文提示（而不是把英文诊断原样糊到用户脸上）；
+      // 后者（参数错/会话不存在等）保留原始 message 便于定位。
+      setError(isServiceUnavailable(e)
+        ? '宿主会话服务暂时不可用（通常稍等片刻自行恢复）——请再点一次角色卡重试；若持续不行，重启应用。'
+        : `打开失败：${(e as Error).message}`)
     } finally {
       setOpening(null)
     }

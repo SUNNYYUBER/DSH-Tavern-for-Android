@@ -19,7 +19,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Fragment, type JSX, type ReactNode } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
-import { dshRpc, rpApi, type RpWorkspaceInfo } from './rpc.ts'
+import { dshRpc, isServiceUnavailable, rpApi, type RpWorkspaceInfo } from './rpc.ts'
 import { clientTimeZoneFields } from './time-zone.ts'
 import {
   isMessageWindowed, messagePlaceholderHeight, registerMessageWindowing,
@@ -1633,10 +1633,27 @@ let rpSessionCache: Promise<Map<string, boolean>> | null = null
 function fetchRpSessionMap(): Promise<Map<string, boolean>> {
   if (rpSessionCache === null) {
     // rc.7 wire 契约：session/list 的 args 必须带 _request（空对象）——漏了会 gateway/arguments-invalid
-    // 静默 catch 成空 Map → isRp 恒 false → 重新生成按钮永不显示（实机抓到）
-    rpSessionCache = dshRpc<{ items?: Array<{ sessionId: string; cwd?: string }> }>('session.list', { _request: {} })
-      .then(r => new Map((r.items ?? []).map(it => [it.sessionId, slugFromCwd(it.cwd) !== null])))
-      .catch(() => new Map<string, boolean>())
+    // 【心跳 59 · T-57】两处静默降级修正（原实现 `.catch(() => new Map())`）：
+    //   ① **失败不缓存**：原实现把「失败产生的空 Map」**永久钉在模块级变量上**
+    //      （`rpSessionCache` 非 null 不重取）→ 一次瞬时失败 = 该会话周期内
+    //      `isRp` 恒 false → 重新生成按钮**永不显示**（用户看不到任何报错）。
+    //      改为失败时清回 null，下次挂载可重取。
+    //   ② **可自愈错误自动重试一次**：`gateway/service-unavailable` 是宿主服务
+    //      （`sessionController` 的 cordis fiber）暂时离开 ACTIVE，
+    //      依赖恢复时框架会自动 `_reload()`（`cordis/src/fiber.ts:688-695`）
+    //      → 属「等一下就好」，值得一次短延迟重试；其余错误（如 not-found）不重试。
+    const once = (): Promise<Map<string, boolean>> =>
+      dshRpc<{ items?: Array<{ sessionId: string; cwd?: string }> }>('session.list', { _request: {} })
+        .then(r => new Map((r.items ?? []).map(it => [it.sessionId, slugFromCwd(it.cwd) !== null])))
+    rpSessionCache = once().catch(async (e: unknown) => {
+      if (isServiceUnavailable(e)) {
+        await new Promise(resolve => setTimeout(resolve, 1200))
+        try { return await once() } catch { /* 落到下方统一处理 */ }
+      }
+      rpSessionCache = null // 关键：失败不钉住，允许下次重取（原实现在此处永久缓存空 Map）
+      console.warn('[dsht-rp-ui] fetchRpSessionMap 失败（重新生成按钮本轮不显示，稍后会自动重试）:', (e as Error).message)
+      return new Map<string, boolean>()
+    })
   }
   return rpSessionCache
 }

@@ -790,35 +790,43 @@
   T-42/T-48 的其余部分据此**降级为非缺陷**（`renderExtensionTemplateAsync('regex','editor')`
   只在卡的旧版面板路径里被调用，新版路径不再走）。
 
-### T-57　🆕 **`sessionController` 服务运行一段时间后不可用 → RP UI「打开角色会话」必然失败**（心跳 57 续发现，待定性）
+### T-57　🟠→✅ **`sessionController` 不可用**：机制查清（**不是我方缺陷**）+ 顺手修掉两处**我方静默降级**（心跳 59）
 
-**证据（最小对照实验）**：同一份请求、同一页面、同一份源码，只改应用状态：
+**心跳 57 现象**：应用运行 30+ 分钟后 `session/list` → `service-unavailable`，重启即恢复。
 
-| 应用状态 | `POST /api/session/list` | `POST /api/session/create` |
+**心跳 59 定性（逐层查到达成机制，含官方源码 file:line）**：
+| 层 | 事实 | 证据 |
 |---|---|---|
-| 已运行约 30+ 分钟（期间页面 reload 过） | `200 {ok:false, error:{code:'gateway/service-unavailable', message:'typert gateway: session/list: active Service "sessionController" is unavailable'}}` | 同款错误 |
-| `am force-stop` + 重启后 75~90 秒 | `200 {ok:true, value:{items:[…82]}}` | `200 {ok:true, value:{sessionId:'…', agentPreset:'standard'}}` |
+| 报错构造点 | `TypertGatewayError('gateway/service-unavailable', …)` | `dsh-api-gateway/lib/index.js:743` |
+| **判定条件** | `receiver = ctx.get(服务名)`；取不到（或非对象）即抛 | 同上 `:743` |
+| 取不到的原因 | cordis `_getImpl`：作用域无实现 **或 `impl.fiber.state !== ACTIVE`** | `cordis/src/reflect.ts:237-243` |
+| 谁的生命周期 | `SessionController` 由 cordis **fiber** 承载，`inject` 了 **10 个**服务（`agents`/`sessions`/`sessionQuery`/`workspaceRegistry`/`typert`/…） | `dsh-api-session-controller/lib/index.js:2698-2709` |
+| **为什么会不可用** | 那 10 个 inject 中**任一**被重载/短暂不可用 → fiber `_unload()` 离开 ACTIVE | `cordis/src/fiber.ts:625-639` |
+| **能否自愈** | **能** —— 依赖重新提供时框架自动 `_reload()`；**除非** fiber 已 DISPOSED（那只能重启） | `cordis/src/fiber.ts:688-695`（自愈）/ `:267-268`（DISPOSED 不可逆） |
 
-**影响面**：RP UI 的「打开角色会话」是**唯一**依赖 `session.list` / `session.create` 的产品路径
-（`RpOverlay.tsx:334` 取最近会话续聊、`:345` 建新会话 + `open-chat`）。
-⇒ 在该状态下点角色卡**必然失败**。注意 `chatId` 仍可能有值（插件侧会话注册表还在），
-所以"界面看上去正常"与"这个入口能开新会话"是两件事。
+⇒ **结论**：这是**宿主框架的服务生命周期行为**（非我方代码缺陷），且**属「稍等自愈」类**。
+与验收基准（TT）无关 —— 不在差异清单内，也不该由我方向官方提「改源码」。
 
-**待定性**：触发条件（时间？页面导航？原生对话视图 unmount？），以及是否应补"服务不可用 → 自动重载页面/重启服务"的自愈路径
-（可复用 **T-45** 已落地的带预算重载机制）。
+**我方确实有两处真缺陷（本轮已修）**：
+1. 🔴 **`dshRpc` 丢弃 `error.code`**（[rpc.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/rpc.ts#L36-L48)）
+   —— gateway 把业务失败包进 **HTTP 200**（`!resp.ok` 分支永不触发），原实现只取 `error.message`
+   → 调用方**无从区分**「服务暂不可用（等一下就好）」与「会话不存在（重试无用）」。
+   ✅ 修：新增 `DshRpcError extends Error`（带 `code`/`method`）+ `isServiceUnavailable()` 判别；
+   `extends Error` ⇒ 既有 `(e as Error).message` 调用点**零改动**仍工作。
+2. 🔴 **`fetchRpSessionMap` 把失败空 Map 永久钉住**（[RpNativeChat.tsx:1631-1642](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/RpNativeChat.tsx#L1631-L1642)）
+   —— `rpSessionCache` 模块级、非 null 不重取 → **一次瞬时失败 = 该会话周期内
+   `isRp` 恒 false → 「↻ 重新生成」按钮永不显示**，且用户看不到任何报错（L42 家族：静默降级）。
+   ✅ 修：失败时回清 `null`（允许下次重取）+ 对 `service-unavailable` **自动短延迟重试一次**
+   + `console.warn` 出声（不再静默）。
+3. 顺带：RP Overlay 两处 catch 对可自愈错误给**可操作中文提示**（原先把英文诊断原样糊到用户脸上）。
 
-**探针**：`stage3-device/hb57/hb57-svc-liveness.js`（只读，不建会话）。
-
-**心跳 58 复测（未复现，如实记录）**：同一台设备（`emulator-5554`）、同一探针，两轮均通过：
-| 轮次 | 前置状态 | `session.list` 结果 |
-|---|---|---|
-| 1 | 应用已运行 **14 分 12 秒** | `200 ok:true, itemCount=81` |
-| 2 | 再触发**页面 reload**（心跳 57 记录的变量）并等待 20s | `200 ok:true, itemCount=81` |
-
-⇒ 未能复现「运行一段时间后 unavailable」。**结论不下**（不凭「没复现」否定心跳 57 的观测）：
-心跳 57 记录的是应用运行 **30+ 分钟**且期间 reload 过；本轮两轮分别 14 分钟与 reload 后即刻，
-**可能未触及触发窗口**。→ 保持 ⏳ 待定性；下次**长时运行（≥40 分钟）后再测**，
-并补一条判据：崩溃/不可用时的 `logcat` 是否出现 `sessionController` 相关生命周期行。
+**验收**：`typecheck` 三段式 0 错 · 单测 **53 文件 / 1103 全绿**（+25，含新 `rpc-error.spec.ts` 8 条）·
+**反控**：还原旧 `dshRpc`（丢 code）→ 3 条立刻转红。
+**实机验证**（同设备，热推 client bundle 后）：真实业务错误信封 `http:200 / ok:false / hasCode:true /
+code:"gateway/arguments-invalid"` → `isServiceUnavailable 判别 = false`（**正确区分**，未把不可自愈的当可重试）。
+**复测**：应用运行 14min / reload 后 / **45m54s** 三轮均 `ok:true, itemCount=81` ——
+**未复现**心跳 57 的故障，与「依赖重载窗口内的瞬时态」这一机制解释一致（偶发、非定时）。
+**沉淀**：LEARNINGS **L80**。
 
 ---
 

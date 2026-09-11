@@ -358,11 +358,16 @@ LEARNINGS **L71**（第三方脚本「取不到就静默降级」= 版本分叉�
 
 ### 6. 本轮新登记
 
-- **T-57（待定性，心跳 58 复测未复现）**：`sessionController` 服务在应用运行一段时间后变为 unavailable，
-  而 RP UI 的「打开角色会话」是**唯一**依赖 `session.list`/`session.create` 的产品路径
-  （`RpOverlay.tsx:334/345`）⇒ 那种状态下该入口**必然失败**。触发条件待定性（重启即恢复）。
-  心跳 58 同设备两轮复测**均通过**（14m12s / reload 后 → `ok:true, 81 items`）——
-  但心跳 57 记录的是 30+ 分钟窗口，**本轮未触及**，故**不下结论**，下次长时运行再测。
+- ~~**T-57（待定性）**~~ ✅ **心跳 59 定性 + 顺手修掉两处我方静默降级**：
+  机制（逐层查到官方源码）：报错来自 typert gateway 的 `ctx.get('sessionController')` 取不到实例
+  （`dsh-api-gateway/lib/index.js:743`），根因是承载它的 **cordis fiber 离开 ACTIVE**
+  （`cordis/src/reflect.ts:237-243`；该服务 inject 了 10 个依赖，任一被重载即 `_unload()`），
+  **框架会在依赖恢复时自动 `_reload()`** → 属**宿主框架的生命周期行为，非我方缺陷**（也不在 TT 差异清单内）。
+  **但我方确有两处真缺陷（已修）**：① `dshRpc` 丢弃 `error.code`（gateway 把业务失败包进 HTTP 200，
+  `!resp.ok` 永不触发 → 调用方无从区分「可重试」与「不可重试」）→ 新增 `DshRpcError` + `isServiceUnavailable`；
+  ② `fetchRpSessionMap` 把失败空 Map **永久钉住** → 一次瞬时失败 = 「↻ 重新生成」按钮**永不显示**且无报错
+  → 改为失败不缓存 + 可自愈码重试一次 + `console.warn`。
+  **复测**：14min / reload 后 / **45m54s** 三轮均 `ok:true`（未复现，与「依赖重载窗口的瞬时态」机制一致）。沉淀 **L80**。
 - ~~**T-58（待定性）**~~ ✅ **心跳 58 收口：原描述与代码相反**。
   三处非 live 分支（rollback/edit/regenerate）**本就有 409 硬拒收守卫**；
   被拒的是 live（会话开着），能改盘的是非 live（会话关着）——后者是**设计语义**。
