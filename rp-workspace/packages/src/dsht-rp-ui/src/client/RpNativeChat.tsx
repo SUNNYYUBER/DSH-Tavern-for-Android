@@ -20,6 +20,7 @@ import { Fragment, type JSX, type ReactNode } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { dshRpc, rpApi, type RpWorkspaceInfo } from './rpc.ts'
+import { clientTimeZoneFields } from './time-zone.ts'
 import {
   isMessageWindowed, messagePlaceholderHeight, registerMessageWindowing,
   reportWindowCommit, subscribeWindowing, findScrollAncestor,
@@ -1817,7 +1818,7 @@ export const RpUserNodeView = memo(function RpUserNodeView({
             sessionId,
             mode: 'queue',
             content: [{ type: 'text', text }],
-            clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            ...clientTimeZoneFields(),
           },
         })
         void refreshRollbackMask(sessionId) // 掩码更新 → 隐藏旧消息
@@ -1833,7 +1834,7 @@ export const RpUserNodeView = memo(function RpUserNodeView({
               sessionId,
               mode: 'queue',
               content: [{ type: 'text', text }],
-              clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              ...clientTimeZoneFields(),
             },
           })
         } catch { /* 重发失败也重开：用户看得到截断结果再手动重试 */ }

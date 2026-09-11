@@ -12,16 +12,16 @@
 | 源码 runtime | **0.1.5-rc.1**（sentinel v250，46 个心跳已推完阶段 0/1/2/3/4） |
 | 你手机上的包 | **arm64-release，9-11 11:0x 构建 = 0.1.5-rc.1**（sentinel v250） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | 923 项全绿（48 文件） |
-| 未提交改动 | 本轮改动 + 并发实例的 `regex/engine.ts` / `display-compiler.ts`（T-17 `$<name>`，**我未碰**） |
+| 单测 | **1001 项全绿（50 文件）** |
+| 未提交改动 | 本轮改动 + 并发实例的 `regex/engine.ts` / `display-compiler.ts` / `dsh-plugin/index.ts` / `macros.ts`（**我未碰**） |
 
-**当前状态**：升级目标（evaluate.sh 5/5）已达成。心跳 50 的进展 = **把"运行期逐个撞墙"改成"静态一次性枚举"**
-（新建 `audit-card-context-surface.mjs`，首跑列出 13 个宿主面缺口）+ 落地其中 **15 个宿主门面成员**
-（i18n / 弹窗 / 函数工具注册 / 事件名旧别名 / isMobile / saveSettingsDebounced），缺口 **13 → 6**；
-并把 T-43 的"超限永久修不到"**定性为非缺陷**（口径错误的误判）。详见 §6 后的 T-43 / T-44 / T-45。
+**当前状态**：升级目标（evaluate.sh 5/5）已达成。心跳 52 的进展 = **修掉一个"整机不可用"**：
+系统时区为 `GMT` 的设备（**模拟器默认**）因 WebView 把时区报成 `+00:00` 而被 0.1.5 宿主拒收
+→ **一条消息都发不出去**；已在**注入层**替换取样结果（官方源零修改），真机 before/after 闭环。
+详见 **T-50** 与 MASTER_TODO「心跳 52 做了什么」。
 
-⚠️ **交付物状态提醒**：心跳 50 改了源码（`host-vendor.ts` / 新增 `host-st-surface.ts` / `dsh-plugin/index.ts`），
-**已重打双架构 APK**（x86_64 **v249** / arm64 **v250**）并已装机实测 —— 见下方"每轮收尾"。
+⚠️ **交付物状态提醒**：心跳 52 改了源码（新增 `src/client/time-zone.ts`、`index.tsx`、`RpNativeChat.tsx`），
+**已重打双架构 APK**（x86_64 **v260** / arm64 **v261**）并已装机实测（含 GMT 环境）—— 见下方"每轮收尾"。
 
 ---
 
@@ -100,12 +100,12 @@
 | # | 缺口 | 状态 | 落点 |
 |---|---|---|---|
 | T-16 | substituteRegex 枚举 1↔2 颠倒 | ✅ 已修 | `regex/engine.ts` |
-| T-17 | 正则 `$1/$<name>` 捕获组失效 | ✅ 已修（TT 对照修复 2026-09-09） | `regex/engine.ts:165+` |
+| T-17 | 正则 `$1/$<name>` 捕获组失效 | ✅ 已修（2026-09-11 补齐 `$<name>`） | **原声明不成立**：2026-09-09 只落了 `$1..$99` 数字组，`$<name>` 具名组从未实现（头注释却一直声称支持）→ 具名组字面残留。本次在 [engine.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/regex/engine.ts#L158-L195) 与 [display-compiler.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/display-compiler.ts#L323-L352) 两处补齐（含「组未命中给空串」ST 语义），正控 3 例 + 反控（stash 后 2 例红） |
 | T-18 | `{{match}}` 大小写不敏感 | ✅ 已修（v181，改 `/gi`） | `th-shim.ts:1086` |
 | T-19 | shim `Mvu.parseMessage` 与 `state/mvu.ts` 不对称 | ✅ 已修（已复核，2026-09-11） | `th-shim.ts` `Mvu.parseMessage` 直调 `state/mvu.ts` 的 `parseUpdateVariable`（同源，非各写一份） |
 | T-20 | `getTavernRegexes` 未对齐真 TH **snake_case** 形状 | ✅ 已修（2026-09-10，e78e433） | 出口/入口双向映射 + 契约测试 `th-regex-contract.spec.ts` |
 | T-21 | `getChatMessages` / `getWorldbook` / `deleteVariable` 字段透传 | ✅ 已修（2026-09-10，ae59380） | 逐项对真 TH 类型定义补齐 |
-| T-22 | `setglobalvar` 宏族 | ✅ 已修 | `th-shim.ts:1339+` |
+| T-22 | `setglobalvar` 宏族 | ✅ 已修（2026-09-11 补宏形态） | **原声明不成立**：落点写 `th-shim.ts:1339+` 是**斜杠形态**（`/setglobalvar`，triggerSlash），而真卡（ExampleGame 等）用的是**宏形态** `{{setglobalvar::…}}`——该形态此前完全没有，整串被当未知宏原样留在提示词且**变量从不写入**。本次在 [macros.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-plugin-shared/macros.ts#L396-L416) 补齐 `set/add/inc/dec/getglobalvar` 五宏（TT `variables.js:250-259` 对照），写侧带 `scope:'global'` 并由两处落盘方分流到 `rp/variables/global.json`；测试 6 例，反控 5 例红 |
 
 ---
 
@@ -523,6 +523,36 @@
   UI 入口涉及"用 DSH 原生消息操作栏 还是 做 DSHT 自己的消息操作栏"，是方向性选择。
 - **判据（做完的标志）**：设备侧全 DOM 过滤能命中 ≥1 个「编辑」入口与 ≥1 个「变体」入口，
   且点击后真能走到 `th-edit` / `variant/*` 路由（实测闭环，非"按钮在"）。
+
+### T-50　✅ **设备时区偏移式命名（`GMT` → `+00:00`）致「一条消息都发不出去」**（心跳 52 已修 + 实机闭环）
+
+对应作战地图 **D-5a**（此前标为"待用户拍板"，**已按建议 A 落地**，该项可关闭）。
+
+- **症状**：系统时区为 `GMT` 的手机（**模拟器默认**）→ `Intl.DateTimeFormat().resolvedOptions().timeZone`
+  返回 `"+00:00"` → 宿主 `session/invalid-time-zone` 拒收 → **点发送毫无反应**（toast 一闪而过、
+  会话文件零写入、logcat 无红字线索）。
+- **宿主契约（唯一拒绝点）**：`@deepseek-ai/dsh-api-session-controller/lib/index.js:738-739`
+  → `@deepseek-ai/dsh-util-time/lib/index.js:19-29` `canonicalClientTimeZone()`；
+  接受域 = `"UTC"` 字面量 或 匹配 `^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$`
+  （**必须带 `/`**）且 ICU 规范化后仍合规。**`undefined` 放行**（`:750` 字段不出现在 `source` 里）。
+- 🔴 **修法落点（关键）**：主发送路径（composer 原生提交）的 `clientTimeZone` 由**官方客户端模块**
+  自己采样（`…/client/time-zone.js:7` → `…/sessions/session.js:178/204`），官方源零修改 →
+  只补我方 3 个调用点**等于没修**，必须**在注入层替换取样结果**。
+- ✅ **实现**：`src/client/time-zone.ts` —— `canonicalizeLikeHost()`（逐字复刻宿主判定）+
+  `normalizeClientTimeZone()`（`+00:00`/`GMT`/`Z`→`UTC`；整点偏移→`Etc/GMT∓N`；
+  分数偏移→「全年偏移恒定」等价表 8 条；不可映射→`undefined` + 去重出声）+
+  `clientTimeZoneFields()`（三处调用点统一出口）+ `installClientTimeZonePatch()`
+  （替换 `Intl.DateTimeFormat.prototype.resolvedOptions` 的 `timeZone`，**只换名字不换偏移**，幂等）；
+  在 `index.tsx:apply()` **最先**安装。
+- ✅ **实测闭环（GMT 环境）**：① 前提复现 `TZ=+00:00`；② 非破坏性闸门对质（不存在的 sessionId，
+  零写入）：`+00:00`→拒 / `UTC`·`Etc/GMT-8`·省略→过；③ 装包后页内 `patched:true`、`raw:"UTC"`；
+  ④ **真实产品路径 before/after**：修前发一条 → 会话文件零变化；修后同动作 → 落盘
+  `user/message seq 1202` 且 `source.clientTimeZone:"UTC"`，全 logcat `invalid-time-zone` **= 0**。
+- **验收**：三闸门 0 错 · 50 文件 / **1001 测试**全绿 · `stage4-regression` **21/21**（基线一致 = 无回归）·
+  双架构 APK **x86_64 v260 / arm64 v261** · APK 内载荷标记与新鲜度核验通过。
+- **沉淀**：LEARNINGS **L53**（修复点 ≠ 承重点：先问"这条路径归谁"）· **L54**（映射表要用可执行的
+  等价判据筛，配正控+反控；给不出精确等价就降级为"不带"）· **L55**（抓包要抓对传输层；优先选
+  不依赖"我猜对实现细节"的判据，如**服务端落盘**）。
 
 ### T-45　🆕 观察：WebView 启动竞态 → 停在 `chrome-error://chromewebdata/` 且**不自动重试**（心跳 50）
 - **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在

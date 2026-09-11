@@ -31,6 +31,7 @@ import { installProcessFolder } from './ProcessFolder.ts'
 import { installScriptUiGuard } from './script-ui-guard.ts'
 import { PLUGIN_CARD_KEYS, makePluginCard } from './PluginCards.tsx'
 import { dshRpc, rpApi } from './rpc.ts'
+import { clientTimeZoneFields, installClientTimeZonePatch } from './time-zone.ts'
 import { installComposerEnterFix } from './composer-enter-fix.ts'
 import type { JSX } from 'react'
 
@@ -101,6 +102,11 @@ export function apply(ctx: {
   sessions?: { open: (id: string) => void }
   workspaces?: { archiveSession?: (id: string) => Promise<void> }
 }): void {
+  // 【T-50 / D-5a】最先装：把 WebView 报出的偏移式时区名替换成宿主接受的 IANA 名。
+  // 必须在**任何**读 `Intl…resolvedOptions().timeZone` 的代码之前生效 ——
+  // 主发送路径（composer 原生提交）由官方客户端模块自己采样（详见 time-zone.ts 头注），
+  // 官方源零修改，所以只能在这一层替换。不装 = 系统时区为 GMT 的设备**发不出任何消息**。
+  installClientTimeZonePatch()
   ensureAbortSignalAny()
   ensureStyle()
   // 宿主环境复刻（host-vendor / vendor2）：client 启动即补挂缺失的 window._/$/jQuery/z/Zod/YAML
@@ -323,7 +329,7 @@ export function apply(ctx: {
               sessionId,
               mode: 'queue',
               content: [{ type: 'text', text: r.lastUserText }],
-              clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              ...clientTimeZoneFields(),
             },
           })
         },
