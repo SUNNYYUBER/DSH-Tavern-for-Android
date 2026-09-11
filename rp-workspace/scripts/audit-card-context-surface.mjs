@@ -22,6 +22,7 @@
  */
 import fs from 'node:fs'
 import process from 'node:process'
+import { pathToFileURL } from 'node:url'
 
 const ST_REF = 'D:/SillyTavern-1.16.0/TauriTavern-Canary/SillyTavern-reference/public/scripts/st-context.js'
 const OUR_CTX = 'D:/DSH RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/host-vendor.ts'
@@ -392,4 +393,7 @@ function main() {
   process.exit(gaps > 0 ? 1 : 0)
 }
 
-main()
+// 【心跳 63】只在**直接执行**时跑 main —— 被 import 时（T-46 分档工具复用本文件的解析器）
+// 不得执行/退出。此前无守卫，`import` 会立刻 main() 并 process.exit，复用解析器被迫复制一份实现
+// （两份实现必然漂移 → 正控测的不是同一份代码）。
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) main()

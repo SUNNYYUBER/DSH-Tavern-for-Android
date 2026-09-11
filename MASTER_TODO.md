@@ -10,7 +10,19 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
-> 最后更新：2026-09-12（心跳 62 续 · 62B —— **T-48 部分收口：先把"该不该做完整实现"用只读探针问死，再只做该做的那一半**：
+> 最后更新：2026-09-12（心跳 63 —— **T-46 的「死结」被基准解开：原判据是个「假两难」，真实解法是「父页投影」**：
+> ① **原判据（TASK-LIST T-46）**：「补 iframe 面成员 = 要么在构建期模板串里**再抄一份**（违反单源纪律），要么改成**注入式装配**」⇒ 两个都不接受 ⇒ 长期搁置；要求先按「可经 postMessage 桥 / **必须同步** / 需要注入式装配」三档做**零风险静态分档**。
+> ② **回基准一读就解开了（第一取证源）**：真 TH `src/iframe/predefine.js:26-35` 逐字 —— `Object.defineProperty(window,'SillyTavern',{ get: () => { const SillyTavern = _.get(window.parent,'SillyTavern'); const getContext = () => ({ ...SillyTavern.getContext(), writeExtensionField: … }); return { ...getContext(), getContext } } })` ⇒ **基准里 iframe 面既不是独立实现、也没有任何桥，它就是父页门面的一张投影**（同文件还逐字做了 `window._ = window.parent._`、`$ / toastr / z / YAML / EjsTemplate / TavernHelper / showdown` 的父子合并、`TavernHelper._bind` 去下划线后 `bind(window)` 挂载）。
+> ③ **三分法逐档坍缩**：`可经 postMessage 桥` = **空集**（基准 predefine **0 处** postMessage —— 桥是我们**想象出来**的机制，引入即违反 L36「不能多」）· `必须同步` = **不存在**（同源 + getter 直取 ⇒ 同步语义天然成立）· `需要注入式装配` = **空集**（一个 `Object.defineProperty` 就够了）⇒ **真解法是"第四种"：父页投影**。
+> ④ **四口径实测**（新工具 `rp-workspace/scripts/audit-iframe-surface-gap.mjs`，**纯只读**）：真 ST `st-context.js:getContext()` **145** / 宿主面 `buildHostStContext()` **39** / **iframe 顶层 `window.SillyTavern` 22** / iframe `buildStContextFacade()` **11**；缺口 —— iframe 顶层 **125**、iframe getContext **140**、宿主面 **112**。**卡样本（`recon-g/card.js`，19 个真 ST 成员）**：iframe **顶层缺 12**、**getContext 缺 15**，而**宿主面 0 缺**（这正是并集口径此前报"缺口 0"、把 T-46 遮住的原因）。
+> ⑤ **落地代价（本轮新量出，直接决定"能不能升"）**：投影后 iframe 顶层 = 「宿主面 + `getContext`」⇒ **自建独有的 10 个成员会丢**（除 `getContext` 外共 9 个：`saveChat` / `registerMacro` / `unregisterMacro` / `getChatCompletionModel` / `getRequestHeaders` / `loadWorldInfo` / `getCharacterCardFields` / `characters` / `characterId`）⇒ **投影必须与「宿主面补齐这 9 个」配对，否则是倒退**。其中 `characters` / `characterId` 恰是 **T-47 的待决成员**，现状是**「iframe 面已有、宿主面全无」**（与 T-47 原文"宿主门面仍缺"互为镜像）⇒ **T-46 与 T-47 是同一个决定的两半，不能分开拍板**。
+> ⑥ **顺带查出上轮遗留的不一致**：`renderExtensionTemplateAsync`（62B 交付）只落在 `buildStContextFacade()` 面（getContext 口径），**没落 iframe 顶层** —— 与基准形态（顶层 ≡ getContext 展开）和宿主面都不一致。
+> ⑦ **工具与纪律**：给 `audit-card-context-surface.mjs` 加**导入守卫**（此前 `import` 即 `main()` + `process.exit` ⇒ 想复用它的解析器只能**复制一份实现** = 违反单源纪律；加守卫后正控 `--selftest` **PASS**、反控 `--script` 输出与改动前**逐字相同**），新工具**复用同一份解析器**并含空壳兜底。
+> ⑧ **一次真实踩坑（→ L96 附注 / L44 同族）**：基准取证正则首版写成 `/TavernHelper\)._bind/` ⇒ **假阴性**（真写法是 `_.get(window.parent,'TavernHelper')._bind`，中间隔着 `'` 与 `)`），一度打出"**基准也没做 `_bind` 挂载**"的**自我安慰式结论**；修正后 = YES。
+> ⑨ **交付**：**源码未改动**（本轮纯静态分档 + 文档回写）⇒ **APK 沿用 v280 / v281**、单测沿用 **54 文件 / 1149 全绿**、三段式 typecheck 0 错。
+> ⑩ **性质**：这是 **T-46「是否升」的决策输入**，不是已执行的改动 —— 决策池已合并为 **2 项**（T-46+T-47 合并 / P-1）。
+>
+> 前一轮：2026-09-12（心跳 62 续 · 62B —— **T-48 部分收口：先把"该不该做完整实现"用只读探针问死，再只做该做的那一半**：
 > ① **量的三件事**（改代码之前）：宿主门面 **37** 成员且 `renderExtensionTemplateAsync` **连 stub 都没有**（`typeof = 'undefined'`）；
 > `Handlebars` / `DOMPurify` **全仓全无**；`/script.js` · `/scripts/templates/*` · `/scripts/extensions/**` · `/api/extensions` **全 404**；
 > 设备上**根本没有扩展文件存储**（`chat-history-backup` 只存在于 **TT** 的对照数据里）。
@@ -141,14 +153,21 @@
 > **心跳 59 变更（本轮）**：新增 **T-25 只读预检报告**（发布前**一票否决项**，此前只有定性描述）
 > + **T-61 发布卫生闸门**（把「搜不到敏感信息」变成可复跑判据）；**T-35 完成**（deep-merge 收敛）。
 > 拍板位**仍为 3 项**（T-46 / T-47 / P-1）—— 本轮**未新增决策**。
+>
+> **心跳 63 变更**：**T-46 的「可行性分档」已完成**（零风险静态工作）⇒ 结论是**原判据本身错了**
+> —— 真 TH `src/iframe/predefine.js:26-35` 用的是**父页投影**（`window.parent.SillyTavern.getContext()` 展开），
+> 既不"再抄一份"也不"注入式装配"、**更没有桥**（基准 0 处 postMessage）。
+> 且本轮量出投影的代价：**会丢 10 个自建独有成员**（含 `characters` / `characterId`）
+> ⇒ **投影必须与「宿主面补齐」配对**，而那两个成员正是 T-47 的待决项
+> ⇒ **T-46 与 T-47 合并为同一个决定**（两方案规模对比见 TASK-LIST T-46 正文）。
+> ⇒ 拍板位由 3 项降为 **2 项**（**T-46+T-47 合并** / **P-1**）。本轮**未改源码**。
 > ⚠️ **但新增一条发布阻断事实**：受控面扫出 **1 条真实 API 密钥** + 16 条个人微信 ID +
 > 1.29MB 抓包正文 ⇒ **现在不能公开**（仓库无远端、从未推送，故非对外事故）。见 T-25 / T-61。
 
 | # | 要你定的事 | 我的建议 | 不定会怎样 |
 |---|---|---|---|
 | ~~**T-42**~~ ✅ | ~~卡脚本要挂到 **ST 正则面板的 17 个 DOM 元素**（`#saved_regex_scripts` 等），我们前端是 DSH 的 UI，**一个都没有**~~ | **心跳 58 已真修，不用你拍板**——⚠️ 心跳 57 的「真根是缺 `/version` 端点」**已被实证推翻**：按卡逐字取法实测 `extensions.regex.length` **抛 TypeError**（我方 `extensionSettingsRegex` 恒 `undefined`），而卡在**无条件调用**的 `updateSTRegexes()` 里读它 → `RegexBinding()` 整段中断 → `ChatSquash`/`MacroNest`/工具注册**全不执行**（新旧版路径都会走到）。已按基准补 `extensions.regex` 真数据 seed（`host-vendor.ts:seedHostExtensionSettings`）+ iframe 侧同族副本。**实机验证**：`extensions.regex.length` = **1**（真数据，非空壳），反控同形报错。见 **T-60** | — |
-| **T-46** | 脚本 iframe 里的宿主门面只有 **9 个成员**（宿主页有 37），卡在 iframe 内访问的 19 个真 ST 成员里 **16 个缺失** | 建议**补齐 15 个**（心跳 53 静态排查已证明成本从"一次重构"降到"接线"：iframe 是 `srcdoc + allow-same-origin` **同源**，`window.parent.X` 同步可达，且该文件本来就在这么用；只有一个活跃脚本运行时，无跨会话取错值风险）；**唯一例外** `renderExtensionTemplateAsync` 依赖缺失的数据模型 | **触发条件目前未成立**（设备 logcat 无 iframe 侧成员报错）→ 卡只在 iframe 内跑时才暴露；不补则相关脚本静默少功能 |
-| **T-47** | 宿主门面最后 3 个成员的**数据模型**：`characters`+`characterId`（4+12 次调用）要**成对**建角色列表模型；`chatMetadata`（9 次）我方**无对应存储** | 需要你定**语义归属**（角色列表以什么为源？`chatMetadata` 存哪一层？）；拒绝"给空对象"——那会让卡的写入**静默消失**（本项目主力缺陷族） | 相关卡脚本的这几条调用**无实现**；若强行补空容器，会变成"看起来能用、写进去没反应" |
+| **T-46**<br>**+T-47**<br>（已合并） | **iframe 门面要不要升、怎么升** + **`characters` / `characterId` / `chatMetadata` 的数据模型**（两者是同一个决定的两半）<br>▸ 心跳 63 实测四口径：真 ST **145** / 宿主面 **39** / **iframe 顶层 22** / iframe `getContext()` **11**；卡样本 19 个成员中 **iframe 顶层缺 12 / getContext 缺 15 / 宿主面 0 缺**<br>▸ **分档已做完，原「三档」逐档坍缩**：`可经 postMessage 桥` = **空集** · `必须同步` = **不存在**（同源 + getter 直取）· `需要注入式装配` = **空集** | **推荐方案 A（照抄基准：父页投影 + 宿主面补齐）**——逐字同形、约 **5 行**改动（vs 方案 B 的 22 条转发且**长期漂移**）、宿主面将来补齐多少 iframe **自动跟随**；<br>⚠️ 前提 = 同时补齐**会丢的 9 个自建独有成员**（`saveChat` / `registerMacro` / `unregisterMacro` / `getChatCompletionModel` / `getRequestHeaders` / `loadWorldInfo` / `getCharacterCardFields` / **`characters`** / **`characterId`**），其中后两个需你定**语义归属** | 不升则 iframe 侧脚本静默少功能（**触发条件目前未成立** —— 设备 logcat 无 iframe 侧报错，已知报错**全在宿主帧**）;<br>若只投影不补齐 ⇒ **倒退**（丢 9 个成员）;<br>若给空容器 ⇒ 卡的写入**静默消失**（本项目主力缺陷族） |
 | ~~**D-6**~~ ✅ | ~~我发给 AI 的请求里多出 **32 个工具定义**（24k 字说明书），TT 的请求体**完全没有** `tools` 字段~~ | **心跳 58 已按拍板关掉**：`system-prompt/assemble` 里按「是否 RP 会话」修剪 `tools` + 对应 `tool:<name>` section；`lightAgent`/`heavyAgent`/`agent` 三路径**保留**（其预设正文要求调用工具，硬关会造出新的静默不一致）。见 **T-59** | — |
 | ~~**D-5a**~~ ✅ | ~~手机时区显示为 `GMT` 时，系统给的时区名是 `+00:00`（非标准名），0.1.5 拒绝 → **发不出消息**。要不要做产品级兜底~~ | **已按建议 A 落地（心跳 52）**：注入层替换取样结果（`Intl.DateTimeFormat.prototype.resolvedOptions`），只换名字不换偏移；GMT 真机实测已能正常发消息并落盘 `clientTimeZone:"UTC"` | — |
 | ~~**D-5b**~~ ✅ | ~~要不要**一次性清洗存量脏楼层**（`$1` 残留 + `<interactive_input>` 包装被写回过）~~ | **心跳 58 按拍板选 B：不清洗，本项关闭**。依据（心跳 54 只读报告）：**真脏 83 条 / 13 个会话**（`$1` 字面残留 62 / 嵌套包装 1），另 35 条属**设计用途快照**不计风险；**修复已生效**（最后一次污染 09-10 08:53 UTC → 最新消息 09-11 08:12 UTC，**23.3 小时零新增**）⇒ 残留纯属存量、只影响旧会话观感；清洗属不可逆写入，收益不成比例 | — |

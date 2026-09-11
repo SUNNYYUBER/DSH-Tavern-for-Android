@@ -15,10 +15,26 @@
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
 | 单测 | **1149 项全绿（54 文件）** · `typecheck` 三段式 **0 错**（心跳 62B 复跑确认） |
 | 设备回归 | `stage4-regression` **20/21**（心跳 62B 复跑；唯一失败 `variant/groups` = 探针未 attach，与基线一致） |
-| 未提交改动 | 心跳 62 的**新增** `packages/src/dsht-preflight/` + `tests/preflight.spec.ts` + `NodeService.kt` 注入 + 两个构建脚本 + **心跳 62B 的 T-48（`th-shim.ts` / `host-vendor.ts` + 两个 spec）** + 文档回写；**并发实例的** `DSH Android Roleplay App Plan.md` 等未提交改动**一份没碰**（`host-vendor.ts` 里同时也带着它的 T-25 脱敏改动，见提交说明） |
+| 未提交改动 | 心跳 62 的**新增** `packages/src/dsht-preflight/` + `tests/preflight.spec.ts` + `NodeService.kt` 注入 + 两个构建脚本 + **心跳 62B 的 T-48（`th-shim.ts` / `host-vendor.ts` + 两个 spec）** + **心跳 63 的 `audit-card-context-surface.mjs` 导入守卫 + `stage3-device/hb63/`** + 文档回写；**并发实例的** `DSH Android Roleplay App Plan.md` 等未提交改动**一份没碰**（`host-vendor.ts` 里同时也带着它的 T-25 脱敏改动，见提交说明） |
+| 本轮性质 | **心跳 63 = 纯静态分档**（T-46）⇒ **未改功能源码** ⇒ APK 沿用 **v280 / v281**、单测沿用 **1149 全绿**；唯一代码改动是 `audit-card-context-surface.mjs` 的**导入守卫**（正控 `--selftest` PASS、反控 `--script` 输出与改动前**逐字相同**） |
 | 发布闸门 | 🔴 **未达标**（T-25/T-61 心跳 61 复跑：受控面 **616 文件 / 合计 305 项**）⇒ **现在不能公开**；<br>✅ **`SECRET` 已由 1 → 0**（🔴 发布阻断项清除，但⚠️ 属**并发实例**在 `DSH Android Roleplay App Plan.md` 的**未提交**改动）<br>⚠️ **且密钥仍在本地 git 历史里**（仓库无远端、117 个提交从未推送 ⇒ 非对外事故）—— **P0 历史重写未做**；剩余 `WXID 16 / LOCALPATH 70 / SERVER 11 / PAYLOAD 8 / WORDLIST 200` |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
+- **心跳 63** = **T-46「可行性分档」收口 —— 结论是原判据本身错了**：T-46 长期挂着的理由是**假两难**
+  （「补 iframe 成员 = 要么在模板串里**再抄一份**（违反单源纪律）要么**注入式装配**」）。
+  回基准一读就解开了：真 TH `src/iframe/predefine.js:26-35` 用 `Object.defineProperty(window,'SillyTavern',
+  { get: () => ({ ...parent.SillyTavern.getContext(), getContext }) })` —— **就是父页投影**，
+  既不抄写、也不装配、**更没有桥**（基准 0 处 postMessage）。
+  ⇒ 原三分法逐档坍缩：`可经 postMessage 桥` = **空集** · `必须同步` = **不存在**（同源 + getter 直取）·
+  `需要注入式装配` = **空集**（→ 沉淀 **L96**）。
+  **四口径实测**（新工具 `rp-workspace/scripts/audit-iframe-surface-gap.mjs`，纯只读）：真 ST **145** / 宿主面 **39** /
+  **iframe 顶层 22** / iframe `getContext()` **11**；卡样本 19 个成员里 **iframe 顶层缺 12 / getContext 缺 15 /
+  宿主面 0 缺**（终于解释了并集口径为何一直报「缺口 0」）。
+  **本轮新量出的关键代价**：投影会丢 **10 个自建独有成员**（`characters` / `characterId` 也在其中）
+  ⇒ **投影必须与「宿主面补齐这 9 个」配对，否则倒退**；而 `characters`/`characterId` 恰是 **T-47 的待决成员**
+  ⇒ **T-46 与 T-47 合并为一个决策**（两方案规模对比见 T-46 正文）。
+  顺带查出 62B 遗留：`renderExtensionTemplateAsync` **只落 getContext 面、没落 iframe 顶层**。
+  **源码未改动**（纯静态分档 + 文档）⇒ APK 沿用 v280/v281、单测沿用 1149 全绿。
 - **心跳 62 续（62B）** = **T-48 部分收口：把「未移植」（`TypeError: … is not a function`）变成
   「已移植但环境不支持」（基准同形错误路径 + 具名记名）**。设备只读探针先把缺口钉死：宿主门面 **37** 成员、
   `renderExtensionTemplateAsync` **连 stub 都没有**；`Handlebars` / `DOMPurify` / `/scripts/extensions/**` 路由 /
@@ -139,6 +155,8 @@
 | ~~T-07~~ | ~~要不要启用「动态替换提示词」（可能解 D-4）~~ | ✅ **已评估**（T-03 内）：需切 `llm-deepseek` 路由 + 显式声明 models 才生效，**属独立任务**（见 T-11） | D-4 可达性 |
 | ~~T-08~~ | ~~工具定义（D-6）要不要关~~ | ✅ **已按拍板落地（2026-09-11 心跳 58）**：<br>▸ **实测口径**（T-13/D-7）：TT 请求体**完全没有** `tools` 字段；DSHT 侧实测 **32 个**（早期记录写 31 —— 工具数随当时注册的插件集浮动，故两个数字都出现过；以最近一次抓包 32 为准）<br>▸ **修法**：`system-prompt/assemble` 按「是否 RP 会话」修剪 —— 见 **T-59**<br>▸ **保留面**：`lightAgent`/`heavyAgent`/`agent` 三路径**不修剪**（其预设正文明确要求调用 `lore_query` 等工具，硬关会让正文指向不存在的工具 = 新的静默不一致） | RP 会话纯净度 |
 | ~~T-09~~ | ~~**存量脏楼层清洗**：`<interactive_input>` 包装 + `$1` 占位残留~~ | ✅ **按拍板选 B：不清洗，关闭本项**（2026-09-11 心跳 58）<br>▸ **实测口径**（心跳 47 复核设备真值）：含 `<interactive_input>` 的文件 **20 个 / 共 965 处**；其中 **`$1` 真未替换**的 **12 个文件 / 共 73 处**；影响面集中在 3 个会话<br>▸ **只读报告**（心跳 54，`scripts/audit-dirty-floors.mjs`，零写入）：**真脏 83 条**（`$1` 字面残留 62 / 嵌套包装 1），**受影响会话 13 个**；另有 35 条属**设计用途快照**（system-level / runtime-ctx / skill-list）不计风险；assistant 提及该标签 192 条属「模型在谈论」<br>▸ **修复已生效**：最后一次污染 09-10 08:53 UTC → 最新消息 09-11 08:12 UTC = **23.3 小时零新增** ⇒ **行为已正确，残留纯属存量**<br>▸ **拍板结论**：**不清洗** —— 只影响旧会话观感，与新版行为无关；零成本、零风险（清洗属不可逆写入，收益不成比例） | 历史聊天外观（**不影响新消息**） |
+| **T-46**<br>**+T-47**<br>（心跳 63 已合并） | **① iframe 门面要不要升、怎么升；② `characters` / `characterId` / `chatMetadata` 的数据模型**<br>—— 两者**是同一个决定的两半**：投影（T-46 推荐方案）会丢 10 个自建独有成员，其中 `characters` / `characterId` 恰是 T-47 的待决项。 | **推荐方案 A（照抄基准：父页投影 + 宿主面补齐 9 个）**：逐字同形、约 **5 行**改动、宿主面将来补齐多少 iframe **自动跟随**；<br>**方案 B（保持自建 + 顶层逐条转发）**：22 条转发且**长期漂移**（T-19/T-41 同型约束）。<br>⚠️ 无论哪案，`characters` + `characterId` 必须**成对**建真实角色列表模型、`chatMetadata` 需定**语义归属**（拒绝"给空对象"——那会让卡的写入**静默消失**）。 | **触发条件目前未成立**（设备 logcat 无 iframe 侧成员报错，已知报错**全在宿主帧**）⇒ **不阻塞发布**；<br>不升则 iframe 侧脚本静默少功能；只投影不补齐 ⇒ **倒退**。 |
+| **P-1** | 更新开关要用**哪个 GitHub 仓库**（公开 or 私有？影响鉴权） | 需你定；**公开**最简单（无需 token） | 阶段三发布前必须定；代码已就绪，只差填地址 |
 
 ---
 
@@ -563,19 +581,75 @@
   ③ **注意 L52**：本轮 md5 产物对照被**并发实例的构建**污染（`lib/client.js` 13:40:25 vs 基线 13:40:20）
   → 等价性结论改由「决定性单测 + 产物晚于源码 + 设备探针」支撑，**不可只看 md5**。
 
-### T-46　🆕 **iframe 门面显著窄于宿主门面**（心跳 51 量出，未定性为缺陷）
-- **量出的数**：卡脚本访问的 19 个真 ST 成员里，`th-shim.ts:buildStContextFacade()` **缺 16 个**
-  （`eventSource` / `eventTypes` / `t` / `callGenericPopup` / `POPUP_TYPE` / `isMobile` /
-  `substituteParams(Extended)` / `getCurrentChatId` / `reloadCurrentChat` / `streamingProcessor` / 工具注册三件 / …）；
-  iframe 面 9 个成员 vs 宿主面 37 个。
-- **为什么现在不修**：`th-shim.ts` 整段是**构建期拼进 iframe 的字符串**（`buildShimSource`），
-  **无法 `import`** 共享模块（T-41 已记录同一约束：要么改成「注入式装配」，要么在字符串里再抄一份 =
-  **违反单源纪律，不做**）。这是一次独立重构（与 T-41 同一课题）。
-- **触发条件**：出现**卡脚本在 iframe 内**用这些成员（尤其 `ctx.eventSource` / `ctx.substituteParams`）
-  的**实测报错**时再升。当前所有已知报错都在**宿主帧**，故不阻塞。
-- **下一步判据**：把 iframe 面的这些成员按「可经 postMessage 桥」/「必须同步」/「需要注入式装配」三类
-  先做一次可行性分档（**零风险静态工作**），再决定是否升。
+### T-46　🔷 **iframe 门面窄于宿主门面 —— 「可行性分档」已完成，结论：原三分法不成立**（心跳 51 量出 · **心跳 63 分档收口**）
 
+**量出的数（心跳 63 · 四口径实测**，工具 `rp-workspace/scripts/audit-iframe-surface-gap.mjs`，**纯只读**）：
+
+| 口径 | 成员数 | 相对真 ST 的缺口 |
+|---|---|---|
+| ① 真 ST `st-context.js:getContext()` | **145** | —（权威面） |
+| ② 宿主页 `host-vendor.ts:buildHostStContext()` | **39** | 112 |
+| ③ iframe 顶层 `th-shim.ts:window.SillyTavern` | **22** | **125** |
+| ④ iframe `th-shim.ts:buildStContextFacade()` | **11** | **140** |
+
+**卡样本（`packages/tmp/recon-g/card.js`，19 个真 ST 成员）**：iframe **顶层缺 12** / **getContext 缺 15** / **宿主面 0 缺**。
+
+> ⚠️ 这解释了为什么此前一直报「缺口 0」：`audit-card-context-surface.mjs` 用**并集**口径（宿主面 ∪ iframe 面），
+> 宿主面全中即判无缺口 —— 对「卡到底在哪个帧取 ctx 尚未定性」是**保守正确**的，但它**遮住了 T-46 的真问题**。
+
+#### 分档结论：原判据的「三档」逐档坍缩（**零风险静态工作，本轮已完成**）
+
+**基准形态（第一取证源，非推断）**：真 TH `src/iframe/predefine.js:26-35` 逐字 ——
+
+```js
+Object.defineProperty(window, 'SillyTavern', {
+  get: () => {
+    const SillyTavern = _.get(window.parent, 'SillyTavern');   // ← 同源直取父页
+    const getContext = () => ({ ...SillyTavern.getContext(), writeExtensionField: _th_impl.writeExtensionField });
+    return { ...getContext(), getContext };                    // ← 顶层 ≡ 父页 getContext() 展开
+  },
+});
+```
+
+同文件还逐字做了：`window._ = window.parent._` · `$ / jQuery / toastr / z / Zod / YAML / EjsTemplate / TavernHelper / showdown` 的父子合并 · `TavernHelper._bind` 去下划线后 `bind(window)` 挂载 · `Mvu` 投影。
+→ **我方 `buildIframeDocument` 只复刻了前半（全局合并，`th-shim.ts:2616+`）；后半（`SillyTavern` 投影）被改成了自建 —— 这就是 15 个缺口的根因。**
+
+| 原判据分档 | 实测结论 | 依据 |
+|---|---|---|
+| 可经 postMessage 桥 | **空集** | 基准 `predefine.js` **0 处** postMessage —— 桥是**想象出来**的机制，引入即违反 **L36「不能多」** |
+| **必须同步** | **不存在**（投影天然同步） | iframe 已放开 `sandbox allow-same-origin`（`RpScriptHost.tsx:482`）⇒ 同源 + getter 直取，同步语义自动成立 |
+| 需要注入式装配 | **空集** | 一个 `Object.defineProperty` 就够了 |
+
+⇒ **正确解法是「第四种」：父页投影**。先前认为的「再抄一份 / 注入式装配」二选一，是**被自造机制框住的假两难**（→ **LEARNINGS L96**）。
+
+#### ⚠️ 投影不是零代价：会丢 10 个自建独有成员（**这是「是否升」的关键数据**）
+
+投影后 iframe 顶层 = 「宿主面 + `getContext`」⇒ 自建有、宿主面没有的成员会**消失**：
+
+`getContext`（基准顶层也有 ⇒ 不算丢）· `saveChat` · `registerMacro` · `unregisterMacro` · `getChatCompletionModel` · `getRequestHeaders` · `loadWorldInfo` · `getCharacterCardFields` · **`characters`** · **`characterId`**
+
+⇒ **投影必须与「宿主面补齐这 9 个」配对，否则是倒退**。
+而 `characters` / `characterId` 恰是 **T-47 的待决成员**，现状是**「iframe 面已有、宿主面全无」**（与 T-47 原文「宿主门面仍缺」互为镜像）
+⇒ **T-46 与 T-47 是同一个决定的两半，不能分开拍板**（决策池已合并为一项）。
+
+#### 两个候选方案（供拍板）
+
+| | 方案 A · 照抄基准（投影 + 宿主补齐） | 方案 B · 保持自建（顶层逐条转发） |
+|---|---|---|
+| 改动量 | iframe getter 体 ≈ **5 行** + 宿主面补 **9 个**成员（其中 2 个 = T-47 决策） | iframe 顶层 ≈ **22 条**逐成员转发，且**宿主面每新增一个都要再同步一次** |
+| 与基准一致性 | **逐字同形**（L36 正面用法） | 形态不同（基准没有这种写法）；差异会**双向**出现 |
+| 风险 | 需核对 9 个成员不丢；需保留 `reportMissing` 记名拒绝 + **身份稳定性记忆化** | 无行为回归风险；但**长期漂移**（两份实现，T-19/T-41 同型约束） |
+| 一次性收益 | 宿主面将来补齐多少，iframe **自动跟随** | 无 |
+
+**本轮已完成**（零风险静态工作）：四口径量化 · 分档 · 基准形态取证 · 自建独有清单 · 两方案规模对比。
+**未做**：**不改源码** —— 「是否升」是拍板项，不是本轮能自决的。
+
+**触发条件（仍有效）**：出现**卡脚本在 iframe 内**用这些成员（尤其 `ctx.eventSource` / `ctx.substituteParams`）的**实测报错**时优先升。
+当前所有已知报错都在**宿主帧**（宿主面 0 缺），故不阻塞。
+
+**顺带查出的一处不一致**：`renderExtensionTemplateAsync`（心跳 62B 交付）只落在 `buildStContextFacade()` 面（getContext 口径），**没落 iframe 顶层** —— 与基准形态（顶层 ≡ `...getContext()`）和宿主面都不一致。采纳方案 A 则自动消解；采纳方案 B 需一并补上。
+
+**工具与纪律**：`rp-workspace/scripts/audit-iframe-surface-gap.mjs` **复用** `audit-card-context-surface.mjs` 的解析器（**不写第二份实现**）；为此给后者加了**导入守卫**（此前 `import` 即 `main()` + `process.exit` ⇒ 复用其解析器只能**复制一份实现** = 违反单源纪律）；加守卫后正控 `--selftest` **PASS**、反控 `--script` 输出与改动前**逐字相同**。
 ### T-47　🆕 **宿主门面仍缺的 3 个成员**（心跳 51 量出，属"需要数据模型决策"而非接线）
 - `characters`（4 次）/ `characterId`（12 次）/ `chatMetadata`（9 次）—— 来源是 TH 扩展形态脚本
   `chat-history-backup/index.js` 的实测用法（`:647/666/671/1194/2545`）。
