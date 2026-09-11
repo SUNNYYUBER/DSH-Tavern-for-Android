@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { scanSessionHeaders, pickCurrentSessionFilename, currentSessionLogPath } from '../src/dsht-plugin-shared/session-surgery.ts'
 import { readSurgicalPayload, readSurgicalAnchor, assistantSettlement, boundAppend } from '../src/dsht-plugin-shared/session-write.ts'
+import { canSurgicallyTruncate } from '../src/dsht-plugin-shared/session-surgery.ts'
 import { extractFloorsFromEvents } from '../src/dsht-plugin-memory/index.ts'
 
 // ---------------------------------------------------------------- ① 世代
@@ -324,5 +325,53 @@ describe('boundAppend —— 官方会话方法禁止 detach（心跳 55）', ()
       "Cannot read properties of undefined (reading 'log')",
     )
     expect(s.log).toHaveLength(0) // 关键：零写入 —— 与设备实测一致
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 【心跳 58 · T-58】「非 live 才允许文件手术」的单源判据
+//
+// 背景：该判据原在 **6 处**逐字复制（RP 侧 rollback/edit/regenerate 各一 + undo 插件三处），
+// 单测只覆盖 undo 那份 → 心跳 57 审计 T-58 时看到「对未挂载会话能截断」，
+// 误判为「缺少门槛」（实际三处 RP 侧都已有 409 守卫，只是没被钉住）。
+// 本组把不变量钉在单源纯函数上，两插件同时受保护。
+// ---------------------------------------------------------------------------
+
+describe('canSurgicallyTruncate —— 内存态权威（心跳 58 · T-58 单源判据）', () => {
+  it('非 live（会话没打开）→ 允许文件手术', () => {
+    for (const action of ['rollback', 'edit', 'regenerate'] as const) {
+      expect(canSurgicallyTruncate(false, action)).toEqual({ allowed: true })
+    }
+  })
+
+  it('live（会话正 attach）→ 拒绝，且文案逐字含动作名与指引', () => {
+    const cases = [
+      ['rollback', '再回退'],
+      ['edit', '再编辑'],
+      ['regenerate', '再重新生成'],
+    ] as const
+    for (const [action, tail] of cases) {
+      const r = canSurgicallyTruncate(true, action)
+      expect(r.allowed).toBe(false)
+      if (r.allowed) continue
+      expect(r.error).toContain('session live（内存态权威）')
+      expect(r.error).toContain('先在 DSH 里关闭该会话')
+      expect(r.error.endsWith(tail)).toBe(true)
+    }
+  })
+
+  it('🔴 承重：三个动作的文案**互不相同**（否则「统一成一个」会丢动作信息）', () => {
+    const msgs = (['rollback', 'edit', 'regenerate'] as const)
+      .map(a => canSurgicallyTruncate(true, a))
+      .map(r => (r.allowed ? '' : r.error))
+    expect(new Set(msgs).size).toBe(3)
+  })
+
+  it('判据只取决于 isLive（与动作名、会话 id 无关的可判定性）', () => {
+    // 同一动作在两种状态下结论必须相反 —— 这是「门槛存在」的最小证明
+    for (const action of ['rollback', 'edit', 'regenerate'] as const) {
+      expect(canSurgicallyTruncate(false, action).allowed).toBe(true)
+      expect(canSurgicallyTruncate(true, action).allowed).toBe(false)
+    }
   })
 })

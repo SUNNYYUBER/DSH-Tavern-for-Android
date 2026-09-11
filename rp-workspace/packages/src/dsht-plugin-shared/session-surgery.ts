@@ -121,6 +121,52 @@ export function findLastUserMessage(events: Array<{ type: string; seq: number; d
   return null
 }
 
+// ---------------------------------------------------------------------------
+// 【心跳 58 · T-58】「非 live 才允许文件手术」的唯一判据（单源）
+//
+// 回退 / 编辑 / 重新生成三个动作各有两条路径：
+//   · **live**（会话正 attach 在 `ctx.sessions` 里）→ 走官方 replace 原语做**逻辑**回退
+//     （事件留在日志，立即生效，可再回退）；
+//   · **非 live**（会话没打开）→ 走**物理截断** session.jsonl（`truncateSessionJsonl` + `.bak`）。
+//
+// 为什么 live 必须拒收截盘（**内存态权威**）：live 会话的内存事件树才是权威副本，
+// 落盘文件随后会被 `flush` 用内存态覆盖 —— 此时改盘 = 改动被静默回滚，且可能与
+// 后续 append 的 seq 产生错位。故 live 一律 409，提示先关闭会话。
+//
+// ⚠️ 本判据此前在 **6 处**逐字复制（`dsh-plugin/index.ts` 的 rollback/edit/regenerate
+// 各一处 + `dsht-plugin-undo/index.ts` 的三处），而单测**只覆盖了 undo 那份**。
+// 后果正是心跳 57 对 T-58 的误判：看到「对未挂载会话能截断」就以为缺少门槛，
+// 实际三处 RP 侧**都已有 409 守卫**，只是没有测试与单源把这条不变量钉住（L61 同族）。
+//
+// 收敛为单源后：改一处即两插件同步；单测钉在纯函数上，两侧都受保护。
+// ---------------------------------------------------------------------------
+
+/** 三个动作的文案用词（保持既有逐字文案，避免用户可见文案漂移） */
+export type SurgeryAction = 'rollback' | 'edit' | 'regenerate'
+
+const ACTION_LABEL: Record<SurgeryAction, string> = {
+  rollback: '回退',
+  edit: '编辑',
+  regenerate: '重新生成',
+}
+
+/**
+ * 会话是否**允许**做物理文件手术（截断 session.jsonl）。
+ *
+ * @param isLive 该 sessionId 当前是否 attach 在宿主会话注册表里（`ctx.sessions.get(id) !== undefined`）
+ * @returns `{ allowed: true }` 或 `{ allowed: false, error }`（error = 直接回给客户端的 409 文案）
+ */
+export function canSurgicallyTruncate(
+  isLive: boolean,
+  action: SurgeryAction,
+): { allowed: true } | { allowed: false; error: string } {
+  if (!isLive) return { allowed: true }
+  return {
+    allowed: false,
+    error: `session live（内存态权威）：先在 DSH 里关闭该会话再${ACTION_LABEL[action]}`,
+  }
+}
+
 /**
  * 重复 turn/start 检测与修复（纯函数，R49 存量数据修复）。
  *

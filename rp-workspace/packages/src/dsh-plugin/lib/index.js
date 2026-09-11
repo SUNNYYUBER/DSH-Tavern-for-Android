@@ -14400,6 +14400,18 @@ function findLastUserMessage(events) {
   }
   return null;
 }
+var ACTION_LABEL = {
+  rollback: "\u56DE\u9000",
+  edit: "\u7F16\u8F91",
+  regenerate: "\u91CD\u65B0\u751F\u6210"
+};
+function canSurgicallyTruncate(isLive, action) {
+  if (!isLive) return { allowed: true };
+  return {
+    allowed: false,
+    error: `session live\uFF08\u5185\u5B58\u6001\u6743\u5A01\uFF09\uFF1A\u5148\u5728 DSH \u91CC\u5173\u95ED\u8BE5\u4F1A\u8BDD\u518D${ACTION_LABEL[action]}`
+  };
+}
 function repairDuplicateTurnStarts(content) {
   const lines = content.split("\n");
   const events = lines.map((l) => {
@@ -20479,9 +20491,8 @@ ${rp.firstMes}
                 });
               }
               if (!isEdit) {
-                if (ctx.sessions?.get(sessionId) !== void 0) {
-                  return send(409, { error: "session live\uFF08\u5185\u5B58\u6001\u6743\u5A01\uFF09\uFF1A\u5148\u5728 DSH \u91CC\u5173\u95ED\u8BE5\u4F1A\u8BDD\u518D\u56DE\u9000" });
-                }
+                const guard = canSurgicallyTruncate(ctx.sessions?.get(sessionId) !== void 0, "rollback");
+                if (!guard.allowed) return send(409, { error: guard.error });
                 const hit = (await scanSessionHeaders2()).find((h) => h.sessionId === sessionId);
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` });
                 const file = hit.file;
@@ -20508,8 +20519,9 @@ ${rp.firstMes}
                 return send(200, { kept: r.kept, dropped: r.dropped, variablesRestored: undo.restored, fileSnapshots: { turns: fsnap.restoredTurns, restored: fsnap.filesRestored, deleted: fsnap.filesDeleted, errors: fsnap.errors } });
               }
               {
-                if (ctx.sessions?.get(sessionId) !== void 0) {
-                  return send(409, { error: "session live\uFF08\u5185\u5B58\u6001\u6743\u5A01\uFF09\uFF1A\u5148\u5728 DSH \u91CC\u5173\u95ED\u8BE5\u4F1A\u8BDD\u518D\u7F16\u8F91" });
+                {
+                  const guard = canSurgicallyTruncate(ctx.sessions?.get(sessionId) !== void 0, "edit");
+                  if (!guard.allowed) return send(409, { error: guard.error });
                 }
                 const hit = (await scanSessionHeaders2()).find((h) => h.sessionId === sessionId);
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` });
@@ -20616,9 +20628,8 @@ ${rp.firstMes}
                 });
               }
               {
-                if (ctx.sessions?.get(sessionId) !== void 0) {
-                  return send(409, { error: "session live\uFF08\u5185\u5B58\u6001\u6743\u5A01\uFF09\uFF1A\u5148\u5728 DSH \u91CC\u5173\u95ED\u8BE5\u4F1A\u8BDD\u518D\u91CD\u65B0\u751F\u6210" });
-                }
+                const guard = canSurgicallyTruncate(ctx.sessions?.get(sessionId) !== void 0, "regenerate");
+                if (!guard.allowed) return send(409, { error: guard.error });
                 const hit = (await scanSessionHeaders2()).find((h) => h.sessionId === sessionId);
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` });
                 const file = hit.file;

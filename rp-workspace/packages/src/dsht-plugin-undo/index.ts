@@ -39,7 +39,7 @@ import {
   isTrusted, queryOf, readJsonBody, registerPrefix, resolveDshHome, sendJson,
   type LikePluginContext, type LikeRequest, type LikeResponse,
 } from '../dsht-plugin-shared/http.ts'
-import { findLastUserMessage, scanSessionHeaders, truncateSessionJsonl } from '../dsht-plugin-shared/session-surgery.ts'
+import { canSurgicallyTruncate, findLastUserMessage, scanSessionHeaders, truncateSessionJsonl } from '../dsht-plugin-shared/session-surgery.ts'
 import { snapshotRestoreBoundary } from '../dsht-plugin-shared/file-snapshots.ts'
 import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
 import {
@@ -116,8 +116,10 @@ export async function rollbackSession(deps: UndoDeps, payload: Record<string, un
   if (!Number.isInteger(keepThroughSeq) || keepThroughSeq < 0) {
     return { code: 400, body: { error: 'keepThroughSeq 须为 >= 0 的整数' } }
   }
-  if (deps.isLive(sessionId)) {
-    return { code: 409, body: { error: 'session live（内存态权威）：先在 DSH 里关闭该会话再回退' } }
+  // 【心跳 58 · T-58】单源判据（原先与 RP 侧逐字复制 6 份，只有本侧有测试）
+  const rollbackGuard = canSurgicallyTruncate(deps.isLive(sessionId), 'rollback')
+  if (!rollbackGuard.allowed) {
+    return { code: 409, body: { error: rollbackGuard.error } }
   }
   const file = await locateSessionFile(deps.dshHome, sessionId)
   if (file === null) return { code: 404, body: { error: `session not found: ${sessionId}` } }
@@ -146,8 +148,10 @@ export async function rollbackSession(deps: UndoDeps, payload: Record<string, un
 export async function regenerateSession(deps: UndoDeps, payload: Record<string, unknown>): Promise<UndoResult> {
   const sessionId = String(payload.sessionId ?? '')
   if (!sessionId) return { code: 400, body: { error: 'sessionId required' } }
-  if (deps.isLive(sessionId)) {
-    return { code: 409, body: { error: 'session live（内存态权威）：先在 DSH 里关闭该会话再重新生成' } }
+  // 【心跳 58】单源判据（同 rollback）
+  const regenGuard = canSurgicallyTruncate(deps.isLive(sessionId), 'regenerate')
+  if (!regenGuard.allowed) {
+    return { code: 409, body: { error: regenGuard.error } }
   }
   const file = await locateSessionFile(deps.dshHome, sessionId)
   if (file === null) return { code: 404, body: { error: `session not found: ${sessionId}` } }
@@ -192,8 +196,10 @@ export async function editUserMessage(deps: UndoDeps, payload: Record<string, un
   if (!sessionId) return { code: 400, body: { error: 'sessionId required' } }
   if (!Number.isInteger(seq) || seq < 0) return { code: 400, body: { error: 'seq 须为 >= 0 的整数' } }
   if (!text.trim()) return { code: 400, body: { error: 'text 不能为空' } }
-  if (deps.isLive(sessionId)) {
-    return { code: 409, body: { error: 'session live（内存态权威）：先在 DSH 里关闭该会话再编辑' } }
+  // 【心跳 58】单源判据（同 rollback）
+  const editGuard = canSurgicallyTruncate(deps.isLive(sessionId), 'edit')
+  if (!editGuard.allowed) {
+    return { code: 409, body: { error: editGuard.error } }
   }
   const file = await locateSessionFile(deps.dshHome, sessionId)
   if (file === null) return { code: 404, body: { error: `session not found: ${sessionId}` } }

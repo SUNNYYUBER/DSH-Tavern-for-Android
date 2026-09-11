@@ -122,7 +122,7 @@
 |---|---|---|---|
 | T-10 | D-3 role 映射（系统级内容走 system） | ✅ 主体已修 | 过渡态收敛（历史 user 席快照靠影子化逐轮折叠），观察即可 |
 | T-11 | D-4 用户输入绝对位置 | ✅ **重评完成**（2026-09-11，心跳 45） | 结论维持「**有条件可达**」（非当前可达）：`dsh-llm-deepseek/lib/index.js:1849` 声明 `systemPromptUpdate:"in-history"`，`dsh-llm-pi-ai` **无**该能力；我方走 pi-ai → 默认不生效。解锁 = 独立任务（切 `llm-deepseek` 路由 + 显式声明 models），**不叠加在升级窗口** |
-| T-12 | D-6 agent 层污染（32 tools / 24k 字说明书） | ⏳ 待拍板 | 见 T-08 |
+| ~~T-12~~ | ~~D-6 agent 层污染（32 tools / 24k 字说明书）~~ | ✅ **已落地**（2026-09-11 心跳 58，按拍板关掉） | 见 T-08 与 **T-59**（`system-prompt/assemble` 按「是否 RP 会话」修剪 tools + 对应 `tool:<name>` section；agent 三路径保留） |
 | T-13 | D-7 采样参数对照（TT 侧 `GENERATE_AFTER_COMBINE_PROMPTS` dump 未采） | ✅ **对照已补齐**（2026-09-11，心跳 46 + 修正） | 新建 `rp-workspace/scripts/golden-tt-sampling.mjs`（TT WebView CDP 里 monkey-patch `fetch`+`XHR` 抓**最终请求体**；采样参数不在 prompt 事件里，必须走网络层）。**修正后结论**（首版误判已作废）：① `max_tokens` **映射正常**（切真实 ST 预设 `maxTokens=65535` → 请求实测 65535；首版用无 `maxTokens` 的示范预设测到宿主默认 384000，属**测量口径错误**）② `top_p`/penalties 未发送 = **宿主限制 H-②**（非我方缺陷，预设值已持久化待宿主支持）③ `tools` TT **无** vs DSHT **32 个** = **唯一真差异**（D-6 实锤）。详见 [docs/DSHT-VS-TT-DIFF-2026-09-10.md](docs/DSHT-VS-TT-DIFF-2026-09-10.md) §D-7 |
 | T-14 | golden 接收器迁入 `ctx.webServer`（摆脱宿主进程回收） | ✅ 评估后**决定不改**（2026-09-11，心跳 45） | 现为独立 `golden-receiver.mjs`:31100，**仅在手动采集 Golden Master 对照时启用**，不进产品链路；迁入 `ctx.webServer` 会让生产代码多背一个纯测试设施（且需处理路由命名空间冲突），**无功能收益**。若将来需要常驻采集再迁 |
 | T-15 | rp-plugin msg dump 口径修正（`raw.messages` → `decision.messages`） | ✅ 已修（2026-09-11，心跳 45） | 原落 `raw.messages`（RP 注入**前**的原始批）→ 与 TT 侧 `chat_completion_prompt_ready`（最终组装态）一比，差异全是假的。现改为在各出口落**最终态**（组装 + `dsht-rp/assemble` 钩子后）；`viaAssembleHook` 统一收口 |
@@ -647,7 +647,7 @@
   —— 原子写的临时文件残留，**与本次 force-stop 压测吻合**（写盘途中被杀），非独立缺陷；
   若后续在不频繁强制停止的正常使用下再现，再查 `atomicWriteFile` 的清理路径。
 
-### T-53　🆕 **存量「脏楼层」清洗**（= D-5b；**只读报告已出，等你拍板**）　⏸ 待决策
+### T-53　✅ **存量「脏楼层」清洗**（= D-5b）—— **按拍板选 B：不清洗，本项关闭**（2026-09-11 心跳 58）
 - **背景**：Kemini 预设的「aether opus正则一」是 `promptOnly: true` 的 ST 卡正则，
   语义上**只该变换发往 LLM 的文本、绝不回写 chat 数组**（TT `script.js:5282-5312`）。
   修复前它在 `pre-step` 就跑并被宿主落成 `user/message` 耐久事件 → 聊天记录被写成
@@ -666,9 +666,11 @@
      （单文件实测 **382 条 `compaction/prune`**；直接数事件会把污染面**大幅高估**）。
   2. 分档**复用既有 `classify()`**（`tt-projection.ts:89`），**不自造第二套判据**
      —— 首版自造口径把 **35 条设计用途**误判为脏（**L44/L62**），故脚本内置 `--selftest` **6/6**。
-- **拍板选项**：**A** 清洗（须写带 `.bak` + 幂等 + 收敛断言的写入器，**不可逆 → 先备份再在副本验证**）；
-  **B** 不清洗（旧会话保留可见残留，零成本）。
-- **推荐**：若你不在意旧会话观感 → **选 B**（该项可直接关闭）；若要干净的历史 → 选 A（按本项目铁律先出迁移方案）。
+- **拍板结果（2026-09-11 心跳 58）**：**选 B —— 不清洗，本项关闭**。理由：
+  ① 只影响旧会话观感，**与新版行为无关**（修复已生效，23.3h 零新增）；
+  ② 清洗属**不可逆写入**（须写带 `.bak` + 幂等 + 收敛断言的迁移器），收益不成比例。
+  → 旧会话正文保留可见残留，**零成本、零风险**。若日后你改了主意，上面的只读报告与
+  分档口径（`--selftest 6/6`）可直接复用为迁移方案的基础。
 - **注意（避免造出假待办）**：编辑面板会**忠实预填存储原文**（含包装），这是**基线语义**
   （ST 编辑亦显示原始 `mes`），且**修复后的新消息不再带包装** → 属本条的下游症状，**不是独立缺陷**。
 
@@ -785,23 +787,52 @@
 
 **探针**：`stage3-device/hb57/hb57-svc-liveness.js`（只读，不建会话）。
 
+**心跳 58 复测（未复现，如实记录）**：同一台设备（`emulator-5554`）、同一探针，两轮均通过：
+| 轮次 | 前置状态 | `session.list` 结果 |
+|---|---|---|
+| 1 | 应用已运行 **14 分 12 秒** | `200 ok:true, itemCount=81` |
+| 2 | 再触发**页面 reload**（心跳 57 记录的变量）并等待 20s | `200 ok:true, itemCount=81` |
+
+⇒ 未能复现「运行一段时间后 unavailable」。**结论不下**（不凭「没复现」否定心跳 57 的观测）：
+心跳 57 记录的是应用运行 **30+ 分钟**且期间 reload 过；本轮两轮分别 14 分钟与 reload 后即刻，
+**可能未触及触发窗口**。→ 保持 ⏳ 待定性；下次**长时运行（≥40 分钟）后再测**，
+并补一条判据：崩溃/不可用时的 `logcat` 是否出现 `sessionController` 相关生命周期行。
+
 ---
 
-### T-58　🆕 **`session-regenerate` / `session-rollback` 的「非 live 分支」是破坏性文件截断**（心跳 57 续发现，待定性）
+### T-58　🟠→✅ **「非 live 分支是破坏性截断」的描述经审计不成立；真缺口 = 判据 6 份复制且只有 1 份有测试**（心跳 58 收口）
 
-**证据**：对**未挂载**的会话 `st-1w8aglg` 打 `/dsht-rp/rp/session-regenerate` →
-`200 {"truncated":1,"lastUserText":"…","variablesRestored":0,"fileSnapshots":{…}}`
-→ 该会话 `session.jsonl` 立刻被**截断重写**（md5 `68ddd464…` → `0c32e035…`、3779B 级变化），
-且**不产生变体标记**（后续 `variant/groups` 仍为 0）。
-live 分支返回的是**完全不同**的形状：`200 {"logical":true,"replaced":1,"truncatedTo":0}`（事件留在日志）。
+**心跳 57 的原描述**：对**未挂载**的会话 `st-1w8aglg` 打 `/dsht-rp/rp/session-regenerate` →
+`200 {"truncated":1,…}` → 该会话 `session.jsonl` 被截断重写，
+⇒ 结论「同一端点语义从『逻辑回退』变成『物理截断』，判据只有会话是否挂载」，
+并建议「加显式门槛（未声明 `allowFileTruncation:true` 即拒收）」。
 
-⇒ **同一端点、同一入参、同一 200，语义从"逻辑回退"变成"物理截断"**，判据只有会话是否挂载。
-本次因**先做了备份**（`stage3-device/hb57/variant-backup/hb57-variant-bak.tar`）才精确还原。
+🔴 **心跳 58 逐行核对源码后：该描述**与代码相反** —— 门槛**本来就有**，而且是 409 硬拒收：
+| 动作 | 位置 | 守卫 |
+|---|---|---|
+| rollback | `dsh-plugin/index.ts:5375` | `ctx.sessions?.get(id) !== undefined` → **409** |
+| edit | `:5416` | 同上 → **409** |
+| regenerate | `:5553` | 同上 → **409** |
 
-**建议**：非 live 路径加显式门槛（未声明 `allowFileTruncation:true` 即拒收，或改为"返回 409 + 指引先 `open-chat`"）。
-**需先确认**产品路径是否会碰到它（前端是否可能在会话未 attach 时调这两个端点）——若会，则这是产品缺陷而非仅是探针风险。
+即：**已 attach 的会话（live）才是被拒的那个**；`st-1w8aglg` 之所以被截断，
+正是因为**它当时没打开**（非 live）—— 那恰恰是这条路径的**设计语义**
+（会话关着 = 内存态不存在 = 落盘文件是唯一权威 = 允许原地截断 + `.bak`）。
+心跳 57 把「设计语义」误读成了「缺少门槛」。
 
-**沉淀**：LEARNINGS **L74**（写路由必须先问 liveness，别用"发一次看看返回什么"探写路由）。
+**但审计确实挖出一个真缺口（本次已修）**：
+1. 🔴 **同一判据 6 份逐字复制**：RP 侧 3 处 + `dsht-plugin-undo/index.ts` 3 处，
+   文案逐字相同（`session live（内存态权威）：先在 DSH 里关闭该会话再{回退|编辑|重新生成}`）。
+2. 🔴 **单测只覆盖 undo 那一份**（`undo.spec.ts:135/183`）；RP 侧三处**零覆盖** ——
+   **这正是心跳 57 误判的土壤**：没有测试与单源把这条不变量钉住，读代码时容易把
+   「live 被拒」看成「非 live 能改盘」的漏洞（L61 同族：同一语义多副本）。
+- ✅ **修法（收敛为单源纯函数）**：`dsht-plugin-shared/session-surgery.ts` 新增
+  `canSurgicallyTruncate(isLive, action)`，两侧 6 处调用点全部改为调它；
+  文案用 `ACTION_LABEL` 保持**逐字不变**（用户可见文案不漂移）。
+- ✅ **回归 4 条 + 反控**：非 live→允许 / live→拒绝且文案逐字 /
+  **三动作文案互不相同**（防「统一成一个」丢动作信息）/ 两态结论必相反；
+  **反控**：把判据改成恒放行 → **3 条立刻转红**。
+- **不改行为，只收敛 + 补测**（原 409 行为经逐行核对是正确的，与 `dsht-plugin-undo` 一致）。
+- **沉淀**：**L79**（「看起来缺门槛」有两种可能：真缺 / 有门槛但没被钉住 —— 先逐行核对再动手）。
 
 ---
 
@@ -835,9 +866,12 @@ live 分支返回的是**完全不同**的形状：`200 {"logical":true,"replace
   前缀 `$DSH_HOME/rp/` 且 slug 不含 `/`，故**不匹配**；且它们靠工具干活。
 - **验收**：`typecheck` 三段式 0 错 · 单测 **51 文件 / 1074 全绿**（+5）·
   **两轮反控**：①`shouldStripRpTools` 恒 false → 1 条红；②只清 tools 不清 section → 2 条红。
-- **实机效果未验**（诚实边界）：需在真机发一轮消息后核 `rp/golden/dsht/llm-*.json`
-  的请求体**无 `tools` 字段** + logcat 出现 `D-6 工具修剪：移除 N 个工具定义`。
-  **注**：golden fetch 拦截需 `rp/golden/dsht-ENABLED` 开关文件才启用（见 `index.ts` 内注释）。
+- ✅ **实机验证通过**（2026-09-11 心跳 58，`emulator-5554`；热推 `dsht-rp-plugin` 双副本 + 重启）：
+  | 判据 | 实测证据 |
+  |---|---|
+  | 修剪确实发生 | logcat `[dsht-rp] D-6 工具修剪：移除 32 个工具定义（对齐 TT 无 tools 字段；path=direct）` |
+  | **请求体真的没有 tools** | 新 dump `rp/golden/dsht/llm-224.json` → `keys = model, messages, stream, stream_options, max_tokens, temperature, thinking`，**`tools` 键不存在**（发送前 seq=223 → 发送后 224，确为本次请求） |
+  | 与基准一致 | 修复前抓包口径 32 个 → 现在 **0 个**（基线 TT 亦无该字段） |
 
 ---
 
@@ -870,8 +904,15 @@ live 分支返回的是**完全不同**的形状：`200 {"logical":true,"replace
   改为「空数组且有真数据 → 填充」并补了专门的时序用例。
 - **验收**：`typecheck` 三段式 0 错 · 单测 **+6**（含「按卡的取法读 `.length` 不抛」这条承重断言）·
   **反控**：停用 seed → **6 条立刻转红**，恢复即 52 passed。
-- **实机效果未验**（诚实边界）：需真机开卡后核宿主页 `SillyTavern.getContext().extensionSettings.regex`
-  是数组、且 bootstrap 后续三行（ChatSquash / MacroNest / 工具注册）确实执行。
+- ✅ **实机验证通过**（2026-09-11 心跳 58，`emulator-5554`；热推 `dsht-rp-plugin` 双副本 + 重启）：
+  | 判据 | 实测证据（CDP 探针读**宿主帧**真实 globals） |
+  |---|---|
+  | **卡的那行不再抛** | `extensions.regex.length` = **1**（修复前该变量是 `undefined`） |
+  | 键的形状对 | `Array.isArray(regex) = true`；`regex_presets` 亦为数组 |
+  | **是真数据不是空壳** | 首元素 = `{id: 'bf2c3652-…', scriptName: '花里胡哨状态栏美化衣服 适配手机版…', findRegex: '<StatusPlaceHolderImpl/>'}` —— 与 `rp/regex/global.json` 的全局正则一致；字段为 ST camelCase 13 键全集 |
+  | 引用稳定 | `getContext().extensionSettings === getContext().extension_settings` = true |
+  | **反控（同一台设备上跑）** | 无 `regex` 键的对象 → `THROW: Cannot read properties of undefined (reading 'length')`（**与卡原报错逐字同形**）；有键 → `OK 未抛`；跑完真实对象未被改动（`length` 仍为 1） |
+  | 卡 bootstrap 的失败点 | 复刻 `updateSTRegexes` 的读写序列 → `OK 未抛（修复前此处必抛 TypeError）` |
 
 ---
 
@@ -1027,8 +1068,8 @@ live 分支返回的是**完全不同**的形状：`200 {"logical":true,"replace
 【待你执行】把 arm64 包装真机，验三条基线（启动 / 打开旧聊天 / 发消息）
 【待外部条件】T-25 大扫除（需先解冻 RP 数据）→ T-27 更新渠道（需提供目标 GitHub 仓库）
 【随时可做】T-28~T-33 长尾（不阻塞发布）
-【实机待验】T-59（D-6 工具修剪）/ T-60（T-42 extension_settings.regex）——
-   两者单测+反控已绿，**真机效果未验**（需发一轮消息核请求体 / 核宿主 globals）
+【实机已验】T-59（D-6 工具修剪）/ T-60（T-42 extension_settings.regex）——
+   单测+反控+**设备实测**三重齐备（见各自段落）
 ```
 
 **卡点提示**：T-25 大扫除在「T-04 装机验证通过 + 差异收敛」前**不能动**（数据冻结）；

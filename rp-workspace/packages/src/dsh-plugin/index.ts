@@ -52,7 +52,7 @@ import { loadSheets, renderTablePrompt, expandTableMacros } from '../dsht-plugin
 import { expandTavernMacros, readVarPath, writeVarPath, registerMacro, unregisterMacro, listCustomMacros, hydrateCustomMacros } from '../dsht-plugin-shared/macros.ts'
 import { appendUndoEntries, makeUndoEntry, replayUndoLog } from '../dsht-plugin-shared/undo.ts'
 import { restoreSnapshotsAfter, snapshotBeforeWrite, snapshotRestoreBoundary } from '../dsht-plugin-shared/file-snapshots.ts'
-import { scanSessionHeaders as scanSessionHeadersShared, normalizeSnapshotMessageRoles, repairDuplicateTurnStarts, currentSessionLogPath } from '../dsht-plugin-shared/session-surgery.ts'
+import { scanSessionHeaders as scanSessionHeadersShared, normalizeSnapshotMessageRoles, repairDuplicateTurnStarts, currentSessionLogPath, canSurgicallyTruncate } from '../dsht-plugin-shared/session-surgery.ts'
 // 【阶段3 2026-09-10】会话写入合法形态层：surfaceOp 字段名自适应 + 合法标记载体
 // （0.1.5 把 start/end 改成 startSeq/endSeq，且禁止 assistant/message 做 replace 节点）
 import {
@@ -5372,9 +5372,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               }
               // ---- 非 live：文件截断（原路径）----
               if (!isEdit) {
-                if (ctx.sessions?.get(sessionId) !== undefined) {
-                  return send(409, { error: 'session live（内存态权威）：先在 DSH 里关闭该会话再回退' })
-                }
+                // 【心跳 58 · T-58】会话是否允许文件手术 = 单源判据（原先三处逐字复制，
+                // 且无测试覆盖 → 心跳 57 因此误判「缺门槛」，实为「有门槛但没被钉住」）。
+                const guard = canSurgicallyTruncate(ctx.sessions?.get(sessionId) !== undefined, 'rollback')
+                if (!guard.allowed) return send(409, { error: guard.error })
                 const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId)
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` })
                 const file = hit.file
@@ -5413,8 +5414,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 // 【鲁棒轮 2026-09-09】live 会话 409 守卫（rollback/regenerate 非 live 分支
                 // 同款）——edit 漏了：会话已 attach 但 surface 异常降级时会直接做文件手术，
                 // 随后 live flush 把内存旧事件写回 → 内容复活/seq gap。
-                if (ctx.sessions?.get(sessionId) !== undefined) {
-                  return send(409, { error: 'session live（内存态权威）：先在 DSH 里关闭该会话再编辑' })
+                // 【心跳 58】统一走单源判据 `canSurgicallyTruncate`。
+                {
+                  const guard = canSurgicallyTruncate(ctx.sessions?.get(sessionId) !== undefined, 'edit')
+                  if (!guard.allowed) return send(409, { error: guard.error })
                 }
                 const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId)
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` })
@@ -5550,9 +5553,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               }
               // 非 live：文件截断（原路径）
               {
-                if (ctx.sessions?.get(sessionId) !== undefined) {
-                  return send(409, { error: 'session live（内存态权威）：先在 DSH 里关闭该会话再重新生成' })
-                }
+                // 【心跳 58】统一走单源判据 `canSurgicallyTruncate`。
+                const guard = canSurgicallyTruncate(ctx.sessions?.get(sessionId) !== undefined, 'regenerate')
+                if (!guard.allowed) return send(409, { error: guard.error })
                 const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId)
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` })
                 const file = hit.file

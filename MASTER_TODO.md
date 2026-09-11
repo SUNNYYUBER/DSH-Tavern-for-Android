@@ -268,8 +268,13 @@ THROW extensions.regex.length      => Cannot read properties of undefined (readi
 
 `typecheck` 三段式 **0 错** · 单测 **51 文件 / 1074 全绿**（+17）·
 **三处反控全部成立**（T-42 停用 seed → 6 红；D-6 恒不修剪 → 1 红；D-6 只清 tools → 2 红）。
-**两项的真机效果均未验**（诚实边界，已写进 T-59/T-60）：需发一轮消息核请求体无 `tools`、
-核宿主页 `getExtensionSettings().regex` 是数组。
+
+✅ **两项均已在 `emulator-5554` 上实机验证通过**（热推 `dsht-rp-plugin` 双副本 + 重启）：
+
+| 项 | 判据 | 实测 |
+|---|---|---|
+| **D-6** | 请求体无 `tools` 字段 | 新 dump `llm-224.json` → `keys = model, messages, stream, stream_options, max_tokens, temperature, thinking`，**无 `tools`**；logcat `D-6 工具修剪：移除 32 个工具定义（path=direct）`（发送前 seq=223 → 后 224，确为本次请求） |
+| **T-42** | `extensions.regex.length` 可读 | 宿主帧实测 **1**（修复前该变量 `undefined`）；`Array.isArray=true`；首元素是真数据（`rp/regex/global.json` 的全局正则，ST camelCase 13 键）；反控：无键对象 → `THROW: …reading 'length'`（**与卡原报错逐字同形**），有键 → OK，跑完真实对象未被改动 |
 
 ## 心跳 56 做了什么（**继续逐条核验 ✅ 声明，并把「核验结论」落成可复跑的判据**）
 
