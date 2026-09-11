@@ -57,7 +57,7 @@ import { scanSessionHeaders as scanSessionHeadersShared, normalizeSnapshotMessag
 // （0.1.5 把 start/end 改成 startSeq/endSeq，且禁止 assistant/message 做 replace 节点）
 import {
   appendReplace, replaceRange, isReplaceOp, markerSource, readMarker, readLegacySourceKeys, readSurgicalAnchor,
-  sanitizeEnvelope, planAssistantRewrite, type AppendableSession, type SurgicalMarkerPayload,
+  sanitizeEnvelope, planAssistantRewrite, assistantSettlement, type AppendableSession, type SurgicalMarkerPayload,
 } from '../dsht-plugin-shared/session-write.ts'
 // 【阶段3 2026-09-10】存量 v0 会话 → 0.1.5 可迁移形态（8 类不合规的纯函数重写器）
 import { repairSessionForV3 } from '../dsht-plugin-shared/session-repair.ts'
@@ -1387,7 +1387,7 @@ export function buildVariantSwitchEvent(
   type: 'assistant/message'
   seq: number
   time: number
-  data: { turn: number; step: number; message: { id: string; role: 'assistant'; content: Array<{ type: 'text'; text: string }>; source: { kind: 'model'; provider: string; model: string } } }
+  data: { turn: number; step: number; stream: never[]; message: { id: string; role: 'assistant'; content: Array<{ type: 'text'; text: string }>; source: { kind: 'model'; provider: string; model: string } } }
   /** 追加到 surface 尾部（不再是 replace） */
   surfaceOp: 'append'
   /** 被移出上下文的旧变体 seq（写入标记用，不再进本事件信封） */
@@ -1399,8 +1399,9 @@ export function buildVariantSwitchEvent(
     seq: nextSeq,
     time: Date.now(),
     data: {
-      turn: 1,
-      step: 1,
+      // settlement 三件套（turn/step 由调用点按 planAssistantRewrite 覆写；
+      // stream 必须为数组——缺它 = 会话冷启动直接打不开，详见 session-write.ts）
+      ...assistantSettlement(1, 1),
       message: {
         id: `dsht-variant-${sessionId}-${nextSeq}`,
         role: 'assistant',
@@ -2191,9 +2192,24 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         errors.push(`${h.sessionId}: ${(e as Error).message}`)
       }
     }
-    if (repaired.length > 0 || errors.length > 0) {
-      logLine(`repair-sessions: 修复 ${repaired.length}，跳过 ${skipped.length}，失败 ${errors.length}`)
-      console.log(`[dsht-rp] repair-sessions: repaired=${repaired.length} skipped=${skipped.length} errors=${errors.length}`)
+    // 【心跳 49】原条件 `repaired>0 || errors>0` 会让「只跳过、没修也没错」的场景**完全不出日志**
+    // —— 设备实测 `scanned 80 repaired 0 skipped 2` 正是这种：日志一行没有，看起来像"什么都没发生"。
+    // 跳过是**有意行为**（见上方 live / 超限注释），但**有意 ≠ 可以静默**：目标会话被跳过时
+    // 用户看到的是"打开就红字"，而日志里零线索。故：只要有跳过就出日志，并按原因归类计数。
+    if (repaired.length > 0 || errors.length > 0 || skipped.length > 0) {
+      const byReason = new Map<string, number>()
+      for (const s of skipped) {
+        const key = s.reason.startsWith('live') ? 'live'
+          : s.reason.startsWith('文件 ') ? '超上限' : s.reason
+        byReason.set(key, (byReason.get(key) ?? 0) + 1)
+      }
+      const detail = skipped.length > 0
+        ? `，跳过 ${skipped.length}（${[...byReason].map(([k, v]) => `${k}×${v}`).join(' / ')}）`
+        : ''
+      logLine(`repair-sessions: 修复 ${repaired.length}${detail}，失败 ${errors.length}`)
+      console.log(`[dsht-rp] repair-sessions: repaired=${repaired.length} skipped=${skipped.length} errors=${errors.length}${skipped.length ? ` skippedReason=${JSON.stringify(Object.fromEntries(byReason))}` : ''}`)
+      // 被跳过的**具体会话 id** 也要留痕（否则"哪个会话没修上"仍然查不到）。
+      for (const s of skipped) logLine(`repair-sessions: 跳过 ${s.sessionId} —— ${s.reason}`)
     }
     return { scanned: headers.length, repaired, skipped, errors }
   }
@@ -2853,6 +2869,12 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         JSON.stringify({ type: 'session', version: 0, id: sessionId, createdAt, cwd: wsCwd, delegationDepth: 0 }),
         ev('turn/start', 0, { turn: 1 }),
         ev('step/start', 1, { turn: 1, step: 1 }),
+        // ⚠️ 本行**故意不写 `stream`**：此处产出的是 **v0** 文件（version: 0），
+        // v0 的 assistant/message 必需成员是 `["turn","step","message"]`
+        // （`dsh-session-format-v0-to-v1/lib/index.js:42-45`），**带上 stream 反而是非法成员**；
+        // `stream` 由 v1→v2 迁移器从 assistant/chunk 累积生成
+        // （`v1-to-v2/lib/index.js:752-768`）。**live 会话（v2+）的写入必须带 stream**
+        // —— 代次不同则字段不同，勿"顺手统一"（见 session-write.ts `assistantSettlement`）。
         ev('assistant/message', 2, {
           turn: 1, step: 1,
           message: {
@@ -6411,7 +6433,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                     source: { kind: 'user' },
                   }, { surfaceOp: 'append' })
                   welcomeSession.append('assistant/message', {
-                    turn: 1, step: 1,
+                    // settlement 三件套（live 会话必为 v2+，stream 是必需成员）
+                    ...assistantSettlement(1, 1),
                     message: {
                       id: `dsht-imp-res-${Date.now()}`,
                       role: 'assistant',
@@ -6528,7 +6551,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               session.append('turn/start', { turn })
               session.append('step/start', { turn, step: 1 })
               session.append('assistant/message', {
-                turn, step: 1,
+                // settlement 三件套（live 会话必为 v2+，stream 是必需成员）
+                ...assistantSettlement(turn, 1),
                 message: {
                   id: `dsht-open-${randomUUID()}`,
                   role: 'assistant',
@@ -6627,7 +6651,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                   return
                 }
                 live.append('assistant/message', {
-                  turn, step,
+                  // settlement 三件套（live 会话必为 v2+，stream 是必需成员）
+                  ...assistantSettlement(turn, step),
                   message: {
                     id: mid,
                     role: 'assistant',
@@ -6817,7 +6842,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                     })
                   }
                   live.append('assistant/message', {
-                    turn: plan.turn, step,
+                    // settlement 三件套（live 会话必为 v2+，stream 是必需成员）
+                    ...assistantSettlement(plan.turn, step),
                     message: {
                       id: newId,
                       role: 'assistant',

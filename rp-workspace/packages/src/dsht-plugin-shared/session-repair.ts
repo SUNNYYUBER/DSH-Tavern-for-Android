@@ -200,6 +200,35 @@ export function repairSessionForV3(content: string): SessionRepairResult {
       if (r.changed) { changed = true; ev.data = r.data }
     }
 
+    // 3b-2) settlement 三件套补齐 —— **只在 v2+ 文件上做**（代次必须分叉，同 L30）。
+    //
+    // 官方代次清单（`dsh-session-format-v1-to-v2/lib/index.js:9-20`）：
+    //   · v0/v1：`assistant/message` = `["turn","step","message"]` —— **不含 `stream`**
+    //     （v0 的 payload 处置表 `dsh-session-format-v0-to-v1/lib/index.js:42-45` 同样只有 turn/step/message
+    //     + 可选 usage/interrupted；**带上 stream 反而是非法成员**）。
+    //   · v1→v2 迁移器负责把 `assistant/chunk` 累积成 `stream`
+    //     （`v1-to-v2/lib/index.js:752-768` `messageEvent()` → `stream: streamOf(group)`）。
+    //   · v2+：`assistant/message` = `["turn","step","message","stream"]`，`assistant/attempt` = `["turn","step","stream"]`
+    //     —— **`stream` 是必需成员**。
+    //
+    // 缺陷现场（2026-09-11 心跳 49，实机实证）：我方插件直写的是**运行中的 live 会话**
+    // （必为 v2+），却只写了 `turn/step/message`。**追加时不报错**——`validateSessionEventData`
+    // （`dsh-session/lib/index.js:231-249`）只检查 `request/header` 与 `tool/result`，压根不看 stream；
+    // 直到**冷启动加载**会话日志时走 `assertSessionEventEnvelope` → `assertAssistantSettlementShape`
+    // （`dsh-session/lib/types/index.js:204-212`）才抛
+    // `seed assistant/message at index N has invalid settlement fields` → **整个会话打不开**。
+    // 设备真值：`rp-wuwa` 会话 10 条此类事件（turn 13/14 各 5 条）→ 100% 不可加载；
+    // 补 `stream: []` 后用官方 `Session` 构造器复判即通过（负控：改成非数组立刻复现报错）。
+    if (srcVersion >= 2 && (ev.type === 'assistant/message' || ev.type === 'assistant/attempt')) {
+      const dd = ev.data as { stream?: unknown }
+      if (!Array.isArray(dd.stream)) {
+        dd.stream = []
+        changed = true
+        notes.push(`${ev.type} 缺 settlement 的 stream 字段（v2+ 必需）→ 补空数组`
+          + '（缺它 = 该会话冷启动加载即抛 invalid settlement fields，整个会话打不开）')
+      }
+    }
+
     // 3c) assistant/message 做 replace 节点 → 拆成「标记 replace + append」
     if (ev.type === 'assistant/message' && isReplaceSurfaceOp(ev.surfaceOp)) {
       const range = replaceRangeOf(ev.surfaceOp)!

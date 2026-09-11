@@ -10,7 +10,7 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
-> 最后更新：2026-09-11（心跳 48）
+> 最后更新：2026-09-11（心跳 49）
 
 ## 一句话现状
 
@@ -32,6 +32,7 @@
 | 显示成 `<interactive_input>$1` | ✅ 修好 | 心跳 36 |
 | **发不出来消息** | ✅ 修好 | 心跳 37 |
 | **升级 0.1.5 后发不出来消息** | ✅ 修好（两条平台级根因，见下） | 心跳 44 |
+| **旧会话打开报 `Failed to load history`** | ✅ 修好（写侧漏 `stream` 字段 → 冷启动整体拒收；已自愈 + 补判据 7） | 心跳 49 |
 
 ## 和 TauriTavern 的差距（用请求体积量化）
 
@@ -48,6 +49,16 @@
 | D-4 | 用户输入位置和 TT 不一样 | ⏸ **升级已完，结论不变**：需切 `llm-deepseek` 路由才可达（独立任务） |
 | D-6 | 多出 32 个工具定义（TT 没有） | ⏸ **等你拍板**（D-7 已实锤：TT 请求体**完全没有** `tools` 字段） |
 | D-7 | 采样参数对照 | ✅ **已补齐并修正**（心跳 46）：TT 侧首次抓到最终请求体。修正后真差异**只剩 D-6** —— `max_tokens` 映射正常（65535 = 预设值；首版误判系用错预设测量）、`top_p`/penalties 未发 = 宿主限制 H-②（非我方缺陷） |
+
+## ⏳ 等你拍板（5 项，都不阻塞我继续干别的活）
+
+| # | 要你定的事 | 我的建议 | 不定会怎样 |
+|---|---|---|---|
+| **T-42** 🔴 | 卡脚本要挂到 **ST 正则面板的 17 个 DOM 元素**（`#saved_regex_scripts` 等），我们前端是 DSH 的 UI，**一个都没有**。<br>**A** = 补齐挂载点 + 把 ST 全局正则接进我方正则引擎；**B** = 不补，登记为已知差异 | **建议 A**。`#saved_regex_scripts` 这个缺失按钮在**基准里有**（ST/TT 都有），不补就是功能差异。<br>**已降险**：卡的 34 条正则**已经真实生效**（走我方管线三源合并），缺的只是"面板这一层皮"，不是引擎 | 卡的 `ChatSquash()` / `MacroNest()` / 工具注册**永久不执行**（bootstrap 被这个异常中断） |
+| **D-6** | 我发给 AI 的请求里多出 **32 个工具定义**（24k 字说明书），TT 的请求体**完全没有** `tools` 字段 | 建议**关掉**（TT 是基准） | RP 场景下 AI 可能被工具说明带偏；请求体积虚高 |
+| **D-5a** | 手机时区显示为 `GMT` 时，系统给的时区名是 `+00:00`（非标准名），0.1.5 拒绝 → **发不出消息**。要不要做产品级兜底 | 建议**做**（`±HH:MM` → `Etc/GMT∓N` 映射，注入层一处） | 时区设为 GMT 的手机（模拟器默认）**打不开就发不出消息** |
+| **D-5b** | 要不要**一次性清洗存量脏楼层**（`$1` 残留 + `<interactive_input>` 包装被写回过） | 建议**先出只读报告**（命中几个文件/几层）再决定动不动手 | 老会话正文里留可见脏字符 |
+| **P-1** | 更新开关要用**哪个 GitHub 仓库**（公开 or 私有？影响鉴权） | 需你定；**公开**最简单（无需 token） | 阶段三发布前必须定；代码已就绪，只差填地址 |
 
 ## 心跳 47 做了什么（**把闸门的「覆盖范围」打开，一次抓出 5 个"从未生效"的功能**）
 
@@ -119,6 +130,49 @@
 `dsht-plugin-tavern-helper/lib/index.js` 含新提示语且**旧 422 串已消失**
 —— 排除「插件存在即跳过 → 源码改动静默不进包」（构建链第 ⑦ 类断链）。
 **设备实证**：卡脚本从"死在第 55 行"推进到 `RegexBinding@inject.js:3885`，**每秒重注册循环消失**（55s 窗口仅 1 条异常）。
+
+## 心跳 49 做了什么（**写侧不校验、读侧整体拒收 —— 这次坏的是你正在用的那个会话**）
+
+> 一句话：**不是修了一个字段，是把「验证读侧 ≠ 运行时读侧」这条元教训在第三个链位上又抓了一次。**
+> 上轮（心跳 47）它在**迁移校验**那一步漏网，这轮它在**运行时加载**那一步漏网 —— 同一个盲区，
+> 换了位置就再犯一次，说明防线要按"加载链的每一段"分别落，而不是补一处。
+
+| # | 结论 | 证据 |
+|---|---|---|
+| 1 | 🔴 **用户会话完全打不开** —— 实机 UI 红字 `Failed to load history: stored session "session-fdfc1a28…" is corrupt: seed assistant/message at index 246 has invalid settlement fields (gateway/internal)`。不是缺一段渲染，是**整份无法加载** | 设备 UI DOM 采集 |
+| 2 | 🔴 **根因：官方冷启动校验要求 `stream` 必须是数组** —— `assertAssistantSettlementShape` 要求 `turn`/`step` 为 safe int **且 `data.stream` 是 Array**；`expandAssistantStream` 就是 `for (const c of stream)`，`undefined` 直接 TypeError | `@deepseek-ai/dsh-session/lib/types/index.js:204-212` |
+| 3 | 🔴 **写侧从不校验，所以完全静默** —— 官方 `validateSessionEventData` **只查 `request/header` 与 `tool/result`，不看 `stream`** → 写的时候 HTTP 200、UI 无提示；**冷启动才炸，且炸掉整个会话** | 官方校验器源码 |
+| 4 | 🔴 **污染源是我们自己的 TH 写入桥** —— `th-edit` / `th-append` 追加 `assistant/message` 时只给 `turn/step/message`，**漏 `stream`**；共污染 **10 条**（turn 13-14 各 5 步） | `dsh-plugin/index.ts:6819`（th-edit）/ `:6629`（th-append）；seq 246/249/252/255/258/303/306/309/312/315 |
+| 5 | ✅ **代际必需字段集查清（官方处置表，非推测）** —— **v0** = `["turn","step","message"]`，**带上 `stream` 反而是非法成员**；`stream` 由 **v1→v2 迁移器**从 `assistant/chunk` **生成**；**v2+** = 四件套必需 | `v0-to-v1/lib/index.js:42-45`；`v1-to-v2/lib/index.js:752-768` |
+| 6 | ✅ **修复：单源 + 代次分叉** —— 新增 `assistantSettlement(turn, step)`（返回 `turn/step/stream:[]`），**6 个写侧**统一改用它；**v0 welcome 站点故意不写并加注释**说明为何不能写；`session-repair.ts` 增加**代次门控**回填（**仅 `srcVersion >= 2`**） | `session-write.ts` / `dsh-plugin/index.ts` ×5 / `dsht-plugin-prompt-template/index.ts` ×1 / `session-repair.ts` |
+| 7 | 🔴→✅ **防线的真空洞：判据用的读取器比运行时宽松** —— `verify-session-pipeline.mjs` 原先用 `foldSurface`（**兼容读取器**，两代字段名都认）→ 这个**已经装不进去**的会话文件此前被判「可迁移」。**与前一轮 L30 同源，第三次重演** | 新增**判据 7**：用官方 `new Session(id, events, header)` 做**运行时加载**判定 |
+| 8 | ✅ **回归 9 条，含一条关键负控** —— v3 回填 / v2 回填 / **v0 负控（给 v0 补 stream 必须失败）** / 真 stream 保留 / `assistant/attempt` / 幂等 + 单源形状 3 条 | `session-repair.spec.ts`（25 条）、`session-generation.spec.ts`（28 条） |
+| 9 | ⚠️ **新缺口：修链跳过「live」会话** —— `/rp/repair-sessions` 返回 `scanned 80 repaired 0 skipped 2`，目标会话原因 `live（关闭会话后重跑）`；另有一份 62.3MiB 超 32MiB 上限 | 已产出可复跑工具 `scripts/diag-session-loadable.mjs` |
+
+| 9 | ⚠️→✅ **「跳过」不可见是个真缺陷（L42）** —— 修完上面几条后去查"为什么这个坏会话一开始没被自动修掉"，遇到的是**查不到**：`repair-sessions` 返回 `skipped 2` 但**日志一行没有**（出日志条件是 `repaired>0 \|\| errors>0`，「只跳过」被排除）。第一反应"修复器没跑"是**错的** —— 实际"跑了、按设计跳过了"。**有意 ≠ 可以静默** | 已修：条件加 `skipped.length>0` + 按原因归类计数 + **逐条打印 sessionId 与原因**。设备实证 `skippedReason={"超上限":1}` → **`live` 消失**，证明「启动即修窗口」确实先于会话 live；最初记的「live 跳过是缺陷」是**误判**（探针发得太晚） |
+
+### 验收（全部实测）
+
+| 项 | 修复前 | 修复后 |
+|---|---|---|
+| 判定工具自证（官方 `Session` 为 oracle） | FAIL | OK（**负控**：non-array → 正确报错） |
+| 迷你树可迁移 | 0 / 1 | **1 / 1** |
+| 全树可迁移（迁移前树） | **39 / 80** | **80 / 80**（救回 **41**，质量项全 0） |
+| **设备当前真实树（最强判据）** | — | **81 / 81 本就通过**；判据7 运行时拒载 **0**；内容丢失/非幂等/身份漂移/每次重写 **全 0**；199.5MB / 15.9s |
+| 设备 UI `openError` | 红字错误 | **null**（元素数 668 → **1690**，滚动区 3000px，124 个正文叶子） |
+| `stage4-regression` | 20 / 21 | **21 / 21**（重装 v243 后复验） |
+| 单测 | 886 | **895**（47 文件，+9） |
+
+**交付**：双架构 APK 重打（x86_64 debug **sentinel v243**（196,815,740 B）+ arm64 release **sentinel v244**（128,339,432 B））；
+`npm run typecheck` = **三段式（core + ui + tests）全 0 错**。
+**产物新鲜度按第 ⑪ 条铁律解码后核验** —— 本轮新发现 esbuild 的**第三种**转义形态
+（每个 CJK 字符前加反斜杠，如 `\缺`），已并入 `scripts/check-artifact-freshness.mjs` 的解码规则；
+另新增 `scripts/check-apk-payload.py` 直接核验 **APK 内** `assets/dsh-runtime.zip` 的产物标记。
+解码后确认 staging / **APK 内** / **设备侧**（876,089 B）三处均含
+`assistantSettlement`×7 / `dd.stream = []`×1 / 新提示语×1 / `skippedReason=`×1。
+**沉淀**：LEARNINGS **L39**（验证读侧 ≠ 运行时读侧，按加载链分段落防线）/ **L40**（持久化字段集按代次分叉）/
+**L41**（写时不校验、读时爆炸 = 持久化层标准静默失败形态）/ **L42**（有意跳过 ≠ 可以静默；
+健康系统必须能区分「做成了 / 失败了 / 有意没做」）。
 
 ## 升级已完成：DSH 0.1.2 → 0.1.5 ✅（度量 5/5）
 
@@ -315,20 +369,22 @@
 | ~~D1~~ | ~~是否继续 0.1.5 升级~~ | ✅ **已升级完成**（两条 Android 平台级阻塞均已修复并实机验证） |
 | ~~D2~~ | ~~`thData/thSystem/ejsProcessed` 迁到哪~~ | ✅ **已执行方案①**：迁入 `$DSH_HOME/rp/th-floors/<sid>.json` 旁路存储 |
 | ~~D3~~ | ~~是否允许一次性 normalizer 改写既有会话~~ | ✅ **已执行**（四层回滚保险 + 副本先行验证，80/80 通过） |
-| **T-42** 🔴 | **卡脚本要挂到 ST 的正则面板 DOM（`#saved_regex_scripts`），我们前端是 DSH 的 UI，没有这个元素。**<br>（A）补挂载点**并**把 ST 全局正则 `extension_settings.regex` 真接进我方正则引擎<br>（B）不补，登记为已知差异<br>（C）只补空容器 | **建议 A**。<br>理由：基准（ST/TT）**有**这个元素，不补是与基准的功能差异；但**只补空容器（C）会造成新的静默失败**（卡以为挂上了、正则却不生效），**故坚决不做 C**。<br>代价：A 的工作量中等偏大（需要搬 ST 正则面板语义 + 打通全局正则到引擎）；B 的代价是卡的核心功能（`ChatSquash`/`MacroNest`/工具注册）保持缺失。 |
+| **T-42** 🔴 | **卡脚本要挂到 ST 的正则面板 DOM（`#saved_regex_scripts`），我们前端是 DSH 的 UI，没有这些元素。**<br>（A）补挂载点**并**把 ST 全局正则 `extension_settings.regex` 真接进我方正则引擎<br>（B）不补，登记为已知差异<br>（C）只补空容器 | **建议 A**。<br>理由：基准（ST/TT）**有**这些元素，不补是与基准的功能差异；但**只补空容器（C）会造成新的静默失败**（卡以为挂上了、正则却不生效），**故坚决不做 C**。<br>**心跳 49 已把代价量化**：`tmp/t37-inject.js` 实际引用 **16 个** ST DOM id（`#saved_regex_scripts` / `#bulk_*_regex` ×5 / `#import_regex*` ×3 / `#saved_spreset_scripts` / `#preset_scripts_block` / `#completion_prompt_manager` / `#open*_editor` / `#sort_regexes` / `#squash_enabled_content`…），我方源码**命中 0 个**（16/16 缺失）。<br>**降险事实（重要）**：卡的 **34 条正则（17 启用 / 17 停用）已经通过我方管线真实加载并生效**（三源合并 global→character→preset，预设 `st-[主预设] V17.1 示例预设 · 示例角色-1lnwm2`），回归已实证。故缺的**只是 ST 面板 DOM 这一层皮 + `extension_settings.regex` 这个全局引用**，不是正则引擎本身。<br>代价：A 需把 16 个 id 的面板语义搬进来（我方已有 `RegexPanel.tsx` + `/regexes/get`、`/regexes/replace` 路由可复用），工作量中等；B 的代价是卡 bootstrap 后三行（`ChatSquash()` / `MacroNest()` / `syncSPresetToolRegistrations()`）**永久不执行**。 |
 | **D-6** | 多出的 32 个工具定义要不要处理（TT 请求体**完全没有** `tools` 字段） | **分开处理**，升级已完成，可单独评估开关 |
-| **D-5** | 设备时区为 `GMT` 时 WebView 给出 `+00:00`（非 IANA 名）被宿主拒收，产品级兜底要不要做 | 测试环境已用 `persist.sys.timezone` 解封；产品级兜底（`±HH:MM` → `Etc/GMT∓N` 注入层映射）**待你定** |
+| **D-5a** | 设备时区为 `GMT` 时 WebView 给出 `+00:00`（非 IANA 名）被宿主拒收，产品级兜底要不要做 | 测试环境已用 `persist.sys.timezone` 解封；产品级兜底（`±HH:MM` → `Etc/GMT∓N` 注入层映射）**待你定** |
+| **D-5b** | 清洗存量脏楼层（`$1` 残留 + `<interactive_input>` 包装回写）—— 一次性 migration，扫 `storages/session_projcache/sessions/*.json` | **待你定**。建议：**先出只读报告**（命中文件数/楼层数）再决定动不动手 |
+| **T-25** | 大扫除（发布前 P2 硬门槛） | **需你先解冻 RP 数据**（否则扫不干净） |
 | **P-1** | 更新开关要用哪个 GitHub 仓库（公开 / 私有） | 待定；阶段三发布前必须定 |
 | ~~C~~ | ~~「动态替换提示词」要不要启用~~ | 升级已完成，结论：需切 `llm-deepseek` 路由才生效（独立任务 = D-4） |
 
 ## 关键数字
 
 ```
-自研代码   41,089 行（src 下 .ts/.tsx，不含构建产物）
-自动化测试  47 个文件 / 886 项全绿
+自研代码   41,164 行（src 下 .ts/.tsx，不含构建产物）
+自动化测试  47 个文件 / 895 项全绿
 类型闸门   3 段式全 0 错（typecheck:core / :ui / :tests）
-提交次数   83 次
-最新 APK   x86_64-debug 196.8MB（sentinel v237）/ arm64-release 128.3MB（sentinel v238）
+提交次数   85 次
+最新 APK   x86_64-debug 196.8MB（sentinel v243）/ arm64-release 128.3MB（sentinel v244）
 内嵌 DSH   0.1.5-rc.1
 ```
 

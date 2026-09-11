@@ -29,10 +29,16 @@
  *      加这条的原因 = 实机事故：某次修复把 `dsht-welcome` 的相对 cwd `rp/_start`
  *      补成绝对路径却没搬目录 → 目录名与 cwd 不符 → 会话在核心搬迁中**整份丢失**
  *      （设备 80 → 79）。离线链若能改 cwd，就该在这里被拦下。
+ *   7. 【2026-09-11 心跳 49 新增】**过得了运行时加载**：迁移 + foldSurface 之后，
+ *      还必须能通过 `new Session(id, events, header)`（= `Session.fromRestore`，
+ *      运行时真正加载会话走的那条路）。
+ *      加这条的原因 = 又一次「验证读侧 ≠ 运行时读侧」（L30）：我们自己的 TH 写桥
+ *      往 v3 会话追加 `assistant/message` 时漏了 `stream`，**本脚本原先判它「可迁移」**，
+ *      而设备上该会话 100% 打不开（`invalid settlement fields`）。
  *
  * 用法：
  *   node verify-session-pipeline.mjs <会话树根目录> [--out <证据日志路径>]
- * 退出码：0 = 六项判据全过；1 = 有失败
+ * 退出码：0 = 七项判据全过；1 = 有失败
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -161,11 +167,26 @@ const { sessionFormatCatalog } = await import(
   pathToFileURL(`${RT}/node_modules/@deepseek-ai/dsh-session-format-catalog/lib/index.js`).href)
 const { foldSurface } = await import(
   pathToFileURL(`${RT}/node_modules/@deepseek-ai/dsh-session/lib/types/surface.js`).href)
+// 判据 7 的判定器：**运行时加载路径的那一个**（不是 foldSurface 这个兼容读取器）
+const { Session } = await import(
+  pathToFileURL(`${RT}/node_modules/@deepseek-ai/dsh-session/lib/index.js`).href)
 const rtVersion = JSON.parse(fs.readFileSync(
   `${RT}/node_modules/@deepseek-ai/dsh/package.json`, 'utf8')).version
 emit(`[env] 官方迁移链版本 = ${rtVersion}`)
 
-/** 官方链路判定：迁移 + surface 折叠。返回 null 表示通过，否则返回错误串。 */
+/**
+ * 官方链路判定：迁移 + surface 折叠 + **运行时加载校验**。返回 null 表示通过。
+ *
+ * 【判据 7 / 心跳 49 新增】最后一步 `new Session(...)` 是**运行时真正加载会话走的那条路**
+ * （`dsh-session-persistence-jsonl` 的 `Session.fromRestore`）。加它的原因是一次实机事故：
+ *   我方 TH 写桥往 v3 会话追加 `assistant/message` 时漏了 `stream` 字段 ——
+ *   `sessionFormatCatalog` 迁移**通过**、`foldSurface` 折叠**通过**（两者都不是加载期的
+ *   校验器），但运行时 `assertSessionEventEnvelope → assertAssistantSettlementShape`
+ *   （`dsh-session/lib/types/index.js:204-212`）直接抛
+ *   `seed assistant/message at index N has invalid settlement fields` → **会话打不开**。
+ *   即：**本脚本原先会把这个坏文件判成「可迁移」** —— 防线在"真读"那一步是空的（L30）。
+ *   实测证据：对该坏文件，前两步均通过、第三步必抛（`LOAD-REJECT`）。
+ */
 function officialFold(text) {
   const rows = text.split('\n').filter((l) => l.trim() !== '')
   if (rows.length === 0) return '空文件'
@@ -183,6 +204,12 @@ function officialFold(text) {
   let art
   try { art = restore.finish() } catch (e) { return `FINISH-REJECT: ${e.message}` }
   try { foldSurface(art.events) } catch (e) { return `FOLD-REJECT: ${e.message}` }
+  // ★ 判据 7：运行时加载路径的严格校验器（缺它 = 防线在"真读"那一步是空的）
+  try {
+    void new Session(header.id, art.events, art.header ?? header)
+  } catch (e) {
+    return `LOAD-REJECT: ${e.message}`
+  }
   return null
 }
 
@@ -251,6 +278,8 @@ emit(`\n[pipeline] 会话树 ${treeRoot} → ${files.length} 个会话\n`)
 let beforeFail = 0, afterFail = 0, fixed = 0, regress = 0
 let nonIdempotent = 0, lossy = 0, keyDrift = 0, rewriteEveryBoot = 0, totalBytes = 0, salvagedTotal = 0, movedTotal = 0
 let cwdFixed = 0
+/** 判据 7 的可见面：修复前有多少会话是「迁移/折叠都过、但运行时加载拒绝」——即旧判据完全看不见的那一类 */
+let loadRejectBefore = 0, loadRejectAfter = 0
 const failures = [], problems = [], noteCounts = new Map()
 const t0 = Date.now()
 
@@ -260,6 +289,7 @@ for (const f of files) {
   totalBytes += Buffer.byteLength(orig)
   const origErr = officialFold(orig)
   if (origErr !== null) beforeFail++
+  if (origErr !== null && origErr.startsWith('LOAD-REJECT')) loadRejectBefore++
 
   // 第四步（cwd 规范化）**先跑**，与设备启动顺序一致（repairSessionCwds 早于 repairAllSessionSeqs）。
   // 它可能改 header.cwd 并把目录改名 → 判据 5 的 dirKey 基准随之更新。
@@ -274,6 +304,7 @@ for (const f of files) {
   }
   if (r.error) { afterFail++; failures.push({ rel, err: `seq 修复失败: ${r.error}` }); continue }
   const afterErr = officialFold(r.content)
+  if (afterErr !== null && afterErr.startsWith('LOAD-REJECT')) loadRejectAfter++
 
   if (afterErr !== null) {
     afterFail++
@@ -359,6 +390,8 @@ emit(`目录身份漂移        ${keyDrift}`)
 emit(`每次启动会重写      ${rewriteEveryBoot}`)
 emit(`cwd 规范化          ${cwdFixed} 个会话（相对 cwd → 绝对 + 目录改名）`)
 emit(`source 扩展键迁移   ${salvagedTotal} 个楼层 / ${movedTotal} 段文本改载 sidecar（未丢失）`)
+emit(`【判据7】运行时拒载   修复前 ${loadRejectBefore} → 修复后 ${loadRejectAfter}`
+  + `（迁移/折叠都过、只有「运行时加载」这一步拒收的那一类的可见面）`)
 emit(`总数据量            ${(totalBytes / 1048576).toFixed(1)}MB / 耗时 ${secs}s`)
 if (failures.length) {
   emit(`\n--- 仍失败 (${failures.length}) ---`)
@@ -372,7 +405,7 @@ emit(`\n--- 修复动作分布 ---`)
 for (const [k, n] of [...noteCounts].sort((a, b) => b[1] - a[1])) emit(`  ${String(n).padStart(4)}  ${k}`)
 
 const pass = afterFail === 0 && regress === 0 && lossy === 0 && nonIdempotent === 0 && keyDrift === 0 && rewriteEveryBoot === 0
-emit(`\n[pipeline] ${pass ? '✅ 六项判据全过 —— 阶段 3 通过' : '❌ 存在未通过项 —— 阶段 3 不通过'}`)
+emit(`\n[pipeline] ${pass ? '✅ 七项判据全过 —— 阶段 3 通过' : '❌ 存在未通过项 —— 阶段 3 不通过'}`)
 
 // 清理现场（不要把验证产物留在会被打包的 staging 目录）
 try { fs.rmSync(path.dirname(BUNDLE), { recursive: true, force: true }) } catch { /* 忽略 */ }

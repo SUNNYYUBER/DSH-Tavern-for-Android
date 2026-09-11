@@ -24,7 +24,7 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { scanSessionHeaders, pickCurrentSessionFilename, currentSessionLogPath } from '../src/dsht-plugin-shared/session-surgery.ts'
-import { readSurgicalPayload, readSurgicalAnchor } from '../src/dsht-plugin-shared/session-write.ts'
+import { readSurgicalPayload, readSurgicalAnchor, assistantSettlement } from '../src/dsht-plugin-shared/session-write.ts'
 import { extractFloorsFromEvents } from '../src/dsht-plugin-memory/index.ts'
 
 // ---------------------------------------------------------------- ① 世代
@@ -249,5 +249,42 @@ describe('extractFloorsFromEvents 的掩码读法（回归：0.1.5 新形态标�
     ]
     expect(extractFloorsFromEvents(ev2).floors.map(f => f.text))
       .toEqual(['第一句', '第一答', '第二句', '第二答'])
+  })
+})
+
+/**
+ * assistantSettlement：settlement 三件套单源（心跳 49 事故回归）
+ * ==========================================================================
+ * 事故：6 处手写字面量各自漏了 `stream`，往 v3 会话写出的事件让会话**冷启动打不开**
+ * （`seed assistant/message at index N has invalid settlement fields`）。
+ * 判据（钉的是什么）：三件套必须齐、`stream` 必须是**数组**（且为空数组而非省略），
+ * 且这个函数存在本身就是为了让"手写字面量"不再有第二次机会。
+ */
+describe('assistantSettlement（官方 settlement 三件套单源）', () => {
+  it('返回 turn/step/stream 三件，stream 是空数组（不是 undefined、不是省略）', () => {
+    const d = assistantSettlement(3, 2)
+    expect(d.turn).toBe(3)
+    expect(d.step).toBe(2)
+    expect(Array.isArray(d.stream)).toBe(true)
+    expect(d.stream).toEqual([])
+    expect(Object.keys(d).sort()).toEqual(['step', 'stream', 'turn'])
+  })
+
+  it('🔴 负控：返回的对象**不能**只有 turn/step（缺 stream 就复现事故）', () => {
+    // 用官方判据的形状（assertAssistantSettlementShape）自证：
+    // 缺 stream → 该形状必须被判不合法；这正是设备上 rp-wuwa 会话打不开的原因。
+    const isSettlementShaped = (d: Record<string, unknown>) =>
+      typeof d.turn === 'number' && Number.isSafeInteger(d.turn) && (d.turn as number) >= 0
+      && typeof d.step === 'number' && Number.isSafeInteger(d.step) && (d.step as number) >= 0
+      && Array.isArray(d.stream)
+    expect(isSettlementShaped({ turn: 1, step: 1 })).toBe(false)
+    expect(isSettlementShaped(assistantSettlement(1, 1))).toBe(true)
+  })
+
+  it('turn/step 可被调用点覆写（变体切换先铺 1/1 再由 plan 覆写）', () => {
+    const d = { ...assistantSettlement(1, 1), turn: 7, step: 3 }
+    expect(d.turn).toBe(7)
+    expect(d.step).toBe(3)
+    expect(d.stream).toEqual([])
   })
 })

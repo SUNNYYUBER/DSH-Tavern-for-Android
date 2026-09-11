@@ -441,3 +441,122 @@ describe('session-repair: surfaceOp 字段名按代次自适应（心跳 47 事�
     }
   })
 })
+
+/**
+ * settlement 三件套（心跳 49 事故回归：会话冷启动打不开）
+ * =====================================================================
+ * 事故：我方插件的两条 TH 写桥（`th-append` / `th-edit`）往**运行中的 v3 会话**
+ * 追加 `assistant/message` 时只写 `turn/step/message`，**漏了 `stream`**。
+ * 追加那一刻不报错（`validateSessionEventData` 不看 stream），直到用户**下次冷启动
+ * 打开该会话**才抛 `seed assistant/message at index N has invalid settlement fields`
+ * → 整个会话打不开（UI 红字 `Failed to load history`）。设备真值：rp-wuwa 会话 10 条。
+ *
+ * 判据（本组钉死的是什么）：
+ *   · v2/v3 文件缺 `stream` → 必须补 `[]`，且必须算 `changed`（否则不自愈、会话永远打不开）。
+ *   · **v0 文件不能补** —— v0 的 assistant/message 处置表只有 turn/step/message
+ *     （`dsh-session-format-v0-to-v1/lib/index.js:42-45`），`stream` 由 v1→v2 迁移器生成；
+ *     在 v0 上补 `stream` 会引入**非法成员**。**代次不同则字段不同**（L30 纪律）。
+ *   · 幂等：第二遍零改动。
+ */
+describe('session-repair: settlement 三件套（stream 缺失 → 补 []，仅 v2+）', () => {
+  /** 造一条**故意缺 stream** 的 assistant/message */
+  const MA_NO_STREAM = (turn: number, step: number, id: string, text: string) =>
+    ['assistant/message', { turn, step, message: { id, role: 'assistant', content: [{ type: 'text', text }], source: { kind: 'model', provider: 'th', model: 'th-edit' } } }, { surfaceOp: 'append' }] as [string, Record<string, unknown>, Record<string, unknown>]
+
+  it('v3 文件里 assistant/message 缺 stream → 补空数组 + 计为已修改', () => {
+    const src = sessionV3([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MA_NO_STREAM(1, 1, 'a1', '[角色创建与故事开场]'),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+    ])
+    const r = repairSessionForV3(src)
+    expect(r.changed).toBe(true)
+    const ev = parse(r.content).find(e => e.type === 'assistant/message')!
+    expect(Array.isArray((ev.data as { stream?: unknown }).stream)).toBe(true)
+    expect((ev.data as { stream: unknown[] }).stream).toEqual([])
+    expect(r.notes.join('|')).toContain('stream')
+  })
+
+  it('v2 文件（header.version=2）同样补 stream（v2+ 都要求该成员）', () => {
+    const hdr2 = JSON.stringify({ type: 'session', version: 2, id: 's1', createdAt: 1, cwd: '/data/x', delegationDepth: 0 })
+    const lines = [hdr2]
+    const evs: Array<[string, Record<string, unknown>, Record<string, unknown>?]> = [
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MA_NO_STREAM(1, 1, 'a1', '正文'),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+    ]
+    evs.forEach(([type, data, extra], i) => lines.push(JSON.stringify({ type, seq: i, time: 1000 + i, data, ...(extra ?? {}) })))
+    const r = repairSessionForV3(lines.join('\n') + '\n')
+    expect(r.changed).toBe(true)
+    const ev = parse(r.content).find(e => e.type === 'assistant/message')!
+    expect(Array.isArray((ev.data as { stream?: unknown }).stream)).toBe(true)
+  })
+
+  it('🔴 负控：v0 文件**不得**补 stream（带上 stream 反而是 v0 的非法成员）', () => {
+    // 这条是"代次纪律"的看门测试：v0 的 payload 处置表 = ["turn","step","message"]
+    // （可选 usage/interrupted），没有 stream；v1→v2 迁移器才从 assistant/chunk 生成它。
+    // 若将来有人"顺手统一"把 backfill 的版本闸门去掉，这条会立刻红。
+    const src = session([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      ['assistant/message', { turn: 1, step: 1, message: { id: 'a1', role: 'assistant', content: [{ type: 'text', text: '开场引导' }], source: { kind: 'model', provider: 'p', model: 'welcome' } } }, { surfaceOp: 'append' }],
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+    ])
+    const r = repairSessionForV3(src)
+    const ev = parse(r.content).find(e => e.type === 'assistant/message')!
+    expect((ev.data as { stream?: unknown }).stream).toBeUndefined()
+    expect(r.notes.join('|')).not.toContain('stream')
+  })
+
+  it('已带真实 stream（有 chunk）的事件 → 原样保留，不被覆盖成 []', () => {
+    const src = sessionV3([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      ['assistant/message', {
+        turn: 1, step: 1,
+        message: { id: 'a1', role: 'assistant', content: [{ type: 'text', text: '正文' }], source: { kind: 'model', provider: 'p', model: 'm' } },
+        stream: [{ type: 'chunk', time: 1, chunk: { type: 'text-delta', index: 0, text: '正' } }],
+      }, { surfaceOp: 'append' }],
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+    ])
+    const r = repairSessionForV3(src)
+    const ev = parse(r.content).find(e => e.type === 'assistant/message')!
+    const st = (ev.data as { stream: unknown[] }).stream
+    expect(Array.isArray(st)).toBe(true)
+    expect(st.length).toBe(1)
+  })
+
+  it('assistant/attempt 缺 stream（v3）→ 同样补齐', () => {
+    const src = sessionV3([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      ['assistant/attempt', { turn: 1, step: 1 }, { surfaceOp: 'append' }],
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+    ])
+    const r = repairSessionForV3(src)
+    expect(r.changed).toBe(true)
+    const ev = parse(r.content).find(e => e.type === 'assistant/attempt')!
+    expect((ev.data as { stream?: unknown }).stream).toEqual([])
+  })
+
+  it('幂等：补过 stream 的 v3 会话第二遍零改动（不得反复重写）', () => {
+    const src = sessionV3([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MA_NO_STREAM(1, 1, 'a1', '正文'),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+    ])
+    const r1 = repairSessionForV3(src)
+    expect(r1.changed).toBe(true)
+    const r2 = repairSessionForV3(r1.content)
+    expect(r2.changed).toBe(false)
+  })
+})

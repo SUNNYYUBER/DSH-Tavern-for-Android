@@ -126,6 +126,37 @@ function isInvalidSurfaceOp(e: unknown): boolean {
 /** 供测试重置缓存 */
 export function __resetSurfaceOpStyleForTest(): void { opStyle = 'current' }
 
+// ---------------------------------------------------------------- settlement 三件套
+
+/**
+ * 官方 `assistant/message` / `assistant/attempt` 的 **settlement 三件套**（turn / step / stream）。
+ *
+ * 【为什么必须有这个单源函数】2026-09-11 心跳 49 实机实证的静默失败：
+ *   · 运行时在**冷启动加载**会话日志时走 `assertSessionEventEnvelope`
+ *     → `assertCurrentLlmShape` → `assertAssistantSettlementShape`
+ *     （`@deepseek-ai/dsh-session/lib/types/index.js:204-212`），要求
+ *     `turn`/`step` 为 ≥0 的安全整数**且 `data.stream` 必须是数组**；
+ *     缺 `stream` 直接抛 `seed assistant/message at index N has invalid settlement fields`
+ *     → **整个会话打不开**（UI 红字 `Failed to load history`）。
+ *   · 而**追加时完全不校验**：`validateSessionEventData`
+ *     （同文件 :231-249）只检查 `request/header` 与 `tool/result`，不看 stream。
+ *     → 我方插件直写缺 `stream` 的消息，**不报错、不打日志、HTTP 200**，
+ *       直到用户下次冷启动打开该会话才炸 —— 典型静默失败族。
+ *   · 设备实证：`rp-wuwa` 会话 10 条 `assistant/message`（th-edit / th-append 两条写路径）
+ *       缺 `stream` → 会话 100% 打不开；补 `stream: []` 后用官方 `Session` 构造器复判即通过。
+ *
+ * 【为什么是空数组而不是省略】官方自身对「无流式 chunk」的 assistant 消息也写 `stream: []`
+ * （设备实证：核心写的 assistant/message 带 `stream: Array(0)`）；且消费侧
+ * `expandAssistantStream(stream)` 实现是 `for (const c of stream)`
+ * （`dsh-llm/lib/index.js:1206`）—— `undefined` 会抛 `TypeError: not iterable`。
+ *
+ * 【纪律】任何写 `assistant/message` / `assistant/attempt` 的地方**都必须**用本函数铺开字段，
+ * 不要再手写字面量（本次缺陷正是 6 处手写字面量各自漏了 `stream`）。
+ */
+export function assistantSettlement(turn: number, step: number): { turn: number; step: number; stream: never[] } {
+  return { turn, step, stream: [] }
+}
+
 // ---------------------------------------------------------------- 落点规划
 
 /**

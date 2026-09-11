@@ -25,7 +25,7 @@ import { readJsonBody, registerPrefix, resolveDshHome, sendJson, type LikePlugin
 import { registerSettingsNamespace } from '../dsht-plugin-shared/settings-ns.ts'
 // 【阶段3 2026-09-10】B8 永久写回改用官方合法形态（surfaceOp 字段名自适应 +
 // user 标记 replace + assistant append；0.1.5 禁止 assistant 做 replace 节点）
-import { appendReplace, markerSource, planAssistantRewrite, type AppendableSession } from '../dsht-plugin-shared/session-write.ts'
+import { appendReplace, markerSource, planAssistantRewrite, assistantSettlement, type AppendableSession } from '../dsht-plugin-shared/session-write.ts'
 import { randomUUID } from 'node:crypto'
 
 export const name = 'dsht-plugin-prompt-template'
@@ -324,6 +324,10 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
       live.append('turn/start', { turn: plan.turn })
       live.append('step/start', { turn: plan.turn, step: plan.step })
       live.append('assistant/message', {
+        // settlement 三件套先铺底（stream 缺省为空数组）：原事件若真带 stream（有 chunk），
+        // 紧随其后的 `...ev.data` 会把它覆盖回来；原事件若缺 stream（历史脏数据），
+        // 这里补上的空数组即为正确形状 —— 否则写出的事件会让整个会话冷启动加载失败。
+        ...assistantSettlement(plan.turn, plan.step),
         ...(ev.data as object),
         turn: plan.turn,
         step: plan.step,

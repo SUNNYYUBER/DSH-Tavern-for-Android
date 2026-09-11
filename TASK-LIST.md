@@ -323,6 +323,43 @@
     （`extension_settings.regex`）真接进我方正则引擎 → 真修，工作量中等偏大。
   - **B**：不补，登记为已知差异 → 卡的上述核心功能保持缺失。
   - **C**：只补容器 → **不做**（半吊子 = 静默失败，违反项目纪律）。
+- **心跳 49 代价量化（决策材料，非新结论）**：
+  - `tmp/t37-inject.js` 实际引用 **16 个** ST DOM id：
+    `#saved_regex_scripts` / `#bulk_select_all_toggle` / `#bulk_enable_regex` / `#bulk_disable_regex`
+    / `#bulk_delete_regex` / `#bulk_export_regex` / `#import_regex` / `#import_regex_preset`
+    / `#import_regex_preset_file` / `#open_regex_editor` / `#open_preset_editor`
+    / `#openai_preset_import_file` / `#saved_spreset_scripts` / `#preset_scripts_block`
+    / `#completion_prompt_manager` / `#sort_regexes` / `#squash_enabled_content`（含 `#squash_enabled_content` 共 17 个表面 id）。
+  - 我方源码对这 17 个 id **命中 0 个**（逐一 `grep -rl` 于 `packages/src`，全为 0）。
+  - ✅ **降险事实**：卡的 **34 条正则（17 启用 / 17 停用）已经通过我方管线真实加载并生效**
+    （三源合并 global→character→preset），回归已实证 → 缺的**只是「ST 面板 DOM 这一层皮」
+    + `extension_settings.regex` 这个全局引用**，**不是正则引擎本身**。
+  - 复用面：我方已有 `dsht-rp-ui/src/client/RegexPanel.tsx` + `/regexes/get`、`/regexes/replace`
+    等路由，A 方案可在此之上做挂载适配，不必从零造面板。
+
+### T-43　🟠→✅ 会话修复链的「跳过」不可见（心跳 49 新暴露，**同日收口**）
+- **现象**：设备侧 `POST /rp/repair-sessions` 返回 `scanned 80  repaired 0  skipped 2`，
+  目标会话的 skip 原因 = **`live（关闭会话后重跑）`**；另一份 = `文件 62.3MiB 超 32MiB 上限`。
+- **第一步归因（错的那一步）**：以为"修复器没跑"。**实为"跑了、但按设计跳过了"** ——
+  因为出日志的条件写的是 `repaired > 0 || errors > 0`，**「只跳过」这种组合被排除在外**，
+  于是日志里一行都没有，排查时线索为零。
+- 🔴 **真缺陷 = 静默的有意行为**（→ 固化为 LEARNINGS **L42**）：跳过/短路/降级同样是"事件"，
+  必须留痕，且要留到能定位**具体对象**（哪个 sessionId、什么原因），不能只给计数。
+- ✅ **已修**：`repairAllSessionSeqs` 出日志条件加入 `skipped.length > 0`；按原因归类计数
+  （`live×N` / `超上限×N`）；并**逐条**打印被跳过的 sessionId 与原因。
+- ✅ **设备实证（重装 v243 后冷启动）**：
+  ```
+  [dsht-rp] repair-sessions: repaired=0 skipped=1 errors=0 skippedReason={"超上限":1}
+  ```
+  —— **`live` 跳过消失了**，只剩那条 62.3MiB 超限的。说明：
+  ① 「启动即修窗口」（`dsh-plugin/index.ts:3015`）**确实在会话变 live 之前跑**，设计成立；
+  ② 之前观测到的 `live` 是因为**探针在会话已打开之后才发**，不是修复链的缺陷；
+  ③ 现在日志能一眼看出"谁被跳过、为什么"。
+- **残留（低优先）**：`超上限 32MiB` 那条（62.3MiB）**永久修不到** —— 上限的依据是
+  峰值堆 ≈ 7.2×文件体积（62.3MiB → 448MiB）超 Android node `--max-old-space-size=2048`。
+  真正解法是流式/分块修复，属独立课题，不阻塞发布。
+- **已产出工具**：`scripts/diag-session-loadable.mjs`（官方 `new Session(...)` 为 oracle，含 `--selftest` 负控）
+  + `scripts/ui-accept.mjs`（设备 UI 验收探针）+ `scripts/check-apk-payload.py`（APK 内产物标记核验）。
 
 ### T-41　🟠→✅ 注册端点不再「比基准更严」：`registerVariableSchema` 拒收既有值不匹配（已修）
 - **暴露方式**：T-40 修完后重跑采集器，卡脚本的 bootstrap **再往深处走**，在 iframe 侧抛出
