@@ -10,7 +10,7 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
-> 最后更新：2026-09-11（心跳 49）
+> 最后更新：2026-09-11（心跳 50）
 
 ## 一句话现状
 
@@ -173,6 +173,44 @@
 **沉淀**：LEARNINGS **L39**（验证读侧 ≠ 运行时读侧，按加载链分段落防线）/ **L40**（持久化字段集按代次分叉）/
 **L41**（写时不校验、读时爆炸 = 持久化层标准静默失败形态）/ **L42**（有意跳过 ≠ 可以静默；
 健康系统必须能区分「做成了 / 失败了 / 有意没做」）。
+
+## 心跳 50 做了什么（**从「逐墙试错」升级成「一次性静态穷举」—— 一轮列出 13 个缺口**）
+
+> 一句话：前三轮都是**串行试错**（补一道墙 → 重跑 → 错误前移 → 再补下一道），
+> 一轮只能推进一格，而且**下一条错在哪要等卡脚本跑到了才知道**。
+> 本轮换成**静态穷举**：把卡脚本里所有 `ctx.*` 访问路径机械抽出来，和基准的 `getContext()` 面做差集
+> → **13 个缺口一次全部列出**，不用再等运行时报错。
+
+| # | 结论 | 证据 |
+|---|---|---|
+| 1 | ✅ **新防线：`scripts/audit-card-context-surface.mjs`** —— 抽出卡脚本 **52 条** `ctx.*` 访问路径，与真 ST `getContext()` 的 **145 个成员**做差集。**判定口径只认「基准有、我们没有」**（我们比基准多不算缺陷，符合 L36「不能少也不能多」） | CLI：`--script <card.js>` / `--selftest`，有缺口即 exit 1 |
+| 2 | ⚠️→✅ **枚举器自己先翻车一次（新教训 L44）** —— 首版解析器只识别 `key:` 形式，**简写属性（`eventSource,`）全部看不见** → 测出来"只有 33 个成员"，**会给出看着干净的假结论**。重写后 `--selftest` 正控钉住 shorthand / nested / str / tpl / fn / last 六类形态 | `--selftest` 断言 `['shorthand','nested','str','tpl','fn','last']` |
+| 3 | ✅ **实现 15 个宿主门面成员（缺口 13 → 6）** —— i18n 四件套（`t`/`translate`/`getCurrentLocale`/`addLocaleData`）、弹窗三件（`POPUP_TYPE`/`POPUP_RESULT`/`callGenericPopup`）、工具五件（`registerFunctionTool`/`unregisterFunctionTool`/`isToolCallingSupported`/`canPerformToolCalls`/`ToolManager`）、`isMobile`、`event_types`（legacy 别名）、`saveSettingsDebounced`。**每一条语义都带基准 `file:line` 溯源**，不靠"文档直觉" | 新建 `src/client/host-st-surface.ts`（三节：i18n / popup / tools） |
+| 4 | ⚠️ **「文档直觉」被基准推翻（新教训 L46）** —— 我按常识写的默认按钮是 `OK`/`Cancel`，基准实际是 **CONFIRM = `Yes`/`No`**、**INPUT = `Save`/`Cancel`**；更关键的是**这些默认文案不在 JS 里，而在 HTML 模板的 data 属性**（`index.html:6456/6464/6473-6475`）→ 只读 JS 永远查不出来 | 依 `popup.js:454-501` 逐条校正 |
+| 5 | ✅ **弹窗保真度四处校正** —— ① INPUT 的 Cancel **不该隐藏**（原实现隐藏了）② 按钮**顺序**须 OK 在 Cancel 之前（真机实测返回 `No\|Yes` = 顺序反了）③ `okButton: true` 时应保留 `'OK'` 而非套用 CONFIRM 默认 ④ 输入控件**恒为 `<textarea>`**、X 按钮解析为 **`NEGATIVE(0)`** 而非 AFFIRMATIVE | 设备行为验收 26/26 |
+| 6 | 🔴→✅ **T-43 是「假差异」，不是数据缺陷（L45，L30 第三次重演）** —— 62.3MiB 会话被 `diag-session-loadable.mjs` 判 corrupt，`verify-session-pipeline.mjs` 却说 81/81 全过。**根因是口径不是数据**：该工具把文件里原样的 v0 事件直接喂 `new Session(...)`，**不做 v0→v3 迁移**；而那个文件正是一份 `version:0` / `origin:"subagent"` 的导入流水线会话 | 已给工具补⚠️前置条件警告（"判 v0~v2 请改用 `verify-session-pipeline.mjs`"）+ 给跳过日志加会话身份（`origin=… agentPreset=…`） |
+| 7 | ✅ **修掉一处自己的「假绿」防线** —— `check-apk-payload.py` 原先**硬编码只看 `dsht-rp-plugin/lib/index.js`** → 本轮改的是 `dsht-rp-ui`，**这工具根本验不到**（会报"通过"）。已重写为扫描 APK 内**全部 zip 条目**、同时解两种 esbuild 转义形态 | 重写后 x86_64 / arm64 **两个** APK 均通过 |
+
+### 验收（全部实测）
+
+| 项 | 结果 |
+|---|---|
+| 类型闸门 `npm run typecheck`（三段式 core + ui + tests） | **全 0 错** |
+| 单测 | **923 / 923**（48 文件，本轮 +24） |
+| 设备行为验收（真机弹窗/i18n/工具面） | **26 / 26** |
+| `stage4-regression` | **21 / 21** |
+| 路由契约 `audit-route-contract` | 67 路由 **0 违约** |
+| 补丁标记 `audit-patch-markers.py` | 19 / 19 健全 |
+| `verify-session-pipeline`（七判据含运行时加载） | **81 / 81**，判据 7 拒载 **0** |
+| 卡上下文面缺口 | **13 → 6**（余 4 项需宿主↔插件桥；`streamingProcessor` 属我们**多报**，脚本自身已 null-guard） |
+
+**交付**：双架构 APK 重打（x86_64 debug **sentinel v249**（187MB）+ arm64 release **sentinel v250**（122MB）），
+两个 APK 内的产物标记均已解码核验；设备侧哨兵 `.installed-v247`、`dshVersion 0.1.5-rc.1`。
+**设备实证新日志**（本轮新加的会话身份）已按原样出现：
+`文件 62.3MiB 超 32MiB 上限｜origin=subagent，agentPreset=dsht-adapter → 非用户聊天（subagent），跳过自动修复`。
+**沉淀**：LEARNINGS **L43**（用一次性静态穷举替代运行时逐墙试错）/ **L44**（枚举器自身必须先过正控，
+否则工具缺陷会伪装成数据没问题）/ **L45**（两个工具结论冲突时先查口径 —— L30 第三次重演）/
+**L46**（默认值可能藏在 HTML 模板 data 属性里，别只读 JS）。
 
 ## 升级已完成：DSH 0.1.2 → 0.1.5 ✅（度量 5/5）
 

@@ -9,16 +9,19 @@
 
 | 事实 | 说明 |
 |---|---|
-| 源码 runtime | **0.1.5-rc.1**（sentinel v222，45 个心跳已推完阶段 0/1/2/3/4） |
-| 你手机上的包 | **arm64-release，9-11 04:5x 构建 = 0.1.5-rc.1**（sentinel v222） |
+| 源码 runtime | **0.1.5-rc.1**（sentinel v250，46 个心跳已推完阶段 0/1/2/3/4） |
+| 你手机上的包 | **arm64-release，9-11 11:0x 构建 = 0.1.5-rc.1**（sentinel v250） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | 796 项全绿（41 文件） |
-| 未提交改动 | 无（工作树干净） |
+| 单测 | 923 项全绿（48 文件） |
+| 未提交改动 | 本轮改动 + 并发实例的 `regex/engine.ts` / `display-compiler.ts`（T-17 `$<name>`，**我未碰**） |
 
-**当前状态**：升级目标（evaluate.sh 5/5）已达成。心跳 46 已推进阶段三（T-27 可先做部分实机落地 + 两处静默缺陷修复 + 类型闸门补建）。
+**当前状态**：升级目标（evaluate.sh 5/5）已达成。心跳 50 的进展 = **把"运行期逐个撞墙"改成"静态一次性枚举"**
+（新建 `audit-card-context-surface.mjs`，首跑列出 13 个宿主面缺口）+ 落地其中 **15 个宿主门面成员**
+（i18n / 弹窗 / 函数工具注册 / 事件名旧别名 / isMobile / saveSettingsDebounced），缺口 **13 → 6**；
+并把 T-43 的"超限永久修不到"**定性为非缺陷**（口径错误的误判）。详见 §6 后的 T-43 / T-44 / T-45。
 
-⚠️ **交付物状态提醒**：心跳 46 改了源码（`dsh-plugin` / `dsht-plugin-shared` / `import` / `NodeService.kt`），
-**必须重打双架构 APK** 才与源码一致 —— 见 §9 末尾"每轮收尾"。
+⚠️ **交付物状态提醒**：心跳 50 改了源码（`host-vendor.ts` / 新增 `host-st-surface.ts` / `dsh-plugin/index.ts`），
+**已重打双架构 APK**（x86_64 **v249** / arm64 **v250**）并已装机实测 —— 见下方"每轮收尾"。
 
 ---
 
@@ -361,11 +364,54 @@
   ① 「启动即修窗口」（`dsh-plugin/index.ts:3015`）**确实在会话变 live 之前跑**，设计成立；
   ② 之前观测到的 `live` 是因为**探针在会话已打开之后才发**，不是修复链的缺陷；
   ③ 现在日志能一眼看出"谁被跳过、为什么"。
-- **残留（低优先）**：`超上限 32MiB` 那条（62.3MiB）**永久修不到** —— 上限的依据是
-  峰值堆 ≈ 7.2×文件体积（62.3MiB → 448MiB）超 Android node `--max-old-space-size=2048`。
-  真正解法是流式/分块修复，属独立课题，不阻塞发布。
+- **残留（低优先）**：`超上限 32MiB` 那条（62.3MiB）—— **已定性为非缺陷，见下**。
 - **已产出工具**：`scripts/diag-session-loadable.mjs`（官方 `new Session(...)` 为 oracle，含 `--selftest` 负控）
   + `scripts/ui-accept.mjs`（设备 UI 验收探针）+ `scripts/check-apk-payload.py`（APK 内产物标记核验）。
+
+#### T-43 结论（2026-09-11 心跳 50）：**非缺陷 —— 之前是我方的测量口径错了**
+
+| 判据 | 证据 |
+|---|---|
+| 它是什么 | `sessions/--…rp-import-_adapter--/64e580f0-…/session.jsonl`（62.3MiB，header `"version":0`），首行写着 `origin:"subagent"`、`agentPreset:"dsht-adapter"`、`parentSession:session-5a1b4508` → **一次性 ST 预设导入管线的子代理会话**，**从未在聊天 UI 打开** |
+| 它需要修吗 | **不需要**。`verify-session-pipeline.mjs` 对设备整树（含该文件）判 **81/81 可迁移 / 运行时拒载 0**；官方 v0→v1 迁移器**本就会**展开 packed 聚合行（`PACKED_TAGS`），我方修复器的同一动作是冗余的 |
+| 那 62.3MiB 为什么会"坏" | **它不坏** —— 是我用 `diag-session-loadable.mjs` 把**原始 v0 事件**直接喂 `new Session(...)` 得到的假阳性：该口径**不做 v0→v3 迁移**，对 v0 文件根本不成立（详见 LEARNINGS **L45**）。同一份数据被两个工具判出相反结论 = 口径 bug |
+| 处置 | ① 跳过的日志**加身份**（`｜origin=subagent，agentPreset=dsht-adapter → **非用户聊天**（subagent）`）——L42 的"有意跳过也要能定位到具体对象"，设备实证已生效；② 32MiB 上限**保持不变**（它保护的是 OOM crash-loop，不是这个文件） |
+
+### T-44　🆕 **把「运行期逐个撞墙」改成「静态一次性枚举」**（心跳 50，新防线）
+- **动机**：T-37 → T-40 → T-41 → T-42 是**串行**证明链（每轮只暴露一个缺口，因为卡脚本「首个异常即整段作废」），
+  四轮才走到 `inject.js:3885`。
+- ✅ **新建** `scripts/audit-card-context-surface.mjs`：静态解析卡脚本对 `SillyTavern.getContext()` 的
+  **全部**成员访问路径（别名绑定 / 解构 / 内联链 / 可选链），与**真 ST 权威面**
+  （`st-context.js` 的 getContext 返回体，**145** 个顶层成员）对质，一次列出「真 ST 有、我方宿主面没有」的
+  **全部**成员 —— **首跑即得 13 个缺口**（分类：真 ST 有 19 个、真 ST 也无 0 个）。
+- ✅ **解析器跑了正控**（`--selftest`）：覆盖**简写属性** / 嵌套括号 / 字符串内逗号 / 注释内逗号。
+  ⚠️ 首版解析器只按 `key:` 取键 → 145 个成员**只认出 33 个**（简写属性全漏）→ 差点产出一条**虚假防线**（LEARNINGS **L44**）。
+- ✅ **落地缺口里"不依赖桥"的 15 个成员** → **缺口 13 → 6**：
+  | 组 | 成员 | 基准出处 |
+  |---|---|---|
+  | i18n | `t` / `translate` / `getCurrentLocale` / `addLocaleData` | `i18n.js:6-113` |
+  | 弹窗 | `POPUP_TYPE` / `POPUP_RESULT` / `callGenericPopup` | `popup.js:9-37` + `:739-757` 返回契约 + `index.html:6456` 模板文案 |
+  | 工具注册 | `registerFunctionTool` / `unregisterFunctionTool` / `isToolCallingSupported` / `canPerformToolCalls` / `ToolManager` | `tool-calling.js` 能力查询语义 |
+  | 其他 | `isMobile` / `event_types`（旧蛇形别名）/ `saveSettingsDebounced` | `st-context.js` |
+- **诚实边界（不假装成功）**：`CROP` 弹窗**显式 reject**（无裁剪器）；函数工具**能力查询返 false**
+  （卡注册的工具到不了模型）+ 注册**留痕**（同名只提示一次）；未支持的长尾选项**记台账**。
+- **验收（全实测）**：单测 **+24**；三闸门 0 错；`typecheck` 三段式 0 错；全量 **923/923**；
+  **设备行为验收 26/26**（真渲染、真点击、真解析值：CONFIRM `Yes/No`→1/0、INPUT `Save`→输入串 / `Cancel`→false、
+  DISPLAY `X`→**0**、ESC→`null`、CROP→reject、注册留痕 warned=1、`saveSettingsDebounced` 真落盘且引用稳定）；
+  `stage4-regression` **21/21**。
+- **剩余 6 个缺口（登记，非本轮范围）**：`reloadCurrentChat`(7 次) / `substituteParams`(4) + `substituteParamsExtended`(2)
+  / `getCurrentChatId`(2) / `renderExtensionTemplateAsync`(1) —— 四项都需要**宿主页 ↔ 插件桥**（当前宿主门面无法访问桥）；
+  `streamingProcessor`(1) **不是缺口**（卡脚本写的是 `|| null` 兜底，`undefined` 即正确语义，属枚举器**过度报告**）。
+
+### T-45　🆕 观察：WebView 启动竞态 → 停在 `chrome-error://chromewebdata/` 且**不自动重试**（心跳 50）
+- **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在
+  `Webpage not available`（`chrome-error://chromewebdata/`），**此后不再重试**，`SillyTavern`/UI 全无。
+  重启应用（`force-stop` + `start` + 等 70s）即恢复。
+- **可疑机理**：WebView 立即加载 `http://127.0.0.1:3080/?token=…`，而内嵌 node 尚未 LISTENING
+  → 加载失败且无重试（与"端口 LISTENING ≠ 路由就绪，约 50s"是两个不同阶段）。
+- **状态**：⏳ **登记为观察项，未定性**。要判定是否**产品级缺陷**，需在**不频繁重启**的真实用法下复现
+  （当前证据来自我短时间内连续安装/重启的压测节奏，可能是自造条件）。
+  **下一步判据**：装机后**只启动一次**、等 2 分钟、观察是否自愈；若不愈 → 真缺陷，需在 `NodeService`/Activity 侧加重试。
 
 ### T-41　🟠→✅ 注册端点不再「比基准更严」：`registerVariableSchema` 拒收既有值不匹配（已修）
 - **暴露方式**：T-40 修完后重跑采集器，卡脚本的 bootstrap **再往深处走**，在 iframe 侧抛出

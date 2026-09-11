@@ -2106,6 +2106,36 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   //   · Android node `--max-old-space-size=2048`（NodeService.kt:553）
   //   → 32MiB 文件峰值 ≈ 230MiB，占堆上限 11%，安全；254MB 的 import 怪物仍被挡在外面。
   const REPAIR_MAX_FILE_BYTES = 32 * 1024 * 1024
+  /**
+   * 只读会话**首行**取身份，用于超限跳过时的留痕（L42：有意跳过也必须能定位到具体对象）。
+   *
+   * 动机（2026-09-11 心跳 50，设备实证）：设备上唯一超限的文件是
+   * `sessions/--…rp-import-_adapter--/64e580f0-…/session.jsonl`（62.3MiB），
+   * 首行是 `{"type":"session","origin":"subagent","agentPreset":"dsht-adapter",
+   * "parentSession":"session-5a1b4508-…"}` —— 它是**一次性 ST 预设导入管线的子代理会话**，
+   * 不是用户聊天。旧日志只写「文件 62.3MiB 超 32MiB 上限，跳过自动修复」，
+   * 用户/排查者看到后**无法区分**"我自己的聊天坏了"还是"一个内部产物被跳过"。
+   *
+   * 纪律：**只读 4KiB**（header 是单行 JSON，远小于此），绝不为了写一行日志把 62MiB 拉进内存
+   * ——那正是本上限要避免的事。读不出/首行超长 → 返回空串，**退回旧行为**（不猜）。
+   */
+  const readSessionIdentity = async (file: string): Promise<string> => {
+    let fh: Awaited<ReturnType<typeof open>> | null = null
+    try {
+      fh = await open(file, 'r')
+      const buf = Buffer.alloc(4096)
+      const { bytesRead } = await fh.read(buf, 0, buf.length, 0)
+      const firstLine = buf.subarray(0, bytesRead).toString('utf8').split('\n')[0] ?? ''
+      const h = JSON.parse(firstLine) as { type?: unknown; origin?: unknown; agentPreset?: unknown }
+      if (h.type !== 'session') return ''
+      const origin = typeof h.origin === 'string' ? h.origin : 'chat'
+      const preset = typeof h.agentPreset === 'string' ? `，agentPreset=${h.agentPreset}` : ''
+      const who = origin === 'chat' ? '用户聊天会话' : `**非用户聊天**（${origin}）`
+      return `｜origin=${origin}${preset} → ${who}`
+    } catch { return '' } finally {
+      if (fh !== null) await fh.close().catch(() => undefined)
+    }
+  }
   const repairAllSessionSeqs = async (): Promise<Record<string, unknown>> => {
     const repaired: Array<{ sessionId: string; events: number; normChanged: number; v3Changed: boolean; salvaged?: number }> = []
     const skipped: Array<{ sessionId: string; reason: string }> = []
@@ -2120,7 +2150,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       try {
         const st = await stat(file)
         if (st.size > REPAIR_MAX_FILE_BYTES) {
-          skipped.push({ sessionId: h.sessionId, reason: `文件 ${(st.size / 1048576).toFixed(1)}MiB 超 ${REPAIR_MAX_FILE_BYTES / 1048576}MiB 上限，跳过自动修复` })
+          const identity = await readSessionIdentity(file)
+          skipped.push({ sessionId: h.sessionId, reason: `文件 ${(st.size / 1048576).toFixed(1)}MiB 超 ${REPAIR_MAX_FILE_BYTES / 1048576}MiB 上限${identity}，跳过自动修复` })
           continue
         }
         const content = await readFile(file, 'utf8')

@@ -22,6 +22,11 @@ import type { ThContextSnapshot } from './th-shim.ts'
 import { createThEventSource, type ThEventSource } from './th-event-source.ts'
 // ST 事件名表（生成物；来源 public/scripts/events.js:3，104 条）
 import { ST_EVENT_TYPES } from './st-event-types.gen.ts'
+// 宿主面第二批成员（i18n / 弹窗 / 函数工具注册）——批次依据见该文件头（心跳 50 的静态枚举）
+import {
+  POPUP_RESULT, POPUP_TYPE, callGenericPopup, createHostI18n, createHostToolManager,
+  type HostI18n, type HostToolManager,
+} from './host-st-surface.ts'
 
 /** 复刻的全局清单（缺失才装；z / Zod 双名字对齐真 TH 宿主形态） */
 export const HOST_VENDOR_GLOBALS = ['_', '$', 'jQuery', 'z', 'Zod', 'YAML'] as const
@@ -182,14 +187,43 @@ export function __resetHostEventSource(): void {
   hostEventSource = null
 }
 
+/**
+ * 宿主 i18n / 函数工具管理器：**模块级单例**（身份稳定）。
+ * 理由同 eventSource —— `getContext()` 每次返回**同一枚**对象，脚本 `off`/`!==` 才说得通；
+ * 且工具台账是"进程内见过什么"的累积量，每次新建会把台账抹掉。
+ */
+let hostI18n: HostI18n | null = null
+let hostToolManager: HostToolManager | null = null
+
+function getHostI18n(): HostI18n {
+  if (hostI18n === null) hostI18n = createHostI18n()
+  return hostI18n
+}
+
+function getHostToolManager(): HostToolManager {
+  if (hostToolManager === null) hostToolManager = createHostToolManager()
+  return hostToolManager
+}
+
+/** 只测试用：丢弃 i18n / 工具管理器单例 */
+export function __resetHostSurfaceSingletons(): void {
+  hostI18n = null
+  hostToolManager = null
+}
+
 let extSettingsCache: { key: string | null; value: Record<string, unknown> } | null = null
+
+/** 当前 storage 里实际的内容（`null` = 没有/不可用）。缓存命中与否**只**看它。 */
+function readExtSettingsRaw(): string | null {
+  try {
+    if (typeof localStorage !== 'undefined') return localStorage.getItem(EXT_SETTINGS_LS_KEY)
+  } catch { /* 隐私模式/不可用 */ }
+  return null
+}
 
 /** 宿主 extension_settings（与脚本 iframe 同一 localStorage 键；原文不变即复用同一引用） */
 export function readHostExtensionSettings(): Record<string, unknown> {
-  let raw: string | null = null
-  try {
-    if (typeof localStorage !== 'undefined') raw = localStorage.getItem(EXT_SETTINGS_LS_KEY)
-  } catch { raw = null }
+  const raw = readExtSettingsRaw()
   if (extSettingsCache !== null && extSettingsCache.key === raw) return extSettingsCache.value
   let value: Record<string, unknown> = {}
   if (raw !== null) {
@@ -210,6 +244,60 @@ export function __resetHostStCaches(): void {
 }
 
 /**
+ * 落盘宿主 extension_settings（`saveSettingsDebounced` 的落地动作）。
+ *
+ * 语义：脚本拿到 `ctx.extensionSettings` 后**就地改**这个对象，再调 `saveSettingsDebounced()`
+ * 期望持久化。真 ST 走 server 端 POST；我们宿主页与脚本 iframe 共用**同一个 localStorage 键**
+ * （`__dsht_extension_settings`）→ 这里等价于把它写回去。
+ *
+ * ⚠️ 写回后必须**同步刷新 `extSettingsCache`**：否则下次 `readHostExtensionSettings()`
+ * 见到 raw 变了就会**重新 parse 出一个新对象**，正在持有旧引用的脚本会看到"改动消失"
+ * （且 `:3927` 那类 `!==` 身份比较会被误判成"变了"）。
+ */
+export function saveHostExtensionSettings(settings: Record<string, unknown>): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(EXT_SETTINGS_LS_KEY, JSON.stringify(settings))
+    }
+  } catch { /* 配额/不可用：保持内存态一致，不抛（脚本侧只期望"尽力持久化"） */ }
+  // ⚠️ 缓存键必须记「storage **实际**里的内容」，不是"我们想写的内容"：
+  // 若 setItem 被静默拒绝/不可用，键却记成新串 → 下次读取 raw(null) ≠ key → 重新 parse
+  // → 变成**新对象**，正在持有旧引用的脚本会看到"改动消失"，`!==` 身份比较也被误判。
+  // （本用例首版就踩在这里 → 现已由 readExtSettingsRaw() 回读取得真实值。）
+  extSettingsCache = { key: readExtSettingsRaw(), value: settings }
+}
+
+/**
+ * 真 ST 的 `saveSettingsDebounced` 是**防抖**的（脚本常常在一次交互里连改好几个键）。
+ * 语义差异已在注释里说清：防抖窗口内进程被杀 → 该次改动丢失，与 ST 同性质。
+ * 测试/退出前可用 `flushHostExtensionSettings()` 强制落盘。
+ */
+let hostExtSaveTimer: ReturnType<typeof setTimeout> | null = null
+let hostExtPending: Record<string, unknown> | null = null
+
+export function saveHostExtensionSettingsDebounced(
+  settings: Record<string, unknown>,
+  delayMs = 500,
+): void {
+  hostExtPending = settings
+  if (hostExtSaveTimer !== null) clearTimeout(hostExtSaveTimer)
+  hostExtSaveTimer = setTimeout(() => {
+    hostExtSaveTimer = null
+    const pending = hostExtPending
+    hostExtPending = null
+    if (pending !== null) saveHostExtensionSettings(pending)
+  }, delayMs)
+}
+
+/** 立即落盘（若有挂起的防抖写入） */
+export function flushHostExtensionSettings(): void {
+  if (hostExtSaveTimer !== null) { clearTimeout(hostExtSaveTimer); hostExtSaveTimer = null }
+  const pending = hostExtPending
+  hostExtPending = null
+  if (pending !== null) saveHostExtensionSettings(pending)
+}
+
+/**
  * 纯函数：由会话快照构造宿主 ST 上下文（字段面与 iframe 侧 `buildStContextFacade` 对齐；
  * 缺的数据字段保持 undefined / 空数组形状——**绝不因为缺数据抛错**，脚本首行就是
  * `for (const p of ctx.chatCompletionSettings.prompts)`）。
@@ -227,6 +315,8 @@ export function buildHostStContext(src: HostStContextSource = {}): Record<string
   const charName = (s.character !== null && s.character !== undefined && typeof s.character === 'object'
     && s.character.name != null) ? s.character.name : undefined
   const ext = readHostExtensionSettings()
+  const i18n = getHostI18n()
+  const tools = getHostToolManager()
   return {
     chatCompletionSettings: {
       ...rawSettings,
@@ -257,7 +347,32 @@ export function buildHostStContext(src: HostStContextSource = {}): Record<string
     // 卡脚本写 `ctx.eventTypes.OAI_PRESET_IMPORT_READY || '字面量'` —— 有兜底，
     // 但 `undefined.xxx` 的属性访问**先抛 TypeError**，兜底轮不到（实测 inject.js:493）。
     eventTypes: ST_EVENT_TYPES,
+    // 真 ST 同时保留**旧蛇形命名**别名（`st-context.js` 的 `event_types: event_types`
+    // 与 `@deprecated Legacy snake-case naming, compatibility with old extensions`）。
+    // 卡脚本 `ctx.event_types` 若缺失同样会属性访问即抛 → 必须真给。
+    event_types: ST_EVENT_TYPES,
     uuidv4: src.uuid !== undefined ? src.uuid : defaultUuidv4,
+
+    // ---- 心跳 50：`audit-card-context-surface.mjs` 一次性枚举出的缺口里的「可不依赖桥」部分 ----
+    // i18n（语义逐条对齐 `public/scripts/i18n.js`；缺键返回原文 = ST 行为）
+    t: i18n.t,
+    translate: i18n.translate,
+    getCurrentLocale: i18n.getCurrentLocale,
+    addLocaleData: i18n.addLocaleData,
+    // 弹窗（常量与返回契约抄自 `public/scripts/popup.js`）
+    POPUP_TYPE,
+    POPUP_RESULT,
+    callGenericPopup,
+    // 函数工具注册：能力查询说真话（false），注册留痕（不造静默假成功）
+    registerFunctionTool: tools.registerFunctionTool,
+    unregisterFunctionTool: tools.unregisterFunctionTool,
+    isToolCallingSupported: tools.isToolCallingSupported,
+    canPerformToolCalls: tools.canPerformToolCalls,
+    ToolManager: tools.ToolManager,
+    // 真 ST 的 isMobile 判定的是"移动端布局"；DSHT 本身就是 Android 单一形态 → true（真话）
+    isMobile: true,
+    // extension_settings 的持久化入口（localStorage 同键；落盘后保持引用稳定）
+    saveSettingsDebounced: (): void => saveHostExtensionSettingsDebounced(ext),
   }
 }
 

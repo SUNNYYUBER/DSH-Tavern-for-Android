@@ -13,6 +13,18 @@
  *   node diag-session-loadable.mjs <session.jsonl> [...]
  *   node diag-session-loadable.mjs --selftest <session.jsonl>   # 正/负控自检
  * 退出码：0 = 全部可加载；1 = 有不可加载
+ *
+ * ⚠️⚠️ **前置条件（2026-09-11 心跳 50 补记 —— 我曾因漏读这条而误判）** ⚠️⚠️
+ *   本工具把**文件里原样的事件**直接喂 `new Session(...)`，**不做 v0→v3 迁移**。
+ *   因此它**只对「已处于目标代次」的文件成立**（例如 header `version:3`）。
+ *   对 `version:0/~1/~2` 的存量文件，运行时加载走的是
+ *   `sessionFormatCatalog.createRestore(header).decodeRow(row)` → `finish()` → `new Session(...)`，
+ *   少了迁移这一步，本工具会报出**假阳性**（实测：一个完全健康的 62.3MiB v0 子代理会话
+ *   被判 `✗ seed request/header at index 12 must omit header.system`）。
+ *
+ *   → **判 v0~v2 文件请用 `verify-session-pipeline.mjs`**（它含迁移 + 折叠 + 运行时加载三步，
+ *     与设备真实路径同口径）。本工具保留原语义，供「v3 文件被写坏」一类回归做**定点**复现。
+ *   → 元教训见 LEARNINGS **L45**：两个工具结论相反时，先查口径。
  */
 import fs from 'node:fs'
 import path from 'node:path'
