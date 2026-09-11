@@ -179,6 +179,12 @@
   `tsconfig.check.json` 补 `ES2023.Array`；`typecheck` 改为 `core && ui`
 - ✅ **正控（两配置各一次，L23 要求）**：注入未定义标识符 → **TS2304**；`boolean === 0` →
   **TS2367**；`number + boolean` → **TS2365**。证明闸门真的会 report，不是摆设
+- ✅ **闸门覆盖已核实到"当初出事的那两个文件"**（2026-09-11 复核）：
+  `tsc -p tsconfig.core.json --listFiles` 确认含 `src/dsh-plugin/index.ts`（曾漏 import
+  `loadSheets`/`renderTablePrompt`/`expandTableMacros` 与 `deepMergeInitVars` 的文件）
+  与 `src/dsht-plugin-memory/tables.ts`（被漏导入的定义方）→ 同类回归会被**编译期**直接拦死。
+  **再跑一次现场正控**：往 `src/dsh-plugin/` 注入未声明标识符 → `typecheck:core` 立刻报
+  **TS2304**（清理后复归 0 错）
 - **闸门一开就抓出 5 个「函数在、不抛错、但从未生效」（静默失败族）**：
   1. 🔴 **表格记忆（E1–E12）在 `dsh-plugin` 侧全是自由变量**：`loadSheets`/`renderTablePrompt`/
      `expandTableMacros` 定义在 `dsht-plugin-memory/tables.ts`，调用处**只调用不导入** →
