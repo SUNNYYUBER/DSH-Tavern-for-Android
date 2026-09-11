@@ -501,6 +501,29 @@
   （读文件 + 模板替换 + 缺文件即抛错，**不假装成功**）。
 - **状态**：⏳ 随 T-42 一并决策。
 
+### T-49　🆕 **「编辑楼层」与「变体（swipe）切换」在 UI 面没有任何入口**（心跳 51 量出，需产品决策）
+- **量法（只读，不改状态）**：设备侧全 DOM 枚举 —— `document.querySelectorAll('*')` 共 **176** 个带
+  `title`/`aria-label`/`data-testid` 的元素，逐条按正则过滤：
+  - `/编辑|edit/i` → **命中 0 个**（唯一命中是一条无关的技能描述文本 "file editing"）
+  - `/变体|variant|swipe/i` → **命中 0 个**
+  - `/回退|撤销|rollback|regenerate/i` → **命中 2 个**：`重新生成最后一条回复（…）/dsht-rp-regenerate`、`↺ 撤销/重置状态`
+  - 酒馆面 → `📖 剧情控制台` / `🌊 ExampleGame 世界书控制` / `当前状态（MVU 变量）` / `导入` **全部命中**
+  - 悬停验证：对 6 个消息节点派发 `pointerover/mouseover/mouseenter/pointermove` 后
+    按钮总数 **134 → 134 不变** → 排除"hover 才渲染"的解释
+  - 容器验证：`[role=menu|listbox]` 与 class 含 menu/dropdown 的容器 **0 个** → 排除上下文菜单
+  - 视图验证：当前确实是 RP 会话视图（RP 脚本 pill `dsht-rp-script-pill` 挂在
+    `dsht-rp-script-pillbar` → `wSkVaW_composerStack` 里），不是走错页面
+- **为什么算差异而不是"我们没做"**：**引擎在、入口不在** ——
+  `stage4-regression` 里 `variant/groups` 返回 **200 groups=1**（变体数据面可用），
+  TH 写桥 `th-edit` / `th-append` 也已实现（心跳 49 修过它的 `stream` 字段缺陷）。
+  即：**能改、能存、能读，但用户点不到**。
+- **基准**：TT（TauriTavern）有编辑楼层与 swipe 切换（Tavern 核心交互）→ 按 **L36**（跟基准一致不能少）
+  属**功能差异**，不是"有意精简"。
+- **状态**：⏳ **登记 + 待决策**（补 UI 入口 / 显式登记为已知差异）。**不自行补** ——
+  UI 入口涉及"用 DSH 原生消息操作栏 还是 做 DSHT 自己的消息操作栏"，是方向性选择。
+- **判据（做完的标志）**：设备侧全 DOM 过滤能命中 ≥1 个「编辑」入口与 ≥1 个「变体」入口，
+  且点击后真能走到 `th-edit` / `variant/*` 路由（实测闭环，非"按钮在"）。
+
 ### T-45　🆕 观察：WebView 启动竞态 → 停在 `chrome-error://chromewebdata/` 且**不自动重试**（心跳 50）
 - **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在
   `Webpage not available`（`chrome-error://chromewebdata/`），**此后不再重试**，`SillyTavern`/UI 全无。
