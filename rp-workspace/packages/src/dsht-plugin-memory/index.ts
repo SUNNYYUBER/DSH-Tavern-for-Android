@@ -355,6 +355,69 @@ export interface ShadowOp {
   kind: 'history' | 'snapshot'
 }
 
+export interface ShadowTriggerInput {
+  /** 当前视图节点（只需签名判定所需字段——便于单测） */
+  nodes: Array<{ isSnapshot: boolean; sig: string }>
+  /** 本轮 decision.messages 里新注入的快照签名（planShadowOps 的 freshSigs） */
+  freshSigs?: ReadonlySet<string>
+  estTokens: number
+  /** 前缀折叠阈值（est tokens） */
+  threshold: number
+  /** 同签名副本数达到该值即计为「重复签名」 */
+  minDup: number
+}
+
+export interface ShadowTriggerResult {
+  /** 是否需要跑 planShadowOps（false = 前置早退，恒零 op） */
+  need: boolean
+  overThreshold: boolean
+  /** 视图内同签名副本 ≥ minDup 的签名个数（既有判据） */
+  dupSigs: number
+  /** 本轮重注、且视图上**已有旧副本**的签名个数（心跳 61 新增判据，见下） */
+  freshStaleSigs: number
+}
+
+/**
+ * 影子化触发器（纯函数，心跳 61 从 shadowSurface 内联判据抽出）。
+ *
+ * 为什么需要它：`planShadowOps` 的文档语义是「本轮新注入的副本视为最新 → surface 上
+ * 同签名旧副本全部影子化」（index.ts 的 planShadowOps 注释 + freshSigs 参数），
+ * 但触发条件是 `!overThreshold && dupSigs === 0 → return ''` ——
+ * `dupSigs` 衡量的是**视图上已有几份**，而 freshSigs 生效的前提恰恰是
+ * 「视图上只有 1 份旧副本 + 本轮即将注入新副本」⇒ **该分支永远不可达**（L84 同族：
+ * 兜底/去重路径不可达）。实测后果（心跳 61，设备 session-0b05834c）：
+ * 新会话第 2 轮请求带上陈旧副本 + 新副本，同一 23,782 字符块重复出现，payload 79,994
+ * 字符（+42%）；第 3 轮起因折叠 marker 共用同一签名而**偶然**重新武装去重才自愈。
+ *
+ * 新判据 freshStaleSigs：视图上存在「本轮被重注的同签名旧副本」即触发（1 份即够——
+ * 去重目标就是这份旧副本）。它零信息损失：新副本承载同样内容且位置更靠后。
+ */
+export function decideShadowTrigger(input: ShadowTriggerInput): ShadowTriggerResult {
+  const { nodes, freshSigs, estTokens, threshold, minDup } = input
+  const overThreshold = estTokens > threshold
+  const seen = new Map<string, number>()
+  for (const n of nodes) if (n.isSnapshot) seen.set(n.sig, (seen.get(n.sig) ?? 0) + 1)
+  let dupSigs = 0
+  for (const v of seen.values()) if (v >= minDup) dupSigs += 1
+  let freshStaleSigs = 0
+  if (freshSigs !== undefined && freshSigs.size > 0) {
+    // 去重：同一签名在视图上有多少份旧副本都只算一个「需去重的签名」
+    const counted = new Set<string>()
+    for (const n of nodes) {
+      if (!n.isSnapshot || counted.has(n.sig)) continue
+      if (!freshSigs.has(n.sig)) continue
+      counted.add(n.sig)
+      freshStaleSigs += 1
+    }
+  }
+  return {
+    need: overThreshold || dupSigs > 0 || freshStaleSigs > 0,
+    overThreshold,
+    dupSigs,
+    freshStaleSigs,
+  }
+}
+
 export interface ShadowPlan {
   ops: ShadowOp[]
   /** 影子化前后的模型视图字数（不含本轮新注入） */
@@ -849,15 +912,27 @@ export function apply(ctx: Ctx, _config: unknown): void {
     return tokens
   }
 
-  /** 诊断探针（W32）：把 shadowSurface 的每个 early-return 点落盘，用于实机定位
-   *  「阈值已达但零 op」的静默失败。写 rp/memory-progress/<sid>.probe.json。 */
+  /** 诊断探针（W32；心跳 61 补实现——此前**只有注释、没有实现**，属「文档承诺的能力不存在」）：
+   *  把 shadowSurface 的每个 early-return / 零 op 点落盘，用于实机定位
+   *  「阈值已达但零 op」这类静默失败。写 rp/memory-progress/<sid>.probe.json（覆盖写，<1KB）。 */
+  const writeProbe = async (sid: string, payload: Record<string, unknown>): Promise<void> => {
+    try {
+      await mkdir(progressDir, { recursive: true })
+      await writeFile(join(progressDir, `${sid}.probe.json`),
+        JSON.stringify({ at: new Date().toISOString(), ...payload }, null, 1), 'utf8')
+    } catch { /* 探针自身失败不影响本体 */ }
+  }
+
   const shadowSurface = async (session: SessionRef, sid: string, cfg: MemoryConfig, maxFloor: number, freshSigs: ReadonlySet<string>, windowKeepSeq?: number | null): Promise<string> => {
     const surface = (session as { surface?: { nodes?: number[] } }).surface
     // 0.1.2 坑 #22：`session.events` 已移除——用 snapshotEvents() 快照 + eventAt(seq) 单读。
     // 旧代码直读 `.events` 得 undefined → nodes 恒空 → estTokens=0 → 影子化静默失效
     // （实测 120k tokens > 80k 阈值仍 0 个 replace / 0 个 compaction/prune）。
     const viewSeqs = surface?.nodes ?? []
-    if (viewSeqs.length === 0) return ''
+    if (viewSeqs.length === 0) {
+      await writeProbe(sid, { stage: 'no-surface' })
+      return ''
+    }
     // 只把消息事件建模为节点（tool/result 等不参与楼层/快照判定，但属于 replace 射程）
     const nodes: SurfaceNodeInfo[] = []
     for (const seq of viewSeqs) {
@@ -891,16 +966,22 @@ export function apply(ctx: Ctx, _config: unknown): void {
     const estTokens = Math.round(nodes.reduce((s, n) => s + n.chars, 0) * TOKENS_PER_CHAR)
     // 双判据（2026-09-10 心跳 33）：前缀折叠（有损）按体积阈值门控；
     // 快照去重（无损）只要存在同签名多副本即触发——不再被体积阈值整体短路。
-    const overThreshold = estTokens > SHADOW_TRIGGER_TOKENS
-    const dupSigs = (() => {
-      const seen = new Map<string, number>()
-      for (const n of nodes) if (n.isSnapshot) seen.set(n.sig, (seen.get(n.sig) ?? 0) + 1)
-      let d = 0
-      for (const v of seen.values()) if (v >= SHADOW_MIN_SNAPSHOT_DUP) d += 1
-      return d
-    })()
+    // 【心跳 61 修正】再加第三条判据 freshStaleSigs（本轮重注签名在视图上的旧副本），
+    // 否则「视图上每签名各 1 份旧副本 + 本轮重注」这一情形会被 `dupSigs === 0` 短路，
+    // 令 planShadowOps 的 freshSigs 语义成为不可达分支（实测新会话第 2 轮双份 +23,782 字符）。
+    const trig = decideShadowTrigger({
+      nodes, freshSigs, estTokens,
+      threshold: SHADOW_TRIGGER_TOKENS, minDup: SHADOW_MIN_SNAPSHOT_DUP,
+    })
+    const { overThreshold, dupSigs, freshStaleSigs } = trig
     const foldHistory = overThreshold
-    if (!overThreshold && dupSigs === 0) return ''
+    if (!trig.need) {
+      // 视图里连一个可折叠快照都没有 → 无诊断价值，不写探针（避免每轮无谓 I/O）
+      if (nodes.some(n => n.isSnapshot)) {
+        await writeProbe(sid, { stage: 'skipped', nodes: nodes.length, estTokens, overThreshold, dupSigs, freshStaleSigs })
+      }
+      return ''
+    }
     // 楼层总数（turn 口径：一轮用户输入/一轮 AI 回答 = 1 楼）——与记忆条目「记忆#N-M」
     // 同口径；不再消费 dsh-plugin 的消息条数游标（两套数字会错位）
     const cursor = extractFloorsFromEvents(sessionEventsSnapshot(session) as SessionEventLike[]).cursor
@@ -909,10 +990,14 @@ export function apply(ctx: Ctx, _config: unknown): void {
       memoryMaxFloor: maxFloor, foldFloors: cfg.foldOldFloors, cursor, freshSigs, windowKeepSeq,
       foldHistory,
     })
-    if (plan.ops.length === 0) return ''
+    if (plan.ops.length === 0) {
+      // 静默失败点：判据已触发却规划出 0 个 op —— 必须留痕（否则下次又要靠实机撞）
+      await writeProbe(sid, { stage: 'need-but-zero-ops', nodes: nodes.length, estTokens, overThreshold, dupSigs, freshStaleSigs })
+      return ''
+    }
     console.log(`[dsht-memory] surface 影子化判定: est=${(estTokens / 1000).toFixed(1)}k tokens `
       + `(阈值 ${(SHADOW_TRIGGER_TOKENS / 1000).toFixed(0)}k, ${overThreshold ? '超' : '未超'}→前缀${foldHistory ? '折叠' : '保留'})，`
-      + `重复快照签名 ${dupSigs} 组 → 去重${dupSigs > 0 ? '启用' : '无需'}`)
+      + `重复快照签名 ${dupSigs} 组 + 本轮重注旧副本 ${freshStaleSigs} 组 → 去重${dupSigs > 0 || freshStaleSigs > 0 ? '启用' : '无需'}`)
     for (const op of plan.ops) {
       // 射程内的**真实 surface seqs**（含 tool/result 等非消息节点——replace 覆盖整个区间）
       const inRange = viewSeqs.filter(seq => seq >= op.start && seq <= op.end)

@@ -3,6 +3,7 @@ import {
   extractFloorsFromEvents, nextChunk, parseMemoryRange, buildMemoryEntry,
   rollbackMemoryBook, buildSummarizePrompt, readConfig, planShadowOps,
   neutralizeMacros, desiredWindow, buildExpandSnapshot, parseFoldedFromMarker, rangeCovers,
+  decideShadowTrigger,
   type SurfaceNodeInfo,
 } from '../src/dsht-plugin-memory/index.ts'
 
@@ -499,5 +500,81 @@ describe('planShadowOps：foldHistory 开关（前缀折叠与快照去重解耦
       keepNearFloors: 30, charBudget: 10_000_000, memoryMaxFloor: 0, foldFloors: true, cursor: 1, foldHistory: false,
     })
     expect(plan.ops).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// decideShadowTrigger（§2.2 触发器 —— 心跳 61：修掉「freshSigs 语义不可达」）
+// 背景（设备实测 session-0b05834c）：planShadowOps 的文档语义是「本轮新注入 → 视图上
+// 同签名旧副本全部影子化」，但触发条件 `!overThreshold && dupSigs === 0 → return ''`
+// 把该情形整体短路（视图上每个签名只有 1 份旧副本时 dupSigs 恒 0）→ 新会话第 2 轮请求
+// 同时带上陈旧副本与新副本（同一 23,782 字符块重复，payload 79,994 字符 / +42%）。
+// ---------------------------------------------------------------------------
+describe('decideShadowTrigger：三条判据（体积阈值 / 重复签名 / 本轮重注的旧副本）', () => {
+  const snap = (sig: string) => ({ isSnapshot: true, sig })
+  const TH = { threshold: 80_000, minDup: 2 }
+  const WI = '["dsht-rp-plugin",["dsht-rp:wi-depth:0"]]'
+
+  it('正控（心跳 61 新判据）：每签名各 1 份旧副本 + 本轮重注 → 必须触发（修复前为 false）', () => {
+    const r = decideShadowTrigger({ nodes: [snap(WI)], freshSigs: new Set([WI]), estTokens: 1_000, ...TH })
+    expect(r.freshStaleSigs).toBe(1)
+    expect(r.dupSigs).toBe(0)
+    expect(r.overThreshold).toBe(false)
+    expect(r.need).toBe(true)
+  })
+
+  it('负控：无重复 / 无本轮重注 / 未超阈值 → 不触发（既有短路语义不得回归）', () => {
+    const r = decideShadowTrigger({
+      nodes: [snap('["p",["a"]]'), snap('["p",["b"]]')], freshSigs: new Set(), estTokens: 1_000, ...TH,
+    })
+    expect(r.need).toBe(false)
+  })
+
+  it('负控：freshSigs 里的签名在视图上**没有**旧副本（首轮注入）→ 不触发', () => {
+    const r = decideShadowTrigger({
+      nodes: [snap('["p",["a"]]')], freshSigs: new Set(['["p",["b"]]']), estTokens: 1_000, ...TH,
+    })
+    expect(r.freshStaleSigs).toBe(0)
+    expect(r.need).toBe(false)
+  })
+
+  it('negControl：freshSigs 未传（undefined）→ 新判据恒 0（不出未知副作用）', () => {
+    const r = decideShadowTrigger({ nodes: [snap(WI)], estTokens: 1_000, ...TH })
+    expect(r.freshStaleSigs).toBe(0)
+    expect(r.need).toBe(false)
+  })
+
+  it('正控：同签名 2 份 → dupSigs=1 触发（既有判据未回归）', () => {
+    const r = decideShadowTrigger({ nodes: [snap(WI), snap(WI)], freshSigs: new Set(), estTokens: 1_000, ...TH })
+    expect(r.dupSigs).toBe(1)
+    expect(r.need).toBe(true)
+  })
+
+  it('正控：超阈值 → 触发（前缀折叠通道未回归）', () => {
+    const r = decideShadowTrigger({ nodes: [snap(WI)], freshSigs: new Set(), estTokens: 90_000, ...TH })
+    expect(r.overThreshold).toBe(true)
+    expect(r.need).toBe(true)
+  })
+
+  it('非快照节点不进任何判据；同签名多份旧副本只算一个 freshStaleSig', () => {
+    const r = decideShadowTrigger({
+      nodes: [{ isSnapshot: false, sig: WI }, snap(WI), snap(WI)],
+      freshSigs: new Set([WI]), estTokens: 1_000, ...TH,
+    })
+    expect(r.freshStaleSigs).toBe(1)
+  })
+
+  it('两级一致：触发器放行 ⇔ 规划器确实产出覆盖该旧副本的 op（否则就是「判了不做」的静默失败）', () => {
+    const nodes: SurfaceNodeInfo[] = [
+      nd(10, 'floor', 'u'.repeat(100)),
+      nd(11, 'snapshot', 'x'.repeat(23_782), 'dsht-rp-plugin', 'dsht-rp:wi-depth:0'),
+    ]
+    const freshSigs = new Set([WI])
+    const trig = decideShadowTrigger({ nodes, freshSigs, estTokens: 8_000, ...TH })
+    expect(trig.need).toBe(true)
+    const plan = planShadowOps(nodes, {
+      keepNearFloors: 30, charBudget: 10_000_000, memoryMaxFloor: 0, foldFloors: true, cursor: 1, freshSigs,
+    })
+    expect(plan.ops).toEqual([{ start: 11, end: 11, kind: 'snapshot' }])
   })
 })

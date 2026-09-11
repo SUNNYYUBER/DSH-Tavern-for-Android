@@ -9,12 +9,13 @@
 
 | 事实 | 说明 |
 |---|---|
-| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v272**，阶段 0/1/2/3/4 已全部推完） |
-| 仓库最新产物 | **x86_64 debug sentinel v271（196,839,148 B）/ arm64 release sentinel v272（128,365,172 B）**，9-12 00:06 构建，新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中 |
-| 设备侧 | **已装 v271**（`files/dsh-runtime/.installed-v271`，心跳 60 完成）；装机后 `stage4-regression` **20/21 → attach 后 21/21**；插件**双副本 md5 全一致** + APK 载荷三方一致（无第 ⑦ 类断链） |
+| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v274**，阶段 0/1/2/3/4 已全部推完） |
+| 仓库最新产物 | **x86_64 debug sentinel v273（196,840,085 B）/ arm64 release sentinel v274（128,366,108 B）**，9-12 02:46 / 02:53 构建，新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中（md5 `cf288b9b9cb56cf1be7ac55218c376fb`） |
+| 设备侧 | **已装 v273**（心跳 61 完成）；实机日志确认**新判据在设备上生效**（`本轮重注旧副本 1 组 → 去重启用`）；插件**三方 md5 全一致**（无第 ⑦ 类断链） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1095 项全绿（52 文件）** · `typecheck` 三段式 **0 错**（心跳 59 复跑确认） |
-| 未提交改动 | 心跳 60 的设备探针与文档（本轮提交）；**并发实例正改 `rpc.ts`（T-57 修复），我方一份没碰** |
+| 单测 | **1111 项全绿（53 文件）** · `typecheck` 三段式 **0 错**（心跳 61 复跑确认） |
+| 设备回归 | `stage4-regression` **21/21**（心跳 61 复跑） |
+| 未提交改动 | 心跳 61 的插件源码修复 + 单测 + 证据文档 + 文档回写（本轮提交）；**并发实例正改 `rpc.ts`/`NodeService.kt`/`dsht-rp-ui/lib/*`（T-57 修复），我方一份没碰** |
 | 发布闸门 | 🔴 **未达标**（T-25/T-61：受控面扫出 **306 项命中**，含 **1 条真实 API 密钥**）⇒ **现在不能公开**；仓库无远端、从未推送，故非对外事故 |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
@@ -1194,10 +1195,55 @@ code:"gateway/arguments-invalid"` → `isServiceUnavailable 判别 = false`（**
 
 ---
 
+### T-64　✅ **新会话第 2 轮携带陈旧世界书快照副本（去重触发器自指短路）**（心跳 61 已修 + 实机闭环）
+
+**症状（活体取证）**：纯 RPC 新建会话驱动 2 轮 → 第 2 轮请求 `llm-224.json` = `messages=11` /
+**总字符 79,994** / **大块重复 ×2**（逐字相同的 **23,782 字符**块，索引 4 与 9）。
+
+**双重独立取证**（缺一不能定性为"我方注入"）：
+1. 同轮 `agent/pre-step` 快照 `msg-057.json` → 该块 `source.kind='plugin'`；
+2. `session-0b05834c.v3.jsonl` → **seq=11 与 seq=25 逐字相同**，签名同为
+   `["dsht-rp-plugin",["dsht-rp:wi-depth:0"]]`。
+
+**根因（不可达分支，L84 同族）**：`dsht-plugin-memory/index.ts` 的 `planShadowOps`
+**语义正确** —— 它已有 `freshSigs` / `supersededByFresh`（"本轮重注同签名旧副本 → 折叠旧的"），
+但**触发条件**写成 `if (!overThreshold && dupSigs === 0) return ''`（修复前 `:894-901`）：
+`dupSigs` 数的是"视图上已有几份"，而 `freshSigs` 生效的前提恰是"视图上只有 **1** 份"
+⇒ **规划器永不被调用，那段正确逻辑是死代码**。
+**第 3 轮起"自愈"是巧合**：折叠 marker 共用同一签名（源码 `:985` 注释自认）⇒ marker ≥2 后
+`dupSigs` 恒 ≥1 偶然重新武装（实测第 4 轮日志"重复签名 1 组"就是 marker 自己）。
+
+**修复**：
+- 抽出纯函数 **`decideShadowTrigger({nodes, freshSigs, estTokens, threshold, minDup})`**；
+- 判据补第三条 **`freshStaleSigs ≥ 1`**（视图上存在本轮被重注的同签名旧副本，**1 份即够**；
+  只对快照节点计数、按签名去重）；
+- `if (!trig.need)` 早退。
+
+**验收**：
+| 项 | 结果 |
+|---|---|
+| 新增单测 | `tests/memory-plugin.spec.ts` **8 条**（含"触发器放行 ⇔ 规划器产出 `[{start:11,end:11,kind:'snapshot'}]`"两级一致性） |
+| **负控**（改回 `overThreshold \|\| dupSigs > 0`） | **正好 2 条转红**（= 新增的两条正控），其余 50 条不动 ⇒ 新判据在承重 |
+| 全量单测 | **53 文件 / 1111 全绿**（+8） |
+| 实机日志（v273） | `未超阈值 + 重复快照签名 0 组 + 本轮重注旧副本 1 组 → 去重启用` → `ops=1，视图 3.6万→1.2万字符` |
+| 实机结果 | 新会话第 2 轮 **0 重复组 / 63,562 字符**（旧构建 79,994，−20.5%） |
+| `stage4-regression` | **21/21** |
+
+**顺带修掉（L86）**：`:916` 注释承诺"把每个 early-return 落盘成探针"，但全仓 grep
+`probe`/`writeProbe` **返回零个标识符** ⇒ 补实现 + 三处调用（`no-surface`/`skipped`/`need-but-zero-ops`）。
+
+**交付**：APK `x86_64 debug` **196,840,085 B sentinel v273** / `arm64 release` **128,366,108 B sentinel v274**；
+三方一致性 md5 `cf288b9b9cb56cf1be7ac55218c376fb`。
+证据全文 `stage3-device/hb61/HB61-SNAPSHOT-DEDUP-EVIDENCE.md`。
+**沉淀**：LEARNINGS **L85**（触发器自指短路）· **L86**（文档承诺的防线可能只是注释）。
+
+---
+
 ## 7. 长尾 / 观察项（P3，不阻塞发布）
 
 | # | 项 | 说明 |
 |---|---|---|
+| T-64 | ✅ **新会话第 2 轮陈旧快照副本**（心跳 61 已修） | 见上方完整条目。根因 = 去重**触发器自指短路**（`dupSigs === 0` 早退，恰好挡掉 `freshSigs` 这条本该生效的判据）。已抽纯函数 `decideShadowTrigger` + 补第三条判据 `freshStaleSigs`，负控 2 条转红，实机第 2 轮 **0 重复组** |---|---|---|
 | T-63 | 🆕 **卡脚本请求的 4 个 ST 内部模块全 404**（心跳 60） | 见上方完整条目。**缺口真实（基准有、我方 404），但当前未可达**（`window.versionNumber` 全 `undefined` ⇒ 就绪块未执行）。**分界线清楚**：`STVersionImports` 单独可修；`SPresetImports` 需重实现 ST prompt manager ⇒ **不做空壳** |
 | T-62 | 🆕 **`src/*/lib/*.js` 是「孤儿派生产物」**（心跳 59 发现） | `src/<plugin>/lib/index.js` 受版本控制、且历史提交里**与源码成对更新**（如 `3ffc1f9` 同时改 `src/dsh-plugin/index.ts` 与 `lib/index.js`），但**逐行核查所有构建脚本后确认：无任何路径消费它们** —— `build-plugins.sh:build_node_plugin` 是**直接从 `src/<pkg>/index.ts` 编译到 staging**（`$NM/<pkg>/lib/index.js`），`build-wb.sh` 同理；唯一例外是 `src/dsht-plugin-mobile/lib/index.js`（被 `build-plugins.sh:96` 拷贝）与 `src/dsht-rp-ui/lib/client.js`（由 `build-rp-ui.mjs` 生成并下游消费）。<br>⇒ 现状是**第三种状态**：既没被 `.gitignore`，也没被生成流程维护 —— `src/dsht-plugin-mvu/lib/index.js` 自 09-08 起陈旧至今。**且不可逐字节复现**（同源码两次构建字节数不同：882,361 vs 884,675 B，L52）。<br>**故本轮有意不重建**（重建只制造无意义 churn、且无收益）；**建议**：要么全部 `.gitignore` 掉，要么明确纳入构建。属 T-25 大扫除范畴。**已核验：不影响出货** —— APK 内插件取自 staging，本轮已三层核验新鲜。 |
 | T-28 | Tier 2 TH 长尾 API（约 50 项记名 stub 之外） | ⏳ **未做**（设计如此）：不支持的 API 挂 stub → `console.warn` 记名 + `Promise.reject`（`th-shim.ts:392/1847`），**诚实失败而非假成功**。真 TH 长尾面（rebind 家族 / createOrReplacePreset / QuickReply 系）待「第三次冒同类问题」再升时间盒 |
