@@ -461,3 +461,76 @@ describe('host ST 门面：常驻 ST 正则面板锚点（心跳 57）', () => {
     expect(ensureStRegexAnchor(doc)).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// 【心跳 58 · T-42 收口】宿主 `extension_settings.regex` 的种子
+//
+// 卡的宿主脚本 `inject.js:3538` 取 `const extensions = ctx.extensionSettings;`，
+// 随后在 **无条件调用** 的 `updateSTRegexes()`（`:3892`）里读 `extensions.regex.length`
+// （`:3997`）→ 该键缺席即 `undefined.length` **取值先抛** TypeError → `RegexBinding()`
+// 整段中断 → `ChatSquash()` / `MacroNest()` / `syncSPresetToolRegistrations()` **全不执行**。
+// 基准：`extensions.js:178` 默认 `regex: []`；`extensions/regex/index.js:1713` 的 init() 再兜底。
+// ---------------------------------------------------------------------------
+
+/** 最小 localStorage 替身（门面读写 extension_settings 走它） */
+function fakeLocalStorage(): void {
+  const store = new Map<string, string>()
+  ;(globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: (k: string): string | null => store.get(k) ?? null,
+    setItem: (k: string, v: string): void => { store.set(k, v) },
+    removeItem: (k: string): void => { store.delete(k) },
+  }
+}
+
+describe('host ST 门面：extension_settings.regex 种子（心跳 58 · T-42）', () => {
+  beforeEach(() => { fakeLocalStorage(); __resetHostStCaches() })
+  afterEach(() => { __resetHostStCaches(); delete (globalThis as { localStorage?: unknown }).localStorage })
+
+  it('【承重】按卡的逐字取法读 `extensions.regex.length` 不抛（修复前必抛 TypeError）', () => {
+    const ctx = buildHostStContext({ getSnapshot: () => snap() })
+    const extensions = ctx.extensionSettings as Record<string, unknown>
+    expect(() => { void (extensions.regex as unknown[]).length }).not.toThrow()
+    expect(Array.isArray(extensions.regex)).toBe(true)
+  })
+
+  it('无快照（RP 未打开）时也种空数组 —— 键的存在性与快照无关', () => {
+    const extensions = buildHostStContext().extensionSettings as Record<string, unknown>
+    expect(Array.isArray(extensions.regex)).toBe(true)
+    expect(extensions.regex).toEqual([])
+  })
+
+  it('快照带 extensionSettingsRegex → 真数据落到 extensions.regex（不是永远空数组）', () => {
+    const script = { id: 'g1', scriptName: '全局甲', findRegex: '/x/', placement: [2] }
+    const ctx = buildHostStContext({ getSnapshot: () => snap({ extensionSettingsRegex: [script] }) })
+    const extensions = ctx.extensionSettings as Record<string, unknown>
+    expect(extensions.regex).toEqual([script])
+  })
+
+  it('先空壳后真数据（真实时序：RP 未打开时 getContext 已被调过）→ 真数据仍能进来', () => {
+    buildHostStContext()                                        // ① 空壳：种下 []
+    const script = { id: 'g2', scriptName: '全局乙' }
+    const ctx = buildHostStContext({ getSnapshot: () => snap({ extensionSettingsRegex: [script] }) })
+    const extensions = ctx.extensionSettings as Record<string, unknown>
+    expect(extensions.regex).toEqual([script])
+  })
+
+  it('卡自己改过（已是非空数组）→ 不被数据源回滚', () => {
+    const script = { id: 'g3', scriptName: '全局丙' }
+    const first = buildHostStContext({ getSnapshot: () => snap({ extensionSettingsRegex: [script] }) })
+      .extensionSettings as Record<string, unknown>
+    ;(first.regex as unknown[]).push({ id: 'card-added' })      // 模拟卡就地改
+    const second = buildHostStContext({ getSnapshot: () => snap({ extensionSettingsRegex: [script] }) })
+      .extensionSettings as Record<string, unknown>
+    expect(second.regex).toContainEqual({ id: 'card-added' })
+  })
+
+  it('regex_presets 一并种（同族键同族形状，避免下一个 !Array.isArray 判据再炸）', () => {
+    const extensions = buildHostStContext({ getSnapshot: () => snap() }).extensionSettings as Record<string, unknown>
+    expect(Array.isArray(extensions.regex_presets)).toBe(true)
+  })
+
+  it('extensionSettings / extension_settings 仍是同一引用（引用稳定性不被破坏）', () => {
+    const ctx = buildHostStContext({ getSnapshot: () => snap() })
+    expect(ctx.extensionSettings).toBe(ctx.extension_settings)
+  })
+})

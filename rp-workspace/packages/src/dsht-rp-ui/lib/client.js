@@ -1675,6 +1675,25 @@ function readHostExtensionSettings() {
   extSettingsCache = { key: raw, value };
   return value;
 }
+function seedHostExtensionSettings(ext, snap) {
+  let changed = false;
+  const regexes = snap.extensionSettingsRegex;
+  const hasReal = Array.isArray(regexes) && regexes.length > 0;
+  const currentEmpty = !Array.isArray(ext.regex) || ext.regex.length === 0;
+  if (hasReal && currentEmpty) {
+    ext.regex = regexes;
+    changed = true;
+  }
+  if (!Array.isArray(ext.regex)) {
+    ext.regex = [];
+    changed = true;
+  }
+  if (!Array.isArray(ext.regex_presets)) {
+    ext.regex_presets = [];
+    changed = true;
+  }
+  return changed;
+}
 function saveHostExtensionSettings(settings) {
   try {
     if (typeof localStorage !== "undefined") {
@@ -1716,6 +1735,7 @@ function buildHostStContext(src = {}) {
   const messages = Array.isArray(s.messages) ? s.messages : [];
   const charName = s.character !== null && s.character !== void 0 && typeof s.character === "object" && s.character.name != null ? s.character.name : void 0;
   const ext = readHostExtensionSettings();
+  if (seedHostExtensionSettings(ext, s)) saveHostExtensionSettings(ext);
   const i18n = getHostI18n();
   const tools = getHostToolManager();
   const readChatId = () => {
@@ -8079,6 +8099,19 @@ window.audio = audio; // C17\uFF1A\u5BF9\u8C61\u578B API \u4E0D\u5728\u51FD\u657
 // found\u300D\uFF09\u3002\u8FD9\u91CC\u7ED9\u51FA bundle \u5B9E\u9645\u89E6\u78B0\u7684 ST \u8868\u9762\uFF08\u8BFB\u591A\u5199\u5C11\uFF1B\u5199\u8DEF\u5F84\u5F52\u5BBF\u4E3B\uFF0C\u6C99\u7BB1\u5185 no-op\uFF09\u3002
 var __dshtExtBase = {};
 try { __dshtExtBase = JSON.parse(localStorage.getItem('__dsht_extension_settings') || '{}') || {}; } catch (e) { __dshtExtBase = {}; }
+// \u3010\u5FC3\u8DF3 58 \xB7 T-42 \u6536\u53E3 \xB7 \u540C\u65CF\u526F\u672C\u3011ST \u5168\u5C40\u6B63\u5219\u952E\u7684\u5F62\u72B6\u515C\u5E95\uFF08\u4E0E\u5BBF\u4E3B host-vendor \u7684
+// seedHostExtensionSettings \u540C\u5224\u636E\uFF0C\u9010\u5B57\u5BF9\u9F50 ST extensions.js:178 \u7684\u9ED8\u8BA4\u503C +
+// extensions/regex/index.js:1713 init() \u7684 !Array.isArray \u515C\u5E95\uFF09\u3002
+// \u5BBF\u4E3B\u4FA7\u662F\u5361\u7684 inject.js\uFF08\u8DD1\u5728\u5BBF\u4E3B\u9875\uFF09\u8BFB ctx.extensionSettings.regex\uFF1B
+// \u672C\u4FA7\u662F iframe \u5185\u811A\u672C\u8BFB SillyTavern.extensionSettings.regex \u2014\u2014 \u4E24\u4FA7\u662F**\u5404\u81EA\u72EC\u7ACB\u7684\u526F\u672C**
+//\uFF08\u540C\u4E00 localStorage \u952E\uFF0C\u4F46\u5404\u81EA\u5728\u542F\u52A8\u65F6\u8BFB\u4E00\u6B21\uFF09\uFF0C\u53EA\u6539\u4E00\u4FA7 = L61 \u7684"\u5047\u4FEE"\u3002
+// \u94C1\u5F8B\u63D0\u9192\uFF1A\u672C\u6587\u4EF6\u6574\u6BB5\u662F\u6784\u5EFA\u671F\u6A21\u677F\u4E32\uFF0C\u6B64\u5904\u4E0D\u5F97\u51FA\u73B0\u53CD\u5F15\u53F7 / \u6B63\u5219\u5B57\u9762\u91CF\u3002
+var __dshtExtSeedChanged = false;
+if (!Array.isArray(__dshtExtBase['regex'])) { __dshtExtBase['regex'] = []; __dshtExtSeedChanged = true; }
+if (!Array.isArray(__dshtExtBase['regex_presets'])) { __dshtExtBase['regex_presets'] = []; __dshtExtSeedChanged = true; }
+if (__dshtExtSeedChanged) {
+  try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(__dshtExtBase)) } catch (e) { }
+}
 var __dshtExtSettings = new Proxy(__dshtExtBase, {
   set: function (t, k, v) { t[k] = v; try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(t)) } catch (e) { /* \u914D\u989D\u6EE1\u7B49\uFF1A\u5185\u5B58\u4FDD\u7559 */ } return true },
   deleteProperty: function (t, k) { delete t[k]; try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(t)) } catch (e) { } return true },

@@ -12,8 +12,8 @@
 | 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v266**，阶段 0/1/2/3/4 已全部推完） |
 | 仓库最新产物 | **x86_64 debug sentinel v265（196,836,000 B）/ arm64 release sentinel v266（128,362,024 B）**，9-11 19:11 构建，载荷标记已解码核验 |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1037 项全绿（50 文件）** · `typecheck` 三段式 **0 错**（心跳 56 复跑确认） |
-| 未提交改动 | 心跳 53–56 的源码/文档/工具（待提交） |
+| 单测 | **1074 项全绿（51 文件）** · `typecheck` 三段式 **0 错**（心跳 58 复跑确认） |
+| 未提交改动 | 心跳 53–58 的源码/文档/工具（待提交） |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
 - **心跳 55 · 实例B** = **修掉一个"死了 8 个心跳"的功能级缺陷**：
@@ -109,8 +109,8 @@
 | ~~T-05~~ | ~~升级时机：立即走完 vs 等正式版~~ | ✅ **已按建议执行**：立即走完，阶段 0~4 全部通过（度量 5/5） | — |
 | ~~T-06~~ | ~~能否接受「打开旧聊天要等一会儿」（迁移耗时）~~ | ✅ **已实测解答**：151MB / **1.7 秒**，毫秒级，用户无感；**不构成体验问题** | — |
 | ~~T-07~~ | ~~要不要启用「动态替换提示词」（可能解 D-4）~~ | ✅ **已评估**（T-03 内）：需切 `llm-deepseek` 路由 + 显式声明 models 才生效，**属独立任务**（见 T-11） | D-4 可达性 |
-| T-08 | 工具定义（D-6）要不要关 | ⏳ **仍等你拍板**（建议：分开做，别和升级叠加）<br>▸ **实测口径**（T-13/D-7）：TT 请求体**完全没有** `tools` 字段；DSHT 侧实测 **32 个**（早期记录写 31 —— 工具数随当时注册的插件集浮动，故两个数字都出现过；以最近一次抓包 32 为准） | RP 会话纯净度 |
-| T-09 | **存量脏楼层清洗**：`<interactive_input>` 包装 + `$1` 占位残留 | ⏳ **仍等你拍板**（一次性 migration）<br>▸ **实测口径已漂移**（2026-09-11 心跳 47 复核设备真值，原记「3 会话 146 处」）：<br>· 含 `<interactive_input>` 的文件 **20 个 / 共 965 处**<br>· 其中 **`$1` 真未替换**的 **12 个文件 / 共 73 处**（其余是已被替换或本就为空）<br>· 影响面集中在 3 个会话（`st-vr2jg2` 29、`64e580f0` 8、`st-asm3yf` 5 + 9 个 wuwa 会话各 3） | 历史聊天外观（**不影响新消息**） |
+| ~~T-08~~ | ~~工具定义（D-6）要不要关~~ | ✅ **已按拍板落地（2026-09-11 心跳 58）**：<br>▸ **实测口径**（T-13/D-7）：TT 请求体**完全没有** `tools` 字段；DSHT 侧实测 **32 个**（早期记录写 31 —— 工具数随当时注册的插件集浮动，故两个数字都出现过；以最近一次抓包 32 为准）<br>▸ **修法**：`system-prompt/assemble` 按「是否 RP 会话」修剪 —— 见 **T-59**<br>▸ **保留面**：`lightAgent`/`heavyAgent`/`agent` 三路径**不修剪**（其预设正文明确要求调用 `lore_query` 等工具，硬关会让正文指向不存在的工具 = 新的静默不一致） | RP 会话纯净度 |
+| ~~T-09~~ | ~~**存量脏楼层清洗**：`<interactive_input>` 包装 + `$1` 占位残留~~ | ✅ **按拍板选 B：不清洗，关闭本项**（2026-09-11 心跳 58）<br>▸ **实测口径**（心跳 47 复核设备真值）：含 `<interactive_input>` 的文件 **20 个 / 共 965 处**；其中 **`$1` 真未替换**的 **12 个文件 / 共 73 处**；影响面集中在 3 个会话<br>▸ **只读报告**（心跳 54，`scripts/audit-dirty-floors.mjs`，零写入）：**真脏 83 条**（`$1` 字面残留 62 / 嵌套包装 1），**受影响会话 13 个**；另有 35 条属**设计用途快照**（system-level / runtime-ctx / skill-list）不计风险；assistant 提及该标签 192 条属「模型在谈论」<br>▸ **修复已生效**：最后一次污染 09-10 08:53 UTC → 最新消息 09-11 08:12 UTC = **23.3 小时零新增** ⇒ **行为已正确，残留纯属存量**<br>▸ **拍板结论**：**不清洗** —— 只影响旧会话观感，与新版行为无关；零成本、零风险（清洗属不可逆写入，收益不成比例） | 历史聊天外观（**不影响新消息**） |
 
 ---
 
@@ -371,6 +371,13 @@
   → 卡得 11800 → **走新版路径**（原文注释「11305+ has built-in regex binding; ST is source of truth,
   only sync FROM ST」）。→ 属 L36「跟基准一致**既不能少也不能多**」的「少了」一侧，
   **不是产品决策，是缺陷**。详见 **T-56** 与 LEARNINGS **L71/L72**。
+- **✅ 心跳 58 收口（推翻心跳 57 的「降级为非缺陷」）**：心跳 57 的理由是「ST 1.13.5+ 下卡
+  主动**不往这个锚点渲染**（`inject.js:4196` 的 `if (versionNumber >= 11305) return;`）」——
+  **这个理由对 `#saved_regex_scripts` 成立，但对 `extension_settings.regex` 不成立**。
+  本轮用**按卡逐字取法**的探针实测：卡在**无条件调用**的 `updateSTRegexes()`（`:3892`）里读
+  `extensions.regex.length`（`:3997`）→ 我方该键恒 `undefined` → **取值先抛 TypeError**
+  → `RegexBinding()` 整段中断（影响面正是本条登记的「后续三行不执行」）。
+  详见 **T-60**（含修法与反控）。
 - **选项（原口径，已被上条修正取代；保留以便回溯）**：
   - **A**：提供 ST 拓展面板挂载点（`#saved_regex_scripts` 等）**并**把 ST 全局正则
     （`extension_settings.regex`）真接进我方正则引擎 → 真修，工作量中等偏大。
@@ -798,6 +805,76 @@ live 分支返回的是**完全不同**的形状：`200 {"logical":true,"replace
 
 ---
 
+### T-59　✅ **D-6 落地：RP 会话的 agent 层工具修剪**（心跳 58，按用户拍板）
+
+- **背景（D-7 抓包实证）**：基准 TT 发给 LLM 的请求体**完全没有 `tools` 字段**，
+  而 DSHT 带 **32 个**工具定义 + 24k 字 agent 说明书 —— 这是与基准的**唯一真差异**。
+  危害不只是体积：RP 消息要跟 agent 工具链抢注意力（历史样本 `[29]-[35]` 正是模型在
+  **查 worldbook 工具**而不是直接推进剧情）。
+- **DSH 侧无「关 tools」开关**（`disableTools`/`noTools`/`toolChoice` 全仓零命中，
+  静态枚举已确证）—— 官方给的两条路是 ①自定义无工具 agent preset ②`ctx.tools.restrict()`
+  （需 scoped ctx）。**本项目采用 ③：在 `system-prompt/assemble` 里修剪** ——
+  该钩子的 `assembly` 官方明文标注为 **mutable**（`dsh-system-prompt/lib/types/index.d.ts:23`），
+  是最短路径且无需新建 preset/改会话创建链。
+- ✅ **实现（两个纯函数 + 一处接线）**：
+  | 件 | 位置 | 语义 |
+  |---|---|---|
+  | `shouldStripRpTools(path)` | `dsh-plugin/index.ts` | 默认/`direct` → 修剪；`lightAgent`/`heavyAgent`/`agent` → **保留** |
+  | `stripAssemblyTools(assembly)` | 同上 | 清 `tools` **并摘除对应 `tool:<name>` section**；不改入参；无工具时原样返回 |
+  | 接线 | `system-prompt/assemble` 钩子 | 判据 = `rpSlugFromCwd(cwd)` 命中（**是 RP 会话**） |
+- 🔴 **为什么不是一刀切（关键设计决定）**：`lightAgent`/`heavyAgent`/`agent` 三条路径的
+  **预设正文明确要求调用工具**（`preset/demo.ts` 的 lightAgent 正文：「设定密集的世界观在上下文
+  缺失时，**先用 lore_query 工具查询世界书**，再作答」）。把这三种也关掉 =
+  **让正文指向不存在的工具** = 造出新的静默不一致（L42 家族）。故按 path 分流。
+- 🔴 **为什么 section 要成对摘（而不是只清 tools）**：官方每个工具插件都注册一段
+  `tool:<name>` 使用说明（`dsh-tool-bash/lib/index.js:254-258` 等）。只清 tools 会留下
+  「查看 bash 结果的 `[exit code: N]`」这类**指向不存在工具**的系统指令 ——
+  那是把「多出来的污染」换成「自相矛盾的残留」，不比原来好（与 T-56「一组三件」同理）。
+  匹配规则保守：`name.startsWith('tool:')` **且** 该 name 确在被移除的工具里（不误伤同名前缀）。
+- **迁移会话天然不受影响**：它们的 cwd 是 `rp-import/<batchId>` —— `rpSlugFromCwd` 要求
+  前缀 `$DSH_HOME/rp/` 且 slug 不含 `/`，故**不匹配**；且它们靠工具干活。
+- **验收**：`typecheck` 三段式 0 错 · 单测 **51 文件 / 1074 全绿**（+5）·
+  **两轮反控**：①`shouldStripRpTools` 恒 false → 1 条红；②只清 tools 不清 section → 2 条红。
+- **实机效果未验**（诚实边界）：需在真机发一轮消息后核 `rp/golden/dsht/llm-*.json`
+  的请求体**无 `tools` 字段** + logcat 出现 `D-6 工具修剪：移除 N 个工具定义`。
+  **注**：golden fetch 拦截需 `rp/golden/dsht-ENABLED` 开关文件才启用（见 `index.ts` 内注释）。
+
+---
+
+### T-60　✅ **T-42 收口：宿主 `extension_settings.regex` 的种子**（心跳 58，实证推翻心跳 57 结论）
+
+- **心跳 57 曾把 T-42 判定为「降级为非缺陷」**（理由是「ST 1.13.5+ 下卡不做面板这件事」）。
+  **该判定不成立** —— 本轮用**按卡逐字取法**的探针实测：
+  ```
+  OK    ccs.extensions.regex_scripts => undefined
+  THROW extensions.regex.length      => Cannot read properties of undefined (reading 'length')
+  ```
+- **为什么这一行致命**：卡 `inject.js:3538` 取 `const extensions = ctx.extensionSettings;`，
+  随后在**无条件调用**的 `updateSTRegexes()`（`:3892`）里读 `extensions.regex.length`（`:3997`）
+  → `undefined.length` **取值先抛** TypeError → `RegexBinding()` 整段中断 →
+  紧随其后的 `ChatSquash()` / `MacroNest()` / `syncSPresetToolRegistrations()` **全不执行**。
+  **注意该行新旧版路径都会走到** —— 与 `#saved_regex_scripts` 锚点不同（那处只在旧版路径被消费），
+  所以心跳 57 补的「`/version` + 锚点 + `regex_scripts`」三件**并不足以**让这段不抛。
+- **基准事实（TauriTavern / ST 1.16 源码逐条核实）**：`extension_settings.regex` 是
+  `RegexScriptData[]`（camelCase）—— `extensions.js:178` 默认 `regex: []`，
+  `extensions/regex/index.js:1713` 的 `init()` 再兜底 `if (!Array.isArray(...)) … = []`；
+  且它只装 **GLOBAL** 作用域（`engine.js:110`），与角色内嵌 / 预设内嵌是**三棵独立的树**。
+- ✅ **修复（三处，含同族副本）**：
+  | 件 | 位置 | 内容 |
+  |---|---|---|
+  | ① 数据源 | `dsht-plugin-tavern-helper/facade.ts` 的 `/context` | 输出 `extensionSettingsRegex`（= `rp/regex/global.json` 经 `toStRegexScript` 白名单转换） |
+  | ② 宿主 seed | `host-vendor.ts` 的 `seedHostExtensionSettings` | 种 `regex` / `regex_presets`；**不是数组→种**、**空数组有真数据→填**、**非空→不动**（卡改过的不回滚）；改动时落盘（iframe 与宿主共用同一 localStorage 键） |
+  | ③ 同族副本 | `th-shim.ts`（iframe 侧） | 同样的 `!Array.isArray` 兜底 —— 只改一侧 = L61 的"假修" |
+- **一个被单测当场抓住的设计缺陷**：首版写「只种不覆盖」，但门面**常常先以空壳构建**
+  （RP 未打开时快照为 null）把 `regex` 种成 `[]` → 此后真数据**永远进不来**。
+  改为「空数组且有真数据 → 填充」并补了专门的时序用例。
+- **验收**：`typecheck` 三段式 0 错 · 单测 **+6**（含「按卡的取法读 `.length` 不抛」这条承重断言）·
+  **反控**：停用 seed → **6 条立刻转红**，恢复即 52 passed。
+- **实机效果未验**（诚实边界）：需真机开卡后核宿主页 `SillyTavern.getContext().extensionSettings.regex`
+  是数组、且 bootstrap 后续三行（ChatSquash / MacroNest / 工具注册）确实执行。
+
+---
+
 ### T-45　🆕→✅ **主框架加载失败后无自愈路径 → 永久停在启动屏**（心跳 50 登记 / **心跳 53 定性并修复**）
 - **现象**：`adb install -r` 后立即 `force-stop + start`，约 1/3 概率 WebView 停在
   `Webpage not available`（`chrome-error://chromewebdata/`），**此后不再重试**，`SillyTavern`/UI 全无。
@@ -945,11 +1022,13 @@ live 分支返回的是**完全不同**的形状：`200 {"logical":true,"replace
    → T-04 双架构 APK 交付 → T-11 D-4 重评 → T-13 D-7 对照 → T-14/T-15 宿主面收口
    → T-20/T-21 兼容缺口补完 → T-23/T-24 验证债 → T-26 README → T-32 契约漂移
    → T-34 类型闸门（core+UI 双绿，抓出 5 个从未生效的功能）
-【待你拍板】T-08/T-12（D-6 关不关 tools：TT 请求体**完全没有** tools 字段，D-7 已实锤）
-   → T-09 存量脏楼层清洗（3 会话 146 处）
+【待你拍板】~~T-08/T-12（D-6 关不关 tools）~~ ✅ 已落地（见 T-59）
+   → ~~T-09 存量脏楼层清洗~~ ✅ 已按拍板选 B「不清洗」关闭
 【待你执行】把 arm64 包装真机，验三条基线（启动 / 打开旧聊天 / 发消息）
 【待外部条件】T-25 大扫除（需先解冻 RP 数据）→ T-27 更新渠道（需提供目标 GitHub 仓库）
 【随时可做】T-28~T-33 长尾（不阻塞发布）
+【实机待验】T-59（D-6 工具修剪）/ T-60（T-42 extension_settings.regex）——
+   两者单测+反控已绿，**真机效果未验**（需发一轮消息核请求体 / 核宿主 globals）
 ```
 
 **卡点提示**：T-25 大扫除在「T-04 装机验证通过 + 差异收敛」前**不能动**（数据冻结）；

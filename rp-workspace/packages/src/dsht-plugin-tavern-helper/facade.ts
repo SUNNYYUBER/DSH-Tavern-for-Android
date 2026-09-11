@@ -371,6 +371,23 @@ export async function context(dshHome: string, body: Record<string, unknown>): P
   // 处**属性访问先抛 TypeError**（`inject.js:3567-3569`；与 T-40 的 `eventTypes` 同型缺陷：
   // 看似有 `&&` 短路保护，但 `undefined.xxx` 的取值本身先抛，右侧永远轮不到）。
   const regexScripts = await buildStRegexScripts(dshHome, presetId ?? '')
+  // 【心跳 58 · T-42 收口】**全局作用域**正则 → 宿主 `extension_settings.regex` 的真数据源。
+  //
+  // 基准事实（TauriTavern / ST 1.16）：
+  //   · `extension_settings.regex` 是 `RegexScriptData[]`（camelCase）——`extensions.js:178` 默认 `[]`，
+  //     `extensions/regex/index.js:1713` 的 `init()` 再兜底一次 `if (!Array.isArray(...)) … = []`；
+  //   · 它只装 **GLOBAL** 作用域（`engine.js:110` `case SCRIPT_TYPES.GLOBAL: return extension_settings.regex ?? []`）
+  //     —— 角色内嵌走 `characters[..].data.extensions.regex_scripts`，预设内嵌走 preset manager，
+  //     **三者是三棵独立的树**，不可混用（见本文件 ST_REGEX_SCRIPT_FIELDS 的同类警示）。
+  //
+  // 我方缺陷（心跳 58 探针实证）：宿主门面**从未提供**该键 → `extensions.regex === undefined`。
+  // 卡的宿主脚本 `inject.js:3538` 取 `const extensions = ctx.extensionSettings;`，随后在
+  // **无条件调用**的 `updateSTRegexes()`（`:3892`）里读 `extensions.regex.length`（`:3997`）
+  // → `undefined.length` **取值先抛 TypeError** → 整个 `RegexBinding()` 中断
+  // → 紧随其后的 `ChatSquash()` / `MacroNest()` / `syncSPresetToolRegistrations()` **全不执行**。
+  // 注意这是**新旧版路径都会走到**的一行（与 #saved_regex_scripts 锚点不同，那处只在旧版路径消费）。
+  const globalRegexes = (await loadTaggedScripts(dshHome, 'rp/regex/global.json', 'global'))
+    .map((script, index) => toStRegexScript(script, index))
   return {
     status: 200,
     body: {
@@ -385,6 +402,9 @@ export async function context(dshHome: string, body: Record<string, unknown>): P
         prompt_order: view.prompt_order,
         extensions: { regex_scripts: regexScripts },
       },
+      // 宿主 `extension_settings.regex` 的种子（= GLOBAL 作用域正则，ST 内部 camelCase 形状）。
+      // 宿主侧由 host-vendor 幂等 seed 进 extension_settings（保持对象身份，写回路径不破）。
+      extensionSettingsRegex: globalRegexes,
     },
   }
 }

@@ -1,8 +1,8 @@
-// src/dsht-plugin-tavern-helper/index.ts
-import { mkdir as mkdir4, readFile as readFile5, readdir as readdir4, writeFile as writeFile4 } from "node:fs/promises";
-import { dirname as dirname4, join as join7 } from "node:path";
+// rp-workspace/packages/src/dsht-plugin-tavern-helper/index.ts
+import { mkdir as mkdir4, readFile as readFile5, readdir as readdir4, writeFile as writeFile3 } from "node:fs/promises";
+import { dirname as dirname5, join as join8 } from "node:path";
 
-// src/dsht-plugin-tavern-helper/variables.ts
+// rp-workspace/packages/src/dsht-plugin-tavern-helper/variables.ts
 function decodeSeg(seg) {
   return seg.replace(/~1/g, "/").replace(/~0/g, "~");
 }
@@ -71,7 +71,7 @@ function mergeAllScopes(scopes) {
   );
 }
 
-// src/dsht-plugin-tavern-helper/scripts.ts
+// rp-workspace/packages/src/dsht-plugin-tavern-helper/scripts.ts
 var ACTION_TYPES = /* @__PURE__ */ new Set(["set-variable", "delete-variable", "insert-note", "log"]);
 var SCOPES = ["global", "preset", "character", "chat", "message", "script"];
 function validateScript(raw) {
@@ -143,7 +143,7 @@ function runScript(script, trees) {
   return { ok: true, trees: next, notes, logs };
 }
 
-// src/dsht-plugin-tavern-helper/session-store.ts
+// rp-workspace/packages/src/dsht-plugin-tavern-helper/session-store.ts
 var TAVERN_SCOPES = ["global", "preset", "character", "chat", "message", "script"];
 var SNAPSHOT_KEY = "tavern";
 function emptySnapshot() {
@@ -243,13 +243,13 @@ var TavernSessionStore = class {
   }
 };
 
-// src/dsht-plugin-tavern-helper/facade.ts
+// rp-workspace/packages/src/dsht-plugin-tavern-helper/facade.ts
 import { createReadStream } from "node:fs";
-import { mkdir as mkdir3, readFile as readFile3, readdir as readdir3, rename, rm as rm3, stat, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname3, join as join4, relative, resolve } from "node:path";
+import { mkdir as mkdir3, readFile as readFile4, readdir as readdir3, rename, rm as rm3, stat, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname4, join as join6, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
-// src/preset/schema.ts
+// rp-workspace/packages/src/preset/schema.ts
 var DEFAULT_BUDGET = {
   maxToolRounds: 2,
   maxCallsPerRun: 8,
@@ -284,7 +284,7 @@ function emptyPreset(id, displayName) {
   };
 }
 
-// src/preset/demo.ts
+// rp-workspace/packages/src/preset/demo.ts
 function demoDirectPreset() {
   const p = emptyPreset("rp-demo-direct", "\u793A\u8303 \xB7 \u76F4\u7B54\u578B");
   p.description = "\u5355\u6B21\u8C03\u7528\u76F4\u51FA\uFF0Ctoken = ST oneshot\u3002\u9002\u5408\u65E5\u5E38\u5267\u60C5\u63A8\u8FDB\u3002";
@@ -335,7 +335,7 @@ function demoLightAgentPreset() {
   return p;
 }
 
-// src/lore/entry.ts
+// rp-workspace/packages/src/lore/entry.ts
 var WI_POSITION = {
   BEFORE: 0,
   AFTER: 1,
@@ -347,7 +347,7 @@ var WI_POSITION = {
   OUTLET: 7
 };
 
-// src/dsht-plugin-shared/session-surgery.ts
+// rp-workspace/packages/src/dsht-plugin-shared/session-surgery.ts
 import { open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 async function readFirstLine(path) {
@@ -367,6 +367,20 @@ async function readFirstLine(path) {
     });
   }
 }
+function pickCurrentSessionFilename(entries) {
+  let best = null;
+  let bestVersion = -1;
+  for (const name2 of entries) {
+    const m = /^session\.v(\d+)\.jsonl$/.exec(name2);
+    if (m === null) continue;
+    const v = Number(m[1]);
+    if (v > bestVersion) {
+      bestVersion = v;
+      best = name2;
+    }
+  }
+  return best ?? "session.jsonl";
+}
 async function scanSessionHeaders(dshHome) {
   const root = join(dshHome, "sessions");
   const out = [];
@@ -384,7 +398,14 @@ async function scanSessionHeaders(dshHome) {
       continue;
     }
     for (const sdir of sdirs) {
-      const firstLine = await readFirstLine(join(root, project, sdir, "session.jsonl"));
+      let entries = [];
+      try {
+        entries = await readdir(join(root, project, sdir));
+      } catch {
+        continue;
+      }
+      const file = join(root, project, sdir, pickCurrentSessionFilename(entries));
+      const firstLine = await readFirstLine(file);
       if (firstLine === null) continue;
       try {
         const header = JSON.parse(firstLine);
@@ -394,7 +415,8 @@ async function scanSessionHeaders(dshHome) {
           cwd: typeof header.cwd === "string" ? header.cwd : void 0,
           project,
           sdir,
-          firstLine
+          firstLine,
+          file
         });
       } catch {
       }
@@ -403,11 +425,48 @@ async function scanSessionHeaders(dshHome) {
   return out;
 }
 
-// src/dsht-plugin-shared/file-snapshots.ts
-import { mkdir, open as open2, readFile, readdir as readdir2, rm, writeFile } from "node:fs/promises";
+// rp-workspace/packages/src/dsht-plugin-shared/th-floors.ts
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join as join2 } from "node:path";
+function thFloorsFile(dshHome, sessionId) {
+  return join2(dshHome, "rp", "th-floors", `${sessionId}.json`);
+}
+function readThFloors(dshHome, sessionId) {
+  try {
+    const raw = readFileSync(thFloorsFile(dshHome, sessionId), "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v === null || typeof v !== "object" || Array.isArray(v)) continue;
+      const r = v;
+      const rec = {};
+      if (r.data !== void 0) rec.data = r.data;
+      if (r.system === true) rec.system = true;
+      if (r.legacy !== null && typeof r.legacy === "object" && !Array.isArray(r.legacy)) {
+        rec.legacy = r.legacy;
+      }
+      if (rec.data !== void 0 || rec.system !== void 0 || rec.legacy !== void 0) out[k] = rec;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+function lookupThFloor(table, id, seq) {
+  if (typeof id === "string" && id !== "") {
+    const hit = table[id];
+    if (hit !== void 0) return hit;
+  }
+  if (typeof seq === "number") return table[`seq:${seq}`];
+  return void 0;
+}
+
+// rp-workspace/packages/src/dsht-plugin-shared/file-snapshots.ts
+import { mkdir, open as open2, readFile, readdir as readdir2, rm, writeFile } from "node:fs/promises";
+import { dirname as dirname2, join as join3 } from "node:path";
 function snapshotDir(dshHome, sessionId) {
-  return join2(dshHome, "rp", "file-history", sessionId);
+  return join3(dshHome, "rp", "file-history", sessionId);
 }
 function isSnapshotEligible(relPath) {
   const p = relPath.replaceAll("\\", "/");
@@ -449,7 +508,7 @@ async function readLatestTurn(sessionJsonlPath) {
 async function resolveSessionTurnAnchor(dshHome, sessionId) {
   const hit = (await scanSessionHeaders(dshHome)).find((h) => h.sessionId === sessionId);
   if (!hit) return null;
-  return readLatestTurn(join2(dshHome, "sessions", hit.project, hit.sdir, "session.jsonl"));
+  return readLatestTurn(hit.file);
 }
 async function snapshotBeforeWrite(dshHome, sessionId, relPaths, turnAnchor) {
   const empty = { snapshotted: 0, skipped: 0, anchor: null };
@@ -459,7 +518,7 @@ async function snapshotBeforeWrite(dshHome, sessionId, relPaths, turnAnchor) {
   const eligible = relPaths.filter(isSnapshotEligible);
   const result = { snapshotted: 0, skipped: relPaths.length - eligible.length, anchor };
   if (eligible.length === 0) return result;
-  const file = join2(snapshotDir(dshHome, sessionId), `${anchor}.json`);
+  const file = join3(snapshotDir(dshHome, sessionId), `${anchor}.json`);
   let snapshot = { turn: anchor, createdAt: Date.now(), files: [] };
   try {
     const parsed = JSON.parse(await readFile(file, "utf8"));
@@ -472,7 +531,7 @@ async function snapshotBeforeWrite(dshHome, sessionId, relPaths, turnAnchor) {
     let existed = true;
     let content = "";
     try {
-      content = (await readFile(join2(dshHome, ...rel.split("/")))).toString("base64");
+      content = (await readFile(join3(dshHome, ...rel.split("/")))).toString("base64");
     } catch {
       existed = false;
     }
@@ -481,13 +540,13 @@ async function snapshotBeforeWrite(dshHome, sessionId, relPaths, turnAnchor) {
     result.snapshotted++;
   }
   if (result.snapshotted > 0) {
-    await mkdir(dirname(file), { recursive: true });
+    await mkdir(dirname2(file), { recursive: true });
     await writeFile(file, JSON.stringify(snapshot), "utf8");
   }
   return result;
 }
 
-// src/dsht-plugin-shared/schema.ts
+// rp-workspace/packages/src/dsht-plugin-shared/schema.ts
 var SCHEMA_MAX_DEPTH = 5;
 function validateSchemaSubset(value, schema, path = "$", depth = 0) {
   if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return [];
@@ -526,11 +585,11 @@ function validateSchemaSubset(value, schema, path = "$", depth = 0) {
   return [];
 }
 
-// src/dsht-plugin-shared/undo.ts
-import { appendFile, mkdir as mkdir2, readFile as readFile2, rm as rm2, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname2, join as join3 } from "node:path";
+// rp-workspace/packages/src/dsht-plugin-shared/undo.ts
+import { appendFile, mkdir as mkdir2, readFile as readFile2, rm as rm2 } from "node:fs/promises";
+import { dirname as dirname3, join as join4 } from "node:path";
 
-// src/dsht-plugin-shared/macros.ts
+// rp-workspace/packages/src/dsht-plugin-shared/macros.ts
 function parseVarPath(path) {
   const p = path.trim();
   if (p.startsWith("/")) {
@@ -584,7 +643,7 @@ function mulberry32(seed) {
 }
 function splitMacroList(listString) {
   if (listString.includes("::")) return listString.split("::");
-  return listString.replace(/\\,/g, "\0COMMA\0").split(",").map((item) => item.trim().replace(/ COMMA /g, ","));
+  return listString.replace(/\\,/g, "\0COMMA\0").split(",").map((item) => item.trim().replace(/\0COMMA\0/g, ","));
 }
 function rollDice(formula) {
   const m = formula.replace(/\s+/g, "").match(/^(\d*)d(\d+)([+-]\d+)?$|^(\d+)$/);
@@ -618,6 +677,11 @@ var BUILTIN_MACRO_NAMES = /* @__PURE__ */ new Set([
   "addvar",
   "incvar",
   "decvar",
+  "getglobalvar",
+  "setglobalvar",
+  "addglobalvar",
+  "incglobalvar",
+  "decglobalvar",
   "get_message_variable",
   "get_chat_variable",
   "get_character_variable",
@@ -667,9 +731,22 @@ function expandOnce(text, ctx, overlay, writes) {
   const unknownMacros = [];
   const now = ctx.now ?? /* @__PURE__ */ new Date();
   const rawHash = fnv1a(text);
+  const dynMacros = (() => {
+    if (ctx.dynamicMacros === void 0) return void 0;
+    const m = {};
+    for (const [k, v] of Object.entries(ctx.dynamicMacros)) m[k.toLowerCase()] = v;
+    return m;
+  })();
   const readVar = (path) => {
     const local = readVarPath(overlay, path);
     if (local !== void 0) return local;
+    return ctx.getVar?.(path);
+  };
+  const readGlobalVar = (path) => {
+    const local = readVarPath(overlay, path);
+    if (local !== void 0) return local;
+    const scoped = ctx.scopeGet?.("global", path);
+    if (scoped !== void 0) return scoped;
     return ctx.getVar?.(path);
   };
   const readScopeVar = (kind, path) => {
@@ -682,137 +759,178 @@ function expandOnce(text, ctx, overlay, writes) {
     if (typeof v === "number" && Number.isFinite(v)) return v.toLocaleString("en-US");
     return stringifyVar(v);
   };
-  const addNumericVar = (path, delta) => {
+  const addNumericVar = (path, delta, scope) => {
     if (!path) return "";
-    const cur = Number(readVar(path));
+    const cur = Number(scope === "global" ? readGlobalVar(path) : readVar(path));
     const next = (Number.isFinite(cur) ? cur : 0) + delta;
-    const value = String(next);
-    const pointer = toPointer(path);
-    writeInto(overlay, path, value);
-    writes.push({ path: pointer, value });
-    ctx.setVar?.(pointer, value);
-    return "";
+    return writeVarMacro(path, String(next), scope);
   };
   const writeInto = (tree, path, value) => {
     const next = writeVarPath(tree, path, value);
     for (const k of Object.keys(tree)) delete tree[k];
     Object.assign(tree, next);
   };
+  const writeVarMacro = (path, value, scope) => {
+    if (!path) return "";
+    const pointer = toPointer(path);
+    writeInto(overlay, path, value);
+    writes.push(scope === void 0 ? { path: pointer, value } : { path: pointer, value, scope });
+    ctx.setVar?.(pointer, value);
+    return "";
+  };
+  const splitVarArgs = (args) => {
+    const sep = args.indexOf("::") >= 0 ? "::" : ":";
+    const at = args.indexOf(sep);
+    return { path: (at >= 0 ? args.slice(0, at) : args).trim(), rest: at >= 0 ? args.slice(at + sep.length) : "" };
+  };
   const result = text.replace(MACRO_PATTERN, (full, body, offset) => {
-    if (body.startsWith("//") || body.startsWith("!")) return "";
-    const sep = body.indexOf("::") >= 0 ? "::" : ":";
-    const sepAt = body.indexOf(sep);
-    const name2 = (sepAt >= 0 ? body.slice(0, sepAt) : body).trim();
-    const args = sepAt >= 0 ? body.slice(sepAt + sep.length) : "";
-    switch (name2) {
-      case "user":
-        return ctx.user;
-      case "char":
-        return ctx.char;
-      case "persona":
-        return ctx.persona ?? "";
-      case "noop":
-        return "";
-      case "getvar":
-        return stringifyVar(readVar(args.trim()));
-      case "setvar": {
-        const innerSep = args.indexOf("::") >= 0 ? "::" : ":";
-        const innerAt = args.indexOf(innerSep);
-        const path = (innerAt >= 0 ? args.slice(0, innerAt) : args).trim();
-        const value = innerAt >= 0 ? args.slice(innerAt + innerSep.length).replace(/^\s+|\s+$/g, "") : "";
-        if (!path) return "";
-        const pointer = toPointer(path);
-        writeInto(overlay, path, value);
-        writes.push({ path: pointer, value });
-        ctx.setVar?.(pointer, value);
-        return "";
-      }
-      case "addvar": {
-        const innerSep = args.indexOf("::") >= 0 ? "::" : ":";
-        const innerAt = args.indexOf(innerSep);
-        const path = (innerAt >= 0 ? args.slice(0, innerAt) : args).trim();
-        const delta = innerAt >= 0 ? Number(args.slice(innerAt + innerSep.length).trim()) : 0;
-        return addNumericVar(path, Number.isFinite(delta) ? delta : 0);
-      }
-      case "incvar":
-        return addNumericVar(args.trim(), 1);
-      case "decvar":
-        return addNumericVar(args.trim(), -1);
-      // C2 类宏（MVU 作用域变量）：get 走 scopeGet（保持 unknown 语义——未命中不吞原文由 stringifyVar 决定）
-      case "get_message_variable":
-      case "get_chat_variable":
-        return stringifyVar(readScopeVar("chat", args.trim()));
-      case "get_character_variable":
-        return stringifyVar(readScopeVar("character", args.trim()));
-      case "get_preset_variable":
-        return stringifyVar(readScopeVar("preset", args.trim()));
-      case "get_global_variable":
-        return stringifyVar(readScopeVar("global", args.trim()));
-      case "format_message_variable":
-      case "format_chat_variable":
-        return formatVar(readScopeVar("chat", args.trim()));
-      case "format_character_variable":
-        return formatVar(readScopeVar("character", args.trim()));
-      case "format_preset_variable":
-        return formatVar(readScopeVar("preset", args.trim()));
-      case "format_global_variable":
-        return formatVar(readScopeVar("global", args.trim()));
-      case "random": {
-        const list = splitMacroList(args);
-        if (list.length === 0) return "";
-        return list[Math.floor(Math.random() * list.length)];
-      }
-      case "pick": {
-        const list = splitMacroList(args);
-        if (list.length === 0) return "";
-        const seed = fnv1a(`${ctx.stableSeed ?? ""}-${rawHash}-${offset}`);
-        const rng = mulberry32(seed);
-        return list[Math.floor(rng() * list.length)];
-      }
-      case "roll":
-      case "dice": {
-        const formula = args.trim();
-        const norm = /^\d+$/.test(formula) ? `1d${formula}` : formula;
-        const r = rollDice(norm);
-        return r == null ? "" : String(r);
-      }
-      case "time":
-        return now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-      case "date":
-        return now.toLocaleDateString("zh-CN");
-      case "datetime":
-        return `${now.toLocaleDateString("zh-CN")} ${now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
-      case "weekday":
-        return `\u661F\u671F${WEEKDAYS[now.getDay()]}`;
-      case "isotime":
-        return now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-      case "isodate": {
-        const p2 = (n) => String(n).padStart(2, "0");
-        return `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
-      }
-      default: {
-        const custom = customMacros.get(name2.toLowerCase());
-        if (custom !== void 0) {
-          if (typeof custom === "function") {
-            try {
-              return custom(args, ctx);
-            } catch {
-              return full;
-            }
-          }
-          return custom;
+    let unknown = false;
+    const out = (() => {
+      if (body.startsWith("//") || body.startsWith("!")) return "";
+      const sep = body.indexOf("::") >= 0 ? "::" : ":";
+      const sepAt = body.indexOf(sep);
+      const name2 = (sepAt >= 0 ? body.slice(0, sepAt) : body).trim();
+      const args = sepAt >= 0 ? body.slice(sepAt + sep.length) : "";
+      switch (name2) {
+        case "user":
+          return ctx.user;
+        case "char":
+          return ctx.char;
+        case "persona":
+          return ctx.persona ?? "";
+        case "noop":
+          return "";
+        case "getvar":
+          return stringifyVar(readVar(args.trim()));
+        case "setvar": {
+          const { path, rest } = splitVarArgs(args);
+          return writeVarMacro(path, rest.replace(/^\s+|\s+$/g, ""));
         }
-        unknownMacros.push(full);
-        return full;
+        case "addvar": {
+          const { path, rest } = splitVarArgs(args);
+          const delta = Number(rest.trim());
+          return addNumericVar(path, Number.isFinite(delta) ? delta : 0);
+        }
+        case "incvar":
+          return addNumericVar(args.trim(), 1);
+        case "decvar":
+          return addNumericVar(args.trim(), -1);
+        // 【T-22 2026-09-11】全局变量宏族——此前只落了斜杠形态（triggerSlash 里
+        // /setglobalvar），宏形态完全缺失：真卡（ExampleGame 等）大量用 {{setglobalvar::…}}，
+        // 缺失时整串被当未知宏原样留在提示词里且**变量从不写入**。
+        // 语义对齐基准（TT variables.js:250-259 + setGlobalVariable/getGlobalVariable）：
+        //   set/add/inc/dec → 写 global 树，输出空串；get → 只读 global 树。
+        case "setglobalvar": {
+          const { path, rest } = splitVarArgs(args);
+          return writeVarMacro(path, rest.replace(/^\s+|\s+$/g, ""), "global");
+        }
+        case "addglobalvar": {
+          const { path, rest } = splitVarArgs(args);
+          const delta = Number(rest.trim());
+          return addNumericVar(path, Number.isFinite(delta) ? delta : 0, "global");
+        }
+        case "incglobalvar":
+          return addNumericVar(args.trim(), 1, "global");
+        case "decglobalvar":
+          return addNumericVar(args.trim(), -1, "global");
+        case "getglobalvar":
+          return stringifyVar(readGlobalVar(args.trim()));
+        // C2 类宏（MVU 作用域变量）：get 走 scopeGet（保持 unknown 语义——未命中不吞原文由 stringifyVar 决定）
+        case "get_message_variable":
+        case "get_chat_variable":
+          return stringifyVar(readScopeVar("chat", args.trim()));
+        case "get_character_variable":
+          return stringifyVar(readScopeVar("character", args.trim()));
+        case "get_preset_variable":
+          return stringifyVar(readScopeVar("preset", args.trim()));
+        case "get_global_variable":
+          return stringifyVar(readScopeVar("global", args.trim()));
+        case "format_message_variable":
+        case "format_chat_variable":
+          return formatVar(readScopeVar("chat", args.trim()));
+        case "format_character_variable":
+          return formatVar(readScopeVar("character", args.trim()));
+        case "format_preset_variable":
+          return formatVar(readScopeVar("preset", args.trim()));
+        case "format_global_variable":
+          return formatVar(readScopeVar("global", args.trim()));
+        case "random": {
+          const list = splitMacroList(args);
+          if (list.length === 0) return "";
+          return list[Math.floor(Math.random() * list.length)];
+        }
+        case "pick": {
+          const list = splitMacroList(args);
+          if (list.length === 0) return "";
+          const seed = fnv1a(`${ctx.stableSeed ?? ""}-${rawHash}-${offset}`);
+          const rng = mulberry32(seed);
+          return list[Math.floor(rng() * list.length)];
+        }
+        case "roll":
+        case "dice": {
+          const formula = args.trim();
+          const norm = /^\d+$/.test(formula) ? `1d${formula}` : formula;
+          const r = rollDice(norm);
+          return r == null ? "" : String(r);
+        }
+        case "time":
+          return now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+        case "date":
+          return now.toLocaleDateString("zh-CN");
+        case "datetime":
+          return `${now.toLocaleDateString("zh-CN")} ${now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+        case "weekday":
+          return `\u661F\u671F${WEEKDAYS[now.getDay()]}`;
+        case "isotime":
+          return now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+        case "isodate": {
+          const p2 = (n) => String(n).padStart(2, "0");
+          return `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
+        }
+        default: {
+          const dyn = dynMacros?.[name2.toLowerCase()];
+          if (dyn !== void 0) {
+            if (typeof dyn === "function") {
+              try {
+                return dyn(args, ctx);
+              } catch {
+                return full;
+              }
+            }
+            return dyn;
+          }
+          const custom = customMacros.get(name2.toLowerCase());
+          if (custom !== void 0) {
+            if (typeof custom === "function") {
+              try {
+                return custom(args, ctx);
+              } catch {
+                return full;
+              }
+            }
+            return custom;
+          }
+          unknownMacros.push(full);
+          unknown = true;
+          return full;
+        }
       }
+    })();
+    if (unknown) return out;
+    const pp = ctx.postProcess;
+    if (pp === void 0) return out;
+    try {
+      return pp(out);
+    } catch {
+      return out;
     }
   });
   return { text: result, unknownMacros };
 }
 
-// src/dsht-plugin-shared/undo.ts
+// rp-workspace/packages/src/dsht-plugin-shared/undo.ts
 function undoLogPath(dshHome, sessionId) {
-  return join3(dshHome, "rp", "state", `${sessionId}.undo.jsonl`);
+  return join4(dshHome, "rp", "state", `${sessionId}.undo.jsonl`);
 }
 function makeUndoEntry(scope, slug, path, tree, ts = Date.now()) {
   const pointer = toPointer(path);
@@ -822,7 +940,7 @@ function makeUndoEntry(scope, slug, path, tree, ts = Date.now()) {
 async function appendUndoEntries(dshHome, sessionId, entries) {
   if (!sessionId || entries.length === 0) return;
   const file = undoLogPath(dshHome, sessionId);
-  await mkdir2(dirname2(file), { recursive: true });
+  await mkdir2(dirname3(file), { recursive: true });
   await appendFile(file, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
 }
 function flattenLeaves(tree, prefix = "") {
@@ -852,7 +970,106 @@ function diffUndoEntries(scope, slug, before, after, ts = Date.now()) {
   return entries;
 }
 
-// src/dsht-plugin-tavern-helper/for-session.ts
+// rp-workspace/packages/src/dsht-plugin-tavern-helper/macros.ts
+import { readFile as readFile3 } from "node:fs/promises";
+import { join as join5 } from "node:path";
+async function loadActivePersona(dshHome) {
+  try {
+    const parsed = JSON.parse(await readFile3(join5(dshHome, "rp", "persona.json"), "utf8"));
+    const list = Array.isArray(parsed.list) ? parsed.list : [];
+    const activeName = typeof parsed.active === "string" ? parsed.active : null;
+    const hit = activeName !== null ? list.find((p) => p?.name === activeName) : void 0;
+    if (!hit) return null;
+    return {
+      name: String(hit.name ?? ""),
+      description: typeof hit.description === "string" ? hit.description : ""
+    };
+  } catch {
+    return null;
+  }
+}
+async function resolveIdentity(dshHome, slug) {
+  let char = "";
+  let macrosUser = "";
+  if (slug) {
+    try {
+      const rp = JSON.parse(await readFile3(join5(dshHome, "rp", slug, "rp.json"), "utf8"));
+      char = typeof rp?.macros?.char === "string" && rp.macros.char ? rp.macros.char : String(rp?.characterName ?? "");
+      macrosUser = typeof rp?.macros?.user === "string" ? rp.macros.user : "";
+    } catch {
+    }
+  }
+  const persona = await loadActivePersona(dshHome);
+  return {
+    user: persona?.name || macrosUser || "\u7528\u6237",
+    char: char || "\u89D2\u8272",
+    persona: persona?.description ?? ""
+  };
+}
+async function runMacroExpand(deps, input) {
+  const slug = input.slug ?? "";
+  const sessionId = input.sessionId ?? "";
+  try {
+    const disk = JSON.parse(await readFile3(join5(deps.dshHome, "rp", "macros.json"), "utf8"));
+    hydrateCustomMacros(disk);
+  } catch {
+  }
+  const identity = await resolveIdentity(deps.dshHome, slug);
+  const globalTree = await deps.loadScope("global", "", "");
+  const characterTree = slug ? await deps.loadScope("character", slug, "") : {};
+  const chatTree = sessionId ? await deps.loadScope("chat", "", sessionId) : {};
+  const merged = mergeScopes(globalTree, characterTree, chatTree);
+  const r = expandTavernMacros(input.text, {
+    user: identity.user,
+    char: identity.char,
+    persona: identity.persona,
+    getVar: (path) => readVarPath(merged, path),
+    // C2 类宏作用域读取：kind → 各自作用域树（preset 无独立落盘 → global 兜底；
+    // chat/message 宏族 → chat 树），unknown 语义不变
+    scopeGet: (kind, path) => {
+      if (kind === "character") return readVarPath(characterTree, path);
+      if (kind === "preset" || kind === "global") return readVarPath(globalTree, path);
+      return readVarPath(chatTree, path);
+    },
+    stableSeed: sessionId ? `rp-${sessionId}` : slug ? `rp-${slug}` : "rp-global"
+  });
+  if (r.writes.length > 0) {
+    const globalWrites = r.writes.filter((w) => w.scope === "global");
+    const scopedWrites = r.writes.filter((w) => w.scope !== "global");
+    if (globalWrites.length > 0) {
+      let gtree = await deps.loadScope("global", "", "");
+      const gUndo = [];
+      for (const w of globalWrites) {
+        gUndo.push(makeUndoEntry("global", "", w.path, gtree));
+        gtree = setByPath(gtree, w.path, w.value);
+      }
+      if (sessionId) await appendUndoEntries(deps.dshHome, sessionId, gUndo);
+      await deps.beforeSave?.("global", "", "");
+      await deps.saveScope("global", "", "", gtree);
+    }
+    if (scopedWrites.length > 0) {
+      const scope = sessionId ? "chat" : slug ? "character" : "global";
+      let tree = await deps.loadScope(scope, slug, sessionId);
+      if (sessionId) {
+        const seq = [];
+        let evolving = tree;
+        for (const w of scopedWrites) {
+          seq.push(makeUndoEntry(scope, slug, w.path, evolving));
+          evolving = setByPath(evolving, w.path, w.value);
+        }
+        await appendUndoEntries(deps.dshHome, sessionId, seq);
+        tree = evolving;
+      } else {
+        for (const w of scopedWrites) tree = setByPath(tree, w.path, w.value);
+      }
+      await deps.beforeSave?.(scope, slug, sessionId);
+      await deps.saveScope(scope, slug, sessionId, tree);
+    }
+  }
+  return { result: r.text, writes: r.writes, unknownMacros: r.unknownMacros };
+}
+
+// rp-workspace/packages/src/dsht-plugin-tavern-helper/for-session.ts
 var STATE_RESERVED_KEYS = /* @__PURE__ */ new Set(["presetId", "state", "variables", "variableSchema", "cursor", "loreTimed", "tavern"]);
 function isTree2(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
@@ -934,7 +1151,7 @@ function lodashPathToPointer(path) {
   return "/" + segs.join("/");
 }
 
-// src/dsht-plugin-tavern-helper/facade.ts
+// rp-workspace/packages/src/dsht-plugin-tavern-helper/facade.ts
 function isTree3(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
@@ -972,17 +1189,52 @@ function buildStPromptView(preset) {
   }
   return { prompts, prompt_order: [{ character_id: 100001, order }] };
 }
+var ST_REGEX_SCRIPT_FIELDS = [
+  "id",
+  "scriptName",
+  "findRegex",
+  "replaceString",
+  "trimStrings",
+  "placement",
+  "disabled",
+  "markdownOnly",
+  "promptOnly",
+  "runOnEdit",
+  "substituteRegex",
+  "minDepth",
+  "maxDepth"
+];
+function toStRegexScript(script, index) {
+  const out = {};
+  for (const key of ST_REGEX_SCRIPT_FIELDS) {
+    if (script[key] !== void 0) out[key] = script[key];
+  }
+  if (typeof out.id !== "string" || out.id.length === 0) out.id = `rx-local-${index}`;
+  return out;
+}
+async function buildStRegexScripts(dshHome, presetId) {
+  if (!presetId) return [];
+  let raw;
+  try {
+    raw = JSON.parse(await readFile4(homePath(dshHome, `rp-presets/${presetId}/regex.json`), "utf8"));
+  } catch {
+    return [];
+  }
+  const scripts = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw.scripts : void 0;
+  if (!Array.isArray(scripts)) return [];
+  return scripts.filter((s) => s !== null && typeof s === "object" && !Array.isArray(s)).map((s, i) => toStRegexScript(s, i));
+}
 async function listPresets(dshHome) {
   const out = [];
   let dirs = [];
   try {
-    dirs = await readdir3(join4(dshHome, "rp-presets"));
+    dirs = await readdir3(join6(dshHome, "rp-presets"));
   } catch {
     return out;
   }
   for (const id of dirs.sort()) {
     try {
-      const p = JSON.parse(await readFile3(join4(dshHome, "rp-presets", id, "preset.json"), "utf8"));
+      const p = JSON.parse(await readFile4(join6(dshHome, "rp-presets", id, "preset.json"), "utf8"));
       if (isTree3(p)) out.push({ id, displayName: typeof p.displayName === "string" && p.displayName ? p.displayName : id, preset: p });
     } catch {
     }
@@ -991,24 +1243,24 @@ async function listPresets(dshHome) {
 }
 async function resolveSessionPresetId(dshHome, sessionId) {
   try {
-    const file = JSON.parse(await readFile3(join4(dshHome, "rp", "state", `${sessionId}.json`), "utf8"));
+    const file = JSON.parse(await readFile4(join6(dshHome, "rp", "state", `${sessionId}.json`), "utf8"));
     const pid = presetIdFromStateFile(file);
     if (pid) return pid;
   } catch {
   }
   try {
-    const batches = (await readdir3(join4(dshHome, "rp-import"))).filter((b) => /^[a-z0-9][a-z0-9-]{0,60}$/.test(b)).sort().reverse();
+    const batches = (await readdir3(join6(dshHome, "rp-import"))).filter((b) => /^[a-z0-9][a-z0-9-]{0,60}$/.test(b)).sort().reverse();
     for (const b of batches) {
-      const dir = join4(dshHome, "rp-import", b);
+      const dir = join6(dshHome, "rp-import", b);
       let stRoot = "data/default-user";
       try {
-        const meta = JSON.parse(await readFile3(join4(dir, "meta.json"), "utf8"));
+        const meta = JSON.parse(await readFile4(join6(dir, "meta.json"), "utf8"));
         if (typeof meta.manifest?.stRoot === "string" && meta.manifest.stRoot) stRoot = meta.manifest.stRoot;
       } catch {
       }
       let activeName = null;
       try {
-        activeName = activePresetNameFromSettings(JSON.parse(await readFile3(join4(dir, "unpacked", stRoot, "settings.json"), "utf8")));
+        activeName = activePresetNameFromSettings(JSON.parse(await readFile4(join6(dir, "unpacked", stRoot, "settings.json"), "utf8")));
       } catch {
         continue;
       }
@@ -1032,7 +1284,7 @@ function slugifyPresetId(name2) {
 }
 async function characterNameOf(dshHome, slug) {
   try {
-    const rp = JSON.parse(await readFile3(join4(dshHome, "rp", slug, "rp.json"), "utf8"));
+    const rp = JSON.parse(await readFile4(join6(dshHome, "rp", slug, "rp.json"), "utf8"));
     return typeof rp?.characterName === "string" && rp.characterName ? rp.characterName : slug;
   } catch {
     return slug;
@@ -1046,17 +1298,35 @@ async function snapshotFor(dshHome, sessionId, relPaths) {
   }
 }
 function homePath(dshHome, relPath) {
-  return join4(dshHome, ...relPath.split("/"));
+  return join6(dshHome, ...relPath.split("/"));
 }
-async function atomicWrite(path, data) {
+async function atomicWrite(path, data, encoding = "utf8") {
   const tmp = `${path}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  await writeFile3(tmp, data, "utf8");
+  await writeFile2(tmp, data, encoding);
   try {
     await rename(tmp, path);
   } catch (e) {
     await rm3(tmp, { force: true }).catch(() => {
     });
     throw e;
+  }
+}
+async function sweepOrphanTemps(targetAbs) {
+  try {
+    const dir = dirname4(targetAbs);
+    const base = targetAbs.slice(dir.length + 1);
+    const names = await readdir3(dir);
+    const cutoff = Date.now() - 6e4;
+    for (const n of names) {
+      if (n === base || !n.startsWith(`${base}.tmp-`)) continue;
+      const p = join6(dir, n);
+      try {
+        const st = await stat(p);
+        if (st.mtimeMs < cutoff) await rm3(p, { force: true });
+      } catch {
+      }
+    }
+  } catch {
   }
 }
 async function context(dshHome, body) {
@@ -1067,7 +1337,7 @@ async function context(dshHome, body) {
   let preset = null;
   if (presetId !== null) {
     try {
-      preset = JSON.parse(await readFile3(homePath(dshHome, `rp-presets/${presetId}/preset.json`), "utf8"));
+      preset = JSON.parse(await readFile4(homePath(dshHome, `rp-presets/${presetId}/preset.json`), "utf8"));
     } catch {
       if (presetId === "rp-demo-direct") preset = demoDirectPreset();
       else if (presetId === "rp-demo-light-agent") preset = demoLightAgentPreset();
@@ -1076,6 +1346,8 @@ async function context(dshHome, body) {
   }
   const view = preset !== null ? buildStPromptView(preset) : { prompts: [], prompt_order: [] };
   const characterName = slug ? await characterNameOf(dshHome, slug) : "";
+  const regexScripts = await buildStRegexScripts(dshHome, presetId ?? "");
+  const globalRegexes = (await loadTaggedScripts(dshHome, "rp/regex/global.json", "global")).map((script, index) => toStRegexScript(script, index));
   return {
     status: 200,
     body: {
@@ -1085,7 +1357,14 @@ async function context(dshHome, body) {
       // ST getContext().name1 = 用户名（脚本读它当玩家名；飞讯 getPlayerName 等）。
       // ST 迁移会话的用户名取消息流的 name（'User'）；DSH 无独立 persona 存储，恒一致。
       name1: "User",
-      chatCompletionSettings: { prompts: view.prompts, prompt_order: view.prompt_order }
+      chatCompletionSettings: {
+        prompts: view.prompts,
+        prompt_order: view.prompt_order,
+        extensions: { regex_scripts: regexScripts }
+      },
+      // 宿主 `extension_settings.regex` 的种子（= GLOBAL 作用域正则，ST 内部 camelCase 形状）。
+      // 宿主侧由 host-vendor 幂等 seed 进 extension_settings（保持对象身份，写回路径不破）。
+      extensionSettingsRegex: globalRegexes
     }
   };
 }
@@ -1123,27 +1402,7 @@ async function presetExport(dshHome, body) {
   const hit = presetId ? (await listPresets(dshHome)).find((p) => p.id === presetId) : void 0;
   if (!hit) return { status: 404, body: { error: `preset not found: ${name2}` } };
   const view = buildStPromptView(hit.preset);
-  const regexScripts = [];
-  try {
-    const parsed = JSON.parse(await readFile3(homePath(dshHome, `rp-presets/${hit.id}/regex.json`), "utf8"));
-    for (const s of Array.isArray(parsed?.scripts) ? parsed.scripts : []) {
-      regexScripts.push({
-        scriptName: s.scriptName,
-        findRegex: s.findRegex,
-        replaceString: s.replaceString,
-        trimStrings: s.trimStrings,
-        placement: s.placement,
-        disabled: s.disabled,
-        markdownOnly: s.markdownOnly,
-        promptOnly: s.promptOnly,
-        runOnEdit: s.runOnEdit,
-        substituteRegex: s.substituteRegex,
-        minDepth: s.minDepth,
-        maxDepth: s.maxDepth
-      });
-    }
-  } catch {
-  }
+  const regexScripts = await buildStRegexScripts(dshHome, hit.id);
   return {
     status: 200,
     body: {
@@ -1231,7 +1490,7 @@ async function presetPut(dshHome, body) {
   }
   const relPath = `rp-presets/${targetId}/preset.json`;
   await snapshotFor(dshHome, sessionId, [relPath]);
-  await mkdir3(dirname3(homePath(dshHome, relPath)), { recursive: true });
+  await mkdir3(dirname4(homePath(dshHome, relPath)), { recursive: true });
   await atomicWrite(homePath(dshHome, relPath), JSON.stringify(preset, null, 1), "utf8");
   console.log(`[dsht-th] preset/put: ${name2} \u2192 ${targetId}\uFF08slots=${preset.slots.length}\uFF09`);
   return { status: 200, body: { ok: true, presetId: targetId } };
@@ -1243,7 +1502,7 @@ async function presetDelete(dshHome, body) {
   if (!presetId) return { status: 404, body: { error: `preset not found: ${name2}` } };
   const sessionId = String(body.sessionId ?? "");
   await snapshotFor(dshHome, sessionId, [`rp-presets/${presetId}/preset.json`, `rp-presets/${presetId}/regex.json`]);
-  await rm3(join4(dshHome, "rp-presets", presetId), { recursive: true, force: true });
+  await rm3(join6(dshHome, "rp-presets", presetId), { recursive: true, force: true });
   console.log(`[dsht-th] preset/delete: ${name2} \u2192 ${presetId}`);
   return { status: 200, body: { ok: true } };
 }
@@ -1256,7 +1515,7 @@ async function presetRename(dshHome, body) {
   const relPath = `rp-presets/${presetId}/preset.json`;
   let preset;
   try {
-    preset = JSON.parse(await readFile3(homePath(dshHome, relPath), "utf8"));
+    preset = JSON.parse(await readFile4(homePath(dshHome, relPath), "utf8"));
   } catch {
     return { status: 404, body: { error: `preset.json not found: ${presetId}` } };
   }
@@ -1276,7 +1535,7 @@ async function presetLoad(dshHome, body) {
   const relPath = `rp/state/${sessionId}.json`;
   let file = {};
   try {
-    const parsed = JSON.parse(await readFile3(homePath(dshHome, relPath), "utf8"));
+    const parsed = JSON.parse(await readFile4(homePath(dshHome, relPath), "utf8"));
     if (isTree3(parsed)) file = parsed;
   } catch {
   }
@@ -1285,14 +1544,14 @@ async function presetLoad(dshHome, body) {
   }
   file.presetId = presetId;
   await snapshotFor(dshHome, sessionId, [relPath]);
-  await mkdir3(dirname3(homePath(dshHome, relPath)), { recursive: true });
+  await mkdir3(dirname4(homePath(dshHome, relPath)), { recursive: true });
   await atomicWrite(homePath(dshHome, relPath), JSON.stringify(file), "utf8");
   console.log(`[dsht-th] preset/load: ${name2} \u2192 ${presetId}\uFF08sid=${sessionId}\uFF09`);
   return { status: 200, body: { ok: true, presetId } };
 }
 function rpSlugFromCwd(dshHome, cwd) {
   if (!cwd) return null;
-  const rel = relative(join4(dshHome, "rp"), resolve(cwd));
+  const rel = relative(join6(dshHome, "rp"), resolve(cwd));
   if (!rel || rel.startsWith("..")) return null;
   const slug = rel.split(/[\\/]/)[0];
   return slug || null;
@@ -1310,9 +1569,14 @@ async function scanSessionHeadersCached(dshHome) {
 async function chatMessages(dshHome, body) {
   const sessionId = String(body.sessionId ?? "");
   if (!sessionId) return { status: 400, body: { error: "sessionId required" } };
-  const hit = (await scanSessionHeadersCached(dshHome)).find((h) => h.sessionId === sessionId);
+  let hit = (await scanSessionHeadersCached(dshHome)).find((h) => h.sessionId === sessionId);
+  if (!hit) {
+    const fresh = await scanSessionHeaders(dshHome);
+    sessionHeadersCache = { at: Date.now(), value: fresh };
+    hit = fresh.find((h) => h.sessionId === sessionId);
+  }
   if (!hit) return { status: 404, body: { error: `session not found: ${sessionId}` } };
-  const logPath = join4(dshHome, "sessions", hit.project, hit.sdir, "session.jsonl");
+  const logPath = hit.file;
   let cached;
   try {
     const st = await stat(logPath);
@@ -1326,12 +1590,13 @@ async function chatMessages(dshHome, body) {
   const slug = rpSlugFromCwd(dshHome, hit.cwd);
   if (slug) {
     try {
-      const rp = JSON.parse(await readFile3(homePath(dshHome, `rp/${slug}/rp.json`), "utf8"));
+      const rp = JSON.parse(await readFile4(homePath(dshHome, `rp/${slug}/rp.json`), "utf8"));
       if (typeof rp?.characterName === "string" && rp.characterName) charName = rp.characterName;
     } catch {
     }
   }
   const messages = [];
+  const thFloors = readThFloors(dshHome, sessionId);
   const shadowed = /* @__PURE__ */ new Set();
   const rl0 = createInterface({ input: createReadStream(logPath, "utf8"), crlfDelay: Infinity });
   for await (const line of rl0) {
@@ -1372,11 +1637,13 @@ async function chatMessages(dshHome, body) {
     if (!isTree3(msg)) continue;
     const source = isTree3(msg.source) ? msg.source : null;
     if (source?.form === "snapshot") continue;
-    const isThSystem = source?.thSystem === true;
+    const floor = lookupThFloor(thFloors, msg.id, ev.seq);
+    const isThSystem = floor?.system === true || source?.thSystem === true || source?.model === "th-system";
     if (isThSystem) role2 = "system";
     const content = msg.content;
     const text = Array.isArray(content) ? content.filter(isTree3).filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("\n") : typeof content === "string" ? content : "";
     if (!text && !isThSystem) continue;
+    const floorData = floor?.data !== void 0 ? floor.data : source?.thData;
     messages.push({
       message_id: messages.length,
       // L1a：携带事件 seq（TH 事件桥的楼层解析锚——客户端节点视图以 seq 定位楼层；
@@ -1386,7 +1653,7 @@ async function chatMessages(dshHome, body) {
       role: role2,
       message: text,
       is_system: isThSystem,
-      ...isThSystem && isTree3(source?.thData) ? { data: source.thData } : {}
+      ...isThSystem && isTree3(floorData) ? { data: floorData } : {}
     });
   }
   try {
@@ -1399,7 +1666,7 @@ async function chatMessages(dshHome, body) {
 }
 async function loadTaggedScripts(dshHome, relPath, scope) {
   try {
-    const parsed = JSON.parse(await readFile3(homePath(dshHome, relPath), "utf8"));
+    const parsed = JSON.parse(await readFile4(homePath(dshHome, relPath), "utf8"));
     if (!Array.isArray(parsed.scripts)) return [];
     return parsed.scripts.filter(isTree3).map((s) => ({ ...s, _dshtScope: scope }));
   } catch {
@@ -1408,7 +1675,7 @@ async function loadTaggedScripts(dshHome, relPath, scope) {
 }
 async function loadCharacterRegex(dshHome, slug) {
   try {
-    const rp = JSON.parse(await readFile3(homePath(dshHome, `rp/${slug}/rp.json`), "utf8"));
+    const rp = JSON.parse(await readFile4(homePath(dshHome, `rp/${slug}/rp.json`), "utf8"));
     if (!Array.isArray(rp.regex)) return [];
     return rp.regex.filter(isTree3).map((s) => ({ ...s, _dshtScope: "character" }));
   } catch {
@@ -1438,7 +1705,7 @@ async function regexesReplace(dshHome, body) {
   if (scope === "global") {
     const relPath = "rp/regex/global.json";
     await snapshotFor(dshHome, sessionId, [relPath]);
-    await mkdir3(dirname3(homePath(dshHome, relPath)), { recursive: true });
+    await mkdir3(dirname4(homePath(dshHome, relPath)), { recursive: true });
     await atomicWrite(homePath(dshHome, relPath), JSON.stringify({ scripts }, null, 1), "utf8");
     console.log(`[dsht-th] regexes/replace global: ${scripts.length}`);
     return { status: 200, body: { ok: true, count: scripts.length } };
@@ -1448,7 +1715,7 @@ async function regexesReplace(dshHome, body) {
     const relPath = `rp/${slug}/rp.json`;
     let rp;
     try {
-      rp = JSON.parse(await readFile3(homePath(dshHome, relPath), "utf8"));
+      rp = JSON.parse(await readFile4(homePath(dshHome, relPath), "utf8"));
     } catch {
       return { status: 404, body: { error: `rp.json not found: ${slug}` } };
     }
@@ -1461,7 +1728,7 @@ async function regexesReplace(dshHome, body) {
   if (scope === "preset") {
     const presetId = String(body.presetId ?? "") || (sessionId ? await resolveSessionPresetId(dshHome, sessionId) : null);
     if (!presetId) return { status: 400, body: { error: "presetId required\uFF08\u6216\u63D0\u4F9B\u53EF\u89E3\u6790\u7684 sessionId\uFF09" } };
-    const dir = join4(dshHome, "rp-presets", presetId);
+    const dir = join6(dshHome, "rp-presets", presetId);
     try {
       await readdir3(dir);
     } catch {
@@ -1469,7 +1736,7 @@ async function regexesReplace(dshHome, body) {
     }
     const relPath = `rp-presets/${presetId}/regex.json`;
     await snapshotFor(dshHome, sessionId, [relPath]);
-    await atomicWrite(join4(dir, "regex.json"), JSON.stringify({ scripts }, null, 1), "utf8");
+    await atomicWrite(join6(dir, "regex.json"), JSON.stringify({ scripts }, null, 1), "utf8");
     console.log(`[dsht-th] regexes/replace preset: ${presetId} \u2192 ${scripts.length}`);
     return { status: 200, body: { ok: true, count: scripts.length } };
   }
@@ -1479,12 +1746,12 @@ async function worldbookList(dshHome, _body) {
   const books = [];
   const seen = /* @__PURE__ */ new Set();
   try {
-    for (const dir of (await readdir3(join4(dshHome, "skills"))).sort()) {
+    for (const dir of (await readdir3(join6(dshHome, "skills"))).sort()) {
       if (!dir.startsWith("wb-")) continue;
       const lorePath = `skills/${dir}/references/lore.json`;
       if (seen.has(lorePath)) continue;
       try {
-        const parsed = JSON.parse(await readFile3(homePath(dshHome, lorePath), "utf8"));
+        const parsed = JSON.parse(await readFile4(homePath(dshHome, lorePath), "utf8"));
         seen.add(lorePath);
         books.push({ name: typeof parsed?.name === "string" && parsed.name ? parsed.name : dir, lorePath });
       } catch {
@@ -1493,7 +1760,7 @@ async function worldbookList(dshHome, _body) {
   } catch {
   }
   try {
-    const g = JSON.parse(await readFile3(homePath(dshHome, "rp/global-books.json"), "utf8"));
+    const g = JSON.parse(await readFile4(homePath(dshHome, "rp/global-books.json"), "utf8"));
     if (Array.isArray(g.books)) {
       for (const b of g.books.filter(isTree3)) {
         if (typeof b.lorePath !== "string" || !b.lorePath || seen.has(b.lorePath)) continue;
@@ -1505,38 +1772,56 @@ async function worldbookList(dshHome, _body) {
   }
   return { status: 200, body: { books } };
 }
+var locateBookCache = /* @__PURE__ */ new Map();
 async function locateBook(dshHome, name2) {
+  const hit = locateBookCache.get(name2);
+  if (hit) return hit;
   try {
-    for (const dir of (await readdir3(join4(dshHome, "skills"))).sort()) {
+    for (const dir of (await readdir3(join6(dshHome, "skills"))).sort()) {
       if (!dir.startsWith("wb-")) continue;
       const lorePath = `skills/${dir}/references/lore.json`;
-      if (dir === name2) return lorePath;
+      if (dir === name2) {
+        locateBookCache.set(name2, lorePath);
+        return lorePath;
+      }
       try {
-        const parsed = JSON.parse(await readFile3(homePath(dshHome, lorePath), "utf8"));
-        if (parsed?.name === name2) return lorePath;
+        const parsed = JSON.parse(await readFile4(homePath(dshHome, lorePath), "utf8"));
+        if (parsed?.name === name2) {
+          locateBookCache.set(name2, lorePath);
+          return lorePath;
+        }
       } catch {
       }
     }
   } catch {
   }
   try {
-    const g = JSON.parse(await readFile3(homePath(dshHome, "rp/global-books.json"), "utf8"));
+    const g = JSON.parse(await readFile4(homePath(dshHome, "rp/global-books.json"), "utf8"));
     if (Array.isArray(g.books)) {
       for (const b of g.books.filter(isTree3)) {
-        if (b.name === name2 && typeof b.lorePath === "string" && b.lorePath) return b.lorePath;
+        if (b.name === name2 && typeof b.lorePath === "string" && b.lorePath) {
+          locateBookCache.set(name2, b.lorePath);
+          return b.lorePath;
+        }
       }
     }
   } catch {
   }
   try {
-    const dir = join4(dshHome, "rp", "chat-worldbooks");
+    const dir = join6(dshHome, "rp", "chat-worldbooks");
     for (const f of (await readdir3(dir)).sort()) {
       if (!f.endsWith(".json")) continue;
       const p = `rp/chat-worldbooks/${f}`;
-      if (f.replace(/\.json$/, "") === name2) return p;
+      if (f.replace(/\.json$/, "") === name2) {
+        locateBookCache.set(name2, p);
+        return p;
+      }
       try {
-        const parsed = JSON.parse(await readFile3(homePath(dshHome, p), "utf8"));
-        if (parsed?.name === name2) return p;
+        const parsed = JSON.parse(await readFile4(homePath(dshHome, p), "utf8"));
+        if (parsed?.name === name2) {
+          locateBookCache.set(name2, p);
+          return p;
+        }
       } catch {
       }
     }
@@ -1571,31 +1856,54 @@ function loreEntryToSt(entry, uid) {
     disabled: !entry.enabled
   };
 }
+var TH_POSITION_TYPE_TO_ST = {
+  before_char: WI_POSITION.BEFORE,
+  after_char: WI_POSITION.AFTER,
+  before_authors_note: WI_POSITION.AN_TOP,
+  after_authors_note: WI_POSITION.AN_BOTTOM,
+  at_depth: WI_POSITION.AT_DEPTH,
+  before_example_messages: WI_POSITION.EM_TOP,
+  after_example_messages: WI_POSITION.EM_BOTTOM
+};
 function stEntryToLore(st, bookName, id) {
   const arr = (v) => (Array.isArray(v) ? v : v === void 0 || v === null ? [] : [v]).map(String).filter((k) => k !== "");
   const num = (v, d) => typeof v === "number" && Number.isFinite(v) ? v : d;
+  let position = num(st.position, -1);
+  if (position === -1 && st.position !== null && typeof st.position === "object" && !Array.isArray(st.position)) {
+    const po2 = st.position;
+    const mapped = typeof po2.type === "string" ? TH_POSITION_TYPE_TO_ST[po2.type] : void 0;
+    position = mapped !== void 0 ? mapped : WI_POSITION.BEFORE;
+  } else if (position === -1) position = WI_POSITION.BEFORE;
+  const posIsObject = st.position !== null && typeof st.position === "object" && !Array.isArray(st.position);
+  const po = posIsObject ? st.position : null;
   return {
     id,
     comment: typeof st.comment === "string" ? st.comment : "",
     content: typeof st.content === "string" ? st.content : "",
-    keys: arr(st.key ?? st.keys),
-    secondaryKeys: arr(st.keysecondary ?? st.secondaryKeys),
-    selectiveLogic: num(st.selectiveLogic, 0),
-    constant: st.constant === true,
-    selective: st.selective === true,
-    position: num(st.position, WI_POSITION.BEFORE),
-    depth: num(st.depth, 4),
-    role: st.role === "user" || st.role === "assistant" ? st.role : "system",
+    keys: arr(st.key ?? st.keys ?? (po ? po.keys ?? po.strategy?.keys : void 0)),
+    secondaryKeys: arr(st.keysecondary ?? st.secondaryKeys ?? (po ? po.strategy?.secondary_keys : void 0)),
+    selectiveLogic: num(st.selectiveLogic ?? (po ? po.strategy?.selective_logic : void 0), 0),
+    constant: st.constant === true || (po ? po.strategy?.type === "constant" : false),
+    selective: st.selective === true || (po ? po.strategy?.type === "selective" : false),
+    position,
+    depth: num(st.depth ?? (po ? po.depth : void 0), 4),
+    role: st.role === "user" || st.role === "assistant" ? st.role : po && (po.role === "user" || po.role === "assistant") ? po.role : "system",
     scanDepth: typeof st.scanDepth === "number" && Number.isFinite(st.scanDepth) ? st.scanDepth : null,
     preventRecursion: st.preventRecursion === true,
     excludeRecursion: st.excludeRecursion === true,
-    insertionOrder: num(st.order ?? st.insertionOrder, 100),
+    insertionOrder: num(st.order ?? st.insertionOrder ?? (po ? po.order : void 0), 100),
     sticky: num(st.sticky, 0),
     cooldown: num(st.cooldown, 0),
     delay: num(st.delay, 0),
     group: typeof st.group === "string" ? st.group : "",
     groupOverride: st.groupOverride === true,
-    enabled: st.disabled !== true && st.enabled !== false,
+    // 【2026-09-10 极性修复】原实现 `enabled: st.disabled !== true && st.enabled !== false`
+    // 让 disabled 无条件压过 enabled。但 TH/ST 的 WorldbookEntry 权威字段是 enabled，
+    // disabled 只是我们读面同时给出的镜像（loreEntryToSt:902）。卡脚本惯例是只改一个：
+    //   Object.assign({}, e, { enabled: true })  —— disabled 仍是上一次写下的 true
+    // 旧实现下这个 true 被吞 → 条目永远停在禁用态（实机复现：翻转 → 还原后仍是 false）。
+    // 修复：enabled 显式给出时以它为准；仅当 enabled 缺席时才回落到 disabled。
+    enabled: typeof st.enabled === "boolean" ? st.enabled : st.disabled !== true,
     book: bookName
   };
 }
@@ -1605,7 +1913,9 @@ async function worldbookGet(dshHome, body) {
   if (!name2) return { status: 400, body: { error: "name required" } };
   const lorePath = await locateBook(dshHome, name2);
   if (!lorePath) return { status: 404, body: { error: `worldbook not found: ${name2}` } };
+  if (entryPutQueues.has(lorePath)) await flushEntryPuts(dshHome, lorePath);
   const abs = homePath(dshHome, lorePath);
+  void sweepOrphanTemps(abs);
   let book;
   try {
     const st = await stat(abs);
@@ -1613,7 +1923,7 @@ async function worldbookGet(dshHome, body) {
     if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
       book = hit.book;
     } else {
-      book = JSON.parse(await readFile3(abs, "utf8"));
+      book = JSON.parse(await readFile4(abs, "utf8"));
       if (loreBookCache.size > 8) loreBookCache.clear();
       loreBookCache.set(abs, { mtimeMs: st.mtimeMs, size: st.size, book });
     }
@@ -1631,6 +1941,49 @@ async function worldbookGet(dshHome, body) {
     }
   };
 }
+var entryPutQueues = /* @__PURE__ */ new Map();
+var ENTRY_PUT_COALESCE_MS = 250;
+var entryPutFlushChains = /* @__PURE__ */ new Map();
+var flushLogAt = /* @__PURE__ */ new Map();
+async function flushEntryPuts(dshHome, lorePath) {
+  const prev = entryPutFlushChains.get(lorePath) ?? Promise.resolve();
+  const run = prev.catch(() => {
+  }).then(async () => {
+    const q = entryPutQueues.get(lorePath);
+    if (!q) return;
+    if (q.timer !== null) {
+      clearTimeout(q.timer);
+      q.timer = null;
+    }
+    const sessionId = q.puts[q.puts.length - 1]?.sessionId ?? "";
+    q.puts = [];
+    await snapshotFor(dshHome, sessionId, [lorePath]);
+    await mkdir3(dirname4(homePath(dshHome, lorePath)), { recursive: true });
+    await atomicWrite(homePath(dshHome, lorePath), JSON.stringify(q.book, null, 1), "utf8");
+    try {
+      const st = await stat(homePath(dshHome, lorePath));
+      loreBookCache.set(homePath(dshHome, lorePath), { mtimeMs: st.mtimeMs, size: st.size, book: q.book });
+    } catch {
+    }
+    void sweepOrphanTemps(homePath(dshHome, lorePath));
+    if (q.puts.length > 0) {
+      if (q.timer === null) q.timer = setTimeout(() => {
+        void flushEntryPuts(dshHome, lorePath).catch(() => {
+        });
+      }, ENTRY_PUT_COALESCE_MS);
+    } else {
+      entryPutQueues.delete(lorePath);
+    }
+    const now = Date.now();
+    const last = flushLogAt.get(lorePath) ?? 0;
+    if (now - last > 6e4) {
+      flushLogAt.set(lorePath, now);
+      console.log(`[dsht-th] worldbook flush: ${lorePath}\uFF08${q.book.entries.length} \u6761\uFF0C\u672C\u6279 ${sessionId ? "has-sid" : "no-sid"}\uFF09`);
+    }
+  });
+  entryPutFlushChains.set(lorePath, run);
+  return run;
+}
 async function worldbookEntryPut(dshHome, body) {
   const name2 = String(body.name ?? "");
   if (!name2) return { status: 400, body: { error: "name required" } };
@@ -1638,13 +1991,18 @@ async function worldbookEntryPut(dshHome, body) {
   const entry = body.entry;
   const lorePath = await locateBook(dshHome, name2);
   if (!lorePath) return { status: 404, body: { error: `worldbook not found: ${name2}` } };
-  let book;
-  try {
-    book = JSON.parse(await readFile3(homePath(dshHome, lorePath), "utf8"));
-  } catch {
-    return { status: 404, body: { error: `lore.json \u8BFB\u53D6\u5931\u8D25: ${lorePath}` } };
+  let q = entryPutQueues.get(lorePath);
+  if (!q) {
+    let book;
+    try {
+      book = JSON.parse(await readFile4(homePath(dshHome, lorePath), "utf8"));
+    } catch {
+      return { status: 404, body: { error: `lore.json \u8BFB\u53D6\u5931\u8D25: ${lorePath}` } };
+    }
+    q = { book, puts: [], timer: null };
+    entryPutQueues.set(lorePath, q);
   }
-  const entries = Array.isArray(book.entries) ? book.entries : [];
+  const entries = Array.isArray(q.book.entries) ? q.book.entries : [];
   const comment = typeof entry.comment === "string" ? entry.comment : "";
   const uidNum = Number(entry.uid);
   const uidOk = Number.isInteger(uidNum) && uidNum >= 0 && uidNum < entries.length;
@@ -1655,17 +2013,20 @@ async function worldbookEntryPut(dshHome, body) {
     entries.push(stEntryToLore(entry, name2, `lore-${name2}-${entries.length}`));
     idx = entries.length - 1;
   }
-  book.name = typeof book.name === "string" && book.name ? book.name : name2;
-  book.entries = entries;
-  await snapshotFor(dshHome, String(body.sessionId ?? ""), [lorePath]);
-  await mkdir3(dirname3(homePath(dshHome, lorePath)), { recursive: true });
-  await atomicWrite(homePath(dshHome, lorePath), JSON.stringify(book, null, 1), "utf8");
-  console.log(`[dsht-th] worldbook/entry-put: ${name2} #${idx}\uFF08\u5171 ${entries.length} \u6761\uFF09`);
+  q.book.name = typeof q.book.name === "string" && q.book.name ? q.book.name : name2;
+  q.book.entries = entries;
+  q.puts.push({ entry, sessionId: String(body.sessionId ?? "") });
+  if (q.timer === null) {
+    q.timer = setTimeout(() => {
+      void flushEntryPuts(dshHome, lorePath).catch(() => {
+      });
+    }, ENTRY_PUT_COALESCE_MS);
+  }
   return { status: 200, body: { ok: true, uid: idx, count: entries.length } };
 }
 async function loadSessionStateFile(dshHome, sessionId) {
   try {
-    const parsed = JSON.parse(await readFile3(homePath(dshHome, `rp/state/${sessionId}.json`), "utf8"));
+    const parsed = JSON.parse(await readFile4(homePath(dshHome, `rp/state/${sessionId}.json`), "utf8"));
     if (!isTree3(parsed)) return {};
     if (!Object.keys(parsed).some((k) => STATE_RESERVED_KEYS.has(k)) && Object.keys(parsed).length > 0) {
       return { variables: parsed };
@@ -1692,7 +2053,7 @@ async function variablesMerge(dshHome, body) {
   }
   await appendUndoEntries(dshHome, sessionId, diffUndoEntries("chat", "", before, merged));
   await snapshotFor(dshHome, sessionId, [relPath]);
-  await mkdir3(dirname3(homePath(dshHome, relPath)), { recursive: true });
+  await mkdir3(dirname4(homePath(dshHome, relPath)), { recursive: true });
   await atomicWrite(homePath(dshHome, relPath), JSON.stringify({ ...file, variables: merged }), "utf8");
   console.log(`[dsht-th] variables/merge: sid=${sessionId}\uFF08${Object.keys(body.variables).length} \u9876\u5C42\u952E\uFF09`);
   return { status: 200, body: { ok: true, variables: merged } };
@@ -1701,14 +2062,21 @@ async function variableSchemaRegister(dshHome, body) {
   const sessionId = String(body.sessionId ?? "");
   if (!sessionId) return { status: 400, body: { error: "sessionId required" } };
   if (!isTree3(body.variableSchema)) return { status: 400, body: { error: "variableSchema object required" } };
-  const name2 = typeof body.name === "string" ? body.name.trim() : "";
+  const rawName = typeof body.name === "string" ? body.name.trim() : "";
+  const SCOPES3 = /* @__PURE__ */ new Set(["global", "preset", "character", "chat", "message"]);
+  const name2 = rawName === "" || rawName === "message" || !SCOPES3.has(rawName) ? "" : rawName;
   const relPath = `rp/state/${sessionId}.json`;
   const file = await loadSessionStateFile(dshHome, sessionId);
   const vars = isTree3(file.variables) ? file.variables : {};
   const target = name2 ? vars[name2] : vars;
+  let advisory = [];
   if (target !== void 0) {
-    const issues = validateSchemaSubset(target, body.variableSchema, name2 ? `$${name2}` : "$");
-    if (issues.length > 0) return { status: 422, body: { error: "\u65E2\u6709\u53D8\u91CF\u4E0E schema \u4E0D\u5339\u914D", issues } };
+    advisory = validateSchemaSubset(target, body.variableSchema, name2 ? `$${name2}` : "$");
+    if (advisory.length > 0) {
+      console.warn(
+        `[dsht-th] variables/schema: sid=${sessionId} \u65E2\u6709\u503C\u4E0E schema \u4E0D\u5339\u914D ${advisory.length} \u9879\uFF08\u6309\u57FA\u51C6\u4ECD\u843D\u4E0B schema\uFF0C\u4EC5\u63D0\u793A\uFF0C\u4E0D\u62D2\u6536\uFF09`
+      );
+    }
   }
   if (name2) {
     const base = isTree3(file.variableSchema) ? file.variableSchema : {};
@@ -1718,11 +2086,18 @@ async function variableSchemaRegister(dshHome, body) {
   } else {
     file.variableSchema = body.variableSchema;
   }
+  if (isTree3(file.variableSchema) && isTree3(file.variableSchema.properties)) {
+    const props = file.variableSchema.properties;
+    if (Object.prototype.hasOwnProperty.call(props, "[object Object]")) {
+      delete props["[object Object]"];
+      console.log(`[dsht-th] variables/schema: sid=${sessionId} \u5DF2\u6E05\u7406\u5386\u53F2\u5783\u573E\u952E "[object Object]"`);
+    }
+  }
   await snapshotFor(dshHome, sessionId, [relPath]);
-  await mkdir3(dirname3(homePath(dshHome, relPath)), { recursive: true });
+  await mkdir3(dirname4(homePath(dshHome, relPath)), { recursive: true });
   await atomicWrite(homePath(dshHome, relPath), JSON.stringify(file), "utf8");
   console.log(`[dsht-th] variables/schema: sid=${sessionId} ${name2 || "(\u6574\u6811)"}`);
-  return { status: 200, body: { ok: true } };
+  return { status: 200, body: advisory.length > 0 ? { ok: true, issues: advisory } : { ok: true } };
 }
 async function worldbookReplaceEntries(dshHome, body) {
   const name2 = String(body.name ?? "");
@@ -1732,7 +2107,7 @@ async function worldbookReplaceEntries(dshHome, body) {
   if (!lorePath) return { status: 404, body: { error: `worldbook not found: ${name2}` } };
   let book;
   try {
-    book = JSON.parse(await readFile3(homePath(dshHome, lorePath), "utf8"));
+    book = JSON.parse(await readFile4(homePath(dshHome, lorePath), "utf8"));
   } catch {
     return { status: 404, body: { error: `lore.json \u8BFB\u53D6\u5931\u8D25: ${lorePath}` } };
   }
@@ -1740,7 +2115,7 @@ async function worldbookReplaceEntries(dshHome, body) {
   book.name = typeof book.name === "string" && book.name ? book.name : name2;
   book.entries = entries;
   await snapshotFor(dshHome, String(body.sessionId ?? ""), [lorePath]);
-  await mkdir3(dirname3(homePath(dshHome, lorePath)), { recursive: true });
+  await mkdir3(dirname4(homePath(dshHome, lorePath)), { recursive: true });
   await atomicWrite(homePath(dshHome, lorePath), JSON.stringify(book, null, 1), "utf8");
   console.log(`[dsht-th] worldbook/replace-entries: ${name2} \u2192 ${entries.length} \u6761`);
   return { status: 200, body: { ok: true, count: entries.length } };
@@ -1761,7 +2136,7 @@ async function worldbookRebindGlobal(dshHome, body) {
   if (resolved === null) return { status: 404, body: { error: `worldbook not found in: [${names.join(", ")}]` } };
   const relPath = "rp/global-books.json";
   await snapshotFor(dshHome, String(body.sessionId ?? ""), [relPath]);
-  await mkdir3(dirname3(homePath(dshHome, relPath)), { recursive: true });
+  await mkdir3(dirname4(homePath(dshHome, relPath)), { recursive: true });
   await atomicWrite(homePath(dshHome, relPath), JSON.stringify({ books: resolved }, null, 1), "utf8");
   console.log(`[dsht-th] worldbook/rebind-global: [${names.join(", ")}]`);
   return { status: 200, body: { ok: true, count: resolved.length } };
@@ -1774,7 +2149,7 @@ async function worldbookRebindChar(dshHome, body) {
   const relPath = `rp/${slug}/rp.json`;
   let rp;
   try {
-    rp = JSON.parse(await readFile3(homePath(dshHome, relPath), "utf8"));
+    rp = JSON.parse(await readFile4(homePath(dshHome, relPath), "utf8"));
   } catch {
     return { status: 404, body: { error: `rp.json not found: ${slug}` } };
   }
@@ -1792,108 +2167,228 @@ async function worldbookChatGetOrCreate(dshHome, body) {
   const name2 = `chat-${sessionId}`;
   const lorePath = `rp/chat-worldbooks/${sessionId}.json`;
   try {
-    const existing = JSON.parse(await readFile3(homePath(dshHome, lorePath), "utf8"));
+    const existing = JSON.parse(await readFile4(homePath(dshHome, lorePath), "utf8"));
     if (isTree3(existing)) return { status: 200, body: { name: typeof existing.name === "string" && existing.name ? existing.name : name2, created: false } };
   } catch {
   }
   const book = { name: name2, entries: [], importWarnings: [] };
   await snapshotFor(dshHome, sessionId, [lorePath]);
-  await mkdir3(dirname3(homePath(dshHome, lorePath)), { recursive: true });
+  await mkdir3(dirname4(homePath(dshHome, lorePath)), { recursive: true });
   await atomicWrite(homePath(dshHome, lorePath), JSON.stringify(book, null, 1), "utf8");
   console.log(`[dsht-th] worldbook/chat-get-or-create: sid=${sessionId} \u2192 ${name2}`);
   return { status: 200, body: { name: name2, created: true } };
 }
-
-// src/dsht-plugin-tavern-helper/macros.ts
-import { readFile as readFile4 } from "node:fs/promises";
-import { join as join5 } from "node:path";
-async function loadActivePersona(dshHome) {
+function activateWorldInfo(entries, historyText, userInput) {
+  const before = [];
+  const after = [];
+  for (const e of entries) {
+    if (!e.enabled || !e.content) continue;
+    if (!e.constant) {
+      const windowChars = typeof e.scanDepth === "number" && e.scanDepth > 0 ? e.scanDepth * 80 : historyText.length;
+      const hay = historyText.slice(-windowChars) + "\n" + userInput;
+      const keys = Array.isArray(e.keys) ? e.keys : [];
+      const hit = keys.some((k) => {
+        const t = k.trim();
+        if (!t) return false;
+        if (t.startsWith("/") && t.lastIndexOf("/") > 0) {
+          try {
+            return new RegExp(t.slice(1, t.lastIndexOf("/")), t.slice(t.lastIndexOf("/") + 1)).test(hay);
+          } catch {
+            return false;
+          }
+        }
+        return hay.toLowerCase().includes(t.toLowerCase());
+      });
+      if (!hit) continue;
+    }
+    const bucket = e.position === WI_POSITION.BEFORE ? before : after;
+    bucket.push({ order: e.insertionOrder, text: e.content });
+  }
+  const texts = (list) => list.sort((a, b) => b.order - a.order).map((x) => x.text);
+  return { before: texts(before), after: texts(after) };
+}
+async function primaryCharacterBook(dshHome, slug) {
+  if (!slug) return null;
   try {
-    const parsed = JSON.parse(await readFile4(join5(dshHome, "rp", "persona.json"), "utf8"));
-    const list = Array.isArray(parsed.list) ? parsed.list : [];
-    const activeName = typeof parsed.active === "string" ? parsed.active : null;
-    const hit = activeName !== null ? list.find((p) => p?.name === activeName) : void 0;
-    if (!hit) return null;
-    return {
-      name: String(hit.name ?? ""),
-      description: typeof hit.description === "string" ? hit.description : ""
-    };
+    const dirs = (await readdir3(join6(dshHome, "rp", slug, "books"), { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+    for (const dir of dirs) {
+      try {
+        await stat(homePath(dshHome, `rp/${slug}/books/${dir}/lore.json`));
+        return dir;
+      } catch {
+        continue;
+      }
+    }
   } catch {
-    return null;
+  }
+  return null;
+}
+async function loadCardFields(dshHome, slug) {
+  if (!slug) return {};
+  try {
+    const parsed = JSON.parse(await readFile4(homePath(dshHome, `rp/${slug}/card.json`), "utf8"));
+    const root = isTree3(parsed) ? parsed : {};
+    return isTree3(root.data) ? { ...root, ...root.data, ...root } : root;
+  } catch {
+    return {};
   }
 }
-async function resolveIdentity(dshHome, slug) {
-  let char = "";
-  let macrosUser = "";
-  if (slug) {
+var GEN_RAW_DEFAULT_ORDER = ["world_info_before", "persona_description", "char_description", "char_personality", "scenario", "world_info_after", "dialogue_examples", "chat_history", "user_input"];
+async function assembleGenerateRawPrompt(dshHome, body) {
+  const sessionId = String(body.sessionId ?? "");
+  const slug = String(body.slug ?? "");
+  const userInput = String(body.user_input ?? body.prompt ?? "");
+  const ordered = Array.isArray(body.ordered_prompts) ? body.ordered_prompts : GEN_RAW_DEFAULT_ORDER;
+  const missing = [];
+  const [persona, card, primaryBook] = await Promise.all([
+    loadActivePersona(dshHome),
+    loadCardFields(dshHome, slug),
+    primaryCharacterBook(dshHome, slug)
+  ]);
+  const str = (v) => typeof v === "string" ? v : "";
+  const cardDesc = str(card.description);
+  const cardPersonality = str(card.personality);
+  const cardScenario = str(card.scenario);
+  const cardExamples = str(card.mes_example);
+  let history = [];
+  if (sessionId) {
     try {
-      const rp = JSON.parse(await readFile4(join5(dshHome, "rp", slug, "rp.json"), "utf8"));
-      char = typeof rp?.macros?.char === "string" && rp.macros.char ? rp.macros.char : String(rp?.characterName ?? "");
-      macrosUser = typeof rp?.macros?.user === "string" ? rp.macros.user : "";
+      const chat = await chatMessages(dshHome, { sessionId });
+      const messages = chat.body.messages ?? [];
+      const maxN = Number(body.max_chat_history);
+      const take = Number.isFinite(maxN) && maxN > 0 ? messages.slice(-maxN) : messages;
+      history = take.map((m) => ({ name: m.name, role: m.role, text: m.message }));
+    } catch {
+      missing.push("chat_history:session-messages");
+    }
+  }
+  const historyText = history.map((h) => h.text).join("\n");
+  let wiBefore = [];
+  let wiAfter = [];
+  const bookNames = [];
+  if (primaryBook) bookNames.push(primaryBook);
+  try {
+    const g = JSON.parse(await readFile4(homePath(dshHome, "rp/global-books.json"), "utf8"));
+    if (Array.isArray(g.books)) {
+      for (const b of g.books.filter(isTree3)) if (typeof b.name === "string" && b.name) bookNames.push(b.name);
+    }
+  } catch {
+  }
+  for (const name2 of bookNames) {
+    try {
+      const wb = await worldbookGet(dshHome, { name: name2 });
+      if (wb.status !== 200) continue;
+      const entries = wb.body.entries;
+      if (!Array.isArray(entries)) continue;
+      const loreEntries = entries.map((e) => ({
+        id: String(e.uid ?? ""),
+        comment: str(e.comment),
+        content: str(e.content),
+        keys: Array.isArray(e.key) ? e.key.map(String) : [],
+        secondaryKeys: Array.isArray(e.keysecondary) ? e.keysecondary.map(String) : [],
+        selectiveLogic: typeof e.selectiveLogic === "number" ? e.selectiveLogic : 0,
+        constant: e.constant === true,
+        selective: e.selective === true,
+        position: typeof e.position === "number" ? e.position : WI_POSITION.BEFORE,
+        depth: typeof e.depth === "number" ? e.depth : 4,
+        role: e.role === "user" || e.role === "assistant" ? e.role : "system",
+        scanDepth: typeof e.scanDepth === "number" ? e.scanDepth : null,
+        preventRecursion: e.preventRecursion === true,
+        excludeRecursion: e.excludeRecursion === true,
+        insertionOrder: typeof e.order === "number" ? e.order : 100,
+        sticky: 0,
+        cooldown: 0,
+        delay: 0,
+        group: "",
+        groupOverride: false,
+        enabled: typeof e.enabled === "boolean" ? e.enabled : e.disabled !== true,
+        book: name2
+      }));
+      const act = activateWorldInfo(loreEntries, historyText, userInput);
+      wiBefore.push(...act.before);
+      wiAfter.push(...act.after);
     } catch {
     }
   }
-  const persona = await loadActivePersona(dshHome);
+  const historyLines = history.map((h) => h.role === "system" ? h.text : `${h.name}: ${h.text}`);
+  const injects = Array.isArray(body.injects) ? body.injects.filter(isTree3) : [];
+  for (const inj of injects) {
+    const content = str(inj.content);
+    if (!content) continue;
+    const depthRaw = Number(inj.depth);
+    const depth = Number.isFinite(depthRaw) && depthRaw >= 0 ? Math.round(depthRaw) : 4;
+    const at = Math.max(0, historyLines.length - depth);
+    historyLines.splice(at, 0, content);
+  }
+  const sections = [];
+  for (const item of ordered) {
+    if (typeof item === "string") {
+      switch (item) {
+        case "world_info_before":
+          sections.push(wiBefore.join("\n"));
+          break;
+        case "persona_description":
+          sections.push(persona?.description ?? "");
+          break;
+        case "char_description":
+          sections.push(cardDesc);
+          break;
+        case "char_personality":
+          sections.push(cardPersonality);
+          break;
+        case "scenario":
+          sections.push(cardScenario);
+          break;
+        case "world_info_after":
+          sections.push(wiAfter.join("\n"));
+          break;
+        case "dialogue_examples":
+          sections.push(cardExamples.replace(/<START>\s*/g, "").trim());
+          break;
+        case "chat_history":
+          sections.push("__DSHT_HISTORY__");
+          break;
+        case "user_input":
+          sections.push(userInput);
+          break;
+        default:
+          missing.push(`ordered:${item}`);
+          break;
+      }
+    } else if (isTree3(item)) {
+      sections.push(str(item.content));
+    }
+  }
+  const capRaw = Number(body.max_context_chars);
+  const cap = Number.isFinite(capRaw) && capRaw > 4e3 ? capRaw : 48e3;
+  const nonHistory = sections.filter((s) => s !== "__DSHT_HISTORY__").map((s) => s.trim()).filter(Boolean);
+  const fixedLen = nonHistory.join("\n").length + userInput.length + 64;
+  let historyText2 = historyLines.join("\n");
+  if (fixedLen + historyText2.length > cap) {
+    const budget = Math.max(2e3, cap - fixedLen);
+    let acc = 0;
+    let startIdx = historyLines.length;
+    for (let i = historyLines.length - 1; i >= 0; i--) {
+      acc += historyLines[i].length + 1;
+      if (acc > budget) break;
+      startIdx = i;
+    }
+    historyText2 = (startIdx > 0 ? "\u3010\u66F4\u65E9\u7684\u5BF9\u8BDD\u5DF2\u7701\u7565\u3011\n" : "") + historyLines.slice(startIdx).join("\n");
+  }
+  const finalSections = sections.map((s) => s === "__DSHT_HISTORY__" ? historyText2 : s);
   return {
-    user: persona?.name || macrosUser || "\u7528\u6237",
-    char: char || "\u89D2\u8272",
-    persona: persona?.description ?? ""
+    system: str(body.system),
+    prompt: finalSections.map((s) => s.trim()).filter(Boolean).join("\n"),
+    missing
   };
 }
-async function runMacroExpand(deps, input) {
-  const slug = input.slug ?? "";
-  const sessionId = input.sessionId ?? "";
-  try {
-    const disk = JSON.parse(await readFile4(join5(deps.dshHome, "rp", "macros.json"), "utf8"));
-    hydrateCustomMacros(disk);
-  } catch {
-  }
-  const identity = await resolveIdentity(deps.dshHome, slug);
-  const globalTree = await deps.loadScope("global", "", "");
-  const characterTree = slug ? await deps.loadScope("character", slug, "") : {};
-  const chatTree = sessionId ? await deps.loadScope("chat", "", sessionId) : {};
-  const merged = mergeScopes(globalTree, characterTree, chatTree);
-  const r = expandTavernMacros(input.text, {
-    user: identity.user,
-    char: identity.char,
-    persona: identity.persona,
-    getVar: (path) => readVarPath(merged, path),
-    // C2 类宏作用域读取：kind → 各自作用域树（preset 无独立落盘 → global 兜底；
-    // chat/message 宏族 → chat 树），unknown 语义不变
-    scopeGet: (kind, path) => {
-      if (kind === "character") return readVarPath(characterTree, path);
-      if (kind === "preset" || kind === "global") return readVarPath(globalTree, path);
-      return readVarPath(chatTree, path);
-    },
-    stableSeed: sessionId ? `rp-${sessionId}` : slug ? `rp-${slug}` : "rp-global"
-  });
-  if (r.writes.length > 0) {
-    const scope = sessionId ? "chat" : slug ? "character" : "global";
-    let tree = await deps.loadScope(scope, slug, sessionId);
-    if (sessionId) {
-      const seq = [];
-      let evolving = tree;
-      for (const w of r.writes) {
-        seq.push(makeUndoEntry(scope, slug, w.path, evolving));
-        evolving = setByPath(evolving, w.path, w.value);
-      }
-      await appendUndoEntries(deps.dshHome, sessionId, seq);
-      tree = evolving;
-    } else {
-      for (const w of r.writes) tree = setByPath(tree, w.path, w.value);
-    }
-    await deps.beforeSave?.(scope, slug, sessionId);
-    await deps.saveScope(scope, slug, sessionId, tree);
-  }
-  return { result: r.text, writes: r.writes, unknownMacros: r.unknownMacros };
-}
 
-// src/dsht-plugin-shared/http.ts
+// rp-workspace/packages/src/dsht-plugin-shared/http.ts
 import { homedir } from "node:os";
-import { resolve as resolve2, join as join6 } from "node:path";
+import { resolve as resolve2, join as join7 } from "node:path";
 function resolveDshHome() {
   const envHome = process.env.DSH_HOME?.trim();
-  return envHome ? resolve2(envHome) : join6(homedir(), ".dsh");
+  return envHome ? resolve2(envHome) : join7(homedir(), ".dsh");
 }
 function isTrusted(req, webServer) {
   const host = String(req.headers.host ?? "").toLowerCase();
@@ -1959,7 +2454,7 @@ function registerPrefix(ctx, prefix, logTag, handler) {
   }
 }
 
-// node_modules/.pnpm/@deepseek-ai+cosmokit@1.8.3/node_modules/@deepseek-ai/cosmokit/lib/index.js
+// rp-workspace/packages/node_modules/.pnpm/@deepseek-ai+cosmokit@1.8.3/node_modules/@deepseek-ai/cosmokit/lib/index.js
 function isNullable(value) {
   return value === null || value === void 0;
 }
@@ -2145,7 +2640,7 @@ var Time;
   Time2.template = template;
 })(Time || (Time = {}));
 
-// node_modules/.pnpm/@deepseek-ai+schemastery@3.18.2/node_modules/@deepseek-ai/schemastery/lib/index.mjs
+// rp-workspace/packages/node_modules/.pnpm/@deepseek-ai+schemastery@3.18.2/node_modules/@deepseek-ai/schemastery/lib/index.mjs
 var kSchema = /* @__PURE__ */ Symbol.for("schemastery");
 var kValidationError = /* @__PURE__ */ Symbol.for("ValidationError");
 globalThis.__schemastery_index__ ??= 0;
@@ -2747,7 +3242,7 @@ defineMethod("transform", [
   "preserve"
 ], ({ inner }, isInner) => inner.toString(isInner));
 
-// src/dsht-plugin-shared/settings-ns.ts
+// rp-workspace/packages/src/dsht-plugin-shared/settings-ns.ts
 function registerSettingsNamespace(ctx, ns, logTag) {
   const settings = ctx.settings;
   if (!settings || typeof settings.register !== "function") return;
@@ -2759,7 +3254,7 @@ function registerSettingsNamespace(ctx, ns, logTag) {
   }
 }
 
-// src/dsht-plugin-tavern-helper/index.ts
+// rp-workspace/packages/src/dsht-plugin-tavern-helper/index.ts
 var name = "dsht-plugin-tavern-helper";
 var inject = ["webServer", "settings"];
 var SCOPES2 = [...TAVERN_SCOPES];
@@ -2775,31 +3270,31 @@ function scopeArgError(scope, slug, sessionId, scriptId) {
 function apply(ctx, _config) {
   const dshHome = resolveDshHome();
   registerSettingsNamespace(ctx, "dsht-plugin-tavern-helper", "dsht-th");
-  const scriptsPath = join7(dshHome, "rp", "tavern-helper", "scripts.json");
+  const scriptsPath = join8(dshHome, "rp", "tavern-helper", "scripts.json");
   const sessionStore = new TavernSessionStore({
     readStateFile: async (sid) => {
       try {
-        const parsed = JSON.parse(await readFile5(join7(dshHome, "rp", "state", `${sid}.json`), "utf8"));
+        const parsed = JSON.parse(await readFile5(join8(dshHome, "rp", "state", `${sid}.json`), "utf8"));
         return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
       } catch {
         return null;
       }
     },
     writeStateFile: async (sid, file) => {
-      const p = join7(dshHome, "rp", "state", `${sid}.json`);
-      await mkdir4(dirname4(p), { recursive: true });
-      await writeFile4(p, JSON.stringify(file), "utf8");
+      const p = join8(dshHome, "rp", "state", `${sid}.json`);
+      await mkdir4(dirname5(p), { recursive: true });
+      await writeFile3(p, JSON.stringify(file), "utf8");
     }
   });
   const loadScope = async (scope, slug, sessionId, scriptId = "") => {
     try {
       if (scope === "global") {
-        const parsed2 = JSON.parse(await readFile5(join7(dshHome, "rp", "variables", "global.json"), "utf8"));
+        const parsed2 = JSON.parse(await readFile5(join8(dshHome, "rp", "variables", "global.json"), "utf8"));
         return parsed2 && typeof parsed2 === "object" && !Array.isArray(parsed2) ? parsed2 : {};
       }
       if (scope === "character") {
         if (!slug) return {};
-        const parsed2 = JSON.parse(await readFile5(join7(dshHome, "rp", slug, "variables.json"), "utf8"));
+        const parsed2 = JSON.parse(await readFile5(join8(dshHome, "rp", slug, "variables.json"), "utf8"));
         return parsed2 && typeof parsed2 === "object" && !Array.isArray(parsed2) ? parsed2 : {};
       }
       if (scope === "preset" || scope === "message") {
@@ -2811,7 +3306,7 @@ function apply(ctx, _config) {
         return structuredClone(snap.scripts[scriptId] ?? {});
       }
       if (!sessionId) return {};
-      const parsed = JSON.parse(await readFile5(join7(dshHome, "rp", "state", `${sessionId}.json`), "utf8"));
+      const parsed = JSON.parse(await readFile5(join8(dshHome, "rp", "state", `${sessionId}.json`), "utf8"));
       const vars = parsed?.variables;
       return vars && typeof vars === "object" && !Array.isArray(vars) ? vars : {};
     } catch {
@@ -2820,15 +3315,15 @@ function apply(ctx, _config) {
   };
   const saveScope = async (scope, slug, sessionId, tree, scriptId = "") => {
     if (scope === "global") {
-      const p2 = join7(dshHome, "rp", "variables", "global.json");
-      await mkdir4(dirname4(p2), { recursive: true });
-      await writeFile4(p2, JSON.stringify(tree), "utf8");
+      const p2 = join8(dshHome, "rp", "variables", "global.json");
+      await mkdir4(dirname5(p2), { recursive: true });
+      await writeFile3(p2, JSON.stringify(tree), "utf8");
       return;
     }
     if (scope === "character") {
-      const p2 = join7(dshHome, "rp", slug, "variables.json");
-      await mkdir4(dirname4(p2), { recursive: true });
-      await writeFile4(p2, JSON.stringify(tree), "utf8");
+      const p2 = join8(dshHome, "rp", slug, "variables.json");
+      await mkdir4(dirname5(p2), { recursive: true });
+      await writeFile3(p2, JSON.stringify(tree), "utf8");
       return;
     }
     if (scope === "preset" || scope === "message") {
@@ -2839,7 +3334,7 @@ function apply(ctx, _config) {
       await sessionStore.mutate(sessionId, { scope: "script", scriptId, tree });
       return;
     }
-    const p = join7(dshHome, "rp", "state", `${sessionId}.json`);
+    const p = join8(dshHome, "rp", "state", `${sessionId}.json`);
     let file = {};
     try {
       const parsed = JSON.parse(await readFile5(p, "utf8"));
@@ -2847,8 +3342,8 @@ function apply(ctx, _config) {
     } catch {
     }
     file.variables = tree;
-    await mkdir4(dirname4(p), { recursive: true });
-    await writeFile4(p, JSON.stringify(file), "utf8");
+    await mkdir4(dirname5(p), { recursive: true });
+    await writeFile3(p, JSON.stringify(file), "utf8");
   };
   const loadScripts = async () => {
     try {
@@ -2859,8 +3354,8 @@ function apply(ctx, _config) {
     }
   };
   const saveScripts = async (scripts) => {
-    await mkdir4(dirname4(scriptsPath), { recursive: true });
-    await writeFile4(scriptsPath, JSON.stringify({ scripts }, null, 1), "utf8");
+    await mkdir4(dirname5(scriptsPath), { recursive: true });
+    await writeFile3(scriptsPath, JSON.stringify({ scripts }, null, 1), "utf8");
   };
   const snapshotFiles = async (sessionId, relPaths) => {
     if (!sessionId) return;
@@ -2874,7 +3369,7 @@ function apply(ctx, _config) {
     const method = req.method ?? "GET";
     const q = queryOf(req.url);
     if (sub === "/settings") {
-      const p = join7(dshHome, "rp", "th-settings.json");
+      const p = join8(dshHome, "rp", "th-settings.json");
       const defaults = {
         scriptEnabled: true,
         macroEnabled: true,
@@ -2921,8 +3416,8 @@ function apply(ctx, _config) {
         }
         const rc = merged.render.collapseCodeBlock;
         if (rc !== "none" && rc !== "frontend_only" && rc !== "all") merged.render.collapseCodeBlock = "frontend_only";
-        await mkdir4(dirname4(p), { recursive: true });
-        await writeFile4(p, JSON.stringify(merged, null, 1), "utf8");
+        await mkdir4(dirname5(p), { recursive: true });
+        await writeFile3(p, JSON.stringify(merged, null, 1), "utf8");
         console.log(`[dsht-th] settings: scriptEnabled=${merged.scriptEnabled} macroEnabled=${merged.macroEnabled}`);
         return sendJson(res, 200, { ok: true, settings: merged });
       }
@@ -3061,7 +3556,7 @@ function apply(ctx, _config) {
       if (!body) return sendJson(res, 400, { error: "bad json" });
       const text = String(body.text ?? "");
       if (!text) return sendJson(res, 400, { error: "text required" });
-      const thCfg = await readFile5(join7(dshHome, "rp", "th-settings.json"), "utf8").then((t) => JSON.parse(t)).catch(() => ({ macroEnabled: true }));
+      const thCfg = await readFile5(join8(dshHome, "rp", "th-settings.json"), "utf8").then((t) => JSON.parse(t)).catch(() => ({ macroEnabled: true }));
       if (thCfg.macroEnabled === false) {
         return sendJson(res, 200, { result: text, writes: [], unknownMacros: [], macroDisabled: true });
       }
@@ -3089,25 +3584,25 @@ function apply(ctx, _config) {
       if (!sessionId) return sendJson(res, 400, { error: "sessionId required" });
       let presetId = null;
       try {
-        const file = JSON.parse(await readFile5(join7(dshHome, "rp", "state", `${sessionId}.json`), "utf8"));
+        const file = JSON.parse(await readFile5(join8(dshHome, "rp", "state", `${sessionId}.json`), "utf8"));
         presetId = presetIdFromStateFile(file);
       } catch {
       }
       if (!presetId) {
         try {
-          const batches = (await readdir4(join7(dshHome, "rp-import"))).filter((b) => /^[a-z0-9][a-z0-9-]{0,60}$/.test(b)).sort().reverse();
+          const batches = (await readdir4(join8(dshHome, "rp-import"))).filter((b) => /^[a-z0-9][a-z0-9-]{0,60}$/.test(b)).sort().reverse();
           let activeName = null;
           for (const b of batches) {
-            const dir = join7(dshHome, "rp-import", b);
+            const dir = join8(dshHome, "rp-import", b);
             let stRoot = "data/default-user";
             try {
-              const meta = JSON.parse(await readFile5(join7(dir, "meta.json"), "utf8"));
+              const meta = JSON.parse(await readFile5(join8(dir, "meta.json"), "utf8"));
               if (typeof meta.manifest?.stRoot === "string" && meta.manifest.stRoot) stRoot = meta.manifest.stRoot;
             } catch {
             }
             let text = "";
             try {
-              text = await readFile5(join7(dir, "unpacked", stRoot, "settings.json"), "utf8");
+              text = await readFile5(join8(dir, "unpacked", stRoot, "settings.json"), "utf8");
             } catch {
               continue;
             }
@@ -3117,9 +3612,9 @@ function apply(ctx, _config) {
           if (activeName) {
             const presets = [];
             try {
-              for (const id of (await readdir4(join7(dshHome, "rp-presets"))).sort()) {
+              for (const id of (await readdir4(join8(dshHome, "rp-presets"))).sort()) {
                 try {
-                  const p = JSON.parse(await readFile5(join7(dshHome, "rp-presets", id, "preset.json"), "utf8"));
+                  const p = JSON.parse(await readFile5(join8(dshHome, "rp-presets", id, "preset.json"), "utf8"));
                   presets.push({ id, displayName: p.displayName });
                 } catch {
                 }
@@ -3138,8 +3633,8 @@ function apply(ctx, _config) {
           return null;
         }
       };
-      const presetRaw = presetId ? await readLibrary(join7(dshHome, "rp-presets", presetId, "tavern-helper-scripts.json")) : null;
-      const charRaw = slug ? await readLibrary(join7(dshHome, "rp", slug, "tavern-helper-scripts.json")) : null;
+      const presetRaw = presetId ? await readLibrary(join8(dshHome, "rp-presets", presetId, "tavern-helper-scripts.json")) : null;
+      const charRaw = slug ? await readLibrary(join8(dshHome, "rp", slug, "tavern-helper-scripts.json")) : null;
       const scripts = mergeSessionScripts(presetRaw, charRaw);
       for (const s of scripts) {
         if (Object.keys(s.data).length === 0) continue;
@@ -3152,8 +3647,8 @@ function apply(ctx, _config) {
       return sendJson(res, 200, { scripts, presetId, slug });
     }
     if (sub === "/inject" || sub === "/uninject") {
-      const injDir = join7(dshHome, "rp", "th-injections");
-      const injPath = (sid2) => join7(injDir, `${sid2}.json`);
+      const injDir = join8(dshHome, "rp", "th-injections");
+      const injPath = (sid2) => join8(injDir, `${sid2}.json`);
       const readInjections = async (sid2) => {
         try {
           const parsed = JSON.parse(await readFile5(injPath(sid2), "utf8"));
@@ -3179,11 +3674,12 @@ function apply(ctx, _config) {
         for (const raw of rawList) {
           if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
           const rec = raw;
-          const key = typeof rec.key === "string" ? rec.key.trim() : "";
+          const key = typeof rec.key === "string" && rec.key.trim() ? rec.key.trim() : typeof rec.id === "string" && rec.id.trim() ? rec.id.trim() : "";
           if (!key) continue;
+          const prompt = typeof rec.prompt === "string" ? rec.prompt : typeof rec.content === "string" ? rec.content : "";
           incoming.push({
             key,
-            prompt: typeof rec.prompt === "string" ? rec.prompt : "",
+            prompt,
             order: typeof rec.order === "number" && Number.isFinite(rec.order) ? rec.order : 100,
             depth: typeof rec.depth === "number" && Number.isFinite(rec.depth) ? rec.depth : 4,
             position: typeof rec.position === "number" && Number.isFinite(rec.position) ? rec.position : 0,
@@ -3197,7 +3693,7 @@ function apply(ctx, _config) {
         for (const inj of incoming) byKey.set(String(inj.key), inj);
         await mkdir4(injDir, { recursive: true });
         const list = [...byKey.values()];
-        await writeFile4(injPath(sid), JSON.stringify(list), "utf8");
+        await writeFile3(injPath(sid), JSON.stringify(list), "utf8");
         console.log(`[dsht-th] inject: sid=${sid} keys=[${incoming.map((i) => i.key).join(",")}] total=${list.length}`);
         return sendJson(res, 200, { ok: true, count: list.length });
       }
@@ -3206,7 +3702,7 @@ function apply(ctx, _config) {
       const keySet = new Set(keys);
       const next = existing.filter((x) => !keySet.has(String(x.key ?? "")));
       await mkdir4(injDir, { recursive: true });
-      await writeFile4(injPath(sid), JSON.stringify(next), "utf8");
+      await writeFile3(injPath(sid), JSON.stringify(next), "utf8");
       console.log(`[dsht-th] uninject: sid=${sid} keys=[${keys.join(",")}] remain=${next.length}`);
       return sendJson(res, 200, { ok: true, count: next.length });
     }
@@ -3228,6 +3724,29 @@ function apply(ctx, _config) {
         if (!resp.ok) return sendJson(res, resp.status === 503 ? 503 : 502, data);
         console.log(`[dsht-th] generate: ${String(data.text ?? "").length}ch\uFF08loopback llm/classify\uFF09`);
         return sendJson(res, 200, data);
+      } catch (e) {
+        return sendJson(res, 502, { error: `llm \u901A\u9053\u8F6C\u53D1\u5931\u8D25\uFF1A${e.message}` });
+      }
+    }
+    if (sub === "/generate-raw") {
+      if (method !== "POST") return sendJson(res, 405, { error: "POST only" });
+      const body = await readJsonBody(req);
+      if (!body) return sendJson(res, 400, { error: "bad json" });
+      const assembled = await assembleGenerateRawPrompt(dshHome, body);
+      if (!assembled.prompt.trim()) return sendJson(res, 400, { error: "empty prompt\uFF08\u88C5\u914D\u540E\u65E0\u5185\u5BB9\uFF09", missing: assembled.missing });
+      const system = assembled.system.trim() || "\u4F60\u6B63\u5728\u8FDB\u884C SillyTavern \u5F0F\u89D2\u8272\u626E\u6F14\u3002\u8BF7\u5B8C\u5168\u4EE3\u5165\u5F53\u524D\u573A\u666F\u4E2D\u7684\u89D2\u8272\uFF0C\u4F9D\u636E\u4E0A\u6587\u5BF9\u8BDD\u81EA\u7136\u5730\u4EE5\u89D2\u8272\u8EAB\u4EFD\u56DE\u590D\u3002\u76F4\u63A5\u8F93\u51FA\u56DE\u590D\u5185\u5BB9\uFF0C\u4E0D\u8981\u8F93\u51FA JSON\u3001\u5206\u7C7B\u6807\u7B7E\u6216\u4EFB\u4F55\u5143\u4FE1\u606F\u3002";
+      const host = String(req.headers.host ?? "").trim() || "127.0.0.1";
+      try {
+        const resp = await fetch(`http://${host}/dsht-rp/llm/classify`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ system, prompt: assembled.prompt })
+        });
+        const data = await resp.json().catch(() => ({ error: `upstream HTTP ${resp.status}` }));
+        if (!resp.ok) return sendJson(res, resp.status === 503 ? 503 : 502, data);
+        const replyHead = String(data.text ?? "").replace(/\s+/g, " ").slice(0, 80);
+        console.log(`[dsht-th] generate-raw: ${assembled.prompt.length}ch prompt \u2192 ${String(data.text ?? "").length}ch\u300C${replyHead}\u300D\uFF08missing=${assembled.missing.length}\uFF09`);
+        return sendJson(res, 200, { ok: true, text: String(data.text ?? ""), missing: assembled.missing });
       } catch (e) {
         return sendJson(res, 502, { error: `llm \u901A\u9053\u8F6C\u53D1\u5931\u8D25\uFF1A${e.message}` });
       }

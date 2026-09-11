@@ -1496,6 +1496,58 @@ export function rpSlugFromCwd(cwd: string | undefined, dshHome: string): string 
   return slug
 }
 
+// ---------------------------------------------------------------------------
+// D-6（T-08 / T-12）：RP 会话的 agent 层工具修剪
+// ---------------------------------------------------------------------------
+
+/**
+ * 该预设路径是否应**保留**工具。`false` = 修剪掉。
+ *
+ * 背景（D-7 抓包实证）：基准 TT 发给 LLM 的请求体**完全没有 `tools` 字段**，
+ * 而 DSHT 带 **32 个**工具定义 + agent 说明书 —— 这是与基准的**唯一真差异**（D-6）。
+ * RP 是纯对话场景，工具说明会与剧情描写抢注意力（历史样本里模型去查 worldbook 工具
+ * 而不是直接推进剧情）。
+ *
+ * ⚠️ **不是一刀切**：`lightAgent`/`heavyAgent`/`agent` 三条路径的**设计前提就是有工具**
+ * （见 `preset/demo.ts` 的 lightAgent 预设正文「先用 lore_query 工具查询世界书，再作答」）。
+ * 把这三种也关掉，会让预设正文**指向不存在的工具** = 造出新的静默不一致（L42 家族）。
+ * 故：默认（含无预设）与 `direct` 路径修剪；显式选了 agent 路径则尊重其设计。
+ */
+export function shouldStripRpTools(presetPath: string | null | undefined): boolean {
+  return presetPath !== 'lightAgent' && presetPath !== 'heavyAgent' && presetPath !== 'agent'
+}
+
+/**
+ * 从 assembly 摘除全部工具**及其使用说明 section**。
+ *
+ * 为什么必须成对摘（而不是只清 `tools`）：官方每个工具插件都注册了一段 `tool:<name>`
+ * 使用说明（`dsh-tool-bash/lib/index.js:254-258`、`dsh-tool-fs`、`dsh-tool-goal` …）。
+ * 只清 tools 会留下「查看 bash 结果的 [exit code: N]」这类**指向不存在工具**的系统指令
+ * —— 那是把「多出来的污染」换成「自相矛盾的残留」，不比原来好（T-56 的「一组三件」同理）。
+ *
+ * 匹配规则：section 名 `tool:<name>` 且 `<name>` 确在被移除的工具里。**只删对得上的**
+ * （自研 section 若保留工具则一并保留，不误伤同名前缀）。
+ *
+ * 返回**新对象**（不改入参，与 assemble 钩子里其它不可变重建同风格）。
+ */
+export function stripAssemblyTools(
+  assembly: { tools?: unknown; sections?: unknown; [k: string]: unknown },
+): { assembly: typeof assembly; removed: string[] } {
+  const tools = Array.isArray(assembly.tools) ? assembly.tools : []
+  const removed = tools
+    .map(t => (t !== null && typeof t === 'object' ? String((t as { name?: unknown }).name ?? '') : ''))
+    .filter(n => n.length > 0)
+  if (removed.length === 0) return { assembly, removed }
+  const removedSet = new Set(removed)
+  const sections = Array.isArray(assembly.sections)
+    ? assembly.sections.filter(s => {
+        const name = s !== null && typeof s === 'object' ? String((s as { name?: unknown }).name ?? '') : ''
+        return !(name.startsWith('tool:') && removedSet.has(name.slice('tool:'.length)))
+      })
+    : assembly.sections
+  return { assembly: { ...assembly, tools: [], sections }, removed }
+}
+
 /** T3.1b 兜底：从 rp.json 可得的字段重建 ST V2 JSON（仅旧工作区无 card.json 时用） */
 export function buildStV2FromRp(rp: RpWorkspace): string {
   const data: Record<string, unknown> = {
@@ -3470,6 +3522,23 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       }
 
       const resolved = await resolveAgentPreset(agent)
+
+      // ---- D-6（T-08 / T-12）：RP 会话的 agent 层工具修剪 ----
+      // 判据 = **是否 RP 会话**（cwd 落在 `$DSH_HOME/rp/<slug>` 下），而不是「有没有预设」——
+      // 无预设的 RP 会话同样要修剪（用户拍板：对齐基准 TT，其请求体没有 tools 字段）。
+      // 迁移类会话的 cwd 是 `rp-import/<batchId>`（**不匹配** `rp/` 前缀，见 rpSlugFromCwd），
+      // 且它们靠工具干活 → 天然不受影响。
+      // 若 presetId 解析不出（resolved=null）→ shouldStripRpTools(undefined)=true → 照样修剪。
+      if (rpSlugFromCwd(agent.session.header.cwd, dshHome)) {
+        if (shouldStripRpTools(resolved?.preset.path)) {
+          const stripped = stripAssemblyTools(assembly as unknown as { tools?: unknown; sections?: unknown })
+          if (stripped.removed.length > 0) {
+            assembly = stripped.assembly as typeof assembly
+            console.log(`[dsht-rp] D-6 工具修剪：移除 ${stripped.removed.length} 个工具定义（对齐 TT 无 tools 字段；path=${resolved?.preset.path ?? 'none'}）`)
+          }
+        }
+      }
+
       if (!resolved) return assembly
       const { slug, rp, preset, sessionId } = resolved
       const st = sessionId ? await loadSessionState(sessionId) : ({} as SessionRpState)

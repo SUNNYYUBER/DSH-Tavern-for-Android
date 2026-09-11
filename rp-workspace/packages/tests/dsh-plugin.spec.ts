@@ -6,7 +6,8 @@ import {
   hasDirectUserInput,
   processActivatedEntries, renderWorldInfoSnapshot, repairSessionSeqs, rewriteSessionHeaderCwd,
   rpSlugFromCwd, scanSurfaceHistory, searchLoreEntries, sessionContentMaxTime,
-  sessionCwdNeedsRepair, sessionHeaderCwd, sessionRepairNeedsWrite, spliceDepthInjections, truncateSessionJsonl,
+  sessionCwdNeedsRepair, sessionHeaderCwd, sessionRepairNeedsWrite, shouldStripRpTools, spliceDepthInjections,
+  stripAssemblyTools, truncateSessionJsonl,
 } from '../src/dsh-plugin/index.ts'
 import { projectKey } from '../src/import/dsh-export.ts'
 import type { LoreEntry } from '../src/lore/entry.ts'
@@ -26,6 +27,65 @@ describe('dsht-rp-plugin: 工作区识别', () => {
     expect(rpSlugFromCwd('/other/path', home)).toBeNull()
     expect(rpSlugFromCwd(`${home}/skills/x`, home)).toBeNull()
     expect(rpSlugFromCwd(`${home}/rp/a/b`, home)).toBeNull() // 嵌套不算
+  })
+})
+
+// ---------------------------------------------------------------------------
+// D-6（T-08 / T-12）：RP 会话的 agent 层工具修剪
+// 基准 TT 请求体**没有** tools 字段；DSHT 曾带 32 个工具定义 + 说明书（D-7 抓包实证）。
+// ---------------------------------------------------------------------------
+
+describe('dsht-rp-plugin: D-6 工具修剪', () => {
+  it('shouldStripRpTools：默认/direct 修剪；agent 三路径保留（其正文明确要求调用工具）', () => {
+    expect(shouldStripRpTools(null)).toBe(true)
+    expect(shouldStripRpTools(undefined)).toBe(true)
+    expect(shouldStripRpTools('direct')).toBe(true)
+    // 这三条路径的预设正文写着「先用 lore_query 工具查询世界书」——关了会让正文指向不存在的工具
+    expect(shouldStripRpTools('lightAgent')).toBe(false)
+    expect(shouldStripRpTools('heavyAgent')).toBe(false)
+    expect(shouldStripRpTools('agent')).toBe(false)
+  })
+
+  it('stripAssemblyTools：tools 清空 + 对应 tool:<name> section 一并摘除', () => {
+    const asm = {
+      tools: [{ name: 'bash' }, { name: 'lore_query' }],
+      sections: [
+        { name: 'tool:bash', text: '查看 [exit code: N]' },
+        { name: 'tool:lore_query', text: 'Use lore_query…' },
+        { name: 'dsht-rp:slot:character', text: '角色卡' },
+      ],
+    }
+    const r = stripAssemblyTools(asm)
+    expect(r.removed.sort()).toEqual(['bash', 'lore_query'])
+    expect(r.assembly.tools).toEqual([])
+    // 承重：只清 tools 会留下「查看 [exit code: N]」这类指向不存在工具的指令
+    expect(r.assembly.sections).toEqual([{ name: 'dsht-rp:slot:character', text: '角色卡' }])
+  })
+
+  it('stripAssemblyTools：无 tools 时原样返回（幂等，不制造新对象）', () => {
+    const asm = { tools: [], sections: [{ name: 'tool:bash', text: 'x' }] }
+    const r = stripAssemblyTools(asm)
+    expect(r.removed).toEqual([])
+    expect(r.assembly).toBe(asm) // 同一引用：没动就不重建
+    // 未移除工具时，section 也不动（避免"工具在、说明被删"的反向不一致）
+    expect(r.assembly.sections).toHaveLength(1)
+  })
+
+  it('stripAssemblyTools：不误伤非工具 section（只按 tool:<name> 且名字对得上）', () => {
+    const asm = {
+      tools: [{ name: 'bash' }],
+      sections: [{ name: 'tool:bashx', text: '前缀相似但不同名' }, { name: 'tool:bash', text: '真身' }],
+    }
+    const r = stripAssemblyTools(asm)
+    expect((r.assembly.sections as Array<{ name: string }>).map(s => s.name)).toEqual(['tool:bashx'])
+  })
+
+  it('stripAssemblyTools：不改入参（返回新对象）', () => {
+    const asm = { tools: [{ name: 'bash' }], sections: [{ name: 'tool:bash', text: 'x' }] }
+    const r = stripAssemblyTools(asm)
+    expect(asm.tools).toHaveLength(1)          // 原对象未被清空
+    expect(asm.sections).toHaveLength(1)
+    expect(r.assembly).not.toBe(asm)
   })
 })
 

@@ -278,6 +278,53 @@ export function __resetHostStCaches(): void {
 }
 
 /**
+ * 【心跳 58 · T-42 收口】把 ST 的全局正则键种进宿主 `extension_settings`。
+ *
+ * ## 为什么必须种（实机取证 + 探针复现）
+ *
+ * 真 ST 的 `extension_settings.regex` 是 `RegexScriptData[]`（camelCase）：
+ * `extensions.js:178` 默认 `regex: []`，`extensions/regex/index.js:1713` 的 `init()` 再兜底
+ * `if (!Array.isArray(extension_settings.regex)) extension_settings.regex = []`。
+ *
+ * 我方原先**从未提供该键** → 卡脚本 `inject.js:3538` 取 `const extensions = ctx.extensionSettings;`
+ * 后在**无条件调用**的 `updateSTRegexes()`（`:3892`）里读 `extensions.regex.length`（`:3997`）
+ * → `undefined.length` **取值先抛** TypeError → `RegexBinding()` 整段中断 → 紧随其后的
+ * `ChatSquash()` / `MacroNest()` / `syncSPresetToolRegistrations()` **全不执行**
+ *（这正是 T-42 登记的影响面）。注意该行**新旧版路径都会走到**——与 `#saved_regex_scripts`
+ * 锚点不同（那处只在旧版路径被消费），所以光补 `/version` + 锚点并不够。
+ *
+ * ## 语义与纪律
+ * - **不是数组 → 种**（逐字对齐 ST `init()` 的 `!Array.isArray` 判据）。
+ * - **是空数组且有真数据 → 填充**：这一条是必需的 —— 门面常常**先以空壳构建**
+ *   （RP 未打开时 `getSnapshot()` 返回 null）而把 `regex` 种成 `[]`；若此后一律"不覆盖"，
+ *   真数据就**永远进不来**（本用例第一版即踩此坑，被单测当场抓住）。
+ * - **非空数组 → 一律不动**：卡可能已就地改过（`extensions.regex = …filter(…)`），不回滚。
+ * - **就地改同一对象**：`ext` 是缓存里的那个引用，就地赋值 → `getContext()` 的引用稳定性要求不被破坏。
+ * - **数据来源**：`/context` 的 `extensionSettingsRegex`（= GLOBAL 作用域正则，ST camelCase 形状；
+ *   facade 侧由 `toStRegexScript` 白名单转换，与 `extensions.regex_scripts` 的转换同源）。
+ * - `regex_presets` 一并种（`extensions.js:181` 同为 `[]` 基线）——同族键给同族形状，避免下一个
+ *   `!Array.isArray` 判据再炸一次。
+ *
+ * @returns 是否**真的改动了**（调用方据此决定要不要落盘——不改就不碰 storage，避免读路径无谓写）
+ */
+export function seedHostExtensionSettings(
+  ext: Record<string, unknown>,
+  snap: ThContextSnapshot,
+): boolean {
+  let changed = false
+  const regexes = (snap as { extensionSettingsRegex?: unknown }).extensionSettingsRegex
+  const hasReal = Array.isArray(regexes) && regexes.length > 0
+  const currentEmpty = !Array.isArray(ext.regex) || (ext.regex as unknown[]).length === 0
+  if (hasReal && currentEmpty) {
+    ext.regex = regexes
+    changed = true
+  }
+  if (!Array.isArray(ext.regex)) { ext.regex = []; changed = true }
+  if (!Array.isArray(ext.regex_presets)) { ext.regex_presets = []; changed = true }
+  return changed
+}
+
+/**
  * 落盘宿主 extension_settings（`saveSettingsDebounced` 的落地动作）。
  *
  * 语义：脚本拿到 `ctx.extensionSettings` 后**就地改**这个对象，再调 `saveSettingsDebounced()`
@@ -362,6 +409,10 @@ export function buildHostStContext(src: HostStContextSource = {}): Record<string
   const charName = (s.character !== null && s.character !== undefined && typeof s.character === 'object'
     && s.character.name != null) ? s.character.name : undefined
   const ext = readHostExtensionSettings()
+  // 【心跳 58 · T-42】seed ST 全局正则键（详见 seedHostExtensionSettings 头注）。
+  // 改动时**落盘**：脚本 iframe 与宿主共用同一 localStorage 键（`__dsht_extension_settings`），
+  // 只改内存不落盘会让 iframe 侧看不到（同族数据不一致 = 又一个静默分歧）。
+  if (seedHostExtensionSettings(ext, s)) saveHostExtensionSettings(ext)
   const i18n = getHostI18n()
   const tools = getHostToolManager()
 

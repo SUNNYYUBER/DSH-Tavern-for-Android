@@ -34,9 +34,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/.pnpm/process-nextick-args@2.0.1/node_modules/process-nextick-args/index.js
+// rp-workspace/packages/node_modules/.pnpm/process-nextick-args@2.0.1/node_modules/process-nextick-args/index.js
 var require_process_nextick_args = __commonJS({
-  "node_modules/.pnpm/process-nextick-args@2.0.1/node_modules/process-nextick-args/index.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/process-nextick-args@2.0.1/node_modules/process-nextick-args/index.js"(exports, module) {
     "use strict";
     if (typeof process === "undefined" || !process.version || process.version.indexOf("v0.") === 0 || process.version.indexOf("v1.") === 0 && process.version.indexOf("v1.8.") !== 0) {
       module.exports = { nextTick };
@@ -79,9 +79,9 @@ var require_process_nextick_args = __commonJS({
   }
 });
 
-// node_modules/.pnpm/isarray@1.0.0/node_modules/isarray/index.js
+// rp-workspace/packages/node_modules/.pnpm/isarray@1.0.0/node_modules/isarray/index.js
 var require_isarray = __commonJS({
-  "node_modules/.pnpm/isarray@1.0.0/node_modules/isarray/index.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/isarray@1.0.0/node_modules/isarray/index.js"(exports, module) {
     var toString2 = {}.toString;
     module.exports = Array.isArray || function(arr) {
       return toString2.call(arr) == "[object Array]";
@@ -89,16 +89,16 @@ var require_isarray = __commonJS({
   }
 });
 
-// node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/stream.js
+// rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/stream.js
 var require_stream = __commonJS({
-  "node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/stream.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/stream.js"(exports, module) {
     module.exports = __require("stream");
   }
 });
 
-// node_modules/.pnpm/safe-buffer@5.1.2/node_modules/safe-buffer/index.js
+// rp-workspace/packages/node_modules/.pnpm/safe-buffer@5.1.2/node_modules/safe-buffer/index.js
 var require_safe_buffer = __commonJS({
-  "node_modules/.pnpm/safe-buffer@5.1.2/node_modules/safe-buffer/index.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/safe-buffer@5.1.2/node_modules/safe-buffer/index.js"(exports, module) {
     var buffer = __require("buffer");
     var Buffer2 = buffer.Buffer;
     function copyProps(src, dst) {
@@ -153,9 +153,9 @@ var require_safe_buffer = __commonJS({
   }
 });
 
-// node_modules/.pnpm/core-util-is@1.0.3/node_modules/core-util-is/lib/util.js
+// rp-workspace/packages/node_modules/.pnpm/core-util-is@1.0.3/node_modules/core-util-is/lib/util.js
 var require_util = __commonJS({
-  "node_modules/.pnpm/core-util-is@1.0.3/node_modules/core-util-is/lib/util.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/core-util-is@1.0.3/node_modules/core-util-is/lib/util.js"(exports) {
     function isArray(arg) {
       if (Array.isArray) {
         return Array.isArray(arg);
@@ -223,9 +223,9 @@ var require_util = __commonJS({
   }
 });
 
-// node_modules/.pnpm/inherits@2.0.4/node_modules/inherits/inherits_browser.js
+// rp-workspace/packages/node_modules/.pnpm/inherits@2.0.4/node_modules/inherits/inherits_browser.js
 var require_inherits_browser = __commonJS({
-  "node_modules/.pnpm/inherits@2.0.4/node_modules/inherits/inherits_browser.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/inherits@2.0.4/node_modules/inherits/inherits_browser.js"(exports, module) {
     if (typeof Object.create === "function") {
       module.exports = function inherits(ctor, superCtor) {
         if (superCtor) {
@@ -255,9 +255,9 @@ var require_inherits_browser = __commonJS({
   }
 });
 
-// node_modules/.pnpm/inherits@2.0.4/node_modules/inherits/inherits.js
+// rp-workspace/packages/node_modules/.pnpm/inherits@2.0.4/node_modules/inherits/inherits.js
 var require_inherits = __commonJS({
-  "node_modules/.pnpm/inherits@2.0.4/node_modules/inherits/inherits.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/inherits@2.0.4/node_modules/inherits/inherits.js"(exports, module) {
     try {
       util = __require("util");
       if (typeof util.inherits !== "function") throw "";
@@ -269,9 +269,9 @@ var require_inherits = __commonJS({
   }
 });
 
-// node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/BufferList.js
+// rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/BufferList.js
 var require_BufferList = __commonJS({
-  "node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/BufferList.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/BufferList.js"(exports, module) {
     "use strict";
     function _classCallCheck(instance, Constructor) {
       if (!(instance instanceof Constructor)) {
@@ -315,7 +315,7 @@ var require_BufferList = __commonJS({
         this.head = this.tail = null;
         this.length = 0;
       };
-      BufferList.prototype.join = function join9(s) {
+      BufferList.prototype.join = function join11(s) {
         if (this.length === 0) return "";
         var p = this.head;
         var ret = "" + p.data;
@@ -347,9 +347,9 @@ var require_BufferList = __commonJS({
   }
 });
 
-// node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/destroy.js
+// rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/destroy.js
 var require_destroy = __commonJS({
-  "node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/destroy.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/internal/streams/destroy.js"(exports, module) {
     "use strict";
     var pna = require_process_nextick_args();
     function destroy(err, cb) {
@@ -416,16 +416,16 @@ var require_destroy = __commonJS({
   }
 });
 
-// node_modules/.pnpm/util-deprecate@1.0.2/node_modules/util-deprecate/node.js
+// rp-workspace/packages/node_modules/.pnpm/util-deprecate@1.0.2/node_modules/util-deprecate/node.js
 var require_node = __commonJS({
-  "node_modules/.pnpm/util-deprecate@1.0.2/node_modules/util-deprecate/node.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/util-deprecate@1.0.2/node_modules/util-deprecate/node.js"(exports, module) {
     module.exports = __require("util").deprecate;
   }
 });
 
-// node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_writable.js
+// rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_writable.js
 var require_stream_writable = __commonJS({
-  "node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_writable.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_writable.js"(exports, module) {
     "use strict";
     var pna = require_process_nextick_args();
     module.exports = Writable;
@@ -863,9 +863,9 @@ var require_stream_writable = __commonJS({
   }
 });
 
-// node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_duplex.js
+// rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_duplex.js
 var require_stream_duplex = __commonJS({
-  "node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_duplex.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_duplex.js"(exports, module) {
     "use strict";
     var pna = require_process_nextick_args();
     var objectKeys = Object.keys || function(obj) {
@@ -940,9 +940,9 @@ var require_stream_duplex = __commonJS({
   }
 });
 
-// node_modules/.pnpm/string_decoder@1.1.1/node_modules/string_decoder/lib/string_decoder.js
+// rp-workspace/packages/node_modules/.pnpm/string_decoder@1.1.1/node_modules/string_decoder/lib/string_decoder.js
 var require_string_decoder = __commonJS({
-  "node_modules/.pnpm/string_decoder@1.1.1/node_modules/string_decoder/lib/string_decoder.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/string_decoder@1.1.1/node_modules/string_decoder/lib/string_decoder.js"(exports) {
     "use strict";
     var Buffer2 = require_safe_buffer().Buffer;
     var isEncoding = Buffer2.isEncoding || function(encoding) {
@@ -1178,9 +1178,9 @@ var require_string_decoder = __commonJS({
   }
 });
 
-// node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_readable.js
+// rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_readable.js
 var require_stream_readable = __commonJS({
-  "node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_readable.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_readable.js"(exports, module) {
     "use strict";
     var pna = require_process_nextick_args();
     module.exports = Readable;
@@ -1864,9 +1864,9 @@ var require_stream_readable = __commonJS({
   }
 });
 
-// node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_transform.js
+// rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_transform.js
 var require_stream_transform = __commonJS({
-  "node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_transform.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_transform.js"(exports, module) {
     "use strict";
     module.exports = Transform;
     var Duplex = require_stream_duplex();
@@ -1964,9 +1964,9 @@ var require_stream_transform = __commonJS({
   }
 });
 
-// node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_passthrough.js
+// rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_passthrough.js
 var require_stream_passthrough = __commonJS({
-  "node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_passthrough.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/lib/_stream_passthrough.js"(exports, module) {
     "use strict";
     module.exports = PassThrough;
     var Transform = require_stream_transform();
@@ -1983,9 +1983,9 @@ var require_stream_passthrough = __commonJS({
   }
 });
 
-// node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/readable.js
+// rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/readable.js
 var require_readable = __commonJS({
-  "node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/readable.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/readable-stream@2.3.8/node_modules/readable-stream/readable.js"(exports, module) {
     var Stream = __require("stream");
     if (process.env.READABLE_STREAM === "disable" && Stream) {
       module.exports = Stream;
@@ -2008,9 +2008,9 @@ var require_readable = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/support.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/support.js
 var require_support = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/support.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/support.js"(exports) {
     "use strict";
     exports.base64 = true;
     exports.array = true;
@@ -2048,9 +2048,9 @@ var require_support = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/base64.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/base64.js
 var require_base64 = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/base64.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/base64.js"(exports) {
     "use strict";
     var utils = require_utils();
     var support = require_support();
@@ -2125,9 +2125,9 @@ var require_base64 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejsUtils.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejsUtils.js
 var require_nodejsUtils = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejsUtils.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejsUtils.js"(exports, module) {
     "use strict";
     module.exports = {
       /**
@@ -2181,9 +2181,9 @@ var require_nodejsUtils = __commonJS({
   }
 });
 
-// node_modules/.pnpm/immediate@3.0.6/node_modules/immediate/lib/index.js
+// rp-workspace/packages/node_modules/.pnpm/immediate@3.0.6/node_modules/immediate/lib/index.js
 var require_lib = __commonJS({
-  "node_modules/.pnpm/immediate@3.0.6/node_modules/immediate/lib/index.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/immediate@3.0.6/node_modules/immediate/lib/index.js"(exports, module) {
     "use strict";
     var Mutation = global.MutationObserver || global.WebKitMutationObserver;
     var scheduleDrain;
@@ -2255,9 +2255,9 @@ var require_lib = __commonJS({
   }
 });
 
-// node_modules/.pnpm/lie@3.3.0/node_modules/lie/lib/index.js
+// rp-workspace/packages/node_modules/.pnpm/lie@3.3.0/node_modules/lie/lib/index.js
 var require_lib2 = __commonJS({
-  "node_modules/.pnpm/lie@3.3.0/node_modules/lie/lib/index.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/lie@3.3.0/node_modules/lie/lib/index.js"(exports, module) {
     "use strict";
     var immediate = require_lib();
     function INTERNAL() {
@@ -2525,9 +2525,9 @@ var require_lib2 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/external.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/external.js
 var require_external = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/external.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/external.js"(exports, module) {
     "use strict";
     var ES6Promise = null;
     if (typeof Promise !== "undefined") {
@@ -2541,9 +2541,9 @@ var require_external = __commonJS({
   }
 });
 
-// node_modules/.pnpm/setimmediate@1.0.5/node_modules/setimmediate/setImmediate.js
+// rp-workspace/packages/node_modules/.pnpm/setimmediate@1.0.5/node_modules/setimmediate/setImmediate.js
 var require_setImmediate = __commonJS({
-  "node_modules/.pnpm/setimmediate@1.0.5/node_modules/setimmediate/setImmediate.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/setimmediate@1.0.5/node_modules/setimmediate/setImmediate.js"(exports) {
     (function(global2, undefined2) {
       "use strict";
       if (global2.setImmediate) {
@@ -2689,9 +2689,9 @@ var require_setImmediate = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/utils.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/utils.js
 var require_utils = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/utils.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/utils.js"(exports) {
     "use strict";
     var support = require_support();
     var base64 = require_base64();
@@ -3014,9 +3014,9 @@ var require_utils = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/GenericWorker.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/GenericWorker.js
 var require_GenericWorker = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/GenericWorker.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/GenericWorker.js"(exports, module) {
     "use strict";
     function GenericWorker(name2) {
       this.name = name2 || "default";
@@ -3241,9 +3241,9 @@ var require_GenericWorker = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/utf8.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/utf8.js
 var require_utf8 = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/utf8.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/utf8.js"(exports) {
     "use strict";
     var utils = require_utils();
     var support = require_support();
@@ -3431,9 +3431,9 @@ var require_utf8 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/ConvertWorker.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/ConvertWorker.js
 var require_ConvertWorker = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/ConvertWorker.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/ConvertWorker.js"(exports, module) {
     "use strict";
     var GenericWorker = require_GenericWorker();
     var utils = require_utils();
@@ -3452,9 +3452,9 @@ var require_ConvertWorker = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejs/NodejsStreamOutputAdapter.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejs/NodejsStreamOutputAdapter.js
 var require_NodejsStreamOutputAdapter = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejs/NodejsStreamOutputAdapter.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejs/NodejsStreamOutputAdapter.js"(exports, module) {
     "use strict";
     var Readable = require_readable().Readable;
     var utils = require_utils();
@@ -3483,9 +3483,9 @@ var require_NodejsStreamOutputAdapter = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/StreamHelper.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/StreamHelper.js
 var require_StreamHelper = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/StreamHelper.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/StreamHelper.js"(exports, module) {
     "use strict";
     var utils = require_utils();
     var ConvertWorker = require_ConvertWorker();
@@ -3643,9 +3643,9 @@ var require_StreamHelper = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/defaults.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/defaults.js
 var require_defaults = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/defaults.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/defaults.js"(exports) {
     "use strict";
     exports.base64 = false;
     exports.binary = false;
@@ -3660,9 +3660,9 @@ var require_defaults = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/DataWorker.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/DataWorker.js
 var require_DataWorker = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/DataWorker.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/DataWorker.js"(exports, module) {
     "use strict";
     var utils = require_utils();
     var GenericWorker = require_GenericWorker();
@@ -3748,9 +3748,9 @@ var require_DataWorker = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/crc32.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/crc32.js
 var require_crc32 = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/crc32.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/crc32.js"(exports, module) {
     "use strict";
     var utils = require_utils();
     function makeTable() {
@@ -3795,9 +3795,9 @@ var require_crc32 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/Crc32Probe.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/Crc32Probe.js
 var require_Crc32Probe = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/Crc32Probe.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/Crc32Probe.js"(exports, module) {
     "use strict";
     var GenericWorker = require_GenericWorker();
     var crc322 = require_crc32();
@@ -3815,9 +3815,9 @@ var require_Crc32Probe = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/DataLengthProbe.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/DataLengthProbe.js
 var require_DataLengthProbe = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/DataLengthProbe.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/stream/DataLengthProbe.js"(exports, module) {
     "use strict";
     var utils = require_utils();
     var GenericWorker = require_GenericWorker();
@@ -3838,9 +3838,9 @@ var require_DataLengthProbe = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/compressedObject.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/compressedObject.js
 var require_compressedObject = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/compressedObject.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/compressedObject.js"(exports, module) {
     "use strict";
     var external = require_external();
     var DataWorker = require_DataWorker();
@@ -3883,9 +3883,9 @@ var require_compressedObject = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipObject.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipObject.js
 var require_zipObject = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipObject.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipObject.js"(exports, module) {
     "use strict";
     var StreamHelper = require_StreamHelper();
     var DataWorker = require_DataWorker();
@@ -4000,9 +4000,9 @@ var require_zipObject = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/utils/common.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/utils/common.js
 var require_common = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/utils/common.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/utils/common.js"(exports) {
     "use strict";
     var TYPED_OK = typeof Uint8Array !== "undefined" && typeof Uint16Array !== "undefined" && typeof Int32Array !== "undefined";
     function _has(obj, key) {
@@ -4091,9 +4091,9 @@ var require_common = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/trees.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/trees.js
 var require_trees = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/trees.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/trees.js"(exports) {
     "use strict";
     var utils = require_common();
     var Z_FIXED = 4;
@@ -4733,9 +4733,9 @@ var require_trees = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/adler32.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/adler32.js
 var require_adler32 = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/adler32.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/adler32.js"(exports, module) {
     "use strict";
     function adler322(adler, buf, len, pos) {
       var s1 = adler & 65535 | 0, s2 = adler >>> 16 & 65535 | 0, n = 0;
@@ -4755,9 +4755,9 @@ var require_adler32 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/crc32.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/crc32.js
 var require_crc322 = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/crc32.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/crc32.js"(exports, module) {
     "use strict";
     function makeTable() {
       var c, table = [];
@@ -4783,9 +4783,9 @@ var require_crc322 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/messages.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/messages.js
 var require_messages = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/messages.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/messages.js"(exports, module) {
     "use strict";
     module.exports = {
       2: "need dictionary",
@@ -4810,9 +4810,9 @@ var require_messages = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/deflate.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/deflate.js
 var require_deflate = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/deflate.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/deflate.js"(exports) {
     "use strict";
     var utils = require_common();
     var trees = require_trees();
@@ -5859,9 +5859,9 @@ var require_deflate = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/utils/strings.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/utils/strings.js
 var require_strings = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/utils/strings.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/utils/strings.js"(exports) {
     "use strict";
     var utils = require_common();
     var STR_APPLY_OK = true;
@@ -6001,9 +6001,9 @@ var require_strings = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/zstream.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/zstream.js
 var require_zstream = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/zstream.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/zstream.js"(exports, module) {
     "use strict";
     function ZStream() {
       this.input = null;
@@ -6023,9 +6023,9 @@ var require_zstream = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/deflate.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/deflate.js
 var require_deflate2 = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/deflate.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/deflate.js"(exports) {
     "use strict";
     var zlib_deflate = require_deflate();
     var utils = require_common();
@@ -6184,9 +6184,9 @@ var require_deflate2 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inffast.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inffast.js
 var require_inffast = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inffast.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inffast.js"(exports, module) {
     "use strict";
     var BAD = 30;
     var TYPE = 12;
@@ -6413,9 +6413,9 @@ var require_inffast = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inftrees.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inftrees.js
 var require_inftrees = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inftrees.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inftrees.js"(exports, module) {
     "use strict";
     var utils = require_common();
     var MAXBITS = 15;
@@ -6729,9 +6729,9 @@ var require_inftrees = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inflate.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inflate.js
 var require_inflate = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inflate.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/inflate.js"(exports) {
     "use strict";
     var utils = require_common();
     var adler322 = require_adler32();
@@ -7968,9 +7968,9 @@ var require_inflate = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/constants.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/constants.js
 var require_constants = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/constants.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/constants.js"(exports, module) {
     "use strict";
     module.exports = {
       /* Allowed flush values; see deflate() and inflate() below for details */
@@ -8015,9 +8015,9 @@ var require_constants = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/gzheader.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/gzheader.js
 var require_gzheader = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/gzheader.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/zlib/gzheader.js"(exports, module) {
     "use strict";
     function GZheader() {
       this.text = 0;
@@ -8035,9 +8035,9 @@ var require_gzheader = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/inflate.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/inflate.js
 var require_inflate2 = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/inflate.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/lib/inflate.js"(exports) {
     "use strict";
     var zlib_inflate = require_inflate();
     var utils = require_common();
@@ -8209,9 +8209,9 @@ var require_inflate2 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/pako@1.0.11/node_modules/pako/index.js
+// rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/index.js
 var require_pako = __commonJS({
-  "node_modules/.pnpm/pako@1.0.11/node_modules/pako/index.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/pako@1.0.11/node_modules/pako/index.js"(exports, module) {
     "use strict";
     var assign = require_common().assign;
     var deflate = require_deflate2();
@@ -8223,9 +8223,9 @@ var require_pako = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/flate.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/flate.js
 var require_flate = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/flate.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/flate.js"(exports) {
     "use strict";
     var USE_TYPEDARRAY = typeof Uint8Array !== "undefined" && typeof Uint16Array !== "undefined" && typeof Uint32Array !== "undefined";
     var pako = require_pako();
@@ -8282,9 +8282,9 @@ var require_flate = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/compressions.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/compressions.js
 var require_compressions = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/compressions.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/compressions.js"(exports) {
     "use strict";
     var GenericWorker = require_GenericWorker();
     exports.STORE = {
@@ -8300,9 +8300,9 @@ var require_compressions = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/signature.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/signature.js
 var require_signature = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/signature.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/signature.js"(exports) {
     "use strict";
     exports.LOCAL_FILE_HEADER = "PK";
     exports.CENTRAL_FILE_HEADER = "PK";
@@ -8313,9 +8313,9 @@ var require_signature = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/generate/ZipFileWorker.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/generate/ZipFileWorker.js
 var require_ZipFileWorker = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/generate/ZipFileWorker.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/generate/ZipFileWorker.js"(exports, module) {
     "use strict";
     var utils = require_utils();
     var GenericWorker = require_GenericWorker();
@@ -8597,9 +8597,9 @@ var require_ZipFileWorker = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/generate/index.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/generate/index.js
 var require_generate = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/generate/index.js"(exports) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/generate/index.js"(exports) {
     "use strict";
     var compressions = require_compressions();
     var ZipFileWorker = require_ZipFileWorker();
@@ -8638,9 +8638,9 @@ var require_generate = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejs/NodejsStreamInputAdapter.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejs/NodejsStreamInputAdapter.js
 var require_NodejsStreamInputAdapter = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejs/NodejsStreamInputAdapter.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/nodejs/NodejsStreamInputAdapter.js"(exports, module) {
     "use strict";
     var utils = require_utils();
     var GenericWorker = require_GenericWorker();
@@ -8697,9 +8697,9 @@ var require_NodejsStreamInputAdapter = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/object.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/object.js
 var require_object = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/object.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/object.js"(exports, module) {
     "use strict";
     var utf8 = require_utf8();
     var utils = require_utils();
@@ -8970,9 +8970,9 @@ var require_object = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/DataReader.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/DataReader.js
 var require_DataReader = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/DataReader.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/DataReader.js"(exports, module) {
     "use strict";
     var utils = require_utils();
     function DataReader(data) {
@@ -9092,9 +9092,9 @@ var require_DataReader = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/ArrayReader.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/ArrayReader.js
 var require_ArrayReader = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/ArrayReader.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/ArrayReader.js"(exports, module) {
     "use strict";
     var DataReader = require_DataReader();
     var utils = require_utils();
@@ -9134,9 +9134,9 @@ var require_ArrayReader = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/StringReader.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/StringReader.js
 var require_StringReader = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/StringReader.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/StringReader.js"(exports, module) {
     "use strict";
     var DataReader = require_DataReader();
     var utils = require_utils();
@@ -9164,9 +9164,9 @@ var require_StringReader = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/Uint8ArrayReader.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/Uint8ArrayReader.js
 var require_Uint8ArrayReader = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/Uint8ArrayReader.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/Uint8ArrayReader.js"(exports, module) {
     "use strict";
     var ArrayReader = require_ArrayReader();
     var utils = require_utils();
@@ -9187,9 +9187,9 @@ var require_Uint8ArrayReader = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/NodeBufferReader.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/NodeBufferReader.js
 var require_NodeBufferReader = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/NodeBufferReader.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/NodeBufferReader.js"(exports, module) {
     "use strict";
     var Uint8ArrayReader = require_Uint8ArrayReader();
     var utils = require_utils();
@@ -9207,9 +9207,9 @@ var require_NodeBufferReader = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/readerFor.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/readerFor.js
 var require_readerFor = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/readerFor.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/reader/readerFor.js"(exports, module) {
     "use strict";
     var utils = require_utils();
     var support = require_support();
@@ -9234,9 +9234,9 @@ var require_readerFor = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipEntry.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipEntry.js
 var require_zipEntry = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipEntry.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipEntry.js"(exports, module) {
     "use strict";
     var readerFor = require_readerFor();
     var utils = require_utils();
@@ -9452,9 +9452,9 @@ var require_zipEntry = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipEntries.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipEntries.js
 var require_zipEntries = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipEntries.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/zipEntries.js"(exports, module) {
     "use strict";
     var readerFor = require_readerFor();
     var utils = require_utils();
@@ -9650,9 +9650,9 @@ var require_zipEntries = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/load.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/load.js
 var require_load = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/load.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/load.js"(exports, module) {
     "use strict";
     var utils = require_utils();
     var external = require_external();
@@ -9729,9 +9729,9 @@ var require_load = __commonJS({
   }
 });
 
-// node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/index.js
+// rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/index.js
 var require_lib3 = __commonJS({
-  "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/index.js"(exports, module) {
+  "rp-workspace/packages/node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/lib/index.js"(exports, module) {
     "use strict";
     function JSZip2() {
       if (!(this instanceof JSZip2)) {
@@ -9766,17 +9766,17 @@ var require_lib3 = __commonJS({
   }
 });
 
-// src/dsh-plugin/index.ts
+// rp-workspace/packages/src/dsh-plugin/index.ts
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { access, mkdir as mkdir5, open as open5, readdir as readdir5, readFile as readFile7, realpath as realpath2, rename as rename3, rm as rm4, stat, writeFile as writeFile4 } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { access, mkdir as mkdir6, open as open5, readdir as readdir5, readFile as readFile8, realpath as realpath2, rename as rename3, rm as rm4, stat, writeFile as writeFile4 } from "node:fs/promises";
+import { existsSync, mkdirSync as mkdirSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname as dirname6, join as join8, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
+import { dirname as dirname8, isAbsolute, join as join10, relative as relative2, resolve as resolve2, sep as sep2 } from "node:path";
 import { createInterface } from "node:readline";
 import { randomUUID as randomUUID2 } from "node:crypto";
 
-// src/dsht-plugin-shared/atomic-fs.ts
+// rp-workspace/packages/src/dsht-plugin-shared/atomic-fs.ts
 import { open, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 var atomicWriteSeq = 0;
@@ -9801,7 +9801,7 @@ async function atomicWriteText(path, content) {
   }
 }
 
-// node_modules/.pnpm/@deepseek-ai+cosmokit@1.8.3/node_modules/@deepseek-ai/cosmokit/lib/index.js
+// rp-workspace/packages/node_modules/.pnpm/@deepseek-ai+cosmokit@1.8.3/node_modules/@deepseek-ai/cosmokit/lib/index.js
 function isNullable(value) {
   return value === null || value === void 0;
 }
@@ -9987,7 +9987,7 @@ var Time;
   Time2.template = template;
 })(Time || (Time = {}));
 
-// node_modules/.pnpm/@deepseek-ai+schemastery@3.18.2/node_modules/@deepseek-ai/schemastery/lib/index.mjs
+// rp-workspace/packages/node_modules/.pnpm/@deepseek-ai+schemastery@3.18.2/node_modules/@deepseek-ai/schemastery/lib/index.mjs
 var kSchema = /* @__PURE__ */ Symbol.for("schemastery");
 var kValidationError = /* @__PURE__ */ Symbol.for("ValidationError");
 globalThis.__schemastery_index__ ??= 0;
@@ -10589,10 +10589,10 @@ defineMethod("transform", [
   "preserve"
 ], ({ inner }, isInner) => inner.toString(isInner));
 
-// src/dsh-plugin/index.ts
+// rp-workspace/packages/src/dsh-plugin/index.ts
 var import_jszip = __toESM(require_lib3());
 
-// src/lore/trigger.ts
+// rp-workspace/packages/src/lore/trigger.ts
 function visibleMessageCursor(events) {
   let cursor = 0;
   for (const e of events) {
@@ -10791,7 +10791,7 @@ function triggerWorldInfo(entries, recentMessages, config = {}) {
   };
 }
 
-// src/lore/entry.ts
+// rp-workspace/packages/src/lore/entry.ts
 var WI_POSITION = {
   BEFORE: 0,
   AFTER: 1,
@@ -10848,7 +10848,7 @@ function importLoreBook(name2, raw) {
   return { name: name2, entries, importWarnings: [...new Set(warnings)] };
 }
 
-// src/regex/engine.ts
+// rp-workspace/packages/src/regex/engine.ts
 var PLACEMENT = {
   USER_INPUT: 1,
   AI_OUTPUT: 2,
@@ -10859,9 +10859,30 @@ var PLACEMENT = {
 function activeScripts(scripts, timing) {
   return scripts.filter((s) => {
     if (s.disabled) return false;
-    if (timing === "display") return s.markdownOnly;
-    if (timing === "prompt") return s.promptOnly;
+    if (timing === "display") return !s.promptOnly;
+    if (timing === "prompt") return !s.markdownOnly;
     return !s.markdownOnly && !s.promptOnly;
+  });
+}
+function sanitizeRegexMacro(x) {
+  if (typeof x !== "string") return "";
+  return x.replace(/[\n\r\t\v\f\0.^$*+?{}[\]\\/|()]/g, (s) => {
+    switch (s) {
+      case "\n":
+        return "\\n";
+      case "\r":
+        return "\\r";
+      case "	":
+        return "\\t";
+      case "\v":
+        return "\\v";
+      case "\f":
+        return "\\f";
+      case "\0":
+        return "\\0";
+      default:
+        return "\\" + s;
+    }
   });
 }
 function appliesTo(script, placement, depth) {
@@ -10878,9 +10899,9 @@ function runRegexScripts(scripts, text, timing, placement, ctx = { depth: null }
     if (!appliesTo(script, placement, ctx.depth)) continue;
     let patternSource = script.findRegex;
     if (script.substituteRegex === 1 && ctx.substituteRegex) {
-      patternSource = ctx.substituteRegex(script.findRegex, true);
-    } else if (script.substituteRegex === 2 && ctx.substituteRegex) {
       patternSource = ctx.substituteRegex(script.findRegex, false);
+    } else if (script.substituteRegex === 2 && ctx.substituteRegex) {
+      patternSource = ctx.substituteRegex(script.findRegex, true);
     }
     let flags = "gm";
     const literal = /^\/([\s\S]+)\/([a-z]*)$/.exec(patternSource);
@@ -10901,21 +10922,39 @@ function runRegexScripts(scripts, text, timing, placement, ctx = { depth: null }
     if (matches === null || matches.length === 0) continue;
     let replaced = current.replace(regex, (...args) => {
       const match = args[0];
-      const captures = args.slice(1, Math.max(1, args.length - 2)).map((a) => typeof a === "string" ? a : "");
+      const last = args[args.length - 1];
+      const hasGroups = typeof last === "object" && last !== null;
+      const tail = hasGroups ? 3 : 2;
+      const named = hasGroups ? last : null;
+      const captures = args.slice(1, Math.max(1, args.length - tail)).map((a) => typeof a === "string" ? a : "");
+      const filterTrim = (value) => {
+        let out = value;
+        for (const t of script.trimStrings) {
+          const expanded = ctx.substituteMacros ? ctx.substituteMacros(t) : t;
+          if (expanded === "") continue;
+          out = out.split(expanded).join("");
+        }
+        return out;
+      };
       let replacement = script.replaceString;
-      replacement = replacement.replace(/\{\{match\}\}/g, match);
+      replacement = replacement.replace(/\{\{match\}\}/gi, "$0");
       replacement = replacement.replace(/\$(\d{1,2})/gu, (token, digits) => {
         const index = Number(digits);
-        if (index >= 1 && index <= captures.length) return captures[index - 1];
-        if (index === 0) return match;
+        if (index === 0) return filterTrim(match);
+        if (index >= 1 && index <= captures.length) return filterTrim(captures[index - 1]);
         if (digits.length === 2) {
           const fallback = Number(digits[0]);
-          if (fallback >= 1 && fallback <= captures.length) return captures[fallback - 1] + digits[1];
+          if (fallback >= 1 && fallback <= captures.length) return filterTrim(captures[fallback - 1]) + digits[1];
         }
-        if (captures.length === 0) return match;
+        if (captures.length === 0) return filterTrim(match);
         return token;
       });
-      for (const t of script.trimStrings) replacement = replacement.split(t).join("");
+      if (named !== null) {
+        replacement = replacement.replace(/\$<([A-Za-z_$][\w$]*)>/gu, (_token, name2) => {
+          const v = named[name2];
+          return v === void 0 ? "" : filterTrim(v);
+        });
+      }
       return replacement;
     });
     if (ctx.substituteMacros) replaced = ctx.substituteMacros(replaced);
@@ -10956,7 +10995,7 @@ function importRegexScripts(raw) {
   return { scripts, warnings };
 }
 
-// src/import/character-card.ts
+// rp-workspace/packages/src/import/character-card.ts
 function extractCardJsonFromPng(bytes) {
   if (bytes.length < 8) return null;
   const sig = [137, 80, 78, 71, 13, 10, 26, 10];
@@ -11055,7 +11094,7 @@ function importCharacterJson(json, sourceName) {
   return parseCharacterCard(json, sourceName);
 }
 
-// src/preset/schema.ts
+// rp-workspace/packages/src/preset/schema.ts
 var DEFAULT_BUDGET = {
   maxToolRounds: 2,
   maxCallsPerRun: 8,
@@ -11147,7 +11186,7 @@ ${extra2}` : extra2;
   return out;
 }
 
-// src/preset/st-import.ts
+// rp-workspace/packages/src/preset/st-import.ts
 var MARKER_MAP = {
   chatHistory: "chatHistory",
   charDescription: "charDesc",
@@ -11564,7 +11603,7 @@ function importStPreset(json, displayName) {
   return { preset, regex, skipped, skills };
 }
 
-// src/preset/compiler.ts
+// rp-workspace/packages/src/preset/compiler.ts
 function expandIdentityMacros(text, ctx) {
   return text.replaceAll("{{user}}", ctx.user).replaceAll("{{persona}}", ctx.user).replaceAll("{{char}}", ctx.char);
 }
@@ -11657,7 +11696,7 @@ function isDshtRpAgentComposition(source) {
   return groupRow.test(normalized) && pluginRow("dsh-tool-skill").test(normalized) && pluginRow("dsh-persona").test(normalized);
 }
 
-// src/import/card-export.ts
+// rp-workspace/packages/src/import/card-export.ts
 var CRC_TABLE = (() => {
   const table = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -11816,7 +11855,7 @@ function concatBytes(arrays) {
   return out;
 }
 
-// src/import/dsh-export.ts
+// rp-workspace/packages/src/import/dsh-export.ts
 function hash362(input) {
   let h = 2166136261;
   for (let i = 0; i < input.length; i++) {
@@ -12045,7 +12084,7 @@ function convertChatFile(jsonlText, opts) {
     turns++;
     step = 0;
   };
-  const emitAssistantStep = (text, op, sourceEventSeqs) => {
+  const emitAssistantStep = (text) => {
     step++;
     emit("step/start", { turn, step });
     emit("assistant/message", {
@@ -12057,9 +12096,27 @@ function convertChatFile(jsonlText, opts) {
         content: [{ type: "text", text }],
         source: { kind: "model", provider: "sillytavern-import", model: "imported" }
       }
-    }, op, sourceEventSeqs);
+    }, "append");
     emit("step/end", { turn, step });
     return surfaceNodes[surfaceNodes.length - 1];
+  };
+  const emitVariantMarker = (shadowedSeq, note) => {
+    emit("compaction/prune", {
+      shadowedRange: { start: shadowedSeq, end: shadowedSeq },
+      shadowedSeqs: [shadowedSeq],
+      shadowedTokenCount: 0
+    });
+    emit("user/message", {
+      id: `st-${opts.sessionId}-mark-${seq}`,
+      role: "user",
+      content: [{ type: "text", text: note }],
+      source: {
+        kind: "plugin",
+        plugin: "sillytavern-import",
+        form: "snapshot",
+        sections: [{ name: "dsht:surgical", text: JSON.stringify({ variantOf: shadowedSeq, shadowedSeqs: [shadowedSeq] }) }]
+      }
+    }, { op: "replace", start: shadowedSeq, end: shadowedSeq }, [shadowedSeq]);
   };
   for (const raw of jsonlText.split("\n")) {
     const trimmed = raw.trim();
@@ -12087,12 +12144,15 @@ function convertChatFile(jsonlText, opts) {
       if (turn > 0) closeTurn();
       turn++;
       emit("turn/start", { turn });
+      step++;
+      emit("step/start", { turn, step });
       emit("user/message", {
         id: `st-${opts.sessionId}-${seq}`,
         role: "user",
         content: [{ type: "text", text: mes }],
         source: { kind: "user" }
       }, "append");
+      emit("step/end", { turn, step });
       if (firstUserText === null) firstUserText = mes.slice(0, 120);
     } else {
       if (turn === 0) {
@@ -12107,21 +12167,15 @@ function convertChatFile(jsonlText, opts) {
       for (let i = 0; i < variants.length; i++) {
         const text = variants[i];
         if (activeSeq === void 0) {
-          activeSeq = emitAssistantStep(text, "append");
+          activeSeq = emitAssistantStep(text);
         } else {
-          activeSeq = emitAssistantStep(
-            text,
-            { op: "replace", start: activeSeq, end: activeSeq },
-            [activeSeq]
-          );
+          emitVariantMarker(activeSeq, `[\u53D8\u4F53 ${i + 1}/${variants.length}]`);
+          activeSeq = emitAssistantStep(text);
         }
       }
       if (variants.length > 1 && activeIdx !== variants.length - 1) {
-        activeSeq = emitAssistantStep(
-          variants[activeIdx],
-          { op: "replace", start: activeSeq, end: activeSeq },
-          [activeSeq]
-        );
+        emitVariantMarker(activeSeq, `[\u53D8\u4F53 ${activeIdx + 1}/${variants.length}]`);
+        activeSeq = emitAssistantStep(variants[activeIdx]);
       }
     }
   }
@@ -12197,7 +12251,7 @@ function buildFirstMesSession(card, opts = {}) {
     }));
     seq++;
   };
-  const emitGreeting = (text, step, op, sources) => {
+  const emitGreeting = (text, step) => {
     event("step/start", { turn: 1, step });
     const msgSeq = seq;
     event("assistant/message", {
@@ -12209,17 +12263,40 @@ function buildFirstMesSession(card, opts = {}) {
         content: [{ type: "text", text }],
         source: { kind: "model", provider: "sillytavern-import", model: "first-mes" }
       }
-    }, op, sources);
+    }, "append");
     event("step/end", { turn: 1, step });
     return msgSeq;
   };
+  const emitGreetingMarker = (shadowedSeq, step, n, total) => {
+    event("step/start", { turn: 1, step });
+    event("compaction/prune", {
+      shadowedRange: { start: shadowedSeq, end: shadowedSeq },
+      shadowedSeqs: [shadowedSeq],
+      shadowedTokenCount: 0
+    });
+    event("user/message", {
+      id: `st-${sessionId}-mark-${seq}`,
+      role: "user",
+      content: [{ type: "text", text: `[\u5F00\u573A\u767D\u53D8\u4F53 ${n}/${total}]` }],
+      source: {
+        kind: "plugin",
+        plugin: "sillytavern-import",
+        form: "snapshot",
+        sections: [{ name: "dsht:surgical", text: JSON.stringify({ variantOf: shadowedSeq, shadowedSeqs: [shadowedSeq] }) }]
+      }
+    }, { op: "replace", start: shadowedSeq, end: shadowedSeq }, [shadowedSeq]);
+    event("step/end", { turn: 1, step });
+  };
   event("turn/start", { turn: 1 });
-  let activeSeq = emitGreeting(greetings[0], 1, "append");
+  let activeSeq = emitGreeting(greetings[0], 1);
+  let curStep = 1;
   for (let i = 1; i < greetings.length; i++) {
-    activeSeq = emitGreeting(greetings[i], i + 1, { op: "replace", start: activeSeq, end: activeSeq }, [activeSeq]);
+    emitGreetingMarker(activeSeq, ++curStep, i + 1, greetings.length);
+    activeSeq = emitGreeting(greetings[i], ++curStep);
   }
   if (greetings.length > 1) {
-    emitGreeting(greetings[0], greetings.length + 1, { op: "replace", start: activeSeq, end: activeSeq }, [activeSeq]);
+    emitGreetingMarker(activeSeq, ++curStep, 1, greetings.length);
+    emitGreeting(greetings[0], ++curStep);
   }
   event("turn/end", { turn: 1, reason: { kind: "completed" } });
   return { path: `sessions/${projectKey(cwd)}/${encodeSegment(sessionId)}/session.jsonl`, content: lines.join("\n") + "\n" };
@@ -12257,7 +12334,7 @@ ${books.length > 0 ? `- \u5185\u5D4C\u4E16\u754C\u4E66\uFF1A${books.map((b) => `
   return files;
 }
 
-// src/dsht-plugin-shared/macros.ts
+// rp-workspace/packages/src/dsht-plugin-shared/macros.ts
 function parseVarPath(path) {
   const p = path.trim();
   if (p.startsWith("/")) {
@@ -12311,7 +12388,7 @@ function mulberry32(seed) {
 }
 function splitMacroList(listString) {
   if (listString.includes("::")) return listString.split("::");
-  return listString.replace(/\\,/g, "\0COMMA\0").split(",").map((item) => item.trim().replace(/ COMMA /g, ","));
+  return listString.replace(/\\,/g, "\0COMMA\0").split(",").map((item) => item.trim().replace(/\0COMMA\0/g, ","));
 }
 function rollDice(formula) {
   const m = formula.replace(/\s+/g, "").match(/^(\d*)d(\d+)([+-]\d+)?$|^(\d+)$/);
@@ -12345,6 +12422,11 @@ var BUILTIN_MACRO_NAMES = /* @__PURE__ */ new Set([
   "addvar",
   "incvar",
   "decvar",
+  "getglobalvar",
+  "setglobalvar",
+  "addglobalvar",
+  "incglobalvar",
+  "decglobalvar",
   "get_message_variable",
   "get_chat_variable",
   "get_character_variable",
@@ -12408,9 +12490,22 @@ function expandOnce(text, ctx, overlay, writes) {
   const unknownMacros = [];
   const now = ctx.now ?? /* @__PURE__ */ new Date();
   const rawHash = fnv1a(text);
+  const dynMacros = (() => {
+    if (ctx.dynamicMacros === void 0) return void 0;
+    const m = {};
+    for (const [k, v] of Object.entries(ctx.dynamicMacros)) m[k.toLowerCase()] = v;
+    return m;
+  })();
   const readVar = (path) => {
     const local = readVarPath(overlay, path);
     if (local !== void 0) return local;
+    return ctx.getVar?.(path);
+  };
+  const readGlobalVar = (path) => {
+    const local = readVarPath(overlay, path);
+    if (local !== void 0) return local;
+    const scoped = ctx.scopeGet?.("global", path);
+    if (scoped !== void 0) return scoped;
     return ctx.getVar?.(path);
   };
   const readScopeVar = (kind, path) => {
@@ -12423,135 +12518,176 @@ function expandOnce(text, ctx, overlay, writes) {
     if (typeof v === "number" && Number.isFinite(v)) return v.toLocaleString("en-US");
     return stringifyVar(v);
   };
-  const addNumericVar = (path, delta) => {
+  const addNumericVar = (path, delta, scope) => {
     if (!path) return "";
-    const cur = Number(readVar(path));
+    const cur = Number(scope === "global" ? readGlobalVar(path) : readVar(path));
     const next = (Number.isFinite(cur) ? cur : 0) + delta;
-    const value = String(next);
-    const pointer = toPointer(path);
-    writeInto(overlay, path, value);
-    writes.push({ path: pointer, value });
-    ctx.setVar?.(pointer, value);
-    return "";
+    return writeVarMacro(path, String(next), scope);
   };
   const writeInto = (tree, path, value) => {
     const next = writeVarPath(tree, path, value);
     for (const k of Object.keys(tree)) delete tree[k];
     Object.assign(tree, next);
   };
+  const writeVarMacro = (path, value, scope) => {
+    if (!path) return "";
+    const pointer = toPointer(path);
+    writeInto(overlay, path, value);
+    writes.push(scope === void 0 ? { path: pointer, value } : { path: pointer, value, scope });
+    ctx.setVar?.(pointer, value);
+    return "";
+  };
+  const splitVarArgs = (args) => {
+    const sep3 = args.indexOf("::") >= 0 ? "::" : ":";
+    const at = args.indexOf(sep3);
+    return { path: (at >= 0 ? args.slice(0, at) : args).trim(), rest: at >= 0 ? args.slice(at + sep3.length) : "" };
+  };
   const result = text.replace(MACRO_PATTERN, (full, body, offset) => {
-    if (body.startsWith("//") || body.startsWith("!")) return "";
-    const sep3 = body.indexOf("::") >= 0 ? "::" : ":";
-    const sepAt = body.indexOf(sep3);
-    const name2 = (sepAt >= 0 ? body.slice(0, sepAt) : body).trim();
-    const args = sepAt >= 0 ? body.slice(sepAt + sep3.length) : "";
-    switch (name2) {
-      case "user":
-        return ctx.user;
-      case "char":
-        return ctx.char;
-      case "persona":
-        return ctx.persona ?? "";
-      case "noop":
-        return "";
-      case "getvar":
-        return stringifyVar(readVar(args.trim()));
-      case "setvar": {
-        const innerSep = args.indexOf("::") >= 0 ? "::" : ":";
-        const innerAt = args.indexOf(innerSep);
-        const path = (innerAt >= 0 ? args.slice(0, innerAt) : args).trim();
-        const value = innerAt >= 0 ? args.slice(innerAt + innerSep.length).replace(/^\s+|\s+$/g, "") : "";
-        if (!path) return "";
-        const pointer = toPointer(path);
-        writeInto(overlay, path, value);
-        writes.push({ path: pointer, value });
-        ctx.setVar?.(pointer, value);
-        return "";
-      }
-      case "addvar": {
-        const innerSep = args.indexOf("::") >= 0 ? "::" : ":";
-        const innerAt = args.indexOf(innerSep);
-        const path = (innerAt >= 0 ? args.slice(0, innerAt) : args).trim();
-        const delta = innerAt >= 0 ? Number(args.slice(innerAt + innerSep.length).trim()) : 0;
-        return addNumericVar(path, Number.isFinite(delta) ? delta : 0);
-      }
-      case "incvar":
-        return addNumericVar(args.trim(), 1);
-      case "decvar":
-        return addNumericVar(args.trim(), -1);
-      // C2 类宏（MVU 作用域变量）：get 走 scopeGet（保持 unknown 语义——未命中不吞原文由 stringifyVar 决定）
-      case "get_message_variable":
-      case "get_chat_variable":
-        return stringifyVar(readScopeVar("chat", args.trim()));
-      case "get_character_variable":
-        return stringifyVar(readScopeVar("character", args.trim()));
-      case "get_preset_variable":
-        return stringifyVar(readScopeVar("preset", args.trim()));
-      case "get_global_variable":
-        return stringifyVar(readScopeVar("global", args.trim()));
-      case "format_message_variable":
-      case "format_chat_variable":
-        return formatVar(readScopeVar("chat", args.trim()));
-      case "format_character_variable":
-        return formatVar(readScopeVar("character", args.trim()));
-      case "format_preset_variable":
-        return formatVar(readScopeVar("preset", args.trim()));
-      case "format_global_variable":
-        return formatVar(readScopeVar("global", args.trim()));
-      case "random": {
-        const list = splitMacroList(args);
-        if (list.length === 0) return "";
-        return list[Math.floor(Math.random() * list.length)];
-      }
-      case "pick": {
-        const list = splitMacroList(args);
-        if (list.length === 0) return "";
-        const seed = fnv1a(`${ctx.stableSeed ?? ""}-${rawHash}-${offset}`);
-        const rng = mulberry32(seed);
-        return list[Math.floor(rng() * list.length)];
-      }
-      case "roll":
-      case "dice": {
-        const formula = args.trim();
-        const norm = /^\d+$/.test(formula) ? `1d${formula}` : formula;
-        const r = rollDice(norm);
-        return r == null ? "" : String(r);
-      }
-      case "time":
-        return now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-      case "date":
-        return now.toLocaleDateString("zh-CN");
-      case "datetime":
-        return `${now.toLocaleDateString("zh-CN")} ${now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
-      case "weekday":
-        return `\u661F\u671F${WEEKDAYS[now.getDay()]}`;
-      case "isotime":
-        return now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-      case "isodate": {
-        const p2 = (n) => String(n).padStart(2, "0");
-        return `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
-      }
-      default: {
-        const custom = customMacros.get(name2.toLowerCase());
-        if (custom !== void 0) {
-          if (typeof custom === "function") {
-            try {
-              return custom(args, ctx);
-            } catch {
-              return full;
-            }
-          }
-          return custom;
+    let unknown = false;
+    const out = (() => {
+      if (body.startsWith("//") || body.startsWith("!")) return "";
+      const sep3 = body.indexOf("::") >= 0 ? "::" : ":";
+      const sepAt = body.indexOf(sep3);
+      const name2 = (sepAt >= 0 ? body.slice(0, sepAt) : body).trim();
+      const args = sepAt >= 0 ? body.slice(sepAt + sep3.length) : "";
+      switch (name2) {
+        case "user":
+          return ctx.user;
+        case "char":
+          return ctx.char;
+        case "persona":
+          return ctx.persona ?? "";
+        case "noop":
+          return "";
+        case "getvar":
+          return stringifyVar(readVar(args.trim()));
+        case "setvar": {
+          const { path, rest } = splitVarArgs(args);
+          return writeVarMacro(path, rest.replace(/^\s+|\s+$/g, ""));
         }
-        unknownMacros.push(full);
-        return full;
+        case "addvar": {
+          const { path, rest } = splitVarArgs(args);
+          const delta = Number(rest.trim());
+          return addNumericVar(path, Number.isFinite(delta) ? delta : 0);
+        }
+        case "incvar":
+          return addNumericVar(args.trim(), 1);
+        case "decvar":
+          return addNumericVar(args.trim(), -1);
+        // 【T-22 2026-09-11】全局变量宏族——此前只落了斜杠形态（triggerSlash 里
+        // /setglobalvar），宏形态完全缺失：真卡（ExampleGame 等）大量用 {{setglobalvar::…}}，
+        // 缺失时整串被当未知宏原样留在提示词里且**变量从不写入**。
+        // 语义对齐基准（TT variables.js:250-259 + setGlobalVariable/getGlobalVariable）：
+        //   set/add/inc/dec → 写 global 树，输出空串；get → 只读 global 树。
+        case "setglobalvar": {
+          const { path, rest } = splitVarArgs(args);
+          return writeVarMacro(path, rest.replace(/^\s+|\s+$/g, ""), "global");
+        }
+        case "addglobalvar": {
+          const { path, rest } = splitVarArgs(args);
+          const delta = Number(rest.trim());
+          return addNumericVar(path, Number.isFinite(delta) ? delta : 0, "global");
+        }
+        case "incglobalvar":
+          return addNumericVar(args.trim(), 1, "global");
+        case "decglobalvar":
+          return addNumericVar(args.trim(), -1, "global");
+        case "getglobalvar":
+          return stringifyVar(readGlobalVar(args.trim()));
+        // C2 类宏（MVU 作用域变量）：get 走 scopeGet（保持 unknown 语义——未命中不吞原文由 stringifyVar 决定）
+        case "get_message_variable":
+        case "get_chat_variable":
+          return stringifyVar(readScopeVar("chat", args.trim()));
+        case "get_character_variable":
+          return stringifyVar(readScopeVar("character", args.trim()));
+        case "get_preset_variable":
+          return stringifyVar(readScopeVar("preset", args.trim()));
+        case "get_global_variable":
+          return stringifyVar(readScopeVar("global", args.trim()));
+        case "format_message_variable":
+        case "format_chat_variable":
+          return formatVar(readScopeVar("chat", args.trim()));
+        case "format_character_variable":
+          return formatVar(readScopeVar("character", args.trim()));
+        case "format_preset_variable":
+          return formatVar(readScopeVar("preset", args.trim()));
+        case "format_global_variable":
+          return formatVar(readScopeVar("global", args.trim()));
+        case "random": {
+          const list = splitMacroList(args);
+          if (list.length === 0) return "";
+          return list[Math.floor(Math.random() * list.length)];
+        }
+        case "pick": {
+          const list = splitMacroList(args);
+          if (list.length === 0) return "";
+          const seed = fnv1a(`${ctx.stableSeed ?? ""}-${rawHash}-${offset}`);
+          const rng = mulberry32(seed);
+          return list[Math.floor(rng() * list.length)];
+        }
+        case "roll":
+        case "dice": {
+          const formula = args.trim();
+          const norm = /^\d+$/.test(formula) ? `1d${formula}` : formula;
+          const r = rollDice(norm);
+          return r == null ? "" : String(r);
+        }
+        case "time":
+          return now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+        case "date":
+          return now.toLocaleDateString("zh-CN");
+        case "datetime":
+          return `${now.toLocaleDateString("zh-CN")} ${now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+        case "weekday":
+          return `\u661F\u671F${WEEKDAYS[now.getDay()]}`;
+        case "isotime":
+          return now.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+        case "isodate": {
+          const p2 = (n) => String(n).padStart(2, "0");
+          return `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`;
+        }
+        default: {
+          const dyn = dynMacros?.[name2.toLowerCase()];
+          if (dyn !== void 0) {
+            if (typeof dyn === "function") {
+              try {
+                return dyn(args, ctx);
+              } catch {
+                return full;
+              }
+            }
+            return dyn;
+          }
+          const custom = customMacros.get(name2.toLowerCase());
+          if (custom !== void 0) {
+            if (typeof custom === "function") {
+              try {
+                return custom(args, ctx);
+              } catch {
+                return full;
+              }
+            }
+            return custom;
+          }
+          unknownMacros.push(full);
+          unknown = true;
+          return full;
+        }
       }
+    })();
+    if (unknown) return out;
+    const pp = ctx.postProcess;
+    if (pp === void 0) return out;
+    try {
+      return pp(out);
+    } catch {
+      return out;
     }
   });
   return { text: result, unknownMacros };
 }
 
-// src/macros/engine.ts
+// rp-workspace/packages/src/macros/engine.ts
 var MacroEngine = class {
   handlers = /* @__PURE__ */ new Map();
   /** 插件宏注册（返回注销器） */
@@ -12594,7 +12730,7 @@ var MacroEngine = class {
   }
 };
 
-// src/preset/demo.ts
+// rp-workspace/packages/src/preset/demo.ts
 function demoDirectPreset() {
   const p = emptyPreset("rp-demo-direct", "\u793A\u8303 \xB7 \u76F4\u7B54\u578B");
   p.description = "\u5355\u6B21\u8C03\u7528\u76F4\u51FA\uFF0Ctoken = ST oneshot\u3002\u9002\u5408\u65E5\u5E38\u5267\u60C5\u63A8\u8FDB\u3002";
@@ -12645,7 +12781,7 @@ function demoLightAgentPreset() {
   return p;
 }
 
-// src/preset/managed.ts
+// rp-workspace/packages/src/preset/managed.ts
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename as rename2, rm, writeFile } from "node:fs/promises";
 import { basename, dirname as dirname2, join } from "node:path";
@@ -12752,7 +12888,7 @@ async function markPresetUserOwned(dir) {
 `, "utf8");
 }
 
-// src/state/mvu.ts
+// rp-workspace/packages/src/state/mvu.ts
 var STATE_PATCH_OPS = /* @__PURE__ */ new Set([
   "add",
   "replace",
@@ -13107,8 +13243,31 @@ function renderStateSummary(state) {
   if (rows.length === 0) return "";
   return ["\u3010\u89D2\u8272\u72B6\u6001\uFF08MVU \u53D8\u91CF\u6811\uFF0C\u6700\u65B0\u4F18\u5148\uFF09\u3011", ...rows.map(([k, v]) => `${k}: ${v}`)].join("\n");
 }
+function isMergeableObject(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+function deepMergeInitVars(existing, init) {
+  const out = { ...existing };
+  for (const [k, v] of Object.entries(init)) {
+    const cur = out[k];
+    if (cur === void 0) {
+      out[k] = clonePlainTree(v);
+    } else if (isMergeableObject(cur) && isMergeableObject(v)) {
+      out[k] = deepMergeInitVars(cur, v);
+    }
+  }
+  return out;
+}
+function clonePlainTree(v) {
+  if (v === null || typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.map((x) => clonePlainTree(x));
+  const src = v;
+  const out = {};
+  for (const [k, x] of Object.entries(src)) out[k] = clonePlainTree(x);
+  return out;
+}
 
-// src/dsht-plugin-prompt-template/ejs.ts
+// rp-workspace/packages/src/dsht-plugin-prompt-template/ejs.ts
 function lexExpr(src) {
   const toks = [];
   let i = 0;
@@ -13607,10 +13766,10 @@ function renderMessages(template, context, messages, options = {}) {
   return { messages: out, rendered, skipped };
 }
 
-// src/dsht-plugin-prompt-template/sandbox.ts
+// rp-workspace/packages/src/dsht-plugin-prompt-template/sandbox.ts
 import { createContext, Script } from "node:vm";
 
-// src/dsht-plugin-prompt-template/injection-store.ts
+// rp-workspace/packages/src/dsht-plugin-prompt-template/injection-store.ts
 var MAX_PROMPT_INJECTION_KEY_CHARS = 256;
 var MAX_PROMPT_INJECTION_CHARS = 256 * 1024;
 var MAX_PROMPT_INJECTIONS = 512;
@@ -13678,7 +13837,7 @@ function createPromptInjectionStore() {
   };
 }
 
-// src/dsht-plugin-prompt-template/sandbox.ts
+// rp-workspace/packages/src/dsht-plugin-prompt-template/sandbox.ts
 var MAX_TEMPLATE_CHARS = 256 * 1024;
 var MAX_OUTPUT_CHARS = 256 * 1024;
 var DEFAULT_TIMEOUT_MS = 1e3;
@@ -13895,12 +14054,180 @@ function renderMessagesSandbox(template, context, messages, options = {}) {
   }
   return { ok: true, messages: out, rendered, skipped };
 }
+function asSandboxMessagesResult(rr) {
+  return { ok: true, messages: rr.messages, rendered: rr.rendered, skipped: rr.skipped };
+}
 
-// src/dsht-plugin-shared/undo.ts
-import { appendFile, mkdir as mkdir2, readFile as readFile2, rm as rm2 } from "node:fs/promises";
+// rp-workspace/packages/src/dsht-plugin-memory/tables.ts
+import { mkdir as mkdir2, readFile as readFile2 } from "node:fs/promises";
 import { dirname as dirname3, join as join2 } from "node:path";
+function isValidTablesSessionId(sessionId) {
+  return typeof sessionId === "string" && sessionId.length > 0 && sessionId.length <= 120 && !sessionId.includes("/") && !sessionId.includes("\\") && !sessionId.includes("..") && sessionId !== "." && sessionId.trim() === sessionId;
+}
+function normalizeSheet(raw, index = 0) {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw;
+  const name2 = typeof r.name === "string" && r.name.trim() ? r.name.trim() : `\u8868${index + 1}`;
+  const headers = Array.isArray(r.headers) ? r.headers.map((h) => String(h ?? "")) : [];
+  const rows = Array.isArray(r.rows) ? r.rows.filter((row) => Array.isArray(row)).map((row) => row.map((c) => String(c ?? ""))) : [];
+  const uid = typeof r.uid === "string" && r.uid ? r.uid : `t${index + 1}`;
+  return { uid, name: name2, headers, rows, enabled: r.enabled !== false };
+}
+function migrateLegacyTables(raw) {
+  const legacy = raw.tableData ?? raw.tables;
+  if (!legacy || typeof legacy !== "object" || Array.isArray(legacy) === (Array.isArray(raw.tables) && raw.tables !== void 0 && Array.isArray(raw.tables))) {
+  }
+  if (!legacy || typeof legacy !== "object") return { sheets: [], found: false };
+  const entries = Array.isArray(legacy) ? legacy.map((v, i) => [`\u8868${i + 1}`, v]) : Object.entries(legacy);
+  const sheets = [];
+  for (const [key, v] of entries) {
+    if (!v || typeof v !== "object") continue;
+    const r = v;
+    const content = Array.isArray(r.content) ? r.content : null;
+    if (!content) continue;
+    const list = content.map((row) => Array.isArray(row) ? row.map((c) => String(c ?? "")) : [String(row ?? "")]);
+    const headers = list.length > 0 ? list[0] : [];
+    const rows = list.slice(1);
+    sheets.push({
+      uid: typeof r.uid === "string" && r.uid ? r.uid : `t${sheets.length + 1}`,
+      name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : key,
+      headers,
+      rows,
+      enabled: r.enable !== false && r.enabled !== false
+    });
+  }
+  return { sheets, found: true };
+}
+function sheetsStatePath(dshHome, sessionId) {
+  return join2(dshHome, "rp", "state", `${sessionId}.json`);
+}
+async function loadSheets(dshHome, sessionId) {
+  if (!isValidTablesSessionId(sessionId)) return { whole: {}, sheets: [], history: [], migrated: false };
+  let whole = {};
+  try {
+    const parsed = JSON.parse(await readFile2(sheetsStatePath(dshHome, sessionId), "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) whole = parsed;
+  } catch {
+    return { whole: {}, sheets: [], history: [], migrated: false };
+  }
+  let sheets = Array.isArray(whole.sheets) ? whole.sheets.map((s, i) => normalizeSheet(s, i)).filter((s) => s !== null) : [];
+  let migrated = false;
+  if (!Array.isArray(whole.sheets)) {
+    const legacy = migrateLegacyTables(whole);
+    if (legacy.sheets.length > 0) {
+      sheets = legacy.sheets;
+      migrated = true;
+      whole.sheets = sheets;
+      whole.tablesMigrated = true;
+      await saveSheets(dshHome, sessionId, whole);
+    }
+  }
+  const history = Array.isArray(whole.sheetHistory) ? whole.sheetHistory.map((h) => {
+    const e = h ?? {};
+    return {
+      at: typeof e.at === "number" && Number.isFinite(e.at) ? e.at : 0,
+      sheets: Array.isArray(e.sheets) ? e.sheets.map((s, i) => normalizeSheet(s, i)).filter((x) => x !== null) : []
+    };
+  }) : [];
+  return { whole, sheets, history, migrated };
+}
+async function saveSheets(dshHome, sessionId, whole) {
+  if (!isValidTablesSessionId(sessionId)) throw new Error("invalid sessionId");
+  const path = sheetsStatePath(dshHome, sessionId);
+  await mkdir2(dirname3(path), { recursive: true });
+  let merged = whole;
+  try {
+    const latest = JSON.parse(await readFile2(path, "utf8"));
+    if (latest && typeof latest === "object" && !Array.isArray(latest)) {
+      merged = {
+        ...latest,
+        sheets: whole.sheets,
+        sheetHistory: whole.sheetHistory,
+        ...whole.tablesMigrated === true ? { tablesMigrated: true } : {}
+      };
+    }
+  } catch {
+  }
+  await atomicWriteText(path, JSON.stringify(merged));
+}
+function cellText(v) {
+  return String(v ?? "").replace(/\|/g, "\u4E28").replace(/\r?\n/g, " ").trim();
+}
+function renderTableData(sheets) {
+  const active = sheets.filter((s) => s.enabled);
+  if (active.length === 0) return "";
+  return active.map((s) => {
+    const lines = [`## ${s.name}`];
+    if (s.headers.length > 0) lines.push(s.headers.map((h) => cellText(h)).join(" | "));
+    for (const row of s.rows) lines.push(s.headers.map((_, i) => cellText(row[i])).join(" | "));
+    return lines.join("\n");
+  }).join("\n\n");
+}
+function renderTablePrompt(sheets) {
+  const data = renderTableData(sheets);
+  if (!data) return "";
+  return [
+    "\u3010\u5267\u60C5\u8868\u683C\u3011\uFF08\u5F53\u524D\u72B6\u6001\u8DDF\u8E2A\u8868\u3002\u9700\u8981\u589E\u5220\u6539\u6761\u76EE\u65F6\uFF0C\u5728\u56DE\u590D\u672B\u5C3E\u8F93\u51FA\u4E00\u4E2A <tableEdit> \u5757\uFF0C\u5757\u5185\u6BCF\u884C\u4E00\u6761\u6307\u4EE4\uFF0C\u683C\u5F0F\uFF1A\u8868\u540D; \u64CD\u4F5C; \u53C2\u6570\u2026\uFF09",
+    "\u53EF\u7528\u64CD\u4F5C\uFF08\u884C\u53F7/\u5217\u53F7\u5747\u4ECE 1 \u5F00\u59CB\uFF0C\u884C\u53F7\u53EA\u6570\u6570\u636E\u884C\u4E0D\u542B\u8868\u5934\uFF09\uFF1A",
+    "- \u8868\u540D; insertRow; [\u884C\u53F7]; \u5355\u5143\u683C1; \u5355\u5143\u683C2; \u2026\uFF08\u63D2\u5165\u6570\u636E\u884C\uFF1B\u7701\u7565\u884C\u53F7 = \u8FFD\u52A0\u5230\u8868\u5C3E\uFF09",
+    "- \u8868\u540D; updateRow; \u884C\u53F7; \u5217=\u65B0\u503C; \u2026\uFF08\u5217\u53F7\u4ECE 1 \u5F00\u59CB\uFF1B\u4E00\u6B21\u53EF\u66F4\u65B0\u591A\u5217\uFF09",
+    "- \u8868\u540D; deleteRow; \u884C\u53F7",
+    "- \u8868\u540D; insertCol; [\u5217\u53F7]; \u8868\u5934\u540D",
+    "- \u8868\u540D; deleteCol; \u5217\u53F7",
+    "- \u8868\u540D; setName; \u65B0\u8868\u540D",
+    "\u793A\u4F8B\uFF1A",
+    "<tableEdit>",
+    "\u72B6\u6001; updateRow; 1; \u4F4D\u7F6E=\u5496\u5561\u5385; \u5FC3\u60C5=\u7D27\u5F20",
+    "\u4E8B\u4EF6; insertRow; \u5728\u95E8\u53E3\u9047\u5230\u65E7\u8BC6",
+    "</tableEdit>",
+    "\u5F53\u524D\u8868\u683C\uFF1A",
+    data
+  ].join("\n");
+}
+function getTableCell(sheets, name2, row, col) {
+  const sheet = sheets.find((s) => s.name === name2) ?? sheets.find((s) => s.name.trim() === name2.trim());
+  if (!sheet) return null;
+  if (!Number.isInteger(row) || row < 1 || row > sheet.rows.length) return null;
+  if (!Number.isInteger(col) || col < 1 || col > sheet.headers.length) return null;
+  return sheet.rows[row - 1][col - 1] ?? "";
+}
+function parseA1Address(addr) {
+  const m = /^([A-Za-z]+)(\d+)$/.exec(addr.trim());
+  if (!m) return null;
+  let col = 0;
+  for (const ch of m[1].toUpperCase()) col = col * 26 + (ch.charCodeAt(0) - 64);
+  const row = Number(m[2]);
+  if (row < 1 || col < 1) return null;
+  return { row, col };
+}
+function expandTableMacros(text, sheets) {
+  let out = text;
+  if (/\{\{\s*tableData\s*\}\}/i.test(out)) out = out.replace(/\{\{\s*tableData\s*\}\}/gi, renderTableData(sheets));
+  if (/\{\{\s*tablePrompt\s*\}\}/i.test(out)) out = out.replace(/\{\{\s*tablePrompt\s*\}\}/gi, renderTablePrompt(sheets));
+  if (/\{\{\s*GET::/i.test(out)) {
+    out = out.replace(/\{\{\s*GET::([^}]+)\}\}/gi, (_all, body) => {
+      const segs = body.split(":").map((s) => s.trim());
+      if (segs.length < 2) return "";
+      const a1 = parseA1Address(segs[segs.length - 1]);
+      if (a1) {
+        const name3 = segs.slice(0, -1).join(":");
+        return getTableCell(sheets, name3, a1.row, a1.col) ?? "";
+      }
+      if (segs.length < 3) return "";
+      const col = Number(segs.pop());
+      const row = Number(segs.pop());
+      const name2 = segs.join(":");
+      return getTableCell(sheets, name2, row, col) ?? "";
+    });
+  }
+  return out;
+}
+
+// rp-workspace/packages/src/dsht-plugin-shared/undo.ts
+import { appendFile, mkdir as mkdir3, readFile as readFile3, rm as rm2 } from "node:fs/promises";
+import { dirname as dirname4, join as join3 } from "node:path";
 function undoLogPath(dshHome, sessionId) {
-  return join2(dshHome, "rp", "state", `${sessionId}.undo.jsonl`);
+  return join3(dshHome, "rp", "state", `${sessionId}.undo.jsonl`);
 }
 function makeUndoEntry(scope, slug, path, tree, ts = Date.now()) {
   const pointer = toPointer(path);
@@ -13910,12 +14237,12 @@ function makeUndoEntry(scope, slug, path, tree, ts = Date.now()) {
 async function appendUndoEntries(dshHome, sessionId, entries) {
   if (!sessionId || entries.length === 0) return;
   const file = undoLogPath(dshHome, sessionId);
-  await mkdir2(dirname3(file), { recursive: true });
+  await mkdir3(dirname4(file), { recursive: true });
   await appendFile(file, entries.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8");
 }
 async function readUndoLog(dshHome, sessionId) {
   try {
-    const text = await readFile2(undoLogPath(dshHome, sessionId), "utf8");
+    const text = await readFile3(undoLogPath(dshHome, sessionId), "utf8");
     const out = [];
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
@@ -13931,9 +14258,9 @@ async function readUndoLog(dshHome, sessionId) {
   }
 }
 async function loadScopeTree(dshHome, scope, slug, sessionId) {
-  const file = scope === "global" ? join2(dshHome, "rp", "variables", "global.json") : scope === "character" ? join2(dshHome, "rp", slug, "variables.json") : join2(dshHome, "rp", "state", `${sessionId}.json`);
+  const file = scope === "global" ? join3(dshHome, "rp", "variables", "global.json") : scope === "character" ? join3(dshHome, "rp", slug, "variables.json") : join3(dshHome, "rp", "state", `${sessionId}.json`);
   try {
-    const parsed = JSON.parse(await readFile2(file, "utf8"));
+    const parsed = JSON.parse(await readFile3(file, "utf8"));
     if (scope === "chat") {
       const vars = parsed?.variables;
       return vars && typeof vars === "object" && !Array.isArray(vars) ? vars : {};
@@ -13944,20 +14271,20 @@ async function loadScopeTree(dshHome, scope, slug, sessionId) {
   }
 }
 async function saveScopeTree(dshHome, scope, slug, sessionId, tree) {
-  const file = scope === "global" ? join2(dshHome, "rp", "variables", "global.json") : scope === "character" ? join2(dshHome, "rp", slug, "variables.json") : join2(dshHome, "rp", "state", `${sessionId}.json`);
+  const file = scope === "global" ? join3(dshHome, "rp", "variables", "global.json") : scope === "character" ? join3(dshHome, "rp", slug, "variables.json") : join3(dshHome, "rp", "state", `${sessionId}.json`);
   if (scope === "chat") {
     let whole = {};
     try {
-      const parsed = JSON.parse(await readFile2(file, "utf8"));
+      const parsed = JSON.parse(await readFile3(file, "utf8"));
       if (parsed && typeof parsed === "object") whole = parsed;
     } catch {
     }
     whole.variables = tree;
-    await mkdir2(dirname3(file), { recursive: true });
+    await mkdir3(dirname4(file), { recursive: true });
     await atomicWriteText(file, JSON.stringify(whole));
     return;
   }
-  await mkdir2(dirname3(file), { recursive: true });
+  await mkdir3(dirname4(file), { recursive: true });
   await atomicWriteText(file, JSON.stringify(tree));
 }
 async function replayUndoLog(dshHome, sessionId, cutoffTs = Number.NEGATIVE_INFINITY) {
@@ -13988,13 +14315,13 @@ async function replayUndoLog(dshHome, sessionId, cutoffTs = Number.NEGATIVE_INFI
   return { restored: toReplay.length };
 }
 
-// src/dsht-plugin-shared/file-snapshots.ts
-import { mkdir as mkdir3, open as open3, readFile as readFile3, readdir as readdir3, rm as rm3, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname4, join as join4 } from "node:path";
+// rp-workspace/packages/src/dsht-plugin-shared/file-snapshots.ts
+import { mkdir as mkdir4, open as open3, readFile as readFile4, readdir as readdir3, rm as rm3, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname5, join as join5 } from "node:path";
 
-// src/dsht-plugin-shared/session-surgery.ts
+// rp-workspace/packages/src/dsht-plugin-shared/session-surgery.ts
 import { open as open2, readdir as readdir2 } from "node:fs/promises";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 function truncateSessionJsonl(content, keepThroughSeq) {
   const lines = content.split("\n");
   while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
@@ -14139,8 +14466,27 @@ async function readFirstLine(path) {
     });
   }
 }
+function pickCurrentSessionFilename(entries) {
+  let best = null;
+  let bestVersion = -1;
+  for (const name2 of entries) {
+    const m = /^session\.v(\d+)\.jsonl$/.exec(name2);
+    if (m === null) continue;
+    const v = Number(m[1]);
+    if (v > bestVersion) {
+      bestVersion = v;
+      best = name2;
+    }
+  }
+  return best ?? "session.jsonl";
+}
+async function currentSessionLogPath(dshHome, project, sdir) {
+  const dir = join4(dshHome, "sessions", project, sdir);
+  const entries = await readdir2(dir).catch(() => []);
+  return join4(dir, pickCurrentSessionFilename(entries));
+}
 async function scanSessionHeaders(dshHome) {
-  const root = join3(dshHome, "sessions");
+  const root = join4(dshHome, "sessions");
   const out = [];
   let projects = [];
   try {
@@ -14151,12 +14497,19 @@ async function scanSessionHeaders(dshHome) {
   for (const project of projects) {
     let sdirs = [];
     try {
-      sdirs = await readdir2(join3(root, project));
+      sdirs = await readdir2(join4(root, project));
     } catch {
       continue;
     }
     for (const sdir of sdirs) {
-      const firstLine = await readFirstLine(join3(root, project, sdir, "session.jsonl"));
+      let entries = [];
+      try {
+        entries = await readdir2(join4(root, project, sdir));
+      } catch {
+        continue;
+      }
+      const file = join4(root, project, sdir, pickCurrentSessionFilename(entries));
+      const firstLine = await readFirstLine(file);
       if (firstLine === null) continue;
       try {
         const header = JSON.parse(firstLine);
@@ -14166,7 +14519,8 @@ async function scanSessionHeaders(dshHome) {
           cwd: typeof header.cwd === "string" ? header.cwd : void 0,
           project,
           sdir,
-          firstLine
+          firstLine,
+          file
         });
       } catch {
       }
@@ -14175,9 +14529,9 @@ async function scanSessionHeaders(dshHome) {
   return out;
 }
 
-// src/dsht-plugin-shared/file-snapshots.ts
+// rp-workspace/packages/src/dsht-plugin-shared/file-snapshots.ts
 function snapshotDir(dshHome, sessionId) {
-  return join4(dshHome, "rp", "file-history", sessionId);
+  return join5(dshHome, "rp", "file-history", sessionId);
 }
 function isSnapshotEligible(relPath) {
   const p = relPath.replaceAll("\\", "/");
@@ -14219,7 +14573,7 @@ async function readLatestTurn(sessionJsonlPath) {
 async function resolveSessionTurnAnchor(dshHome, sessionId) {
   const hit = (await scanSessionHeaders(dshHome)).find((h) => h.sessionId === sessionId);
   if (!hit) return null;
-  return readLatestTurn(join4(dshHome, "sessions", hit.project, hit.sdir, "session.jsonl"));
+  return readLatestTurn(hit.file);
 }
 async function snapshotBeforeWrite(dshHome, sessionId, relPaths, turnAnchor) {
   const empty = { snapshotted: 0, skipped: 0, anchor: null };
@@ -14229,10 +14583,10 @@ async function snapshotBeforeWrite(dshHome, sessionId, relPaths, turnAnchor) {
   const eligible = relPaths.filter(isSnapshotEligible);
   const result = { snapshotted: 0, skipped: relPaths.length - eligible.length, anchor };
   if (eligible.length === 0) return result;
-  const file = join4(snapshotDir(dshHome, sessionId), `${anchor}.json`);
+  const file = join5(snapshotDir(dshHome, sessionId), `${anchor}.json`);
   let snapshot = { turn: anchor, createdAt: Date.now(), files: [] };
   try {
-    const parsed = JSON.parse(await readFile3(file, "utf8"));
+    const parsed = JSON.parse(await readFile4(file, "utf8"));
     if (Array.isArray(parsed?.files)) snapshot = { turn: anchor, createdAt: parsed.createdAt ?? Date.now(), files: parsed.files };
   } catch {
   }
@@ -14242,7 +14596,7 @@ async function snapshotBeforeWrite(dshHome, sessionId, relPaths, turnAnchor) {
     let existed = true;
     let content = "";
     try {
-      content = (await readFile3(join4(dshHome, ...rel.split("/")))).toString("base64");
+      content = (await readFile4(join5(dshHome, ...rel.split("/")))).toString("base64");
     } catch {
       existed = false;
     }
@@ -14251,7 +14605,7 @@ async function snapshotBeforeWrite(dshHome, sessionId, relPaths, turnAnchor) {
     result.snapshotted++;
   }
   if (result.snapshotted > 0) {
-    await mkdir3(dirname4(file), { recursive: true });
+    await mkdir4(dirname5(file), { recursive: true });
     await writeFile2(file, JSON.stringify(snapshot), "utf8");
   }
   return result;
@@ -14284,20 +14638,20 @@ async function restoreSnapshotsAfter(dshHome, sessionId, boundary) {
   }
   const turns = names.map((n) => /^(\d+)\.json$/.exec(n)?.[1]).filter((s) => typeof s === "string").map(Number).filter((t) => t > boundary.fromTurn || boundary.includeBoundary && t === boundary.fromTurn).sort((a, b) => b - a);
   for (const turn of turns) {
-    const file = join4(dir, `${turn}.json`);
+    const file = join5(dir, `${turn}.json`);
     let snapshot;
     try {
-      snapshot = JSON.parse(await readFile3(file, "utf8"));
+      snapshot = JSON.parse(await readFile4(file, "utf8"));
     } catch (e) {
       result.errors.push(`${turn}.json: \u5FEB\u7167\u635F\u574F\uFF08${e.message}\uFF09\uFF0C\u8DF3\u8FC7`);
       continue;
     }
     for (const f of snapshot.files ?? []) {
       if (!isSnapshotEligible(f.path)) continue;
-      const abs = join4(dshHome, ...f.path.split("/"));
+      const abs = join5(dshHome, ...f.path.split("/"));
       try {
         if (f.existed) {
-          await mkdir3(dirname4(abs), { recursive: true });
+          await mkdir4(dirname5(abs), { recursive: true });
           await writeFile2(abs, Buffer.from(f.content, "base64"));
           result.filesRestored++;
         } else {
@@ -14314,7 +14668,747 @@ async function restoreSnapshotsAfter(dshHome, sessionId, boundary) {
   return result;
 }
 
-// src/dsht-plugin-shared/tt-projection.ts
+// rp-workspace/packages/src/dsht-plugin-shared/session-write.ts
+function replaceRange(op) {
+  if (op === null || typeof op !== "object" || Array.isArray(op)) return null;
+  const o = op;
+  if (o.op !== "replace") return null;
+  const start = typeof o.startSeq === "number" ? o.startSeq : typeof o.start === "number" ? o.start : null;
+  const end = typeof o.endSeq === "number" ? o.endSeq : typeof o.end === "number" ? o.end : null;
+  if (start === null || end === null) return null;
+  return { start, end };
+}
+var opStyle = "current";
+function appendReplace(session, type, data, range, sourceEventSeqs) {
+  const build = (style) => style === "current" ? { op: "replace", startSeq: range.start, endSeq: range.end } : { op: "replace", start: range.start, end: range.end };
+  if (opStyle === "current") {
+    try {
+      return session.append(type, data, { surfaceOp: build("current"), sourceEventSeqs });
+    } catch (e) {
+      if (!isInvalidSurfaceOp(e)) throw e;
+      opStyle = "legacy";
+    }
+  }
+  return session.append(type, data, { surfaceOp: build("legacy"), sourceEventSeqs });
+}
+function isInvalidSurfaceOp(e) {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.includes("invalid replace surfaceOp");
+}
+function boundAppend(session) {
+  return session.append.bind(session);
+}
+function assistantSettlement(turn, step) {
+  return { turn, step, stream: [] };
+}
+function planAssistantRewrite(events, idle) {
+  let lastTurn = 0;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]?.type === "turn/start") {
+      lastTurn = Number(events[i]?.data?.turn ?? 0) || 0;
+      break;
+    }
+  }
+  if (idle) return { turn: lastTurn + 1, step: 1, openTurn: true };
+  let openSteps = 0;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]?.type === "turn/start") break;
+    if (events[i]?.type === "step/start") openSteps++;
+  }
+  return { turn: Math.max(lastTurn, 1), step: openSteps + 1, openTurn: false };
+}
+var MARKER_PREFIX = "dsht:";
+function markerSource(plugin, kind, payload) {
+  return {
+    kind: "plugin",
+    plugin,
+    form: "snapshot",
+    sections: [{ name: `${MARKER_PREFIX}${kind}`, text: JSON.stringify(payload) }]
+  };
+}
+function readMarker(source, kind) {
+  if (source === null || typeof source !== "object") return null;
+  const sections = source.sections;
+  if (!Array.isArray(sections)) return null;
+  for (const sec of sections) {
+    if (sec === null || typeof sec !== "object") continue;
+    const name2 = sec.name;
+    const text = sec.text;
+    if (name2 !== `${MARKER_PREFIX}${kind}` || typeof text !== "string") continue;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+function readLegacySourceKeys(source) {
+  const out = {};
+  if (source === null || typeof source !== "object") return out;
+  const s = source;
+  if (typeof s.rolledBackTo === "number") out.rolledBackTo = s.rolledBackTo;
+  if (typeof s.regeneratedFrom === "number") out.regeneratedFrom = s.regeneratedFrom;
+  if (typeof s.editedFrom === "number") out.editedFrom = s.editedFrom;
+  if (s.thSystem === true) out.thSystem = true;
+  if (s.thData !== void 0) out.thData = s.thData;
+  return out;
+}
+function readSurgicalPayload(source) {
+  const out = {};
+  const merge2 = (v) => {
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return;
+    const o = v;
+    if (out.rolledBackTo === void 0 && typeof o.rolledBackTo === "number") out.rolledBackTo = o.rolledBackTo;
+    if (out.regeneratedFrom === void 0 && typeof o.regeneratedFrom === "number") out.regeneratedFrom = o.regeneratedFrom;
+    if (out.editedFrom === void 0 && typeof o.editedFrom === "number") out.editedFrom = o.editedFrom;
+    if (out.variantOf === void 0 && typeof o.variantOf === "number") out.variantOf = o.variantOf;
+    if (out.shadowedSeqs === void 0 && Array.isArray(o.shadowedSeqs)) {
+      const nums = o.shadowedSeqs.filter((n) => typeof n === "number");
+      if (nums.length > 0) out.shadowedSeqs = nums;
+    }
+  };
+  merge2(readMarker(source, "surgical"));
+  merge2(readMarker(source, "legacy"));
+  merge2(source);
+  return out;
+}
+function readSurgicalAnchor(ev) {
+  const src = ev?.type === "user/message" || ev?.type === "assistant/message" ? ev.data?.source ?? ev.data?.message?.source : void 0;
+  const p = readSurgicalPayload(src);
+  if (typeof p.rolledBackTo === "number") return { anchor: p.rolledBackTo };
+  if (typeof p.regeneratedFrom === "number") return { anchor: p.regeneratedFrom };
+  if (typeof p.editedFrom === "number") return { anchor: p.editedFrom - 1 };
+  return { anchor: null };
+}
+
+// rp-workspace/packages/src/dsht-plugin-shared/th-floors.ts
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname as dirname6, join as join6 } from "node:path";
+function thFloorsFile(dshHome, sessionId) {
+  return join6(dshHome, "rp", "th-floors", `${sessionId}.json`);
+}
+function readThFloors(dshHome, sessionId) {
+  try {
+    const raw = readFileSync(thFloorsFile(dshHome, sessionId), "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (v === null || typeof v !== "object" || Array.isArray(v)) continue;
+      const r = v;
+      const rec = {};
+      if (r.data !== void 0) rec.data = r.data;
+      if (r.system === true) rec.system = true;
+      if (r.legacy !== null && typeof r.legacy === "object" && !Array.isArray(r.legacy)) {
+        rec.legacy = r.legacy;
+      }
+      if (rec.data !== void 0 || rec.system !== void 0 || rec.legacy !== void 0) out[k] = rec;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+function writeThFloors(dshHome, sessionId, table) {
+  const file = thFloorsFile(dshHome, sessionId);
+  try {
+    mkdirSync(dirname6(file), { recursive: true });
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, JSON.stringify(table), "utf8");
+    renameSync(tmp, file);
+  } catch {
+  }
+}
+function mergeRecord(prev, next) {
+  const out = { ...prev, ...next };
+  if (prev?.legacy !== void 0 || next.legacy !== void 0) {
+    out.legacy = { ...prev?.legacy ?? {}, ...next.legacy ?? {} };
+  }
+  return out;
+}
+function upsertThFloors(dshHome, sessionId, entries) {
+  const keys = Object.keys(entries);
+  if (keys.length === 0) return;
+  const table = readThFloors(dshHome, sessionId);
+  for (const k of keys) table[k] = mergeRecord(table[k], entries[k]);
+  writeThFloors(dshHome, sessionId, table);
+}
+function mergeSalvagedThFloors(dshHome, sessionId, entries) {
+  const n = Object.keys(entries).length;
+  if (n === 0) return 0;
+  const table = readThFloors(dshHome, sessionId);
+  for (const [k, v] of Object.entries(entries)) table[k] = mergeRecord(table[k], v);
+  writeThFloors(dshHome, sessionId, table);
+  return n;
+}
+function lookupThFloor(table, id, seq) {
+  if (typeof id === "string" && id !== "") {
+    const hit = table[id];
+    if (hit !== void 0) return hit;
+  }
+  if (typeof seq === "number") return table[`seq:${seq}`];
+  return void 0;
+}
+function thFloorKeyOf(data, seq) {
+  if (data === void 0) return null;
+  const msg = data.message;
+  if (msg !== null && typeof msg === "object" && !Array.isArray(msg)) {
+    const id2 = msg.id;
+    if (typeof id2 === "string" && id2 !== "") return id2;
+  }
+  const id = data.id;
+  if (typeof id === "string" && id !== "") return id;
+  return Number.isInteger(seq) && seq >= 0 ? `seq:${seq}` : null;
+}
+
+// rp-workspace/packages/src/dsht-plugin-shared/session-repair.ts
+var ENVELOPE_KEYS = /* @__PURE__ */ new Set(["type", "seq", "time", "data", "surfaceOp", "sourceEventSeqs", "ignorable"]);
+var CHUNK_TAGS = ["text-chunks", "reasoning-chunks", "tool-call-chunks"];
+var PLUGIN_SOURCE_KEYS = /* @__PURE__ */ new Set(["kind", "plugin", "form", "sections", "summary", "compactionId", "sourceCommandId"]);
+var MODEL_SOURCE_KEYS = /* @__PURE__ */ new Set(["kind", "provider", "model", "replayState"]);
+var USER_SOURCE_KEYS = /* @__PURE__ */ new Set(["kind", "rpcId", "clientTimeZone"]);
+var TOOL_SOURCE_KEYS = /* @__PURE__ */ new Set(["kind", "callId"]);
+function repairSessionForV3(content) {
+  const lines = content.split("\n");
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+  if (lines.length === 0) return { content, changed: false, notes: [], events: 0, salvaged: [], error: "\u7A7A\u6587\u4EF6" };
+  let header;
+  try {
+    header = JSON.parse(lines[0]);
+  } catch {
+    return { content, changed: false, notes: [], events: 0, salvaged: [], error: "header \u4E0D\u662F\u5408\u6CD5 JSON" };
+  }
+  if (header?.type !== "session") return { content, changed: false, notes: [], events: 0, salvaged: [], error: "\u9996\u884C\u4E0D\u662F session header" };
+  const notes = [];
+  let changed = false;
+  const pendingSalvage = [];
+  const srcVersion = typeof header.version === "number" ? header.version : 0;
+  const currentOpStyle = srcVersion >= 3;
+  const makeReplaceOp = (start, end) => currentOpStyle ? { op: "replace", startSeq: start, endSeq: end } : { op: "replace", start, end };
+  const headerOut = { ...header };
+  const raw = [];
+  for (let i = 1; i < lines.length; i++) {
+    let ev;
+    try {
+      ev = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (CHUNK_TAGS.includes(ev.type)) {
+      const expanded = expandPackedRow(ev);
+      if (expanded.length > 0) {
+        raw.push(...expanded);
+        changed = true;
+        notes.push("\u805A\u5408\u884C\uFF08text-chunks \u7B49\uFF09\u5C31\u5730\u5C55\u5F00\u4E3A\u9010\u4E8B\u4EF6\uFF08\u7F16\u53F7\u81EA\u6D3D\uFF09");
+      }
+      continue;
+    }
+    if (typeof ev.seq !== "number") continue;
+    const envelopeExtra = Object.keys(ev).filter((k) => !ENVELOPE_KEYS.has(k));
+    if (envelopeExtra.length > 0) {
+      notes.push(`\u4FE1\u5C01\u5265\u9664\u975E\u767D\u540D\u5355\u952E\uFF1A${envelopeExtra.join(",")}`);
+      changed = true;
+    }
+    raw.push({
+      type: String(ev.type),
+      seq: ev.seq,
+      time: typeof ev.time === "number" ? ev.time : 0,
+      data: typeof ev.data === "object" && ev.data !== null ? ev.data : {},
+      ...ev.surfaceOp !== void 0 ? { surfaceOp: ev.surfaceOp } : {},
+      ...Array.isArray(ev.sourceEventSeqs) ? { sourceEventSeqs: flattenSeqRefs(ev.sourceEventSeqs) } : {},
+      ...ev.ignorable === true ? { ignorable: true } : {}
+    });
+  }
+  const out = [];
+  const idRemap = /* @__PURE__ */ new Map();
+  for (const item of raw) {
+    const ev = { ...item, data: { ...item.data } };
+    if (ev.type === "user/message") {
+      const r = fixUserMessage(ev.data, notes);
+      if (r.changed) {
+        changed = true;
+        ev.data = r.data;
+      }
+      if (r.dropped !== void 0) pendingSalvage.push({ ev, payload: r.dropped });
+    } else if (ev.type === "assistant/message") {
+      const r = fixAssistantMessageSource(ev.data, notes);
+      if (r.changed) {
+        changed = true;
+        ev.data = r.data;
+      }
+      if (r.dropped !== void 0) pendingSalvage.push({ ev, payload: r.dropped });
+    } else if (ev.type === "compaction/prune") {
+      const r = fixPrune(ev.data, notes);
+      if (r.changed) {
+        changed = true;
+        ev.data = r.data;
+      }
+    }
+    if (srcVersion >= 2 && (ev.type === "assistant/message" || ev.type === "assistant/attempt")) {
+      const dd = ev.data;
+      if (!Array.isArray(dd.stream)) {
+        dd.stream = [];
+        changed = true;
+        notes.push(`${ev.type} \u7F3A settlement \u7684 stream \u5B57\u6BB5\uFF08v2+ \u5FC5\u9700\uFF09\u2192 \u8865\u7A7A\u6570\u7EC4\uFF08\u7F3A\u5B83 = \u8BE5\u4F1A\u8BDD\u51B7\u542F\u52A8\u52A0\u8F7D\u5373\u629B invalid settlement fields\uFF0C\u6574\u4E2A\u4F1A\u8BDD\u6253\u4E0D\u5F00\uFF09`);
+      }
+    }
+    if (ev.type === "assistant/message" && isReplaceSurfaceOp(ev.surfaceOp)) {
+      const range = replaceRangeOf(ev.surfaceOp);
+      const refs = ev.sourceEventSeqs ?? flattenSeqRefs([range.start, range.end]);
+      const mark = {
+        type: "user/message",
+        seq: -1,
+        // 占位，稍后重编号
+        time: ev.time,
+        data: {
+          id: `dsht-repair-mark-${ev.seq}`,
+          role: "user",
+          content: [{ type: "text", text: "[\u53D8\u4F53\u5207\u6362] \u8BE5\u697C\u5C42\u7684\u4E0A\u4E00\u7248\u672C\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\u3002" }],
+          source: {
+            kind: "plugin",
+            plugin: "dsht-repair",
+            form: "snapshot",
+            sections: [{ name: "dsht:surgical", text: JSON.stringify({ shadowedSeqs: refs }) }]
+          }
+        },
+        surfaceOp: makeReplaceOp(range.start, range.end),
+        sourceEventSeqs: refs
+      };
+      out.push(mark);
+      ev.surfaceOp = "append";
+      delete ev.sourceEventSeqs;
+      out.push(ev);
+      notes.push("assistant/message \u7684 replace \u94FE \u2192 user \u6807\u8BB0 replace + append\uFF080.1.5 \u7981\u6B62 assistant \u505A\u66FF\u6362\u8282\u70B9\uFF09");
+      changed = true;
+      continue;
+    }
+    out.push(ev);
+  }
+  if (fixPruneSurfaceSpans(out, notes)) changed = true;
+  if (normalizeStructure(out, notes)) changed = true;
+  if (currentOpStyle) {
+    for (const ev of out) {
+      const op = ev.surfaceOp;
+      if (op === void 0 || op === "append") continue;
+      if (typeof op === "object" && op !== null && !Object.hasOwn(op, "startSeq")) {
+        changed = true;
+        notes.push("v3 \u6587\u4EF6\u91CC\u53D1\u73B0 v2 \u5F62\u72B6\u7684 replace surfaceOp\uFF08start/end\uFF09\u2192 \u6309 v3 \u5951\u7EA6\u6539\u5199\u4E3A startSeq/endSeq");
+        break;
+      }
+    }
+  }
+  if (!changed) return { content, changed: false, notes: [], events: out.length, salvaged: [] };
+  out.forEach((ev, i) => {
+    idRemap.set(ev.seq, i);
+    ev.seq = i;
+  });
+  const mapRef = (q) => {
+    if (idRemap.has(q)) return idRemap.get(q);
+    let best = -1;
+    for (const [old, neu] of idRemap) if (old <= q && old > best) best = old;
+    return best === -1 ? 0 : idRemap.get(best);
+  };
+  for (let i = 0; i < out.length; i++) {
+    const ev = out[i];
+    if (ev.sourceEventSeqs) ev.sourceEventSeqs = uniqueSorted(ev.sourceEventSeqs.map(mapRef)).filter((q) => q < ev.seq);
+    if (isReplaceSurfaceOp(ev.surfaceOp)) {
+      const r = replaceRangeOf(ev.surfaceOp);
+      ev.surfaceOp = makeReplaceOp(mapRef(r.start), mapRef(r.end));
+    }
+    if (ev.type === "compaction/prune") {
+      const d = ev.data;
+      if (Array.isArray(d.shadowedSeqs)) d.shadowedSeqs = uniqueStable(d.shadowedSeqs.map(mapRef)).filter((q) => q < ev.seq);
+      if (d.shadowedRange !== void 0) {
+        const seqs = d.shadowedSeqs ?? [];
+        d.shadowedRange = { start: seqs[0] ?? 0, end: seqs[seqs.length - 1] ?? 0 };
+      }
+    }
+  }
+  if (fixTitleMessageSeqs(out, mapRef, notes)) changed = true;
+  if (fixPruneSurfaceSpans(out, notes)) changed = true;
+  let lastTime = 0;
+  for (const ev of out) {
+    if (ev.time > 0) lastTime = ev.time;
+    else ev.time = lastTime;
+  }
+  const alive = new Set(out);
+  const salvaged = [];
+  for (const { ev, payload } of pendingSalvage) {
+    if (!alive.has(ev)) continue;
+    const key = thFloorKeyOf(ev.data, ev.seq);
+    if (key !== null) salvaged.push({ key, payload });
+  }
+  const text = [JSON.stringify(headerOut), ...out.map((ev) => JSON.stringify(serialize(ev)))].join("\n") + "\n";
+  return { content: text, changed: true, notes: [...new Set(notes)], events: out.length, salvaged };
+}
+var STEP_SCOPED = /* @__PURE__ */ new Set([
+  "assistant/message",
+  "assistant/attempt",
+  "system/message",
+  "assistant/chunk",
+  "tool/call",
+  "tool/result"
+]);
+var TURN_SCOPED = /* @__PURE__ */ new Set(["request/header", "request/context"]);
+function normalizeStructure(events, notes) {
+  const out = [];
+  let openTurn = null;
+  let openStep = null;
+  let nextTurn = 1;
+  let nextStep = 1;
+  let changed = false;
+  let seqSrc = -1;
+  const closeStep = (turn, step) => {
+    out.push({ type: "step/end", seq: seqSrc, time: 0, data: { turn, step } });
+    openStep = null;
+    nextStep += 1;
+    changed = true;
+  };
+  const closeTurn = (turn, synthesized) => {
+    if (openStep !== null) closeStep(turn, openStep);
+    out.push({ type: "turn/end", seq: seqSrc, time: 0, data: { turn, reason: { kind: "interrupted" } } });
+    openTurn = null;
+    nextTurn += 1;
+    if (synthesized) changed = true;
+  };
+  const openTurnIfNeeded = () => {
+    if (openTurn === null) {
+      out.push({ type: "turn/start", seq: seqSrc, time: 0, data: { turn: nextTurn } });
+      openTurn = nextTurn;
+      nextStep = 1;
+      changed = true;
+    }
+    return openTurn;
+  };
+  for (const ev of events) {
+    const d = ev.data;
+    switch (ev.type) {
+      case "turn/start": {
+        if (openTurn !== null) closeTurn(openTurn, true);
+        const t = nextTurn;
+        if (d.turn !== t) {
+          d.turn = t;
+          changed = true;
+        }
+        out.push(ev);
+        openTurn = t;
+        nextStep = 1;
+        break;
+      }
+      case "turn/end": {
+        if (openTurn === null) {
+          changed = true;
+          break;
+        }
+        if (d.turn !== openTurn) {
+          d.turn = openTurn;
+          changed = true;
+        }
+        if (openStep !== null) closeStep(openTurn, openStep);
+        out.push(ev);
+        openTurn = null;
+        nextTurn += 1;
+        break;
+      }
+      case "step/start": {
+        const t = openTurnIfNeeded();
+        if (openStep !== null) {
+          closeStep(t, openStep);
+          changed = true;
+        }
+        if (d.turn !== t || d.step !== nextStep) {
+          d.turn = t;
+          d.step = nextStep;
+          changed = true;
+        }
+        out.push(ev);
+        openStep = nextStep;
+        break;
+      }
+      case "step/end": {
+        if (openStep === null) {
+          changed = true;
+          break;
+        }
+        if (d.turn !== openTurn || d.step !== openStep) {
+          d.turn = openTurn ?? 0;
+          d.step = openStep;
+          changed = true;
+        }
+        out.push(ev);
+        openStep = null;
+        nextStep += 1;
+        break;
+      }
+      default: {
+        const stepScoped = STEP_SCOPED.has(ev.type) && !(ev.type === "tool/result" && ev.surfaceOp !== void 0 && ev.surfaceOp !== "append");
+        if (stepScoped) {
+          const t = openTurnIfNeeded();
+          if (openStep === null) {
+            out.push({ type: "step/start", seq: seqSrc, time: 0, data: { turn: t, step: nextStep } });
+            openStep = nextStep;
+            changed = true;
+          }
+          if (d.turn !== t || d.step !== openStep) {
+            d.turn = t;
+            d.step = openStep;
+            changed = true;
+          }
+        } else if (TURN_SCOPED.has(ev.type)) {
+          const t = openTurnIfNeeded();
+          if (d.turn !== void 0 && d.turn !== t) {
+            d.turn = t;
+            changed = true;
+          }
+        }
+        out.push(ev);
+      }
+    }
+  }
+  if (openTurn !== null) closeTurn(openTurn, true);
+  if (changed) {
+    notes.push("turn/step \u72B6\u6001\u673A\u5F52\u4E00\uFF08\u8865\u9F50/\u95ED\u5408\u4E0D\u5408\u5B98\u65B9\u4E0D\u53D8\u91CF\u7684\u8FB9\u754C\u4E8B\u4EF6\uFF09");
+    events.length = 0;
+    events.push(...out);
+  }
+  return changed;
+}
+function fixTitleMessageSeqs(events, mapRef, notes) {
+  let changed = false;
+  for (const ev of events) {
+    if (ev.type !== "session/title" && ev.type !== "session/title-llm-request") continue;
+    const d = ev.data;
+    const src = d.messageSeqs;
+    if (!Array.isArray(src)) continue;
+    const fixed = [];
+    for (const q of src) {
+      if (typeof q !== "number") continue;
+      const nq = mapRef(q);
+      const target = events[nq];
+      if (target === void 0 || nq >= ev.seq) continue;
+      if (target.type !== "user/message") continue;
+      const kind = target.data.source?.kind;
+      if (kind !== "user") continue;
+      if (!fixed.includes(nq)) fixed.push(nq);
+    }
+    if (fixed.length !== src.length || fixed.some((q, i) => q !== src[i])) {
+      d.messageSeqs = fixed;
+      changed = true;
+    }
+  }
+  if (changed) notes.push("session/title \u7684 messageSeqs \u91CD\u65B0\u5BF9\u9F50\uFF08\u5FC5\u987B\u5F15\u7528\u66F4\u65E9\u7684\u771F\u4EBA user \u6D88\u606F\uFF09");
+  return changed;
+}
+function normalizePluginForm(s, notes) {
+  let changed = false;
+  const form = s.form;
+  if (form === "snapshot" && !Array.isArray(s.sections)) {
+    s.sections = [];
+    changed = true;
+  }
+  if (form !== "snapshot" && Array.isArray(s.sections) && form !== void 0) {
+    if (s.sections.length > 0) {
+      s.form = "snapshot";
+    } else delete s.sections;
+    changed = true;
+  }
+  if (form === "notice" && typeof s.summary !== "string") {
+    s.summary = "";
+    changed = true;
+  }
+  if (changed) notes.push("plugin source \u7684 form \u4E0E sections/summary \u5F62\u6001\u5BF9\u9F50\uFF08snapshot \u5FC5\u987B\u6709 sections\uFF09");
+  return changed;
+}
+function fixUserMessage(data, notes) {
+  let changed = false;
+  let dropped;
+  const d = { ...data };
+  if (typeof d.id !== "string" || d.id === "") {
+    d.id = `dsht-repair-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    notes.push("user/message \u7F3A id \u2192 \u8865\u751F\u6210");
+    changed = true;
+  }
+  const src = d.source;
+  if (src !== null && typeof src === "object") {
+    const s = { ...src };
+    const kind = String(s.kind ?? "");
+    const allowed = kind === "plugin" ? PLUGIN_SOURCE_KEYS : kind === "model" ? MODEL_SOURCE_KEYS : kind === "user" ? USER_SOURCE_KEYS : kind === "tool" ? TOOL_SOURCE_KEYS : null;
+    if (allowed !== null) {
+      const illegal = Object.keys(s).filter((k) => !allowed.has(k));
+      if (illegal.length > 0) {
+        const payload = {};
+        for (const k of illegal) {
+          payload[k] = s[k];
+          delete s[k];
+        }
+        if (s.kind === "plugin") {
+          const sections = Array.isArray(s.sections) ? s.sections : [];
+          sections.push({ name: "dsht:legacy", text: JSON.stringify(payload) });
+          s.form = s.form ?? "snapshot";
+          s.sections = sections;
+          notes.push("user/message source \u81EA\u5B9A\u4E49\u952E \u2192 \u642C\u8FDB sections \u6807\u8BB0");
+        } else {
+          dropped = payload;
+          notes.push(`user/message source(${kind}) \u7684\u81EA\u5B9A\u4E49\u952E \u2192 \u79FB\u4EA4 sidecar\uFF1A${illegal.join(",")}`);
+        }
+        changed = true;
+      }
+    }
+    if (s.kind === "plugin" && normalizePluginForm(s, notes)) changed = true;
+    d.source = s;
+  }
+  return { data: d, changed, ...dropped !== void 0 ? { dropped } : {} };
+}
+function fixAssistantMessageSource(data, notes) {
+  const msg = data.message;
+  if (msg === null || typeof msg !== "object") return { data, changed: false };
+  const m = { ...msg };
+  const src = m.source;
+  if (src === null || typeof src !== "object") return { data, changed: false };
+  const s = { ...src };
+  const illegal = Object.keys(s).filter((k) => !MODEL_SOURCE_KEYS.has(k));
+  if (illegal.length === 0) return { data, changed: false };
+  const dropped = {};
+  for (const k of illegal) {
+    dropped[k] = s[k];
+    delete s[k];
+  }
+  m.source = s;
+  notes.push(`assistant/message source \u7684\u81EA\u5B9A\u4E49\u952E \u2192 \u79FB\u4EA4 sidecar\uFF08model source \u65E0\u5408\u6CD5\u643A\u5E26\u4F4D\uFF09\uFF1A${illegal.join(",")}`);
+  return { data: { ...data, message: m }, changed: true, dropped };
+}
+function fixPrune(data, notes) {
+  const d = { ...data };
+  const seqs = Array.isArray(d.shadowedSeqs) ? d.shadowedSeqs.filter((q) => typeof q === "number") : [];
+  if (seqs.length === 0) return { data, changed: false };
+  const fixed = uniqueStable(seqs);
+  const same = fixed.length === seqs.length && fixed.every((q, i) => q === seqs[i]);
+  if (same) return { data, changed: false };
+  d.shadowedSeqs = fixed;
+  notes.push("compaction/prune \u7684 shadowedSeqs \u53BB\u91CD\uFF08\u4FDD\u6301 surface \u5E8F\uFF0C\u4E0D\u6309\u6570\u503C\u91CD\u6392\uFF09");
+  return { data, changed: true };
+}
+function fixPruneSurfaceSpans(events, notes) {
+  let changed = false;
+  const surface = [];
+  const kept = [];
+  for (const ev of events) {
+    if (ev.type === "compaction/prune") {
+      const d = ev.data;
+      const seqs = Array.isArray(d.shadowedSeqs) ? d.shadowedSeqs : [];
+      if (seqs.length === 0) {
+        kept.push(ev);
+        continue;
+      }
+      const si = surface.indexOf(seqs[0]);
+      const ei = surface.indexOf(seqs[seqs.length - 1]);
+      if (si < 0 || ei < si) {
+        changed = true;
+        continue;
+      }
+      const span = surface.slice(si, ei + 1);
+      const same = span.length === seqs.length && span.every((q, i) => q === seqs[i]);
+      if (!same) {
+        d.shadowedSeqs = span;
+        d.shadowedRange = { start: span[0], end: span[span.length - 1] };
+        changed = true;
+      }
+      kept.push(ev);
+      continue;
+    }
+    kept.push(ev);
+    if (ev.type === "user/message" || ev.type === "assistant/message" || ev.type === "system/message" || ev.type === "tool/result") {
+      const op = ev.surfaceOp;
+      if (op === "append") {
+        surface.push(ev.seq);
+        continue;
+      }
+      const r = replaceRangeOf(op);
+      if (r === null) continue;
+      const si = surface.indexOf(r.start);
+      const ei = surface.indexOf(r.end);
+      if (si < 0 || ei < si) continue;
+      surface.splice(si, ei - si + 1, ev.seq);
+    }
+  }
+  if (changed) {
+    notes.push("compaction/prune \u7684 shadowedSeqs \u5BF9\u9F50\u5B9E\u9645 surface \u5207\u7247\uFF08\u5931\u6548 prune \u5DF2\u79FB\u9664\uFF09");
+    events.length = 0;
+    events.push(...kept);
+  }
+  return changed;
+}
+function serialize(ev) {
+  const o = { type: ev.type, seq: ev.seq, time: ev.time, data: ev.data };
+  if (ev.surfaceOp !== void 0) o.surfaceOp = ev.surfaceOp;
+  if (ev.sourceEventSeqs !== void 0) o.sourceEventSeqs = ev.sourceEventSeqs;
+  if (ev.ignorable === true) o.ignorable = true;
+  return o;
+}
+function expandPackedRow(row) {
+  const tag = String(row.type);
+  const data = typeof row.data === "object" && row.data !== null ? row.data : {};
+  const payload = tag === "tool-call-chunks" ? data.args : data.texts;
+  const seq0 = row.seq0;
+  const time0 = row.time0;
+  if (typeof seq0 !== "number" || typeof time0 !== "number" || !Array.isArray(payload)) return [];
+  const dt = Array.isArray(data.dt) ? data.dt : [];
+  const out = [];
+  let t = time0;
+  payload.forEach((member, k) => {
+    let chunk;
+    if (tag === "tool-call-chunks") {
+      chunk = { type: "tool-call-delta", index: data.index, id: data.id, name: data.name, argumentsDelta: member };
+    } else if (tag === "reasoning-chunks") {
+      chunk = { type: "reasoning-delta", index: data.index, text: member };
+    } else {
+      chunk = { type: "text-delta", index: data.index, text: member };
+    }
+    out.push({
+      type: "assistant/chunk",
+      seq: seq0 + k,
+      time: t,
+      data: { turn: data.turn, step: data.step, chunk }
+    });
+    const step = typeof dt[k] === "number" ? dt[k] : 0;
+    t += step;
+  });
+  return out;
+}
+function uniqueSorted(xs) {
+  return [...new Set(xs)].sort((a, b) => a - b);
+}
+function uniqueStable(xs) {
+  return [...new Set(xs)];
+}
+function flattenSeqRefs(raw) {
+  const out = [];
+  for (const x of raw) {
+    if (typeof x === "number") {
+      out.push(x);
+      continue;
+    }
+    if (Array.isArray(x) && x.length === 2 && typeof x[0] === "number" && typeof x[1] === "number") {
+      for (let q = x[0]; q <= x[1]; q++) out.push(q);
+    }
+  }
+  return out;
+}
+function isReplaceSurfaceOp(op) {
+  return replaceRangeOf(op) !== null;
+}
+function replaceRangeOf(op) {
+  if (op === null || typeof op !== "object" || Array.isArray(op)) return null;
+  const o = op;
+  if (o.op !== "replace") return null;
+  const start = typeof o.startSeq === "number" ? o.startSeq : typeof o.start === "number" ? o.start : null;
+  const end = typeof o.endSeq === "number" ? o.endSeq : typeof o.end === "number" ? o.end : null;
+  if (start === null || end === null) return null;
+  return { start, end };
+}
+
+// rp-workspace/packages/src/dsht-plugin-shared/tt-projection.ts
 var SLOT_ORDERS = {
   /** 角色卡（谁在演、演谁）——最先 */
   characterCard: 20,
@@ -14329,7 +15423,12 @@ var SLOT_ORDERS = {
   /** 表格（st-memory-enhancement） */
   tables: 45,
   /** 预设 relative 条目（指令层，靠后） */
-  preset: 50
+  preset: 50,
+  /**
+   * 【2026-09-10】promptOnly 正则投影后的整批消息文本（TT `GENERATE_AFTER_COMBINE_PROMPTS`
+   * 对应物）。放最后：语义上是"最终 payload 的镜像"，且只在该批确有 promptOnly 命中时存在。
+   */
+  projectedPrompt: 60
 };
 function planSlotSections(batch, neutralize) {
   return batch.sections.map((s, i) => ({ ...s, seq: i })).filter((s) => typeof s.text === "string" && s.text.trim().length > 0).sort((a, b) => a.order - b.order || a.seq - b.seq).map((s) => {
@@ -14338,14 +15437,164 @@ function planSlotSections(batch, neutralize) {
   }).filter((s) => s !== null);
 }
 
-// src/dsh-plugin/memory.ts
-import { mkdir as mkdir4, readFile as readFile4, writeFile as writeFile3 } from "node:fs/promises";
-import { dirname as dirname5, join as join5 } from "node:path";
+// rp-workspace/packages/src/dsht-plugin-shared/version-compare.ts
+var CORE_RE = /^\d+(?:\.\d+)*$/;
+var IDENT_RE = /^[0-9A-Za-z-]+$/;
+function parseVersion(raw) {
+  if (typeof raw !== "string") return null;
+  let s = raw.trim();
+  if (s === "") return null;
+  if (s[0] === "v" || s[0] === "V") s = s.slice(1);
+  const plus = s.indexOf("+");
+  if (plus >= 0) s = s.slice(0, plus);
+  let preRaw = "";
+  let hadDash = false;
+  const dash = s.indexOf("-");
+  if (dash >= 0) {
+    hadDash = true;
+    preRaw = s.slice(dash + 1);
+    s = s.slice(0, dash);
+  }
+  if (s === "" || !CORE_RE.test(s)) return null;
+  if (hadDash && preRaw === "") return null;
+  const parts = s.split(".").map((n) => Number(n));
+  if (parts.length > 4) return null;
+  if (!parts.every((n) => Number.isFinite(n) && n >= 0)) return null;
+  const core = [
+    parts[0] ?? 0,
+    parts[1] ?? 0,
+    parts[2] ?? 0
+  ];
+  const pre = [];
+  if (preRaw !== "") {
+    const ids = preRaw.split(".");
+    for (const id of ids) {
+      if (id === "" || !IDENT_RE.test(id)) return null;
+      pre.push(/^\d+$/.test(id) ? Number(id) : id);
+    }
+  }
+  const normalized = `${core.join(".")}${pre.length > 0 ? `-${pre.join(".")}` : ""}`;
+  return { core, pre, normalized };
+}
+function comparePre(a, b) {
+  if (a.length === 0 && b.length === 0) return 0;
+  if (a.length === 0) return 1;
+  if (b.length === 0) return -1;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const x = a[i];
+    const y = b[i];
+    const xNum = typeof x === "number";
+    const yNum = typeof y === "number";
+    if (xNum && yNum) {
+      if (x !== y) return x < y ? -1 : 1;
+    } else if (xNum !== yNum) {
+      return xNum ? -1 : 1;
+    } else {
+      const xs = String(x);
+      const ys = String(y);
+      if (xs !== ys) return xs < ys ? -1 : 1;
+    }
+  }
+  if (a.length === b.length) return 0;
+  return a.length < b.length ? -1 : 1;
+}
+function compareVersions(a, b) {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  if (pa === null || pb === null) return null;
+  for (let i = 0; i < 3; i++) {
+    const x = pa.core[i];
+    const y = pb.core[i];
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  const p = comparePre(pa.pre, pb.pre);
+  return p < 0 ? -1 : p > 0 ? 1 : 0;
+}
+function relateVersions(current, latest) {
+  const c = compareVersions(current, latest);
+  if (c === null) return "invalid";
+  if (c < 0) return "newer";
+  if (c > 0) return "older";
+  return "same";
+}
+
+// rp-workspace/packages/src/dsht-plugin-shared/update-feed.ts
+function guessUpdateKind(url, hint) {
+  if (hint === "github" || hint === "json") return hint;
+  return /api\.github\.com|github\.com\/[^/]+\/[^/]+\/releases/i.test(url) ? "github" : "json";
+}
+var asRecord = (v) => v !== null && typeof v === "object" ? v : {};
+function firstString(o, keys) {
+  for (const k of keys) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim() !== "") return v.trim();
+  }
+  return "";
+}
+function normalizeUpdateFeed(raw, kind) {
+  const outer = asRecord(raw);
+  const node = Object.keys(asRecord(outer.latest)).length > 0 ? asRecord(outer.latest) : outer;
+  const version = firstString(node, ["tag_name", "version", "name"]);
+  if (version === "") {
+    throw new Error(kind === "github" ? "\u54CD\u5E94\u91CC\u6CA1\u6709 tag_name\uFF08GitHub Releases \u5F62\u6001\u4E0D\u7B26\uFF09" : "\u54CD\u5E94\u91CC\u6CA1\u6709 version \u5B57\u6BB5");
+  }
+  const url = firstString(node, ["html_url", "url", "downloadUrl"]);
+  const notes = firstString(node, ["body", "notes", "changelog"]);
+  const assetsRaw = Array.isArray(node.assets) ? node.assets : [];
+  const assets = [];
+  for (const a of assetsRaw) {
+    const ao = asRecord(a);
+    const name2 = firstString(ao, ["name"]);
+    const au = firstString(ao, ["browser_download_url", "url"]);
+    if (name2 === "" || au === "") continue;
+    const size = typeof ao.size === "number" && Number.isFinite(ao.size) ? ao.size : null;
+    assets.push({ name: name2, url: au, size });
+  }
+  return { version, url, notes, assets };
+}
+function abiToken(abi) {
+  const a = abi.toLowerCase();
+  if (a.startsWith("arm64")) return "arm64";
+  if (a.startsWith("x86_64") || a.startsWith("x86-64")) return "x86_64";
+  if (a.startsWith("armeabi") || a.startsWith("arm")) return "armeabi";
+  if (a.startsWith("x86")) return "x86";
+  return a;
+}
+function pickDownloadAsset(assets, abi) {
+  const apks = assets.filter((a) => a.name.toLowerCase().endsWith(".apk"));
+  if (apks.length === 0) return null;
+  const token = abi === "" ? "" : abiToken(abi);
+  if (token !== "") {
+    const hit = apks.find((a) => a.name.toLowerCase().includes(token));
+    if (hit) return hit;
+  }
+  return apks[0];
+}
+
+// rp-workspace/packages/src/dsht-plugin-shared/st-compat.ts
+var SILLYTAVERN_COMPAT_VERSION = "1.18.0";
+function stVersionPayload(extra2 = {}) {
+  const body = {
+    agent: `SillyTavern:${SILLYTAVERN_COMPAT_VERSION}:DSHTavern`,
+    pkgVersion: SILLYTAVERN_COMPAT_VERSION,
+    gitRevision: null,
+    gitBranch: null,
+    defaultUpdateChannel: "stable"
+  };
+  if (extra2.appVersion != null) body.tauriVersion = extra2.appVersion;
+  if (extra2.dshVersion != null) body.dshVersion = extra2.dshVersion;
+  return body;
+}
+
+// rp-workspace/packages/src/dsh-plugin/memory.ts
+import { mkdir as mkdir5, readFile as readFile5, writeFile as writeFile3 } from "node:fs/promises";
+import { dirname as dirname7, join as join7 } from "node:path";
 var MEMORY_MAX_ENTRIES = 200;
 var MEMORY_TEXT_MAX = 2e3;
 var MEMORY_SNAPSHOT_COUNT = 20;
 function memoryFilePath(dshHome, sessionId) {
-  return join5(dshHome, "rp", "memory", `${sessionId}.json`);
+  return join7(dshHome, "rp", "memory", `${sessionId}.json`);
 }
 function memoryRelPath(sessionId) {
   return `rp/memory/${sessionId}.json`;
@@ -14375,7 +15624,7 @@ function appendMemory(file, text, source, opts = {}) {
 async function loadMemory(dshHome, sessionId) {
   if (!isValidMemorySessionId(sessionId)) return { entries: [] };
   try {
-    const parsed = JSON.parse(await readFile4(memoryFilePath(dshHome, sessionId), "utf8"));
+    const parsed = JSON.parse(await readFile5(memoryFilePath(dshHome, sessionId), "utf8"));
     if (!Array.isArray(parsed?.entries)) return { entries: [] };
     const entries = [];
     for (const raw of parsed.entries) {
@@ -14398,7 +15647,7 @@ async function loadMemory(dshHome, sessionId) {
 async function saveMemory(dshHome, sessionId, file) {
   if (!isValidMemorySessionId(sessionId)) throw new Error("invalid sessionId");
   const path = memoryFilePath(dshHome, sessionId);
-  await mkdir4(dirname5(path), { recursive: true });
+  await mkdir5(dirname7(path), { recursive: true });
   await writeFile3(path, JSON.stringify(file), "utf8");
 }
 function queryMemory(entries, query, limit = 10) {
@@ -14428,9 +15677,9 @@ function renderMemorySnapshot(entries, opts = {}) {
   return recent.map((e) => `- [${formatMemoryTime(e.createdAt)}] ${e.text}`).join("\n");
 }
 
-// src/dsh-plugin/import-preview.ts
-import { readdir as readdir4, readFile as readFile5, open as open4, realpath } from "node:fs/promises";
-import { join as join6, relative, sep } from "node:path";
+// rp-workspace/packages/src/dsh-plugin/import-preview.ts
+import { readdir as readdir4, readFile as readFile6, open as open4, realpath } from "node:fs/promises";
+import { join as join8, relative, sep } from "node:path";
 async function findStDataRoot(unpackedDir) {
   const hits = [];
   const walk = async (dir, depth) => {
@@ -14446,7 +15695,7 @@ async function findStDataRoot(unpackedDir) {
       if (n.startsWith(".")) continue;
       if (hits.length > 32) return;
       try {
-        const sub = join6(dir, n);
+        const sub = join8(dir, n);
         const subNames = await readdir4(sub);
         if (subNames !== void 0) await walk(sub, depth + 1);
       } catch {
@@ -14515,10 +15764,10 @@ function stPresetPromptCount(root) {
 }
 async function loadExistingState(dshHome) {
   const workspaces = [];
-  const rpDir = join6(dshHome, "rp");
+  const rpDir = join8(dshHome, "rp");
   for (const dir of await readdir4(rpDir).catch(() => [])) {
     try {
-      const rp = JSON.parse(await readFile5(join6(rpDir, dir, "rp.json"), "utf8"));
+      const rp = JSON.parse(await readFile6(join8(rpDir, dir, "rp.json"), "utf8"));
       workspaces.push({
         dir,
         characterName: typeof rp.characterName === "string" ? rp.characterName : void 0,
@@ -14528,10 +15777,10 @@ async function loadExistingState(dshHome) {
     }
   }
   const presets = [];
-  const presetDir = join6(dshHome, "rp-presets");
+  const presetDir = join8(dshHome, "rp-presets");
   for (const id of await readdir4(presetDir).catch(() => [])) {
     try {
-      const p = JSON.parse(await readFile5(join6(presetDir, id, "preset.json"), "utf8"));
+      const p = JSON.parse(await readFile6(join8(presetDir, id, "preset.json"), "utf8"));
       presets.push({
         id: typeof p.id === "string" ? p.id : id,
         displayName: typeof p.displayName === "string" ? p.displayName : id
@@ -14603,7 +15852,7 @@ async function scanDropped(unpackedDir) {
     }
     for (const e of entries) {
       if (out.length > 400) return;
-      const abs = join6(dir, e.name);
+      const abs = join8(dir, e.name);
       const rel = relative(unpackedDir, abs).replaceAll(sep, "/");
       if (e.isDirectory()) {
         const reason = classifyDropped(rel + "/");
@@ -14629,7 +15878,7 @@ async function scanCardFiles(files, relPrefix, pngStems, state) {
     let avatar = false;
     if (/\.png$/i.test(f.name)) {
       try {
-        const json = extractCardJsonFromPng(await readFile5(f.abs));
+        const json = extractCardJsonFromPng(await readFile6(f.abs));
         if (json) cardRoot = JSON.parse(json);
       } catch {
         cardRoot = null;
@@ -14637,7 +15886,7 @@ async function scanCardFiles(files, relPrefix, pngStems, state) {
       avatar = true;
     } else {
       try {
-        cardRoot = JSON.parse(await readFile5(f.abs, "utf8"));
+        cardRoot = JSON.parse(await readFile6(f.abs, "utf8"));
       } catch {
         cardRoot = null;
       }
@@ -14665,7 +15914,7 @@ async function scanCardFiles(files, relPrefix, pngStems, state) {
   return out;
 }
 async function scanPreviewCards(stRoot, state) {
-  const charsDir = join6(stRoot, "characters");
+  const charsDir = join8(stRoot, "characters");
   let names = [];
   try {
     names = await readdir4(charsDir);
@@ -14673,11 +15922,11 @@ async function scanPreviewCards(stRoot, state) {
     return [];
   }
   const pngStems = new Set(names.filter((n) => /\.png$/i.test(n)).map((n) => n.replace(/\.png$/i, "")));
-  const files = names.filter((n) => /\.(png|json)$/i.test(n)).map((n) => ({ name: n, abs: join6(charsDir, n) }));
+  const files = names.filter((n) => /\.(png|json)$/i.test(n)).map((n) => ({ name: n, abs: join8(charsDir, n) }));
   return scanCardFiles(files, "characters", pngStems, state);
 }
 async function scanPreviewBooks(stRoot, state) {
-  const worldsDir = join6(stRoot, "worlds");
+  const worldsDir = join8(stRoot, "worlds");
   let names = [];
   try {
     names = await readdir4(worldsDir);
@@ -14686,12 +15935,12 @@ async function scanPreviewBooks(stRoot, state) {
   }
   const books = [];
   for (const name2 of names.filter((n) => /\.json$/i.test(n))) {
-    const abs = join6(worldsDir, name2);
+    const abs = join8(worldsDir, name2);
     const bookName = name2.replace(/\.json$/i, "");
     let entryCount = 0;
     let ejsEntries = 0;
     try {
-      const text = await readFile5(abs, "utf8");
+      const text = await readFile6(abs, "utf8");
       const root = JSON.parse(text);
       entryCount = lorebookEntryCount(root);
       const entries = Array.isArray(root.entries) ? root.entries : root.entries && typeof root.entries === "object" ? Object.values(root.entries) : [];
@@ -14713,7 +15962,7 @@ async function scanPreviewBooks(stRoot, state) {
   return books;
 }
 async function scanPreviewChats(stRoot, cards, state, dshHome) {
-  const chatsDir = join6(stRoot, "chats");
+  const chatsDir = join8(stRoot, "chats");
   let owners = [];
   try {
     owners = await readdir4(chatsDir);
@@ -14730,7 +15979,7 @@ async function scanPreviewChats(stRoot, cards, state, dshHome) {
   if (state && dshHome) {
     for (const w of state.workspaces) {
       try {
-        const real = await realpath(join6(dshHome, "rp", w.dir));
+        const real = await realpath(join8(dshHome, "rp", w.dir));
         projectBySlug.set(w.dir, projectKey(real.replaceAll(sep, "/")));
       } catch {
       }
@@ -14739,7 +15988,7 @@ async function scanPreviewChats(stRoot, cards, state, dshHome) {
   const sessionKeys = new Set((state?.sessions ?? []).map((s) => `${s.project}/${s.sdir}`));
   const chats = [];
   for (const owner of owners.sort()) {
-    const ownerDir = join6(chatsDir, owner);
+    const ownerDir = join8(chatsDir, owner);
     let files = [];
     try {
       files = await readdir4(ownerDir);
@@ -14749,7 +15998,7 @@ async function scanPreviewChats(stRoot, cards, state, dshHome) {
     const card = normMap.get(normalizeName(owner));
     const wsSlug = card?.slug ?? (state ? findExistingCardSlug(owner, state) : null);
     for (const file of files.filter((f) => f.endsWith(".jsonl")).sort()) {
-      const { count, approx } = await countChatMessages(join6(ownerDir, file));
+      const { count, approx } = await countChatMessages(join8(ownerDir, file));
       let targetSessionId;
       if (wsSlug && projectBySlug.has(wsSlug)) {
         const charName = card?.name ?? owner;
@@ -14769,7 +16018,7 @@ async function scanPreviewChats(stRoot, cards, state, dshHome) {
   return chats;
 }
 async function scanPreviewPresets(stRoot, state) {
-  const dir = join6(stRoot, "OpenAI Settings");
+  const dir = join8(stRoot, "OpenAI Settings");
   let names = [];
   try {
     names = await readdir4(dir);
@@ -14778,12 +16027,12 @@ async function scanPreviewPresets(stRoot, state) {
   }
   const presets = [];
   for (const name2 of names.filter((n) => /\.json$/i.test(n) && !/\.luker-state\./i.test(n))) {
-    const abs = join6(dir, name2);
+    const abs = join8(dir, name2);
     let displayName = name2.replace(/\.json$/i, "");
     let promptCount = 0;
     let ejs = false;
     try {
-      const text = await readFile5(abs, "utf8");
+      const text = await readFile6(abs, "utf8");
       const root = JSON.parse(text);
       if (typeof root.name === "string" && root.name.trim()) displayName = root.name.trim();
       promptCount = stPresetPromptCount(root);
@@ -14803,7 +16052,7 @@ async function scanPreviewPresets(stRoot, state) {
   return presets;
 }
 async function scanInboxPreview(unpackedDir, state) {
-  const inbox = join6(unpackedDir, "inbox");
+  const inbox = join8(unpackedDir, "inbox");
   let names = [];
   try {
     names = await readdir4(inbox);
@@ -14812,13 +16061,13 @@ async function scanInboxPreview(unpackedDir, state) {
   }
   const file = names.find((n) => /\.(png|json)$/i.test(n));
   if (!file) return { kind: "unknown" };
-  const abs = join6(inbox, file);
+  const abs = join8(inbox, file);
   if (/\.png$/i.test(file)) {
     const cards = await scanCardFiles([{ name: file, abs }], "inbox", /* @__PURE__ */ new Set(), state);
     return { kind: "single-card", cards };
   }
   try {
-    const text = await readFile5(abs, "utf8");
+    const text = await readFile6(abs, "utf8");
     const kind = kindFromJsonHead(text.slice(0, 4096));
     if (kind === "single-card") {
       const cards = await scanCardFiles([{ name: file, abs }], "inbox", /* @__PURE__ */ new Set(), state);
@@ -15038,9 +16287,9 @@ function stableJson(v) {
 }
 async function isZipCardNewer(dshHome, unpackedDir, card) {
   try {
-    const existing = stableJson(JSON.parse(await readFile5(join6(dshHome, "rp", card.slug, "card.json"), "utf8")));
-    const abs = join6(unpackedDir, card.sourceFile);
-    const zipText = /\.png$/i.test(card.sourceFile) ? extractCardJsonFromPng(await readFile5(abs)) ?? "" : await readFile5(abs, "utf8");
+    const existing = stableJson(JSON.parse(await readFile6(join8(dshHome, "rp", card.slug, "card.json"), "utf8")));
+    const abs = join8(unpackedDir, card.sourceFile);
+    const zipText = /\.png$/i.test(card.sourceFile) ? extractCardJsonFromPng(await readFile6(abs)) ?? "" : await readFile6(abs, "utf8");
     if (!zipText.trim()) return false;
     return existing !== stableJson(JSON.parse(zipText));
   } catch {
@@ -15054,7 +16303,7 @@ async function collectPreviewClaims(dshHome, unpackedDir, preview) {
     claims.push({ kind: "chat", name: ch.name, detail: claimHint("chat", ch.name) });
   }
   if (!dshHome) return claims;
-  const baseDir = join6(unpackedDir, preview.stRoot || ".");
+  const baseDir = join8(unpackedDir, preview.stRoot || ".");
   for (const card of preview.cards) {
     if (card.target !== "\u5DF2\u5B58\u5728(\u540C\u540D)") continue;
     if (await isZipCardNewer(dshHome, baseDir, card)) {
@@ -15103,12 +16352,12 @@ function buildBatchProgress(meta, cp, extraClaims = []) {
   };
 }
 
-// src/dsht-plugin-tavern-helper/macros.ts
-import { readFile as readFile6 } from "node:fs/promises";
-import { join as join7 } from "node:path";
+// rp-workspace/packages/src/dsht-plugin-tavern-helper/macros.ts
+import { readFile as readFile7 } from "node:fs/promises";
+import { join as join9 } from "node:path";
 async function loadActivePersona(dshHome) {
   try {
-    const parsed = JSON.parse(await readFile6(join7(dshHome, "rp", "persona.json"), "utf8"));
+    const parsed = JSON.parse(await readFile7(join9(dshHome, "rp", "persona.json"), "utf8"));
     const list = Array.isArray(parsed.list) ? parsed.list : [];
     const activeName = typeof parsed.active === "string" ? parsed.active : null;
     const hit = activeName !== null ? list.find((p) => p?.name === activeName) : void 0;
@@ -15126,7 +16375,7 @@ async function resolveIdentity(dshHome, slug) {
   let macrosUser = "";
   if (slug) {
     try {
-      const rp = JSON.parse(await readFile6(join7(dshHome, "rp", slug, "rp.json"), "utf8"));
+      const rp = JSON.parse(await readFile7(join9(dshHome, "rp", slug, "rp.json"), "utf8"));
       char = typeof rp?.macros?.char === "string" && rp.macros.char ? rp.macros.char : String(rp?.characterName ?? "");
       macrosUser = typeof rp?.macros?.user === "string" ? rp.macros.user : "";
     } catch {
@@ -15140,7 +16389,7 @@ async function resolveIdentity(dshHome, slug) {
   };
 }
 
-// src/dsh-plugin/index.ts
+// rp-workspace/packages/src/dsh-plugin/index.ts
 var currentRuntimeLogLine = null;
 var ejsSettingsCache = null;
 async function loadEjsSettings(dshHomeDir) {
@@ -15168,7 +16417,7 @@ async function loadEjsSettings(dshHomeDir) {
     cacheSize: 0,
     cacheHasher: "h32ToString"
   };
-  const stored = await readFile7(join8(dshHomeDir, "rp", "ejs-settings.json"), "utf8").then((t) => JSON.parse(t)).catch(() => ({}));
+  const stored = await readFile8(join10(dshHomeDir, "rp", "ejs-settings.json"), "utf8").then((t) => JSON.parse(t)).catch(() => ({}));
   const out = { ...defaults };
   for (const k of Object.keys(defaults)) if (stored[k] !== void 0) out[k] = stored[k];
   ejsSettingsCache = { at: Date.now(), value: out };
@@ -15208,9 +16457,9 @@ function scanSurfaceHistory(session, claimed, limit, regexScripts = []) {
   return texts.slice(-Math.max(1, limit * 2));
 }
 async function flushLiveSession(sessions, session) {
-  const flush = sessions.flush;
-  if (typeof flush !== "function") return false;
-  const ok = await flush.call(sessions, session);
+  const sessionsObj = sessions;
+  if (typeof sessionsObj.flush !== "function") return false;
+  const ok = await sessionsObj.flush.call(sessionsObj, session);
   if (ok === false) throw new Error("session flush \u5931\u8D25\uFF08\u5199\u76D8\u672A\u8010\u4E45\uFF09\u2014\u2014\u6570\u636E\u4ECD\u5728\u5185\u5B58\uFF0C\u8BF7\u91CD\u8BD5\u6216\u53CD\u9988");
   return true;
 }
@@ -15425,7 +16674,7 @@ async function atomicWriteFile(path, content) {
   }
   await rename3(tmp, path);
   try {
-    const dirHandle = await open5(dirname6(path), "r");
+    const dirHandle = await open5(dirname8(path), "r");
     try {
       await dirHandle.sync();
     } finally {
@@ -15461,7 +16710,7 @@ var globalUserProfile = null;
 async function loadUserProfileCached(dshHome) {
   if (userProfileCache !== null) return userProfileCache;
   try {
-    const raw = JSON.parse(await readFile7(join8(dshHome, "rp", "user-profile.json"), "utf8"));
+    const raw = JSON.parse(await readFile8(join10(dshHome, "rp", "user-profile.json"), "utf8"));
     userProfileCache = {
       name: typeof raw?.name === "string" ? raw.name.trim() : "",
       description: typeof raw?.description === "string" ? raw.description : ""
@@ -15516,7 +16765,8 @@ function normAndroidPath(p) {
   return p.replace(/^\/data\/user\/0\//, "/data/data/");
 }
 function sessionCwdNeedsRepair(cwd) {
-  return typeof cwd === "string" && cwd.startsWith("/data/user/0/");
+  if (typeof cwd !== "string") return false;
+  return cwd.startsWith("/data/user/0/") || !isAbsolute(cwd);
 }
 function rewriteSessionHeaderCwd(line, canonicalCwd) {
   let obj;
@@ -15530,7 +16780,22 @@ function rewriteSessionHeaderCwd(line, canonicalCwd) {
   obj.cwd = canonicalCwd;
   return JSON.stringify(obj);
 }
-var CHUNK_TAGS = ["text-chunks", "reasoning-chunks", "tool-call-chunks"];
+function sessionHeaderCwd(content) {
+  const nl = content.indexOf("\n");
+  const line = nl === -1 ? content : content.slice(0, nl);
+  let obj;
+  try {
+    obj = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  return obj?.type === "session" && typeof obj.cwd === "string" ? obj.cwd : null;
+}
+function sessionRepairNeedsWrite(normChanged, v3Changed, seqRepaired) {
+  void normChanged;
+  return seqRepaired || v3Changed || normChanged !== 0;
+}
+var CHUNK_TAGS2 = ["text-chunks", "reasoning-chunks", "tool-call-chunks"];
 function decodeStorageLine(ev) {
   const tag = ev.type;
   if (tag !== "text-chunks" && tag !== "reasoning-chunks" && tag !== "tool-call-chunks") return [ev];
@@ -15632,7 +16897,7 @@ function repairSessionSeqs(content) {
     } catch {
       return { repaired: false, content, events: events.length, error: `\u7B2C ${i + 1} \u884C\u4E0D\u662F\u5408\u6CD5 JSON` };
     }
-    if (CHUNK_TAGS.includes(ev.type)) {
+    if (CHUNK_TAGS2.includes(ev.type)) {
       hasChunkRows = true;
       for (const sub of decodeStorageLine(ev)) {
         layout.push({ kind: "event", idx: events.length });
@@ -15799,17 +17064,35 @@ function sessionContentMaxTime(content) {
 function hasDirectUserInput(messages) {
   return (messages ?? []).some((m) => m?.source?.kind === "user");
 }
-function applyPromptRegexes(messages, scripts, traceRegexHits) {
+function messageDepth(total, index) {
+  return Math.max(0, total - index - 1);
+}
+function applyPromptRegexes(messages, scripts, traceRegexHits, mode = "persist", macroCtx) {
   if (scripts.length === 0) return messages;
-  return messages.map((m) => {
+  const pool = mode === "persist" ? scripts.filter((s) => s.promptOnly !== true) : scripts;
+  if (pool.length === 0) return messages;
+  const regexCtx = {
+    depth: null,
+    ...macroCtx === void 0 ? {} : {
+      substituteRegex: (raw, escaped) => expandTavernMacros(raw, {
+        user: macroCtx.user ?? "\u7528\u6237",
+        char: macroCtx.char ?? "\u89D2\u8272",
+        stableSeed: mode,
+        postProcess: escaped ? sanitizeRegexMacro : void 0
+      }).text
+    }
+  };
+  const total = messages.length;
+  return messages.map((m, idx) => {
     if (!Array.isArray(m.content)) return m;
     const role2 = m.role === "user" ? "user" : m.role === "assistant" ? "assistant" : null;
     if (role2 === null) return m;
     const placement = role2 === "user" ? PLACEMENT.USER_INPUT : PLACEMENT.AI_OUTPUT;
+    const depth = messageDepth(total, idx);
     let changed = false;
     const content = m.content.map((block) => {
       if (block.type !== "text" || typeof block.text !== "string") return block;
-      const r = runRegexScripts(scripts, block.text, "prompt", placement, { depth: null });
+      const r = runRegexScripts(pool, block.text, "prompt", placement, { ...regexCtx, depth });
       if (r.hits.length > 0) {
         changed = true;
         for (const h of r.hits) traceRegexHits.push({ scriptName: h.scriptName, count: h.count });
@@ -15877,11 +17160,49 @@ function collectVariantGroups(events) {
     }
     return "";
   };
+  const addMember = (anchor, memberSeq, active) => {
+    const prevGroup = groups.get(anchor);
+    const text = textOf(eventBySeq.get(memberSeq) ?? { type: "", seq: memberSeq });
+    if (prevGroup) {
+      if (prevGroup.members.some((m) => m.seq === memberSeq)) {
+        prevGroup.activeSeq = active;
+        return;
+      }
+      prevGroup.members.push({ seq: memberSeq, text });
+      prevGroup.activeSeq = active;
+      groups.set(memberSeq, prevGroup);
+      return;
+    }
+    const g = {
+      members: [
+        { seq: anchor, text: textOf(eventBySeq.get(anchor) ?? { type: "", seq: anchor }) },
+        { seq: memberSeq, text }
+      ],
+      activeSeq: active
+    };
+    groups.set(anchor, g);
+    groups.set(memberSeq, g);
+  };
+  const addReplyGroup = (replySeqs, active) => {
+    const seqs = [.../* @__PURE__ */ new Set([...replySeqs, active])].sort((a, b) => a - b);
+    if (seqs.length === 0) return;
+    const first = seqs[0];
+    let g = groups.get(first);
+    if (g === void 0) {
+      g = { members: [{ seq: first, text: textOf(eventBySeq.get(first) ?? { type: "", seq: first }) }], activeSeq: active };
+      groups.set(first, g);
+    }
+    for (const q of seqs) {
+      if (!g.members.some((m) => m.seq === q)) g.members.push({ seq: q, text: textOf(eventBySeq.get(q) ?? { type: "", seq: q }) });
+      groups.set(q, g);
+    }
+    g.activeSeq = active;
+  };
   for (const ev of events) {
     if (ev.type !== "assistant/message") continue;
-    const op = ev.surfaceOp;
-    if (op === void 0 || op === "append") continue;
-    const prevSeq = ev.sourceEventSeqs?.[0] ?? op.start;
+    const range = replaceRange(ev.surfaceOp);
+    if (range === null) continue;
+    const prevSeq = ev.sourceEventSeqs?.[0] ?? range.start;
     const prevGroup = groups.get(prevSeq);
     if (prevGroup) {
       prevGroup.members.push({ seq: ev.seq, text: textOf(ev) });
@@ -15899,33 +17220,27 @@ function collectVariantGroups(events) {
       groups.set(ev.seq, g);
     }
   }
+  const assistantSeqs = events.filter((e) => e.type === "assistant/message").map((e) => e.seq).sort((a, b) => a - b);
   for (const ev of events) {
     if (ev.type !== "user/message") continue;
-    const op = ev.surfaceOp;
-    if (op === void 0 || op === "append" || typeof op !== "object") continue;
-    const s = ev.data?.source;
-    if (s === void 0) continue;
-    const anchor = typeof s.regeneratedFrom === "number" ? s.regeneratedFrom : typeof s.rolledBackTo === "number" ? s.rolledBackTo : void 0;
-    if (anchor === void 0) continue;
-    for (let q = op.start ?? 0; q <= (op.end ?? 0); q++) {
-      const shadowed = eventBySeq.get(q);
-      if (shadowed?.type !== "assistant/message") continue;
-      const prevGroup = groups.get(anchor);
-      if (prevGroup) {
-        prevGroup.members.push({ seq: q, text: textOf(shadowed) });
-        groups.set(q, prevGroup);
-      } else {
-        const g = {
-          members: [
-            { seq: anchor, text: textOf(eventBySeq.get(anchor) ?? { type: "", seq: anchor }) },
-            { seq: q, text: textOf(shadowed) }
-          ],
-          activeSeq: anchor
-        };
-        groups.set(anchor, g);
-        groups.set(q, g);
-      }
+    const range = replaceRange(ev.surfaceOp);
+    if (range === null) continue;
+    const src = ev.data?.source;
+    const marker = readMarker(src, "surgical");
+    const anchor = marker?.variantOf ?? range.start;
+    const next = assistantSeqs.find((q) => q > ev.seq);
+    if (marker?.variantOf !== void 0 && next !== void 0) {
+      addMember(anchor, next, next);
     }
+    const legacy = readLegacySourceKeys(src);
+    const hideAnchor = marker?.regeneratedFrom ?? legacy.regeneratedFrom ?? marker?.rolledBackTo ?? legacy.rolledBackTo;
+    if (hideAnchor === void 0) continue;
+    const shadowedReplies = [];
+    for (let q = range.start; q <= range.end; q++) {
+      if (eventBySeq.get(q)?.type === "assistant/message") shadowedReplies.push(q);
+    }
+    if (shadowedReplies.length === 0) continue;
+    addReplyGroup(shadowedReplies, next ?? shadowedReplies[shadowedReplies.length - 1]);
   }
   return groups;
 }
@@ -15936,8 +17251,9 @@ function buildVariantSwitchEvent(sessionId, nextSeq, activeSeq, targetText) {
     seq: nextSeq,
     time: Date.now(),
     data: {
-      turn: 1,
-      step: 1,
+      // settlement 三件套（turn/step 由调用点按 planAssistantRewrite 覆写；
+      // stream 必须为数组——缺它 = 会话冷启动直接打不开，详见 session-write.ts）
+      ...assistantSettlement(1, 1),
       message: {
         id: `dsht-variant-${sessionId}-${nextSeq}`,
         role: "assistant",
@@ -15945,8 +17261,8 @@ function buildVariantSwitchEvent(sessionId, nextSeq, activeSeq, targetText) {
         source: { kind: "model", provider: "dsht-variant", model: "user-switch" }
       }
     },
-    surfaceOp: { op: "replace", start: activeSeq, end: activeSeq },
-    sourceEventSeqs: [activeSeq]
+    surfaceOp: "append",
+    shadowedActiveSeq: activeSeq
   };
 }
 function searchLoreEntries(entries, query, opts = {}) {
@@ -15993,6 +17309,20 @@ function rpSlugFromCwd(cwd, dshHome) {
   const slug = normalized.slice(prefix.length);
   if (!slug || slug.includes("/")) return null;
   return slug;
+}
+function shouldStripRpTools(presetPath) {
+  return presetPath !== "lightAgent" && presetPath !== "heavyAgent" && presetPath !== "agent";
+}
+function stripAssemblyTools(assembly) {
+  const tools = Array.isArray(assembly.tools) ? assembly.tools : [];
+  const removed = tools.map((t) => t !== null && typeof t === "object" ? String(t.name ?? "") : "").filter((n) => n.length > 0);
+  if (removed.length === 0) return { assembly, removed };
+  const removedSet = new Set(removed);
+  const sections = Array.isArray(assembly.sections) ? assembly.sections.filter((s) => {
+    const name2 = s !== null && typeof s === "object" ? String(s.name ?? "") : "";
+    return !(name2.startsWith("tool:") && removedSet.has(name2.slice("tool:".length)));
+  }) : assembly.sections;
+  return { assembly: { ...assembly, tools: [], sections }, removed };
 }
 function buildStV2FromRp(rp) {
   const data = {
@@ -16048,10 +17378,10 @@ function agentPresetDirId(presetId) {
 async function unpackZipTo(sourceZip, destDir) {
   const nativeLib = process.env.DSHT_NATIVE_LIB_DIR ?? "";
   if (nativeLib) {
-    const busybox = join8(nativeLib, "libbusybox.so");
+    const busybox = join10(nativeLib, "libbusybox.so");
     try {
       await access(busybox);
-      await mkdir5(destDir, { recursive: true });
+      await mkdir6(destDir, { recursive: true });
       await new Promise((resolve3, reject) => {
         const child = spawn(
           busybox,
@@ -16068,7 +17398,7 @@ async function unpackZipTo(sourceZip, destDir) {
       let count2 = 0;
       const walk = async (dir) => {
         for (const d of await readdir5(dir, { withFileTypes: true })) {
-          const abs = join8(dir, d.name);
+          const abs = join10(dir, d.name);
           if (d.isDirectory()) await walk(abs);
           else count2++;
         }
@@ -16080,16 +17410,16 @@ async function unpackZipTo(sourceZip, destDir) {
       console.warn(`[dsht-rp] busybox unzip \u5931\u8D25\uFF0C\u56DE\u9000 JSZip\uFF1A${e.message}`);
     }
   }
-  const zip = await import_jszip.default.loadAsync(await readFile7(sourceZip));
+  const zip = await import_jszip.default.loadAsync(await readFile8(sourceZip));
   const destRoot = resolve2(destDir);
   let count = 0;
   for (const [rel, entry] of Object.entries(zip.files)) {
     if (entry.dir) continue;
     const segs = rel.split("/").filter((s) => s.length > 0);
     if (segs.length === 0 || segs.some((s) => s === "." || s === "..")) continue;
-    const abs = join8(destDir, ...segs);
+    const abs = join10(destDir, ...segs);
     if (!resolve2(abs).startsWith(destRoot + sep2)) continue;
-    await mkdir5(dirname6(abs), { recursive: true });
+    await mkdir6(dirname8(abs), { recursive: true });
     await writeFile4(abs, await entry.async("nodebuffer"));
     count++;
   }
@@ -16107,7 +17437,7 @@ var countDirFiles = async (dir, match, depth = 2) => {
     }
     for (const e of entries) {
       if (e.isDirectory()) {
-        await walk(join8(d, e.name), lv + 1);
+        await walk(join10(d, e.name), lv + 1);
         continue;
       }
       if (match(e.name)) n++;
@@ -16121,14 +17451,14 @@ async function scanImportManifest(unpackedDir) {
   if (stRoot) {
     const [cards, books, chats, presets] = await Promise.all([
       // 角色卡只计顶层文件（characters/<角色>/ 子目录是表情差分图，不是卡）
-      countDirFiles(join8(stRoot, "characters"), (n) => /\.(png|json)$/i.test(n), 0),
-      countDirFiles(join8(stRoot, "worlds"), (n) => /\.json$/i.test(n), 0),
-      countDirFiles(join8(stRoot, "chats"), (n) => /\.jsonl$/i.test(n), 2),
-      countDirFiles(join8(stRoot, "OpenAI Settings"), (n) => /\.json$/i.test(n) && !/\.luker-state\./i.test(n), 0)
+      countDirFiles(join10(stRoot, "characters"), (n) => /\.(png|json)$/i.test(n), 0),
+      countDirFiles(join10(stRoot, "worlds"), (n) => /\.json$/i.test(n), 0),
+      countDirFiles(join10(stRoot, "chats"), (n) => /\.jsonl$/i.test(n), 2),
+      countDirFiles(join10(stRoot, "OpenAI Settings"), (n) => /\.json$/i.test(n) && !/\.luker-state\./i.test(n), 0)
     ]);
     return { kind: "st-data", cards, books, chats, presets, stRoot: relative2(unpackedDir, stRoot).replaceAll(sep2, "/") || "." };
   }
-  const inbox = join8(unpackedDir, "inbox");
+  const inbox = join10(unpackedDir, "inbox");
   let names = [];
   try {
     names = await readdir5(inbox);
@@ -16141,7 +17471,7 @@ async function scanImportManifest(unpackedDir) {
     kind = "single-card";
   } else {
     try {
-      const head = (await readFile7(join8(inbox, file), "utf8")).slice(0, 4096);
+      const head = (await readFile8(join10(inbox, file), "utf8")).slice(0, 4096);
       if (/"spec"\s*:\s*"chara_card|"mes_example"\s*:|"first_mes"\s*:/.test(head)) kind = "single-card";
       else if (/"entries"\s*:/.test(head)) kind = "single-book";
     } catch {
@@ -16226,14 +17556,14 @@ function withSnapshot(decision, snapshotText) {
 }
 function apply(ctx, _config) {
   const envHome = process.env.DSH_HOME?.trim();
-  const dshHome = envHome ? resolve2(envHome) : join8(homedir(), ".dsh");
+  const dshHome = envHome ? resolve2(envHome) : join10(homedir(), ".dsh");
   const retained = /* @__PURE__ */ new WeakMap();
   const lastTrace = /* @__PURE__ */ new Map();
   const bookCache = /* @__PURE__ */ new Map();
   let globalRegexCache = null;
   const readAsset = (name2) => {
     try {
-      return readFileSync(new URL(`../assets/${name2}`, import.meta.url), "utf8");
+      return readFileSync2(new URL(`../assets/${name2}`, import.meta.url), "utf8");
     } catch {
       return null;
     }
@@ -16275,7 +17605,7 @@ function apply(ctx, _config) {
   process.once("SIGINT", () => {
     void flushAllLiveSessions("sigint");
   });
-  const flushRequestPath = join8(dshHome, "flush-request");
+  const flushRequestPath = join10(dshHome, "flush-request");
   let flushRequestBusy = false;
   const flushRequestPoller = setInterval(() => {
     if (flushRequestBusy) return;
@@ -16315,22 +17645,22 @@ function apply(ctx, _config) {
   const diagSnapshot = async () => {
     let workspaces = 0, skills = 0, sessions = 0;
     try {
-      const rpDir = join8(dshHome, "rp");
+      const rpDir = join10(dshHome, "rp");
       const dirs = await readdir5(rpDir).catch(() => []);
       for (const d of dirs) {
         try {
-          if (JSON.parse(await readFile7(join8(rpDir, d, "rp.json"), "utf8"))) workspaces++;
+          if (JSON.parse(await readFile8(join10(rpDir, d, "rp.json"), "utf8"))) workspaces++;
         } catch {
         }
       }
     } catch {
     }
     try {
-      skills = (await readdir5(join8(dshHome, "skills")).catch(() => [])).length;
+      skills = (await readdir5(join10(dshHome, "skills")).catch(() => [])).length;
     } catch {
     }
     try {
-      sessions = (await readdir5(join8(dshHome, "sessions")).catch(() => [])).length;
+      sessions = (await readdir5(join10(dshHome, "sessions")).catch(() => [])).length;
     } catch {
     }
     return {
@@ -16421,7 +17751,7 @@ function apply(ctx, _config) {
     for (const h of await scanSessionHeaders2()) {
       if (rpSlugFromCwd(h.cwd, dshHome) !== slug) continue;
       try {
-        const m = (await stat(join8(dshHome, "sessions", h.project, h.sdir, "session.jsonl"))).mtimeMs;
+        const m = (await stat(h.file)).mtimeMs;
         if (m > bestMtime) {
           best = h.sessionId;
           bestMtime = m;
@@ -16438,7 +17768,7 @@ function apply(ctx, _config) {
       const slug = rpSlugFromCwd(h.cwd, dshHome);
       if (slug === null || slug === "_start") continue;
       try {
-        const m = (await stat(join8(dshHome, "sessions", h.project, h.sdir, "session.jsonl"))).mtimeMs;
+        const m = (await stat(h.file)).mtimeMs;
         if (m > bestMtime) {
           best = h.sessionId;
           bestMtime = m;
@@ -16455,7 +17785,7 @@ function apply(ctx, _config) {
       const cwd = (h.cwd ?? "").replaceAll(sep2, "/");
       if (!cwd.endsWith("rp-import/_adapter")) continue;
       try {
-        const m = (await stat(join8(dshHome, "sessions", h.project, h.sdir, "session.jsonl"))).mtimeMs;
+        const m = (await stat(h.file)).mtimeMs;
         if (m > bestMtime) {
           best = h.sessionId;
           bestMtime = m;
@@ -16477,15 +17807,16 @@ function apply(ctx, _config) {
         continue;
       }
       try {
-        const canonical = await realpath2(h.cwd);
+        const resolved = isAbsolute(h.cwd) ? h.cwd : resolve2(dshHome, h.cwd);
+        const canonical = await realpath2(resolved).catch(() => resolved);
         if (canonical === h.cwd) continue;
         const newLine = rewriteSessionHeaderCwd(h.firstLine, canonical);
         if (newLine === null) continue;
-        const root = join8(dshHome, "sessions");
+        const root = join10(dshHome, "sessions");
         const targetProject = projectKey(canonical);
         let moved = false;
         if (targetProject !== h.project) {
-          const targetDir = join8(root, targetProject, h.sdir);
+          const targetDir = join10(root, targetProject, h.sdir);
           let exists = true;
           try {
             await stat(targetDir);
@@ -16496,12 +17827,12 @@ function apply(ctx, _config) {
             errors.push(`${h.sessionId}: \u76EE\u6807\u76EE\u5F55\u5DF2\u5B58\u5728\uFF08${targetProject}/${h.sdir}\uFF09\uFF0C\u672A\u52A8`);
             continue;
           }
-          await mkdir5(join8(root, targetProject), { recursive: true });
-          await rename3(join8(root, h.project, h.sdir), targetDir);
+          await mkdir6(join10(root, targetProject), { recursive: true });
+          await rename3(join10(root, h.project, h.sdir), targetDir);
           moved = true;
         }
-        const sessionPath = join8(root, targetProject, h.sdir, "session.jsonl");
-        const full = await readFile7(sessionPath, "utf8");
+        const sessionPath = join10(root, targetProject, h.sdir, "session.jsonl");
+        const full = await readFile8(sessionPath, "utf8");
         const nl = full.indexOf("\n");
         await atomicWriteFile(`${sessionPath}.bak`, full);
         await atomicWriteFile(sessionPath, newLine + (nl === -1 ? "" : full.slice(nl)));
@@ -16516,7 +17847,26 @@ function apply(ctx, _config) {
     }
     return { scanned: headers.length, repaired, skipped, errors };
   };
-  const REPAIR_MAX_FILE_BYTES = 8 * 1024 * 1024;
+  const REPAIR_MAX_FILE_BYTES = 32 * 1024 * 1024;
+  const readSessionIdentity = async (file) => {
+    let fh = null;
+    try {
+      fh = await open5(file, "r");
+      const buf = Buffer.alloc(4096);
+      const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+      const firstLine = buf.subarray(0, bytesRead).toString("utf8").split("\n")[0] ?? "";
+      const h = JSON.parse(firstLine);
+      if (h.type !== "session") return "";
+      const origin = typeof h.origin === "string" ? h.origin : "chat";
+      const preset = typeof h.agentPreset === "string" ? `\uFF0CagentPreset=${h.agentPreset}` : "";
+      const who = origin === "chat" ? "\u7528\u6237\u804A\u5929\u4F1A\u8BDD" : `**\u975E\u7528\u6237\u804A\u5929**\uFF08${origin}\uFF09`;
+      return `\uFF5Corigin=${origin}${preset} \u2192 ${who}`;
+    } catch {
+      return "";
+    } finally {
+      if (fh !== null) await fh.close().catch(() => void 0);
+    }
+  };
   const repairAllSessionSeqs = async () => {
     const repaired = [];
     const skipped = [];
@@ -16527,32 +17877,73 @@ function apply(ctx, _config) {
         skipped.push({ sessionId: h.sessionId, reason: "live\uFF08\u5173\u95ED\u4F1A\u8BDD\u540E\u91CD\u8DD1\uFF09" });
         continue;
       }
-      const file = join8(dshHome, "sessions", h.project, h.sdir, "session.jsonl");
+      const file = h.file;
       try {
         const st = await stat(file);
         if (st.size > REPAIR_MAX_FILE_BYTES) {
-          skipped.push({ sessionId: h.sessionId, reason: `\u6587\u4EF6 ${(st.size / 1048576).toFixed(1)}MiB \u8D85 ${REPAIR_MAX_FILE_BYTES / 1048576}MiB \u4E0A\u9650\uFF0C\u8DF3\u8FC7\u81EA\u52A8\u4FEE\u590D` });
+          const identity = await readSessionIdentity(file);
+          skipped.push({ sessionId: h.sessionId, reason: `\u6587\u4EF6 ${(st.size / 1048576).toFixed(1)}MiB \u8D85 ${REPAIR_MAX_FILE_BYTES / 1048576}MiB \u4E0A\u9650${identity}\uFF0C\u8DF3\u8FC7\u81EA\u52A8\u4FEE\u590D` });
           continue;
         }
-        const content = await readFile7(file, "utf8");
+        const content = await readFile8(file, "utf8");
         const norm = normalizeSnapshotMessageRoles(content);
-        const r = repairSessionSeqs(norm.content);
+        const v3 = repairSessionForV3(norm.content);
+        const r = repairSessionSeqs(v3.content);
         if (r.error) {
           errors.push(`${h.sessionId}: ${r.error}`);
           continue;
         }
-        if (!r.repaired && norm.changed === 0) continue;
+        if (!sessionRepairNeedsWrite(norm.changed, v3.changed, r.repaired)) continue;
+        const outCwd = sessionHeaderCwd(r.content);
+        if (outCwd !== null && projectKey(outCwd) !== h.project) {
+          errors.push(`${h.sessionId}: \u4FEE\u590D\u540E cwd \u4E0E\u76EE\u5F55\u8EAB\u4EFD\u4E0D\u7B26\uFF08projectKey=${projectKey(outCwd)} \u76EE\u5F55=${h.project}\uFF09\uFF0C\u62D2\u7EDD\u843D\u76D8\uFF08\u987B\u8D70 repairSessionCwds \u7684\u642C\u8FC1\u8DEF\u5F84\uFF09`);
+          continue;
+        }
         await atomicWriteFile(`${file}.bak`, content);
         await atomicWriteFile(file, r.content);
-        repaired.push({ sessionId: h.sessionId, events: r.events + norm.changed });
+        if (v3.salvaged.length > 0) {
+          const table = {};
+          for (const s of v3.salvaged) {
+            const rec = table[s.key] ?? {};
+            for (const [k, val] of Object.entries(s.payload)) {
+              if (k === "thData") rec.data = val;
+              else if (k === "thSystem" && val === true) rec.system = true;
+              else rec.legacy = { ...rec.legacy ?? {}, [k]: val };
+            }
+            table[s.key] = rec;
+          }
+          const n = mergeSalvagedThFloors(dshHome, h.sessionId, table);
+          console.log(`[dsht-rp] repair-sessions(salvage): ${h.sessionId} ${n} \u4E2A\u697C\u5C42\u7684 source \u6269\u5C55\u952E\u5DF2\u8FC1\u5165 sidecar`);
+        }
+        repaired.push({
+          sessionId: h.sessionId,
+          // 【心跳 47 修复】原为 `r.events + norm.changed + v3.changed` —— `norm.changed` 是
+          // **number**、`v3.changed` 是 **boolean**（session-repair.ts:56），运行时靠 `true → 1`
+          // 隐式转换"凑合能跑"，把一个「事件总数」字段污染成「事件数 + 0/1 + 0/1」。
+          // 这正是 L14 记录过的同型缺陷（布尔当计数）。类型闸门一开即报 TS2365。
+          // 现在各归其位：events 就是事件总数，改动量单独记字段（消费方只用 repaired.length，
+          // 无人读 events，故不构成下游兼容风险）。
+          events: r.events,
+          normChanged: norm.changed,
+          v3Changed: v3.changed,
+          salvaged: v3.salvaged.length
+        });
+        if (v3.changed) console.log(`[dsht-rp] repair-sessions(v3): ${h.sessionId} ${v3.notes.join("\uFF1B")}`);
         if (r.note) console.log(`[dsht-rp] repair-sessions: ${h.sessionId} ${r.note}${r.truncated ? `\uFF08truncated=${r.truncated}\uFF09` : ""}`);
       } catch (e) {
         errors.push(`${h.sessionId}: ${e.message}`);
       }
     }
-    if (repaired.length > 0 || errors.length > 0) {
-      logLine(`repair-sessions: \u4FEE\u590D ${repaired.length}\uFF0C\u8DF3\u8FC7 ${skipped.length}\uFF0C\u5931\u8D25 ${errors.length}`);
-      console.log(`[dsht-rp] repair-sessions: repaired=${repaired.length} skipped=${skipped.length} errors=${errors.length}`);
+    if (repaired.length > 0 || errors.length > 0 || skipped.length > 0) {
+      const byReason = /* @__PURE__ */ new Map();
+      for (const s of skipped) {
+        const key = s.reason.startsWith("live") ? "live" : s.reason.startsWith("\u6587\u4EF6 ") ? "\u8D85\u4E0A\u9650" : s.reason;
+        byReason.set(key, (byReason.get(key) ?? 0) + 1);
+      }
+      const detail = skipped.length > 0 ? `\uFF0C\u8DF3\u8FC7 ${skipped.length}\uFF08${[...byReason].map(([k, v]) => `${k}\xD7${v}`).join(" / ")}\uFF09` : "";
+      logLine(`repair-sessions: \u4FEE\u590D ${repaired.length}${detail}\uFF0C\u5931\u8D25 ${errors.length}`);
+      console.log(`[dsht-rp] repair-sessions: repaired=${repaired.length} skipped=${skipped.length} errors=${errors.length}${skipped.length ? ` skippedReason=${JSON.stringify(Object.fromEntries(byReason))}` : ""}`);
+      for (const s of skipped) logLine(`repair-sessions: \u8DF3\u8FC7 ${s.sessionId} \u2014\u2014 ${s.reason}`);
     }
     return { scanned: headers.length, repaired, skipped, errors };
   };
@@ -16571,23 +17962,23 @@ function apply(ctx, _config) {
     }
     let dirs = [];
     try {
-      dirs = await readdir5(join8(dshHome, ".agent-presets"));
+      dirs = await readdir5(join10(dshHome, ".agent-presets"));
     } catch {
       return { migrated, removed, keptInUse, errors };
     }
     for (const d of dirs.sort()) {
       if (!d.startsWith("rp-")) continue;
       try {
-        const rpPath = join8(dshHome, "rp", d, "rp.json");
+        const rpPath = join10(dshHome, "rp", d, "rp.json");
         let rp = null;
         try {
-          rp = JSON.parse(await readFile7(rpPath, "utf8"));
+          rp = JSON.parse(await readFile8(rpPath, "utf8"));
         } catch {
         }
         if (rp !== null && rp.schemaVersion === 1 && typeof rp.promptPersona !== "string") {
           let persona = null;
           try {
-            persona = extractPersonaTextFromAgentYml(await readFile7(join8(dshHome, ".agent-presets", d, "agent.cordis.yml"), "utf8"));
+            persona = extractPersonaTextFromAgentYml(await readFile8(join10(dshHome, ".agent-presets", d, "agent.cordis.yml"), "utf8"));
           } catch {
           }
           if (persona) {
@@ -16600,7 +17991,7 @@ function apply(ctx, _config) {
           keptInUse.push(d);
           continue;
         }
-        await rm4(join8(dshHome, ".agent-presets", d), { recursive: true, force: true });
+        await rm4(join10(dshHome, ".agent-presets", d), { recursive: true, force: true });
         removed.push(d);
       } catch (e) {
         errors.push(`${d}: ${e.message}`);
@@ -16616,7 +18007,7 @@ function apply(ctx, _config) {
     if (globalRegexCache !== null) return globalRegexCache;
     try {
       signal.throwIfAborted();
-      const text = readFileSync(join8(dshHome, "rp", "regex", "global.json"), "utf8");
+      const text = readFileSync2(join10(dshHome, "rp", "regex", "global.json"), "utf8");
       const parsed = JSON.parse(text);
       globalRegexCache = Array.isArray(parsed.scripts) ? parsed.scripts : [];
     } catch {
@@ -16632,7 +18023,7 @@ function apply(ctx, _config) {
     const out = [];
     try {
       signal.throwIfAborted();
-      const text = await readFile7(join8(dshHome, "rp-presets", presetId, "regex.json"), "utf8");
+      const text = await readFile8(join10(dshHome, "rp-presets", presetId, "regex.json"), "utf8");
       const parsed = JSON.parse(text);
       if (Array.isArray(parsed.scripts)) out.push(...parsed.scripts);
     } catch {
@@ -16645,19 +18036,19 @@ function apply(ctx, _config) {
     if (activeStPresetCache !== void 0) return activeStPresetCache;
     activeStPresetCache = null;
     try {
-      const batches = (await readdir5(join8(dshHome, "rp-import"))).filter(isValidBatchId).sort().reverse();
+      const batches = (await readdir5(join10(dshHome, "rp-import"))).filter(isValidBatchId).sort().reverse();
       let activeName = "";
       for (const b of batches) {
-        const dir = join8(dshHome, "rp-import", b);
+        const dir = join10(dshHome, "rp-import", b);
         let stRoot = "data/default-user";
         try {
-          const meta = JSON.parse(await readFile7(join8(dir, "meta.json"), "utf8"));
+          const meta = JSON.parse(await readFile8(join10(dir, "meta.json"), "utf8"));
           if (typeof meta.manifest?.stRoot === "string" && meta.manifest.stRoot) stRoot = meta.manifest.stRoot;
         } catch {
         }
         let text = "";
         try {
-          text = await readFile7(join8(dir, "unpacked", stRoot, "settings.json"), "utf8");
+          text = await readFile8(join10(dir, "unpacked", stRoot, "settings.json"), "utf8");
         } catch {
           continue;
         }
@@ -16668,10 +18059,10 @@ function apply(ctx, _config) {
         }
       }
       if (activeName) {
-        const dirs = await readdir5(join8(dshHome, "rp-presets"));
+        const dirs = await readdir5(join10(dshHome, "rp-presets"));
         for (const id of dirs.sort()) {
           try {
-            const p = JSON.parse(await readFile7(join8(dshHome, "rp-presets", id, "preset.json"), "utf8"));
+            const p = JSON.parse(await readFile8(join10(dshHome, "rp-presets", id, "preset.json"), "utf8"));
             if (p.displayName === activeName) {
               activeStPresetCache = id;
               break;
@@ -16703,10 +18094,10 @@ function apply(ctx, _config) {
     const out = [...builtinPresets];
     try {
       signal.throwIfAborted();
-      const dirs = await readdir5(join8(dshHome, "rp-presets"));
+      const dirs = await readdir5(join10(dshHome, "rp-presets"));
       for (const id of dirs.sort()) {
         try {
-          const text = await readFile7(join8(dshHome, "rp-presets", id, "preset.json"), "utf8");
+          const text = await readFile8(join10(dshHome, "rp-presets", id, "preset.json"), "utf8");
           const p = JSON.parse(text);
           if (p?.schemaVersion === 1 && p.id) out.push(p);
         } catch {
@@ -16727,7 +18118,7 @@ function apply(ctx, _config) {
   const STATE_RESERVED_KEYS = /* @__PURE__ */ new Set(["presetId", "state", "variables", "variableSchema", "cursor", "loreTimed", "sheets", "sheetHistory", "tablesMigrated", "tables", "tableData"]);
   const loadSessionState = async (sessionId) => {
     try {
-      const s = JSON.parse(await readFile7(join8(dshHome, "rp", "state", `${sessionId}.json`), "utf8"));
+      const s = JSON.parse(await readFile8(join10(dshHome, "rp", "state", `${sessionId}.json`), "utf8"));
       if (s.state !== void 0 && (s.state === null || typeof s.state !== "object")) s.state = void 0;
       if (s && typeof s === "object" && !Object.keys(s).some((k) => STATE_RESERVED_KEYS.has(k))) {
         return { variables: s };
@@ -16738,11 +18129,11 @@ function apply(ctx, _config) {
     }
   };
   const saveSessionState = async (sessionId, state) => {
-    await mkdir5(join8(dshHome, "rp", "state"), { recursive: true });
-    const path = join8(dshHome, "rp", "state", `${sessionId}.json`);
+    await mkdir6(join10(dshHome, "rp", "state"), { recursive: true });
+    const path = join10(dshHome, "rp", "state", `${sessionId}.json`);
     let merged = state;
     try {
-      const latest = JSON.parse(await readFile7(path, "utf8"));
+      const latest = JSON.parse(await readFile8(path, "utf8"));
       if (latest && typeof latest === "object" && !Array.isArray(latest)) {
         merged = { ...latest, ...state };
       }
@@ -16803,7 +18194,7 @@ function apply(ctx, _config) {
   };
   const retainedTables = /* @__PURE__ */ new WeakMap();
   const slotPublished = /* @__PURE__ */ new WeakMap();
-  const SLOT_ROUTING = !existsSync(join8(dshHome, "rp", "slot-routing-OFF"));
+  const SLOT_ROUTING = !existsSync(join10(dshHome, "rp", "slot-routing-OFF"));
   const publishSlots = (agent, sections) => {
     if (!SLOT_ROUTING) return;
     const prev = slotPublished.get(agent)?.sections ?? [];
@@ -16814,14 +18205,14 @@ function apply(ctx, _config) {
   const loadVarScopeTree = async (scope, slug, sid) => {
     try {
       if (scope === "global") {
-        const p2 = JSON.parse(await readFile7(join8(dshHome, "rp", "variables", "global.json"), "utf8"));
+        const p2 = JSON.parse(await readFile8(join10(dshHome, "rp", "variables", "global.json"), "utf8"));
         return p2 && typeof p2 === "object" && !Array.isArray(p2) ? p2 : {};
       }
       if (scope === "character") {
-        const p2 = JSON.parse(await readFile7(join8(dshHome, "rp", slug, "variables.json"), "utf8"));
+        const p2 = JSON.parse(await readFile8(join10(dshHome, "rp", slug, "variables.json"), "utf8"));
         return p2 && typeof p2 === "object" && !Array.isArray(p2) ? p2 : {};
       }
-      const p = JSON.parse(await readFile7(join8(dshHome, "rp", "state", `${sid}.json`), "utf8"));
+      const p = JSON.parse(await readFile8(join10(dshHome, "rp", "state", `${sid}.json`), "utf8"));
       const v = p?.variables;
       return v && typeof v === "object" && !Array.isArray(v) ? v : {};
     } catch {
@@ -16842,29 +18233,54 @@ function apply(ctx, _config) {
         getVar: (path) => readVarPath(chatVars, path) ?? readVarPath(charVars, path) ?? readVarPath(globalVars, path),
         stableSeed: sid ? `rp-${sid}` : `rp-${slug}`
       });
-      if (r.writes.length > 0 && sid) {
-        const stateFile = join8(dshHome, "rp", "state", `${sid}.json`);
-        let whole = {};
-        try {
-          const parsed = JSON.parse(await readFile7(stateFile, "utf8"));
-          if (parsed && typeof parsed === "object") whole = parsed;
-        } catch {
+      if (r.writes.length > 0) {
+        const globalWrites = r.writes.filter((w) => w.scope === "global");
+        const chatWrites = r.writes.filter((w) => w.scope !== "global");
+        if (globalWrites.length > 0) {
+          const globalFile = join10(dshHome, "rp", "variables", "global.json");
+          let gtree = {};
+          try {
+            const parsed = JSON.parse(await readFile8(globalFile, "utf8"));
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) gtree = parsed;
+          } catch {
+          }
+          const gUndo = [];
+          for (const w of globalWrites) {
+            gUndo.push(makeUndoEntry("global", "", w.path, gtree));
+            gtree = writeVarPath(gtree, w.path, w.value);
+          }
+          if (sid) await appendUndoEntries(dshHome, sid, gUndo);
+          await mkdir6(dirname8(globalFile), { recursive: true });
+          await writeFile4(globalFile, JSON.stringify(gtree), "utf8");
         }
-        let vars = whole.variables && typeof whole.variables === "object" && !Array.isArray(whole.variables) ? whole.variables : {};
-        const undoSeq = [];
-        for (const w of r.writes) {
-          undoSeq.push(makeUndoEntry("chat", "", w.path, vars));
-          vars = writeVarPath(vars, w.path, w.value);
+        if (chatWrites.length > 0 && sid) {
+          const stateFile = join10(dshHome, "rp", "state", `${sid}.json`);
+          let whole = {};
+          try {
+            const parsed = JSON.parse(await readFile8(stateFile, "utf8"));
+            if (parsed && typeof parsed === "object") whole = parsed;
+          } catch {
+          }
+          let vars = whole.variables && typeof whole.variables === "object" && !Array.isArray(whole.variables) ? whole.variables : {};
+          const undoSeq = [];
+          for (const w of chatWrites) {
+            undoSeq.push(makeUndoEntry("chat", "", w.path, vars));
+            vars = writeVarPath(vars, w.path, w.value);
+          }
+          await appendUndoEntries(dshHome, sid, undoSeq);
+          whole.variables = vars;
+          await mkdir6(dirname8(stateFile), { recursive: true });
+          await writeFile4(stateFile, JSON.stringify(whole), "utf8");
         }
-        await appendUndoEntries(dshHome, sid, undoSeq);
-        whole.variables = vars;
-        await mkdir5(dirname6(stateFile), { recursive: true });
-        await writeFile4(stateFile, JSON.stringify(whole), "utf8");
       }
       let out = r.text;
       if (/\{\{\s*(?:tableData|tablePrompt|GET::)/i.test(out)) {
-        const { sheets } = await loadSheets(dshHome, sid);
-        out = expandTableMacros(out, sheets);
+        try {
+          const { sheets } = await loadSheets(dshHome, sid);
+          out = expandTableMacros(out, sheets);
+        } catch (e) {
+          console.log(`[dsht-rp] \u8868\u683C\u5B8F\u8DF3\u8FC7\uFF08sheets \u8BFB\u53D6\u5931\u8D25\uFF0C\u5176\u4F59\u5B8F\u7167\u5E38\u5C55\u5F00\uFF09\uFF1A${e.message}`);
+        }
       }
       if (r.unknownMacros.length > 0) {
         console.log(`[dsht-rp] macro expand: writes=${r.writes.length} unknown=${r.unknownMacros.length}\uFF08\u539F\u6837\u4FDD\u7559\uFF09`);
@@ -16878,7 +18294,7 @@ function apply(ctx, _config) {
   const loadRpJson = async (slug, signal) => {
     try {
       signal.throwIfAborted();
-      const text = await readFile7(join8(dshHome, "rp", slug, "rp.json"), "utf8");
+      const text = await readFile8(join10(dshHome, "rp", slug, "rp.json"), "utf8");
       const parsed = JSON.parse(text);
       if (parsed?.schemaVersion !== 1 || !Array.isArray(parsed.books)) {
         console.log(`[dsht-rp] rp.json invalid: ${slug}`);
@@ -16963,7 +18379,51 @@ ${memoryText}`
           const tablesText = renderTablePrompt(active);
           if (tablesText) out.push({ name: "dsht-memory:slot:tables", order: SLOT_ORDERS.tables, text: tablesText });
         }
-      } catch {
+      } catch (e) {
+        console.log(`[dsht-rp] \u8868\u683C\u69FD\u4F4D\u8DF3\u8FC7\uFF08sheets \u8BFB\u53D6\u5931\u8D25\uFF09\uFF1A${e.message}`);
+      }
+      try {
+        let pj = preparedPromptProjections.get(sid);
+        if (pj === void 0) {
+          try {
+            const all = await mergedRegex(rp, new AbortController().signal, sid);
+            pj = { slug, scripts: all.filter((s) => s.promptOnly === true) };
+            preparedPromptProjections.set(sid, pj);
+          } catch {
+            pj = void 0;
+          }
+        }
+        if (pj !== void 0 && pj.scripts.length > 0) {
+          const msgs = agent.session.deriveMessages();
+          if (msgs.length > 0) {
+            const hits = [];
+            const regexIdentity = await resolveIdentity(dshHome, slug);
+            const projected = applyPromptRegexes(msgs, pj.scripts, hits, "prompt", {
+              user: regexIdentity.user,
+              char: regexIdentity.char || rp.macros.char
+            });
+            if (hits.length > 0) {
+              const changed = [];
+              for (let i = 0; i < projected.length; i++) {
+                const a = messageText(msgs[i]);
+                const b = messageText(projected[i]);
+                if (a !== b) changed.push(b);
+              }
+              if (changed.length > 0) {
+                out.push({
+                  name: "dsht-rp:slot:prompt-projection",
+                  order: SLOT_ORDERS.projectedPrompt,
+                  text: `\u3010\u751F\u6210\u671F\u6B63\u5219\u6295\u5F71\u3011\uFF08\u4EE5\u4E0B ${changed.length} \u6BB5\u4E3A\u7ECF promptOnly \u6B63\u5219\u5904\u7406\u540E\u7684\u6700\u7EC8\u6587\u672C\uFF0C\u4E0E\u804A\u5929\u8BB0\u5F55\u663E\u793A\u7684\u539F\u6587\u53EF\u80FD\u4E0D\u540C\uFF1B\u547D\u4E2D\u811A\u672C\uFF1A${hits.map((h) => h.scriptName).join("\u3001")}\uFF09
+
+` + changed.join("\n\n")
+                });
+                console.log(`[dsht-rp] promptOnly \u6295\u5F71\u5165 system \u69FD\u4F4D\uFF1A${changed.length} \u6BB5\u547D\u4E2D\uFF08${hits.map((h) => h.scriptName).join("\u3001")}\uFF09`);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.log(`[dsht-rp] promptOnly \u6295\u5F71\u69FD\u4F4D\u5931\u8D25\uFF08\u8DF3\u8FC7\uFF09\uFF1A${e.message}`);
       }
     } catch (e) {
       console.log(`[dsht-rp] D-3 slot \u5185\u5BB9\u6536\u96C6\u5931\u8D25\uFF08\u4E0D\u963B\u585E\uFF09\uFF1A${e.message}`);
@@ -16973,7 +18433,7 @@ ${memoryText}`
   const loadBook = async (lorePath, signal) => {
     try {
       signal.throwIfAborted();
-      const text = await readFile7(join8(dshHome, lorePath), "utf8");
+      const text = await readFile8(join10(dshHome, lorePath), "utf8");
       const parsed = JSON.parse(text);
       const entries = (Array.isArray(parsed?.entries) ? parsed.entries : []).map((e) => ({
         ...e,
@@ -16992,14 +18452,14 @@ ${memoryText}`
   const WELCOME_SLUG = "_start";
   const ensureWelcomeWorkspace = async () => {
     try {
-      const startDir = join8(dshHome, "rp", WELCOME_SLUG);
-      const rpJsonPath = join8(startDir, "rp.json");
+      const startDir = join10(dshHome, "rp", WELCOME_SLUG);
+      const rpJsonPath = join10(startDir, "rp.json");
       try {
-        await readFile7(rpJsonPath, "utf8");
+        await readFile8(rpJsonPath, "utf8");
         return;
       } catch {
       }
-      await mkdir5(startDir, { recursive: true });
+      await mkdir6(startDir, { recursive: true });
       await writeFile4(rpJsonPath, JSON.stringify({
         schemaVersion: 1,
         characterName: "DSHTavern \u5411\u5BFC",
@@ -17009,7 +18469,7 @@ ${memoryText}`
         firstMes: ""
       }, null, 1), "utf8");
       await writeFile4(
-        join8(startDir, "README.md"),
+        join10(startDir, "README.md"),
         "# DSHTavern \u5411\u5BFC\n\n\u65B0\u624B\u5F15\u5BFC\u5DE5\u4F5C\u533A\uFF1A\u672C\u4F1A\u8BDD\u9996\u6761\u6D88\u606F\u662F\u4E0A\u624B\u6307\u5F15\uFF1B\u5BFC\u5165\u6458\u8981\u4E5F\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\u3002\n",
         "utf8"
       );
@@ -17033,10 +18493,17 @@ ${memoryText}`
         "",
         "\u6709\u4EC0\u4E48\u60F3\u8C03\u6574\u7684\uFF0C\u76F4\u63A5\u5728\u8FD9\u4E2A\u4F1A\u8BDD\u91CC\u7559\u8A00\u5373\u53EF\u2014\u2014\u795D\u73A9\u5F97\u5F00\u5FC3\uFF01"
       ].join("\n");
+      const wsCwd = normAndroidPath(await realpath2(startDir).catch(() => startDir));
       const lines = [
-        JSON.stringify({ type: "session", version: 0, id: sessionId, createdAt, cwd: `rp/${WELCOME_SLUG}`, delegationDepth: 0 }),
+        JSON.stringify({ type: "session", version: 0, id: sessionId, createdAt, cwd: wsCwd, delegationDepth: 0 }),
         ev("turn/start", 0, { turn: 1 }),
         ev("step/start", 1, { turn: 1, step: 1 }),
+        // ⚠️ 本行**故意不写 `stream`**：此处产出的是 **v0** 文件（version: 0），
+        // v0 的 assistant/message 必需成员是 `["turn","step","message"]`
+        // （`dsh-session-format-v0-to-v1/lib/index.js:42-45`），**带上 stream 反而是非法成员**；
+        // `stream` 由 v1→v2 迁移器从 assistant/chunk 累积生成
+        // （`v1-to-v2/lib/index.js:752-768`）。**live 会话（v2+）的写入必须带 stream**
+        // —— 代次不同则字段不同，勿"顺手统一"（见 session-write.ts `assistantSettlement`）。
         ev("assistant/message", 2, {
           turn: 1,
           step: 1,
@@ -17050,9 +18517,9 @@ ${memoryText}`
         ev("step/end", 3, { turn: 1, step: 1 }),
         ev("turn/end", 4, { turn: 1, reason: { kind: "completed" } })
       ];
-      const sessionDir = join8(dshHome, "sessions", projectKey(`rp/${WELCOME_SLUG}`), sessionId);
-      await mkdir5(sessionDir, { recursive: true });
-      await atomicWriteFile(join8(sessionDir, "session.jsonl"), lines.join("\n") + "\n");
+      const sessionDir = join10(dshHome, "sessions", projectKey(wsCwd), sessionId);
+      await mkdir6(sessionDir, { recursive: true });
+      await atomicWriteFile(join10(sessionDir, "session.jsonl"), lines.join("\n") + "\n");
       console.log("[dsht-rp] welcome workspace created (rp/_start + guide session)");
     } catch (e) {
       console.log(`[dsht-rp] welcome workspace skipped: ${e.message}`);
@@ -17076,15 +18543,15 @@ ${memoryText}`
           continue;
         }
         try {
-          const content = readFileSync(new URL(e.name, srcUrl), "utf8");
-          const abs = join8(dstDir, ...childRel.split("/"));
+          const content = readFileSync2(new URL(e.name, srcUrl), "utf8");
+          const abs = join10(dstDir, ...childRel.split("/"));
           let same = false;
           try {
-            same = await readFile7(abs, "utf8") === content;
+            same = await readFile8(abs, "utf8") === content;
           } catch {
           }
           if (same) continue;
-          await mkdir5(dirname6(abs), { recursive: true });
+          await mkdir6(dirname8(abs), { recursive: true });
           await writeFile4(abs, content, "utf8");
           written++;
         } catch {
@@ -17096,8 +18563,8 @@ ${memoryText}`
   };
   const ensureMigrationAssets = async () => {
     try {
-      const skillN = await syncAssetTree("skills/st-migration", join8(dshHome, "skills", "st-migration"));
-      const presetN = await syncAssetTree("agent-presets/dsht-adapter", join8(dshHome, ".agent-presets", "dsht-adapter"));
+      const skillN = await syncAssetTree("skills/st-migration", join10(dshHome, "skills", "st-migration"));
+      const presetN = await syncAssetTree("agent-presets/dsht-adapter", join10(dshHome, ".agent-presets", "dsht-adapter"));
       if (skillN + presetN > 0) console.log(`[dsht-rp] migration assets synced: st-migration=${skillN} dsht-adapter=${presetN}`);
     } catch (e) {
       console.log(`[dsht-rp] migration assets sync skipped: ${e.message}`);
@@ -17116,25 +18583,25 @@ ${memoryText}`
         `order: 100`,
         ``
       ].join("\n") : f.content;
-      const abs = join8(dshHome, f.path.replace(`.agent-presets/${preset.id}/`, `.agent-presets/${dirId}/`));
-      await mkdir5(dirname6(abs), { recursive: true });
+      const abs = join10(dshHome, f.path.replace(`.agent-presets/${preset.id}/`, `.agent-presets/${dirId}/`));
+      await mkdir6(dirname8(abs), { recursive: true });
       await writeFile4(abs, content, "utf8");
     }
     if (dirId !== preset.id) {
-      await rm4(join8(dshHome, ".agent-presets", preset.id), { recursive: true, force: true });
+      await rm4(join10(dshHome, ".agent-presets", preset.id), { recursive: true, force: true });
     }
     console.log(`[dsht-rp] R5 preset synced \u2192 .agent-presets/${dirId}\uFF08${preset.displayName}\uFF09`);
   };
   const removeRpPresetAgent = async (id) => {
     if (!id.startsWith(AGENT_SYNC_PREFIX)) return;
-    await rm4(join8(dshHome, ".agent-presets", agentPresetDirId(id)), { recursive: true, force: true });
-    await rm4(join8(dshHome, ".agent-presets", id), { recursive: true, force: true });
+    await rm4(join10(dshHome, ".agent-presets", agentPresetDirId(id)), { recursive: true, force: true });
+    await rm4(join10(dshHome, ".agent-presets", id), { recursive: true, force: true });
   };
   const ensureRpPresetSync = async () => {
     try {
       let dirs = [];
       try {
-        dirs = await readdir5(join8(dshHome, "rp-presets"));
+        dirs = await readdir5(join10(dshHome, "rp-presets"));
       } catch {
         return;
       }
@@ -17142,11 +18609,11 @@ ${memoryText}`
       for (const id of dirs.sort()) {
         if (!id.startsWith(AGENT_SYNC_PREFIX)) continue;
         try {
-          const preset = JSON.parse(await readFile7(join8(dshHome, "rp-presets", id, "preset.json"), "utf8"));
+          const preset = JSON.parse(await readFile8(join10(dshHome, "rp-presets", id, "preset.json"), "utf8"));
           if (preset?.schemaVersion !== 1 || preset.id !== id) continue;
           const dirId = agentPresetDirId(id);
           try {
-            const yml = await readFile7(join8(dshHome, ".agent-presets", dirId, "agent.cordis.yml"), "utf8");
+            const yml = await readFile8(join10(dshHome, ".agent-presets", dirId, "agent.cordis.yml"), "utf8");
             if (preset.path === "agent" && !isDshtRpAgentComposition(yml)) {
               throw new Error("stale capability axis");
             }
@@ -17170,7 +18637,7 @@ ${memoryText}`
   void migrateCardAgentPresets();
   void (async () => {
     try {
-      const disk = JSON.parse(await readFile7(join8(dshHome, "rp", "macros.json"), "utf8"));
+      const disk = JSON.parse(await readFile8(join10(dshHome, "rp", "macros.json"), "utf8"));
       hydrateCustomMacros(disk);
       const n = Object.keys(disk).length;
       if (n > 0) console.log(`[dsht-rp] custom macros hydrated: ${n} \u4E2A\uFF08${Object.keys(disk).join(", ")}\uFF09`);
@@ -17181,14 +18648,19 @@ ${memoryText}`
     const n = r.repaired.length;
     if (n > 0) logLine(`\u542F\u52A8\u5373\u4FEE\uFF1Aseq \u65AD\u53F7\u4FEE\u590D ${n} \u4E2A\u4F1A\u8BDD`);
   }).catch((e) => console.log(`[dsht-rp] startup repair skipped: ${e.message}`));
+  void repairSessionCwds().then((r) => {
+    const n = r.repaired.length;
+    const errs = r.errors.length;
+    if (n > 0 || errs > 0) logLine(`\u542F\u52A8\u5373\u4FEE\uFF1Asession cwd \u89C4\u8303\u5316 ${n} \u4E2A\uFF08\u5931\u8D25 ${errs}\uFF09`);
+  }).catch((e) => console.log(`[dsht-rp] startup cwd repair skipped: ${e.message}`));
   void (async () => {
     let fixed = 0;
     for (const h of await scanSessionHeaders2()) {
-      const file = join8(dshHome, "sessions", h.project, h.sdir, "session.jsonl");
+      const file = h.file;
       try {
         const stat0 = await stat(file);
         if (stat0.size > 64 * 1024 * 1024) continue;
-        const content = await readFile7(file, "utf8");
+        const content = await readFile8(file, "utf8");
         const r = repairDuplicateTurnStarts(content);
         if (r.renumberedTurns === 0) continue;
         await atomicWriteFile(`${file}.bak`, content);
@@ -17309,10 +18781,10 @@ ${memoryText}`
         const session = exec.agent?.session;
         const sid = session ? String(session.id ?? "") : "";
         if (scope === "global") {
-          const g = JSON.parse(await readFile7(join8(dshHome, "rp", "state", "global.json"), "utf8").catch(() => "{}"));
+          const g = JSON.parse(await readFile8(join10(dshHome, "rp", "state", "global.json"), "utf8").catch(() => "{}"));
           const next2 = applyStatePatches(g, [{ op: "replace", path, value }]);
-          await mkdir5(join8(dshHome, "rp", "state"), { recursive: true });
-          await writeFile4(join8(dshHome, "rp", "state", "global.json"), JSON.stringify(next2), "utf8");
+          await mkdir6(join10(dshHome, "rp", "state"), { recursive: true });
+          await writeFile4(join10(dshHome, "rp", "state", "global.json"), JSON.stringify(next2), "utf8");
           console.log(`[dsht-rp] state_update(global): ${path}`);
           return `global state updated: ${path}`;
         }
@@ -17464,6 +18936,15 @@ ${text}`;
         }
       }
       const resolved = await resolveAgentPreset(agent);
+      if (rpSlugFromCwd(agent.session.header.cwd, dshHome)) {
+        if (shouldStripRpTools(resolved?.preset.path)) {
+          const stripped = stripAssemblyTools(assembly);
+          if (stripped.removed.length > 0) {
+            assembly = stripped.assembly;
+            console.log(`[dsht-rp] D-6 \u5DE5\u5177\u4FEE\u526A\uFF1A\u79FB\u9664 ${stripped.removed.length} \u4E2A\u5DE5\u5177\u5B9A\u4E49\uFF08\u5BF9\u9F50 TT \u65E0 tools \u5B57\u6BB5\uFF1Bpath=${resolved?.preset.path ?? "none"}\uFF09`);
+          }
+        }
+      }
       if (!resolved) return assembly;
       const { slug, rp, preset, sessionId } = resolved;
       const st = sessionId ? await loadSessionState(sessionId) : {};
@@ -17495,37 +18976,48 @@ ${text}`
     }
   });
   try {
-    if (existsSync(join8(dshHome, "rp", "golden", "dsht-ENABLED")) && !globalThis.__dshtGoldenFetchPatched) {
+    if (existsSync(join10(dshHome, "rp", "golden", "dsht-ENABLED")) && !globalThis.__dshtGoldenFetchPatched) {
       ;
       globalThis.__dshtGoldenFetchPatched = true;
-      const gdir0 = join8(dshHome, "rp", "golden", "dsht");
-      mkdirSync(gdir0, { recursive: true });
-      const seqFile0 = join8(gdir0, "llm-seq.txt");
+      const gdir0 = join10(dshHome, "rp", "golden", "dsht");
+      mkdirSync2(gdir0, { recursive: true });
+      const seqFile0 = join10(gdir0, "llm-seq.txt");
       const gFetch = globalThis.fetch.bind(globalThis);
       globalThis.fetch = (async (input, init) => {
+        const url0 = typeof input === "string" ? input : input?.url ?? String(input);
         try {
-          const url = typeof input === "string" ? input : input?.url ?? String(input);
           const body = typeof init === "object" && init !== null ? init.body : void 0;
-          if (typeof body === "string" && body.length > 200 && /chat\/completions|\/v1\/messages|provider\/v1/i.test(url)) {
+          if (typeof body === "string" && body.length > 200 && /chat\/completions|\/v1\/messages|provider\/v1/i.test(url0)) {
             let seq = 0;
             try {
-              seq = parseInt(readFileSync(seqFile0, "utf8").trim() || "0", 10) || 0;
+              seq = parseInt(readFileSync2(seqFile0, "utf8").trim() || "0", 10) || 0;
             } catch {
             }
             seq += 1;
-            writeFileSync(join8(gdir0, `llm-${String(seq).padStart(3, "0")}.json`), JSON.stringify({
+            writeFileSync2(join10(gdir0, `llm-${String(seq).padStart(3, "0")}.json`), JSON.stringify({
               tag: "provider_llm_request",
               seq,
               env: "dshtavern",
               ts: (/* @__PURE__ */ new Date()).toISOString(),
-              url: url.slice(0, 200),
+              url: url0.slice(0, 200),
               data: { body: JSON.parse(body) }
             }, null, 1));
-            writeFileSync(seqFile0, String(seq));
+            writeFileSync2(seqFile0, String(seq));
           }
         } catch {
         }
-        return gFetch(input, init);
+        const isLlmRoute = /chat\/completions|\/v1\/messages|\/models|provider\/v1/i.test(url0);
+        if (isLlmRoute) console.log(`[dsht-rp] outbound fetch \u2192 ${url0.slice(0, 160)}`);
+        try {
+          return await gFetch(input, init);
+        } catch (e) {
+          if (isLlmRoute) {
+            const err = e;
+            const cause = err.cause;
+            console.log(`[dsht-rp] outbound fetch \u5931\u8D25 \u2190 ${url0.slice(0, 160)} :: ${err.name}: ${err.message}` + (cause ? ` | cause=${cause.code ?? ""} ${cause.message ?? ""}` : ""));
+          }
+          throw e;
+        }
       });
       console.log("[dsht-rp] golden: provider fetch \u62E6\u622A\u5DF2\u542F\u7528\uFF08llm dump \u2192 rp/golden/dsht/\uFF09");
     }
@@ -17550,17 +19042,17 @@ ${text}`
         delete out.reasoningEffort;
       }
       try {
-        if (existsSync(join8(dshHome, "rp", "golden", "dsht-ENABLED"))) {
-          const gdir = join8(dshHome, "rp", "golden", "dsht");
-          await mkdir5(gdir, { recursive: true });
-          const seqFile = join8(gdir, "seq.txt");
+        if (existsSync(join10(dshHome, "rp", "golden", "dsht-ENABLED"))) {
+          const gdir = join10(dshHome, "rp", "golden", "dsht");
+          await mkdir6(gdir, { recursive: true });
+          const seqFile = join10(gdir, "seq.txt");
           let seq = 0;
           try {
-            seq = parseInt((await readFile7(seqFile, "utf8")).trim() || "0", 10) || 0;
+            seq = parseInt((await readFile8(seqFile, "utf8")).trim() || "0", 10) || 0;
           } catch {
           }
           seq += 1;
-          await writeFile4(join8(gdir, `dump-${String(seq).padStart(3, "0")}.json`), JSON.stringify({
+          await writeFile4(join10(gdir, `dump-${String(seq).padStart(3, "0")}.json`), JSON.stringify({
             tag: "agent_request_config",
             seq,
             env: "dshtavern",
@@ -17577,16 +19069,36 @@ ${text}`
       return config;
     }
   });
+  const preparedPromptProjections = /* @__PURE__ */ new Map();
+  const projectedPromptHits = /* @__PURE__ */ new Map();
   ctx.on("llm/stream", (options, next) => {
     try {
       const o = options;
-      const msgs = Array.isArray(o.messages) ? o.messages : [];
-      const head = msgs.slice(0, 3).map((m) => {
+      const msgs0 = Array.isArray(o.messages) ? o.messages : [];
+      const head = msgs0.slice(0, 3).map((m) => {
         const mm = m;
         const c = typeof mm.content === "string" ? mm.content : JSON.stringify(mm.content ?? "");
         return `${String(mm.role ?? "?")}:${c.length}ch`;
       });
-      console.log(`[dsht-rp] llm/stream \u89C2\u6D4B: provider=${String(o.provider ?? "")} model=${String(o.model ?? "")} messages=${msgs.length} system=${typeof o.system === "string" ? o.system.length + "ch" : "(none)"} tools=${Array.isArray(o.tools) ? o.tools.length : 0} maxTokens=${String(o.maxTokens ?? "")} temp=${String(o.temperature ?? "")} purpose=${String(o.purpose ?? "")} sessionId=${String(o.sessionId ?? "")} | \u99963\u6761: ${head.join(" ")}`);
+      console.log(`[dsht-rp] llm/stream \u89C2\u6D4B: provider=${String(o.provider ?? "")} model=${String(o.model ?? "")} messages=${msgs0.length} system=${typeof o.system === "string" ? o.system.length + "ch" : "(none)"} tools=${Array.isArray(o.tools) ? o.tools.length : 0} maxTokens=${String(o.maxTokens ?? "")} temp=${String(o.temperature ?? "")} purpose=${String(o.purpose ?? "")} sessionId=${String(o.sessionId ?? "")} | \u99963\u6761: ${head.join(" ")}`);
+      const proj = preparedPromptProjections.get(String(o.sessionId ?? ""));
+      if (proj !== void 0 && proj.scripts.length > 0 && msgs0.length > 0) {
+        const hits = [];
+        const projected = applyPromptRegexes(msgs0, proj.scripts, hits, "prompt");
+        if (hits.length > 0) {
+          projectedPromptHits.set(String(o.sessionId ?? ""), {
+            at: Date.now(),
+            hits: hits.map((h) => h.scriptName),
+            chars: projected.reduce((n, m) => {
+              const c = m.content;
+              if (typeof c === "string") return n + c.length;
+              if (Array.isArray(c)) return n + c.reduce((k, b) => k + (typeof b.text === "string" ? b.text.length : 0), 0);
+              return n;
+            }, 0)
+          });
+          console.log(`[dsht-rp] promptOnly \u6B63\u5219\u6295\u5F71: ${hits.length} \u6761\u547D\u4E2D\uFF08${hits.map((h) => h.scriptName).join("\u3001")}\uFF09\u2014\u2014 \u7ECF system \u69FD\u4F4D\u751F\u6548\uFF0C\u672A\u843D\u76D8`);
+        }
+      }
     } catch (e) {
       console.log(`[dsht-rp] llm/stream \u89C2\u6D4B\u5931\u8D25: ${e.message}`);
     }
@@ -17598,31 +19110,35 @@ ${text}`
     const { agent, messages, signal } = raw;
     const slug = rpSlugFromCwd(agent.session.header.cwd, dshHome);
     console.log(`[dsht-rp] pre-step: cwd=${agent.session.header.cwd ?? "(none)"} slug=${slug ?? "(not-rp)"} turn=${raw.turn}`);
-    try {
-      if (existsSync(join8(dshHome, "rp", "golden", "dsht-ENABLED"))) {
-        const gdir = join8(dshHome, "rp", "golden", "dsht");
-        await mkdir5(gdir, { recursive: true });
-        const seqFile = join8(gdir, "msg-seq.txt");
+    const dumpPrestepMessages = async (a, msgs, turn) => {
+      try {
+        if (!existsSync(join10(dshHome, "rp", "golden", "dsht-ENABLED"))) return;
+        const gdir = join10(dshHome, "rp", "golden", "dsht");
+        await mkdir6(gdir, { recursive: true });
+        const seqFile = join10(gdir, "msg-seq.txt");
         let seq = 0;
         try {
-          seq = parseInt((await readFile7(seqFile, "utf8")).trim() || "0", 10) || 0;
+          seq = parseInt((await readFile8(seqFile, "utf8")).trim() || "0", 10) || 0;
         } catch {
         }
         seq += 1;
-        await writeFile4(join8(gdir, `msg-${String(seq).padStart(3, "0")}.json`), JSON.stringify({
+        await writeFile4(join10(gdir, `msg-${String(seq).padStart(3, "0")}.json`), JSON.stringify({
           tag: "agent_prestep_messages",
           seq,
           env: "dshtavern",
           ts: (/* @__PURE__ */ new Date()).toISOString(),
-          cwd: agent.session.header.cwd ?? null,
-          turn: raw.turn ?? null,
-          data: { messages }
+          cwd: a.session.header.cwd ?? null,
+          turn: turn ?? null,
+          data: { messages: msgs }
         }, null, 1));
         await writeFile4(seqFile, String(seq));
+      } catch {
       }
-    } catch {
+    };
+    if (slug === null) {
+      await dumpPrestepMessages(agent, decision.messages, raw.turn ?? null);
+      return decision;
     }
-    if (slug === null) return decision;
     try {
       signal.throwIfAborted();
       const rp = await loadRpJson(slug, signal);
@@ -17702,7 +19218,8 @@ ${memoryText}`;
                   if (!SLOT_ROUTING) d = withTablesSnapshot(d, tablesText);
                 }
               }
-            } catch {
+            } catch (e) {
+              console.log(`[dsht-rp] \u8868\u683C\u5FEB\u7167\u8DF3\u8FC7\uFF08sheets \u8BFB\u53D6\u5931\u8D25\uFF0C\u4E0D\u963B\u585E\uFF09\uFF1A${e.message}`);
             }
           }
           const effectivePresetId = typeof st.presetId === "string" && st.presetId ? st.presetId : await resolveActiveStPresetId();
@@ -17747,22 +19264,36 @@ ${memoryText}`;
       };
       const viaAssembleHook = async (dp) => {
         const dd = await dp;
-        return await ctx.waterfall(
+        const out = await ctx.waterfall(
           null,
           "dsht-rp/assemble",
           { agent, sessionId: traceKey, slug, turn: turnNo, decision: dd },
           (p) => Promise.resolve(p.decision)
         );
+        await dumpPrestepMessages(agent, out.messages, turnNo);
+        return out;
       };
       const sessionIdForRegex = String(agent.session.id ?? "");
       const regexScripts = await mergedRegex(rp, signal, sessionIdForRegex);
+      if (sessionIdForRegex) {
+        preparedPromptProjections.set(sessionIdForRegex, {
+          slug: slug ?? "",
+          scripts: regexScripts.filter((s) => s.promptOnly === true)
+        });
+      }
       const regexHits = [];
       ctx.emit(null, "dsht-rp/turn", { sessionId: sessionIdForRegex, slug, turn: turnNo });
       let batch = await ctx.waterfall(
         null,
         "dsht-rp/regex",
         { agent, sessionId: sessionIdForRegex, slug, turn: turnNo, messages: decision.messages, hits: regexHits },
-        (p) => applyPromptRegexes(p.messages, regexScripts, regexHits)
+        (p) => applyPromptRegexes(
+          p.messages,
+          regexScripts,
+          regexHits,
+          "persist",
+          { user: userName, char: rp.macros.char || rp.characterName }
+        )
       );
       try {
         const ejs = await loadEjsSettings(dshHome);
@@ -17788,7 +19319,12 @@ ${memoryText}`;
           });
           if (idxs.length > 0) {
             const stMsgs = idxs.map((i) => ({ mes: messageText(batch[i]), role: batch[i].role }));
-            const r = ejs.sandbox === true ? renderMessagesSandbox("", ejsCtx, stMsgs) : { ok: true, messages: renderMessages("", ejsCtx, stMsgs) };
+            let r;
+            if (ejs.sandbox === true) {
+              r = renderMessagesSandbox("", ejsCtx, stMsgs);
+            } else {
+              r = asSandboxMessagesResult(renderMessages("", ejsCtx, stMsgs));
+            }
             if (r.ok) {
               batch = [...batch];
               idxs.forEach((origIdx, k) => {
@@ -17982,8 +19518,8 @@ ${rp.firstMes}
           if (inj.length > 0) console.log(`[dsht-rp] ejs inject: ${inj.length} \u6761 @Inject \u6307\u4EE4\u6CE8\u5165`);
         }
         if (stateSid) {
-          const injFile = join8(dshHome, "rp", "th-injections", `${stateSid}.json`);
-          const injList = await readFile7(injFile, "utf8").then((t) => JSON.parse(t)).catch(() => []);
+          const injFile = join10(dshHome, "rp", "th-injections", `${stateSid}.json`);
+          const injList = await readFile8(injFile, "utf8").then((t) => JSON.parse(t)).catch(() => []);
           if (Array.isArray(injList) && injList.length > 0) {
             const onceKeys = [];
             const sorted = [...injList].sort((a, b) => Number(b.order ?? 100) - Number(a.order ?? 100));
@@ -18005,7 +19541,7 @@ ${rp.firstMes}
             }
             if (onceKeys.length > 0) {
               const rest = injList.filter((e) => !(e.once === true && typeof e.key === "string" && onceKeys.includes(e.key)));
-              await mkdir5(dirname6(injFile), { recursive: true });
+              await mkdir6(dirname8(injFile), { recursive: true });
               await atomicWriteFile(injFile, JSON.stringify(rest));
             }
             console.log(`[dsht-rp] th injects: ${sorted.length} \u6761\u9152\u9986\u52A9\u624B\u6CE8\u5165\uFF08once \u6D88\u8D39 ${onceKeys.length}\uFF09`);
@@ -18067,6 +19603,68 @@ ${rp.firstMes}
       return decision;
     }
   });
+  const buildInfoPayload = async () => {
+    let sentinel = null;
+    try {
+      const runtimeDir = join10(dshHome, "..", "dsh-runtime");
+      const entries = await readdir5(runtimeDir);
+      let maxV = -1;
+      for (const e of entries) {
+        if (!e.startsWith(".installed-v")) continue;
+        const n = Number(e.slice(".installed-v".length));
+        if (Number.isFinite(n) && n > maxV) {
+          maxV = n;
+          sentinel = e;
+        }
+      }
+      if (maxV < 0) sentinel = null;
+    } catch {
+    }
+    let dshVersion = null;
+    try {
+      const pkg = JSON.parse(readFileSync2(join10(dshHome, "..", "dsh-runtime", "node_modules", "@deepseek-ai", "dsh", "package.json"), "utf8"));
+      dshVersion = pkg.version ?? null;
+    } catch {
+    }
+    const env = typeof process !== "undefined" ? process.env : {};
+    const appVersion = typeof env.DSHT_APP_VERSION === "string" && env.DSHT_APP_VERSION.trim() !== "" ? env.DSHT_APP_VERSION.trim() : null;
+    const codeRaw = env.DSHT_APP_VERSION_CODE;
+    const appVersionCode = typeof codeRaw === "string" && /^\d+$/.test(codeRaw) ? Number(codeRaw) : null;
+    const appAbi = typeof env.DSHT_APP_ABI === "string" && env.DSHT_APP_ABI.trim() !== "" ? env.DSHT_APP_ABI.trim() : null;
+    return { sentinel, dshVersion, appVersion, appVersionCode, appAbi, fixTag: "wb-fix-0908" };
+  };
+  const updateCfgPath = () => join10(dshHome, "rp", "update-source.json");
+  const writeUpdateCfg = async (cfg) => {
+    const p = updateCfgPath();
+    await mkdir6(dirname8(p), { recursive: true });
+    await atomicWriteText(p, JSON.stringify(cfg, null, 2));
+  };
+  const readUpdateCfg = async () => {
+    try {
+      const raw = JSON.parse(await readFile8(updateCfgPath(), "utf8"));
+      const source = typeof raw.source === "string" ? raw.source.trim() : "";
+      const kind = raw.kind === "github" || raw.kind === "json" ? raw.kind : "";
+      return { source, kind };
+    } catch {
+      return { source: "", kind: "" };
+    }
+  };
+  const fetchJsonWithTimeout = async (url, ms = 12e3) => {
+    const ac = new AbortController();
+    const timer = setTimeout(() => {
+      ac.abort();
+    }, ms);
+    try {
+      const resp = await fetch(url, {
+        signal: ac.signal,
+        headers: { accept: "application/json", "user-agent": "DSHTavern-update-check" }
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return await resp.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   if (ctx.webServer) {
     const isTrusted = (req) => {
       const host = String(req.headers.host ?? "").toLowerCase();
@@ -18142,19 +19740,19 @@ ${rp.firstMes}
             if (subPath === "/rp/import-batches") {
               const batches = [];
               try {
-                const dirs = await readdir5(join8(dshHome, "rp-import"));
+                const dirs = await readdir5(join10(dshHome, "rp-import"));
                 for (const d of dirs.sort().reverse()) {
                   if (!isValidBatchId(d)) continue;
-                  const dir = join8(dshHome, "rp-import", d);
+                  const dir = join10(dshHome, "rp-import", d);
                   let meta = {};
                   try {
-                    meta = JSON.parse(await readFile7(join8(dir, "meta.json"), "utf8"));
+                    meta = JSON.parse(await readFile8(join10(dir, "meta.json"), "utf8"));
                   } catch {
                   }
                   let hasReport = false;
                   for (const rf of ["migration-report.md", "REPORT.md"]) {
                     try {
-                      await readFile7(join8(dir, rf), "utf8");
+                      await readFile8(join10(dir, rf), "utf8");
                       hasReport = true;
                       break;
                     } catch {
@@ -18162,7 +19760,7 @@ ${rp.firstMes}
                   }
                   let checkpoint = null;
                   try {
-                    checkpoint = parseCheckpointFile(await readFile7(join8(dir, "checkpoint.json"), "utf8"));
+                    checkpoint = parseCheckpointFile(await readFile8(join10(dir, "checkpoint.json"), "utf8"));
                   } catch {
                   }
                   const summary = summarizeCheckpoint(checkpoint);
@@ -18183,7 +19781,7 @@ ${rp.firstMes}
               if (!isValidBatchId(batchId)) return send(400, { error: "batchId required\uFF08?batchId=\uFF09" });
               let checkpoint = null;
               try {
-                checkpoint = parseCheckpointFile(await readFile7(join8(dshHome, "rp-import", batchId, "checkpoint.json"), "utf8"));
+                checkpoint = parseCheckpointFile(await readFile8(join10(dshHome, "rp-import", batchId, "checkpoint.json"), "utf8"));
               } catch {
               }
               return send(200, { batchId, checkpoint, summary: summarizeCheckpoint(checkpoint) });
@@ -18191,19 +19789,19 @@ ${rp.firstMes}
             if (subPath === "/rp/import-progress") {
               const batchId = new URLSearchParams(subQuery).get("batchId") ?? "";
               if (!isValidBatchId(batchId)) return send(400, { error: "batchId required\uFF08?batchId=\uFF09" });
-              const dir = join8(dshHome, "rp-import", batchId);
+              const dir = join10(dshHome, "rp-import", batchId);
               let meta = {};
               try {
-                meta = JSON.parse(await readFile7(join8(dir, "meta.json"), "utf8"));
+                meta = JSON.parse(await readFile8(join10(dir, "meta.json"), "utf8"));
               } catch {
                 return send(404, { error: `\u6279\u6B21\u4E0D\u5B58\u5728\uFF1A${batchId}\uFF08\u5148 import-stage\uFF09` });
               }
               let checkpoint = null;
               try {
-                checkpoint = parseCheckpointFile(await readFile7(join8(dir, "checkpoint.json"), "utf8"));
+                checkpoint = parseCheckpointFile(await readFile8(join10(dir, "checkpoint.json"), "utf8"));
               } catch {
               }
-              const unpacked = join8(dir, "unpacked");
+              const unpacked = join10(dir, "unpacked");
               let preview = getCachedPreview(unpacked);
               if (!preview) {
                 try {
@@ -18220,7 +19818,7 @@ ${rp.firstMes}
               const slug = new URLSearchParams(subQuery).get("slug") ?? "";
               if (!/^[\w.-]{1,80}$/.test(slug)) return send(400, { error: "slug required" });
               try {
-                const buf = await readFile7(join8(dshHome, "rp", slug, "avatar.png"));
+                const buf = await readFile8(join10(dshHome, "rp", slug, "avatar.png"));
                 res.writeHead(200, { "Content-Type": "image/png", "Content-Length": String(buf.length), "Cache-Control": "max-age=3600" });
                 return res.end(buf);
               } catch {
@@ -18232,44 +19830,22 @@ ${rp.firstMes}
               if (!/^[\w.-]{1,80}$/.test(slug)) return send(400, { error: "slug required" });
               let name2 = slug;
               try {
-                const raw = JSON.parse(await readFile7(join8(dshHome, "rp", slug, "rp.json"), "utf8"));
+                const raw = JSON.parse(await readFile8(join10(dshHome, "rp", slug, "rp.json"), "utf8"));
                 if (typeof raw.characterName === "string" && raw.characterName.trim()) name2 = raw.characterName.trim();
               } catch {
               }
               res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "max-age=3600" });
               return res.end(JSON.stringify({ name: name2 }));
             }
-            if (sub === "/rp/build-info") {
-              let sentinel = null;
-              try {
-                const runtimeDir = join8(dshHome, "..", "dsh-runtime");
-                const entries = await readdir5(runtimeDir);
-                let maxV = -1;
-                for (const e of entries) {
-                  if (!e.startsWith(".installed-v")) continue;
-                  const n = Number(e.slice(".installed-v".length));
-                  if (Number.isFinite(n) && n > maxV) {
-                    maxV = n;
-                    sentinel = e;
-                  }
-                }
-                if (maxV < 0) sentinel = null;
-              } catch {
-              }
-              let dshVersion = null;
-              try {
-                const pkg = JSON.parse(readFileSync(join8(dshHome, "..", "dsh-runtime", "node_modules", "@deepseek-ai", "dsh", "package.json"), "utf8"));
-                dshVersion = pkg.version ?? null;
-              } catch {
-              }
-              return send(200, { sentinel, dshVersion, fixTag: "wb-fix-0908" });
+            if (subPath === "/rp/build-info") {
+              return send(200, await buildInfoPayload());
             }
             return sendText(404, "not found", "text/plain");
           }
           if (req.method === "DELETE" && subPath === "/rp/import-checkpoint") {
             const batchId = new URLSearchParams(subQuery).get("batchId") ?? "";
             if (!isValidBatchId(batchId)) return send(400, { error: "batchId required\uFF08?batchId=\uFF09" });
-            await rm4(join8(dshHome, "rp-import", batchId, "checkpoint.json"), { force: true });
+            await rm4(join10(dshHome, "rp-import", batchId, "checkpoint.json"), { force: true });
             logLine(`import-checkpoint: ${batchId} checkpoint \u5DF2\u6E05\u9664\uFF08DELETE\uFF09`);
             return send(200, { ok: true, batchId, cleared: true });
           }
@@ -18292,13 +19868,13 @@ ${rp.firstMes}
               const name2 = nameRaw.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "st-data.zip";
               const rawFile = payload.format === "file";
               const stageBatch = async (batchId2, dir2) => {
-                const unpacked = join8(dir2, "unpacked");
+                const unpacked = join10(dir2, "unpacked");
                 let fileCount = 1;
                 if (!rawFile) {
-                  fileCount = await unpackZipTo(join8(dir2, "source.zip"), unpacked);
+                  fileCount = await unpackZipTo(join10(dir2, "source.zip"), unpacked);
                 }
                 const manifest = await scanImportManifest(unpacked);
-                await writeFile4(join8(dir2, "meta.json"), JSON.stringify({
+                await writeFile4(join10(dir2, "meta.json"), JSON.stringify({
                   batchId: batchId2,
                   name: name2,
                   format: rawFile ? "file" : "zip",
@@ -18312,13 +19888,13 @@ ${rp.firstMes}
               };
               if (typeof payload.dataBase64 === "string" && payload.dataBase64) {
                 const batchId2 = makeBatchId(name2);
-                const dir2 = join8(dshHome, "rp-import", batchId2);
+                const dir2 = join10(dshHome, "rp-import", batchId2);
                 if (rawFile) {
-                  await mkdir5(join8(dir2, "unpacked", "inbox"), { recursive: true });
-                  await writeFile4(join8(dir2, "unpacked", "inbox", name2), Buffer.from(payload.dataBase64, "base64"));
+                  await mkdir6(join10(dir2, "unpacked", "inbox"), { recursive: true });
+                  await writeFile4(join10(dir2, "unpacked", "inbox", name2), Buffer.from(payload.dataBase64, "base64"));
                 } else {
-                  await mkdir5(dir2, { recursive: true });
-                  await writeFile4(join8(dir2, "source.zip"), Buffer.from(payload.dataBase64, "base64"));
+                  await mkdir6(dir2, { recursive: true });
+                  await writeFile4(join10(dir2, "source.zip"), Buffer.from(payload.dataBase64, "base64"));
                 }
                 return send(200, await stageBatch(batchId2, dir2));
               }
@@ -18328,9 +19904,9 @@ ${rp.firstMes}
               let batchId = typeof payload.batchId === "string" ? payload.batchId : "";
               if (index === 0 && !batchId) batchId = makeBatchId(name2);
               if (!isValidBatchId(batchId)) return send(400, { error: "batchId \u975E\u6CD5\uFF08index 0 \u65F6\u4E0D\u4F20\u5219\u7531\u670D\u52A1\u7AEF\u5206\u914D\uFF09" });
-              const dir = join8(dshHome, "rp-import", batchId);
-              const target = rawFile ? join8(dir, "unpacked", "inbox", name2) : join8(dir, "source.zip");
-              await mkdir5(dirname6(target), { recursive: true });
+              const dir = join10(dshHome, "rp-import", batchId);
+              const target = rawFile ? join10(dir, "unpacked", "inbox", name2) : join10(dir, "source.zip");
+              await mkdir6(dirname8(target), { recursive: true });
               await writeFile4(target, Buffer.from(chunk, "base64"), { flag: index === 0 ? "w" : "a" });
               if (payload.done !== true) return send(200, { batchId, index, staged: false });
               return send(200, await stageBatch(batchId, dir));
@@ -18338,7 +19914,7 @@ ${rp.firstMes}
             if (subPath === "/rp/import-preview") {
               const batchId = String(payload.batchId ?? "");
               if (!isValidBatchId(batchId)) return send(400, { error: "batchId required" });
-              const unpacked = join8(dshHome, "rp-import", batchId, "unpacked");
+              const unpacked = join10(dshHome, "rp-import", batchId, "unpacked");
               try {
                 await readdir5(unpacked);
               } catch {
@@ -18352,7 +19928,7 @@ ${rp.firstMes}
             if (subPath === "/rp/import-checkpoint") {
               const batchId = String(payload.batchId ?? "");
               if (!isValidBatchId(batchId)) return send(400, { error: "batchId required" });
-              const cpPath = join8(dshHome, "rp-import", batchId, "checkpoint.json");
+              const cpPath = join10(dshHome, "rp-import", batchId, "checkpoint.json");
               if (payload.reset === true) {
                 await rm4(cpPath, { force: true });
                 logLine(`import-checkpoint: ${batchId} checkpoint \u5DF2\u6E05\u9664`);
@@ -18365,7 +19941,7 @@ ${rp.firstMes}
               }
               let existing = null;
               try {
-                existing = parseCheckpointFile(await readFile7(cpPath, "utf8"));
+                existing = parseCheckpointFile(await readFile8(cpPath, "utf8"));
               } catch {
               }
               const merged = normalizeCheckpointWrite(batchId, existing, { stage, done: payload.done });
@@ -18373,7 +19949,7 @@ ${rp.firstMes}
                 String(payload.sessionId ?? "") || await latestAdapterSessionId(),
                 [`rp-import/${batchId}/checkpoint.json`]
               );
-              await mkdir5(dirname6(cpPath), { recursive: true });
+              await mkdir6(dirname8(cpPath), { recursive: true });
               await writeFile4(cpPath, JSON.stringify(merged, null, 1), "utf8");
               const summary = summarizeCheckpoint(merged);
               logLine(`import-checkpoint: ${batchId} stage=${stage} done=${merged.stages[stage]?.done.length ?? 0}`);
@@ -18381,11 +19957,11 @@ ${rp.firstMes}
               return send(200, { ok: true, batchId, checkpoint: merged, summary });
             }
             if (sub === "/rp/persona") {
-              const personaPath = join8(dshHome, "rp", "persona.json");
+              const personaPath = join10(dshHome, "rp", "persona.json");
               const isWrite = typeof payload.active !== "undefined" || Array.isArray(payload.list);
               if (!isWrite) {
                 try {
-                  const f = JSON.parse(await readFile7(personaPath, "utf8"));
+                  const f = JSON.parse(await readFile8(personaPath, "utf8"));
                   return send(200, { active: f.active ?? null, list: Array.isArray(f.list) ? f.list : [] });
                 } catch {
                   return send(200, { active: null, list: [] });
@@ -18395,12 +19971,12 @@ ${rp.firstMes}
               const clean = list.filter((p) => typeof p?.name === "string" && p.name.trim()).map((p) => ({ name: String(p.name).trim(), description: typeof p.description === "string" ? p.description : "" }));
               const active = typeof payload.active === "string" && clean.some((p) => p.name === payload.active) ? payload.active : null;
               const file = { schemaVersion: 1, active, list: clean };
-              await mkdir5(dirname6(personaPath), { recursive: true });
+              await mkdir6(dirname8(personaPath), { recursive: true });
               {
                 const snapPaths = ["rp/persona.json"];
-                for (const dir of await readdir5(join8(dshHome, "rp")).catch(() => [])) {
+                for (const dir of await readdir5(join10(dshHome, "rp")).catch(() => [])) {
                   try {
-                    await readFile7(join8(dshHome, "rp", dir, "rp.json"), "utf8");
+                    await readFile8(join10(dshHome, "rp", dir, "rp.json"), "utf8");
                     snapPaths.push(`rp/${dir}/rp.json`);
                   } catch {
                   }
@@ -18410,10 +19986,10 @@ ${rp.firstMes}
               await writeFile4(personaPath, JSON.stringify(file, null, 1), "utf8");
               let touched = 0;
               if (active !== null) {
-                for (const dir of await readdir5(join8(dshHome, "rp")).catch(() => [])) {
-                  const rpPath = join8(dshHome, "rp", dir, "rp.json");
+                for (const dir of await readdir5(join10(dshHome, "rp")).catch(() => [])) {
+                  const rpPath = join10(dshHome, "rp", dir, "rp.json");
                   try {
-                    const rp = JSON.parse(await readFile7(rpPath, "utf8"));
+                    const rp = JSON.parse(await readFile8(rpPath, "utf8"));
                     rp.macros = { ...rp.macros ?? {}, user: active };
                     await writeFile4(rpPath, JSON.stringify(rp, null, 1), "utf8");
                     touched++;
@@ -18427,11 +20003,11 @@ ${rp.firstMes}
             if (sub === "/rp/import-ls") {
               const batchId = String(payload.batchId ?? "");
               if (!isValidBatchId(batchId)) return send(400, { error: "batchId required" });
-              const base = join8(dshHome, "rp-import", batchId, "unpacked");
+              const base = join10(dshHome, "rp-import", batchId, "unpacked");
               const rel = String(payload.rel ?? "").replace(/^\/+|\/+$/g, "");
               if (rel.includes("..")) return send(400, { error: "rel \u4E0D\u5141\u8BB8 .." });
               const depth = Math.min(6, Math.max(1, Number(payload.depth ?? 2)));
-              const root = join8(base, rel);
+              const root = join10(base, rel);
               const out = [];
               const walk = async (d, lv) => {
                 if (out.length > 4e3) return;
@@ -18443,7 +20019,7 @@ ${rp.firstMes}
                 }
                 for (const n of names.sort()) {
                   if (out.length > 4e3) return;
-                  const p = join8(d, n);
+                  const p = join10(d, n);
                   const r = relative2(base, p).replaceAll(sep2, "/");
                   let isDir = false;
                   try {
@@ -18460,18 +20036,18 @@ ${rp.firstMes}
             if (sub === "/rp/import-kickoff") {
               const batchId = String(payload.batchId ?? "");
               if (!isValidBatchId(batchId)) return send(400, { error: "batchId required" });
-              const dir = join8(dshHome, "rp-import", batchId);
-              const metaPath = join8(dir, "meta.json");
+              const dir = join10(dshHome, "rp-import", batchId);
+              const metaPath = join10(dir, "meta.json");
               let meta;
               try {
-                meta = JSON.parse(await readFile7(metaPath, "utf8"));
+                meta = JSON.parse(await readFile8(metaPath, "utf8"));
               } catch {
                 return send(404, { error: `\u6279\u6B21\u4E0D\u5B58\u5728\uFF1A${batchId}\uFF08\u5148 import-stage\uFF09` });
               }
               const prior = meta.kickoff;
               const readCheckpoint = async () => {
                 try {
-                  return parseCheckpointFile(await readFile7(join8(dir, "checkpoint.json"), "utf8"));
+                  return parseCheckpointFile(await readFile8(join10(dir, "checkpoint.json"), "utf8"));
                 } catch {
                   return null;
                 }
@@ -18532,8 +20108,8 @@ ${rp.firstMes}
                 return send(200, { batchId, dir, sessionId: prior.sessionId, workspaceId: prior.workspaceId ?? null, reused: true });
               }
               const rpc = hostRpc;
-              const adapterDir = join8(dshHome, "rp-import", "_adapter");
-              await mkdir5(adapterDir, { recursive: true });
+              const adapterDir = join10(dshHome, "rp-import", "_adapter");
+              await mkdir6(adapterDir, { recursive: true });
               const wsDir = await realpath2(adapterDir).catch(() => adapterDir);
               const ws = await rpc("workspace.create", { request: { path: wsDir } });
               const workspace = ws.workspace;
@@ -18594,21 +20170,21 @@ ${rp.firstMes}
               return send(200, await repairAllSessionSeqs());
             }
             const collectSessionsAudit = async () => {
-              const sessionsRoot = join8(dshHome, "sessions");
+              const sessionsRoot = join10(dshHome, "sessions");
               const nameByKey = /* @__PURE__ */ new Map();
-              const rpDir = join8(dshHome, "rp");
+              const rpDir = join10(dshHome, "rp");
               for (const dir of await readdir5(rpDir).catch(() => [])) {
                 try {
-                  const abs = await realpath2(join8(rpDir, dir)).catch(() => join8(rpDir, dir));
+                  const abs = await realpath2(join10(rpDir, dir)).catch(() => join10(rpDir, dir));
                   nameByKey.set(projectKey(abs), dir);
                 } catch {
                 }
               }
               const out = [];
               for (const pk of await readdir5(sessionsRoot).catch(() => [])) {
-                const pkDir = join8(sessionsRoot, pk);
+                const pkDir = join10(sessionsRoot, pk);
                 for (const sid of await readdir5(pkDir).catch(() => [])) {
-                  const f = join8(pkDir, sid, "session.jsonl");
+                  const f = await currentSessionLogPath(dshHome, pk, sid);
                   let header = {};
                   let lines = 0;
                   let lastTime = null;
@@ -18715,22 +20291,22 @@ ${rp.firstMes}
                 const segs = filePath.split("/").filter((s) => s.length > 0);
                 const safePath = filePath.length > 0 && !filePath.startsWith("/") && segs.every((s) => s !== "." && s !== "..") && segs.join("/").startsWith("rp-import/");
                 if (!safePath) return send(400, { error: "filePath \u5FC5\u987B\u662F dshHome \u5185 rp-import/ \u4E0B\u7684\u76F8\u5BF9\u8DEF\u5F84" });
-                const srcAbs = join8(dshHome, filePath);
+                const srcAbs = join10(dshHome, filePath);
                 if (!resolve2(srcAbs).startsWith(resolve2(dshHome) + sep2)) return send(400, { error: "filePath \u8D8A\u754C" });
-                const text = await readFile7(srcAbs, "utf8").catch(() => null);
+                const text = await readFile8(srcAbs, "utf8").catch(() => null);
                 if (text === null) return send(404, { error: `filePath \u4E0D\u5B58\u5728\uFF1A${filePath}` });
                 const conv2 = convertChatFile(text, { sessionId, createdAt, cwd });
                 if (cwd === void 0) return send(400, { error: "\u6587\u4EF6\u6A21\u5F0F\u5FC5\u987B\u5E26 cwd\uFF08\u76F4\u63A5\u843D\u76D8\u9700\u8981\u5DE5\u4F5C\u533A\u8DEF\u5F84\uFF09" });
                 const wsAbs = await realpath2(cwd).catch(() => cwd);
-                const target = join8(dshHome, "sessions", projectKey(wsAbs), encodeSegment(sessionId), "session.jsonl");
-                const existed = await readFile7(target, "utf8").then(() => true, () => false);
-                if (existed) await atomicWriteFile(`${target}.bak2`, await readFile7(target, "utf8"));
-                await mkdir5(join8(target, ".."), { recursive: true });
+                const target = join10(dshHome, "sessions", projectKey(wsAbs), encodeSegment(sessionId), "session.jsonl");
+                const existed = await readFile8(target, "utf8").then(() => true, () => false);
+                if (existed) await atomicWriteFile(`${target}.bak2`, await readFile8(target, "utf8"));
+                await mkdir6(join10(target, ".."), { recursive: true });
                 await atomicWriteFile(target, conv2.content);
                 console.log(`[dsht-rp] convert-chat(file): ${sessionId} \u2190 ${filePath} \u2192 ${conv2.turns} turns, ${conv2.variantGroups} variant groups, ${conv2.skipped} skipped`);
                 return send(200, {
                   written: true,
-                  path: relative2(join8(dshHome, "sessions"), target).split(sep2).join("/"),
+                  path: relative2(join10(dshHome, "sessions"), target).split(sep2).join("/"),
                   turns: conv2.turns,
                   skipped: conv2.skipped,
                   variantGroups: conv2.variantGroups,
@@ -18752,26 +20328,26 @@ ${rp.firstMes}
             }
             if (sub === "/rp/rebuild-chats") {
               const batchId = String(payload.batchId ?? "");
-              const importRoot = join8(dshHome, "rp-import");
+              const importRoot = join10(dshHome, "rp-import");
               let batchDir = "";
               if (batchId) {
-                batchDir = join8(importRoot, batchId);
+                batchDir = join10(importRoot, batchId);
               } else {
                 const batches = (await readdir5(importRoot).catch(() => [])).filter((d) => d !== "_adapter").sort().reverse();
                 for (const b of batches) {
-                  if (await findStDataRoot(join8(importRoot, b, "unpacked"))) {
-                    batchDir = join8(importRoot, b);
+                  if (await findStDataRoot(join10(importRoot, b, "unpacked"))) {
+                    batchDir = join10(importRoot, b);
                     break;
                   }
                 }
               }
-              const stRoot = batchDir ? await findStDataRoot(join8(batchDir, "unpacked")) : null;
+              const stRoot = batchDir ? await findStDataRoot(join10(batchDir, "unpacked")) : null;
               if (!stRoot) return send(404, { error: "\u627E\u4E0D\u5230\u5E26 ST \u6570\u636E\u7684\u6279\u6B21\uFF08\u5148 import-stage\uFF09" });
               const slugByName = /* @__PURE__ */ new Map();
-              const rpDir = join8(dshHome, "rp");
+              const rpDir = join10(dshHome, "rp");
               for (const dir of await readdir5(rpDir).catch(() => [])) {
                 try {
-                  const rp = JSON.parse(await readFile7(join8(rpDir, dir, "rp.json"), "utf8"));
+                  const rp = JSON.parse(await readFile8(join10(rpDir, dir, "rp.json"), "utf8"));
                   if (rp.characterName) slugByName.set(rp.characterName, dir);
                 } catch {
                 }
@@ -18779,13 +20355,13 @@ ${rp.firstMes}
               const norm = (s) => s.replace(/\s+/g, "").toLowerCase();
               const normMap = /* @__PURE__ */ new Map();
               for (const [n, s] of slugByName) normMap.set(norm(n), s);
-              const chatsDir = join8(stRoot, "chats");
+              const chatsDir = join10(stRoot, "chats");
               const owners = await readdir5(chatsDir).catch(() => []);
               let converted = 0, overwritten = 0;
               const orphans = [];
               const errors = [];
               for (const owner of owners) {
-                const ownerDir = join8(chatsDir, owner);
+                const ownerDir = join10(chatsDir, owner);
                 const files = (await readdir5(ownerDir).catch(() => [])).filter((f) => f.endsWith(".jsonl"));
                 if (files.length === 0) continue;
                 let slug = slugByName.get(owner) ?? normMap.get(norm(owner));
@@ -18802,10 +20378,10 @@ ${rp.firstMes}
                   orphans.push(owner);
                   continue;
                 }
-                const wsAbs = await realpath2(join8(rpDir, slug)).catch(() => join8(rpDir, slug));
+                const wsAbs = await realpath2(join10(rpDir, slug)).catch(() => join10(rpDir, slug));
                 for (const f of files) {
                   try {
-                    const text = await readFile7(join8(ownerDir, f), "utf8");
+                    const text = await readFile8(join10(ownerDir, f), "utf8");
                     const sessionId = chatSessionId(owner, f);
                     let createdAt = Date.now();
                     try {
@@ -18815,17 +20391,17 @@ ${rp.firstMes}
                     } catch {
                     }
                     const conv = convertChatFile(text, { sessionId, createdAt, cwd: wsAbs });
-                    const target = join8(dshHome, "sessions", projectKey(wsAbs), encodeSegment(sessionId), "session.jsonl");
-                    const existed = await readFile7(target, "utf8").then(() => true, () => false);
-                    if (existed) await atomicWriteFile(`${target}.bak2`, await readFile7(target, "utf8"));
-                    await mkdir5(join8(target, ".."), { recursive: true });
+                    const target = join10(dshHome, "sessions", projectKey(wsAbs), encodeSegment(sessionId), "session.jsonl");
+                    const existed = await readFile8(target, "utf8").then(() => true, () => false);
+                    if (existed) await atomicWriteFile(`${target}.bak2`, await readFile8(target, "utf8"));
+                    await mkdir6(join10(target, ".."), { recursive: true });
                     await atomicWriteFile(target, conv.content);
                     try {
                       const meta = JSON.parse(text.split("\n")[0]);
                       const vars = meta?.chat_metadata?.variables;
                       if (vars && typeof vars === "object" && Object.keys(vars).length > 0) {
-                        const statePath = join8(dshHome, "rp", "state", `${sessionId}.json`);
-                        await mkdir5(dirname6(statePath), { recursive: true });
+                        const statePath = join10(dshHome, "rp", "state", `${sessionId}.json`);
+                        await mkdir6(dirname8(statePath), { recursive: true });
                         await atomicWriteText(statePath, JSON.stringify(vars));
                       }
                     } catch {
@@ -18857,8 +20433,11 @@ ${rp.firstMes}
               const live = ctx.sessions?.get(sessionId);
               const includeAnchor = payload.includeAnchor === true;
               if (live !== void 0 && typeof live.append === "function" && Array.isArray(live.surface?.nodes)) {
+                const liveNodes = live.surface.nodes;
+                const liveWritable = live;
+                const liveAppend = boundAppend(liveWritable);
                 return await withLiveSurgery(sessionId, async () => {
-                  const view = live.surface.nodes;
+                  const view = liveNodes;
                   const anchor = isEdit ? editSeq : keepThroughSeq;
                   let start;
                   const idx = view.indexOf(anchor);
@@ -18879,14 +20458,15 @@ ${rp.firstMes}
                   }
                   const anchorTime = typeof sessionEventAt(live, anchor)?.time === "number" ? sessionEventAt(live, anchor)?.time : Date.now();
                   const undo = await replayUndoLog(dshHome, sessionId, anchorTime);
-                  live.append("compaction/prune", { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
+                  liveAppend("compaction/prune", { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
                   const markerText = isEdit ? `[\u6D88\u606F\u5DF2\u7F16\u8F91] \u8BE5\u6D88\u606F\u539F\u6587\u53CA\u5176\u540E\u7684\u56DE\u590D\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF0C\u7F16\u8F91\u540E\u7684\u65B0\u6D88\u606F\u968F\u540E\u53D1\u51FA\u3002` : includeAnchor ? `[\u5DF2\u56DE\u9000] \u8BE5\u6D88\u606F\u53CA\u5176\u540E\u7684\u5BF9\u8BDD\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF08\u539F\u6587\u5DF2\u653E\u56DE\u8F93\u5165\u6846\uFF1B\u4E8B\u4EF6\u4ECD\u4FDD\u7559\u5728\u65E5\u5FD7\uFF0C\u53EF\u7ECF /expand \u67E5\u770B\uFF09\u3002` : `[\u5DF2\u56DE\u9000] \u8BE5\u6D88\u606F\u4E4B\u540E\u7684\u5BF9\u8BDD\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF08\u4E8B\u4EF6\u4ECD\u4FDD\u7559\u5728\u65E5\u5FD7\uFF0C\u53EF\u7ECF /expand \u67E5\u770B\uFF09\u3002`;
-                  live.append("user/message", {
+                  const markerPayload = isEdit ? { editedFrom: anchor, shadowedSeqs: seqs } : { rolledBackTo: includeAnchor ? anchor - 1 : keepThroughSeq, shadowedSeqs: seqs };
+                  appendReplace(liveWritable, "user/message", {
                     id: `dsht-rp-${isEdit ? "edit" : "rollback"}-${randomUUID2()}`,
                     role: "user",
                     content: [{ type: "text", text: markerText }],
-                    source: isEdit ? { kind: "plugin", plugin: "dsht-rp", editedFrom: anchor } : { kind: "plugin", plugin: "dsht-rp", rolledBackTo: includeAnchor ? anchor - 1 : keepThroughSeq }
-                  }, { surfaceOp: { op: "replace", start, end }, sourceEventSeqs: seqs });
+                    source: markerSource("dsht-rp", "surgical", markerPayload)
+                  }, { start, end }, seqs);
                   logLine(`${isEdit ? "session-edit" : "session-rollback"}(live): ${sessionId} \u951A seq ${anchor} \u2192 replace [${start},${end}] ${seqs.length} \u4E8B\u4EF6\uFF1B\u53D8\u91CF\u56DE\u6EDA ${undo.restored} \u6761`);
                   console.log(`[dsht-rp] ${isEdit ? "session-edit" : "session-rollback"}: ${sessionId} (live) replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`);
                   try {
@@ -18904,14 +20484,14 @@ ${rp.firstMes}
                 }
                 const hit = (await scanSessionHeaders2()).find((h) => h.sessionId === sessionId);
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` });
-                const file = join8(dshHome, "sessions", hit.project, hit.sdir, "session.jsonl");
-                const content = await readFile7(file, "utf8");
+                const file = hit.file;
+                const content = await readFile8(file, "utf8");
                 const r = truncateSessionJsonl(content, keepThroughSeq);
                 if (r.error) return send(400, { error: r.error });
                 if (r.dropped === 0) return send(200, { kept: r.kept, dropped: 0, note: "no-op\uFF08\u6CA1\u6709\u66F4\u9760\u540E\u7684\u4E8B\u4EF6\uFF09" });
                 try {
                   await withSessionLock(file, async () => {
-                    const cur = await readFile7(file, "utf8");
+                    const cur = await readFile8(file, "utf8");
                     if (cur !== content) throw new Error("\u4F1A\u8BDD\u6587\u4EF6\u5728\u624B\u672F\u671F\u95F4\u88AB\u5E76\u53D1\u4FEE\u6539\u2014\u2014\u653E\u5F03\u672C\u6B21\u624B\u672F");
                     await atomicWriteFile(`${file}.bak`, content);
                     await atomicWriteFile(file, r.content);
@@ -18933,8 +20513,8 @@ ${rp.firstMes}
                 }
                 const hit = (await scanSessionHeaders2()).find((h) => h.sessionId === sessionId);
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` });
-                const file = join8(dshHome, "sessions", hit.project, hit.sdir, "session.jsonl");
-                const content = await readFile7(file, "utf8");
+                const file = hit.file;
+                const content = await readFile8(file, "utf8");
                 const lines = content.split("\n");
                 let keep = -1;
                 let found = false;
@@ -18962,7 +20542,7 @@ ${rp.firstMes}
                 if (r.dropped === 0) return send(200, { truncatedTo: keep, truncated: 0, note: "no-op\uFF08\u8BE5\u6D88\u606F\u4E4B\u540E\u6CA1\u6709\u4E8B\u4EF6\uFF09" });
                 try {
                   await withSessionLock(file, async () => {
-                    const cur = await readFile7(file, "utf8");
+                    const cur = await readFile8(file, "utf8");
                     if (cur !== content) throw new Error("\u4F1A\u8BDD\u6587\u4EF6\u5728\u624B\u672F\u671F\u95F4\u88AB\u5E76\u53D1\u4FEE\u6539\u2014\u2014\u653E\u5F03\u672C\u6B21\u624B\u672F");
                     await atomicWriteFile(`${file}.bak`, content);
                     await atomicWriteFile(file, r.content);
@@ -18983,21 +20563,25 @@ ${rp.firstMes}
               if (!sessionId) return send(400, { error: "sessionId required" });
               const live = ctx.sessions?.get(sessionId);
               if (live !== void 0 && typeof live.append === "function" && Array.isArray(live.surface?.nodes)) {
+                const liveNodes = live.surface.nodes;
+                const liveWritable = live;
+                const liveAppend = boundAppend(liveWritable);
                 return await withLiveSurgery(sessionId, async () => {
                   const evList = [];
                   let n = 0;
                   for (const ev of sessionEventsSnapshot(live)) {
                     const seq = typeof ev.seq === "number" ? ev.seq : n++;
                     if (!ev || ev.type !== "user/message") continue;
-                    if (ev.data?.source?.kind !== "user") continue;
-                    const blocks = Array.isArray(ev.data?.content) ? ev.data.content : [];
+                    const evData = ev.data;
+                    if (evData?.source?.kind !== "user") continue;
+                    const blocks = Array.isArray(evData.content) ? evData.content : [];
                     const text = blocks.filter((b) => b && b.type === "text" && typeof b.text === "string").map((b) => b.text).join("\n");
                     evList.push({ seq, time: typeof ev.time === "number" ? ev.time : void 0, text });
                   }
                   evList.sort((a, b) => a.seq - b.seq);
                   const anchorEv = evList[evList.length - 1];
                   if (anchorEv === void 0) return send(400, { error: "\u4F1A\u8BDD\u91CC\u6CA1\u6709\u7528\u6237\u6D88\u606F\uFF08\u65E0\u53EF\u91CD\u65B0\u751F\u6210\u7684\u951A\u70B9\uFF09" });
-                  const view = live.surface.nodes;
+                  const view = liveNodes;
                   const idx = view.indexOf(anchorEv.seq);
                   const start = idx !== -1 ? idx + 1 < view.length ? view[idx + 1] : -1 : view.find((q) => q > anchorEv.seq) ?? -1;
                   if (start === -1 || start > view[view.length - 1]) return send(200, { logical: true, replaced: 0, lastUserText: anchorEv.text, note: "no-op\uFF08\u951A\u6D88\u606F\u4E4B\u540E\u6CA1\u6709\u53EF\u91CD\u751F\u6210\u7684\u89C6\u56FE\u5185\u5BB9\uFF09" });
@@ -19012,14 +20596,14 @@ ${rp.firstMes}
                   }
                   const anchorTime = typeof anchorEv.time === "number" ? anchorEv.time : Date.now();
                   const undo = await replayUndoLog(dshHome, sessionId, anchorTime);
-                  live.append("compaction/prune", { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
+                  liveAppend("compaction/prune", { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed });
                   const markerText = `[\u91CD\u65B0\u751F\u6210\u4E2D] \u8BE5\u6D88\u606F\u6B64\u524D\u7684\u56DE\u590D\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF0C\u6B63\u5728\u4EE5\u539F\u6D88\u606F\u91CD\u65B0\u751F\u6210\u3002`;
-                  live.append("user/message", {
+                  appendReplace(liveWritable, "user/message", {
                     id: `dsht-rp-regenerate-${randomUUID2()}`,
                     role: "user",
                     content: [{ type: "text", text: markerText }],
-                    source: { kind: "plugin", plugin: "dsht-rp", regeneratedFrom: anchorEv.seq }
-                  }, { surfaceOp: { op: "replace", start, end }, sourceEventSeqs: seqs });
+                    source: markerSource("dsht-rp", "surgical", { regeneratedFrom: anchorEv.seq, shadowedSeqs: seqs })
+                  }, { start, end }, seqs);
                   logLine(`session-regenerate(live): ${sessionId} \u951A seq ${anchorEv.seq} \u2192 replace [${start},${end}] ${seqs.length} \u4E8B\u4EF6\uFF1B\u53D8\u91CF\u56DE\u6EDA ${undo.restored} \u6761`);
                   console.log(`[dsht-rp] session-regenerate: ${sessionId} (live) anchor=${anchorEv.seq} replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`);
                   try {
@@ -19037,8 +20621,8 @@ ${rp.firstMes}
                 }
                 const hit = (await scanSessionHeaders2()).find((h) => h.sessionId === sessionId);
                 if (!hit) return send(404, { error: `session not found: ${sessionId}` });
-                const file = join8(dshHome, "sessions", hit.project, hit.sdir, "session.jsonl");
-                const content = await readFile7(file, "utf8");
+                const file = hit.file;
+                const content = await readFile8(file, "utf8");
                 const events = [];
                 for (const line of content.split("\n").slice(1)) {
                   if (!line.trim()) continue;
@@ -19054,7 +20638,7 @@ ${rp.firstMes}
                 if (r.dropped === 0) return send(200, { truncated: 0, lastUserText: lastUser.text, variablesRestored: 0, note: "no-op\uFF08\u6700\u540E\u4E00\u6761\u7528\u6237\u6D88\u606F\u4E4B\u540E\u6CA1\u6709\u4E8B\u4EF6\uFF09" });
                 try {
                   await withSessionLock(file, async () => {
-                    const cur = await readFile7(file, "utf8");
+                    const cur = await readFile8(file, "utf8");
                     if (cur !== content) throw new Error("\u4F1A\u8BDD\u6587\u4EF6\u5728\u624B\u672F\u671F\u95F4\u88AB\u5E76\u53D1\u4FEE\u6539\u2014\u2014\u653E\u5F03\u672C\u6B21\u624B\u672F");
                     await atomicWriteFile(`${file}.bak`, content);
                     await atomicWriteFile(file, r.content);
@@ -19075,30 +20659,21 @@ ${rp.firstMes}
               let hide = 0;
               const hit = (await scanSessionHeaders2()).find((h) => h.sessionId === sessionId);
               if (hit) {
-                const file = join8(dshHome, "sessions", hit.project, hit.sdir, "session.jsonl");
+                const file = hit.file;
                 const fm = await stat(file).then((s) => ({ size: s.size, mtimeMs: s.mtimeMs })).catch(() => null);
                 const cached = rollbackMaskCache.get(file);
                 if (fm !== null && cached !== void 0 && cached.size === fm.size && cached.mtimeMs === fm.mtimeMs) {
                   return send(200, { hideAfter: cached.hide });
                 }
-                const content = await readFile7(file, "utf8");
+                const content = await readFile8(file, "utf8");
                 let markerSeq = -1;
                 for (const line of content.split("\n")) {
-                  if (!line.includes("rolledBackTo") && !line.includes("editedFrom") && !line.includes("regeneratedFrom")) continue;
+                  if (!line.includes("dsht:surgical") && !line.includes("dsht:legacy") && !line.includes("rolledBackTo") && !line.includes("editedFrom") && !line.includes("regeneratedFrom")) continue;
                   try {
                     const ev = JSON.parse(line);
-                    const s = ev.data?.source;
-                    if (!s) continue;
-                    if (typeof s.rolledBackTo === "number") {
-                      hide = Math.max(hide, s.rolledBackTo);
-                      markerSeq = Math.max(markerSeq, ev.seq ?? -1);
-                    }
-                    if (typeof s.regeneratedFrom === "number") {
-                      hide = Math.max(hide, s.regeneratedFrom);
-                      markerSeq = Math.max(markerSeq, ev.seq ?? -1);
-                    }
-                    if (typeof s.editedFrom === "number") {
-                      hide = Math.max(hide, s.editedFrom - 1);
+                    const { anchor } = readSurgicalAnchor(ev);
+                    if (anchor !== null) {
+                      hide = Math.max(hide, anchor);
                       markerSeq = Math.max(markerSeq, ev.seq ?? -1);
                     }
                   } catch {
@@ -19132,27 +20707,27 @@ ${rp.firstMes}
                 }
               };
               try {
-                for (const d of await readdir5(join8(dshHome, "rp"))) {
+                for (const d of await readdir5(join10(dshHome, "rp"))) {
                   if (d === "_start") continue;
-                  await rmEntry(join8(dshHome, "rp", d), "workspaces");
+                  await rmEntry(join10(dshHome, "rp", d), "workspaces");
                 }
               } catch {
               }
               try {
-                for (const d of await readdir5(join8(dshHome, "skills"))) {
-                  if (d.startsWith("wb-")) await rmEntry(join8(dshHome, "skills", d), "skills");
+                for (const d of await readdir5(join10(dshHome, "skills"))) {
+                  if (d.startsWith("wb-")) await rmEntry(join10(dshHome, "skills", d), "skills");
                 }
               } catch {
               }
               try {
-                for (const d of await readdir5(join8(dshHome, "rp-presets"))) {
-                  await rmEntry(join8(dshHome, "rp-presets", d), "rpPresets");
+                for (const d of await readdir5(join10(dshHome, "rp-presets"))) {
+                  await rmEntry(join10(dshHome, "rp-presets", d), "rpPresets");
                 }
               } catch {
               }
               try {
-                for (const d of await readdir5(join8(dshHome, ".agent-presets"))) {
-                  if (d.startsWith("rp-") || d.startsWith("st-")) await rmEntry(join8(dshHome, ".agent-presets", d), "agentPresets");
+                for (const d of await readdir5(join10(dshHome, ".agent-presets"))) {
+                  if (d.startsWith("rp-") || d.startsWith("st-")) await rmEntry(join10(dshHome, ".agent-presets", d), "agentPresets");
                 }
               } catch {
               }
@@ -19165,10 +20740,10 @@ ${rp.firstMes}
               for (const h of await scanSessionHeaders2()) {
                 const slug = rpCwdSlug(h.cwd);
                 if (slug === null || slug === "_start") continue;
-                await rmEntry(join8(dshHome, "sessions", h.project, h.sdir), "sessions");
-                const leftovers = await readdir5(join8(dshHome, "sessions", h.project)).catch(() => null);
+                await rmEntry(join10(dshHome, "sessions", h.project, h.sdir), "sessions");
+                const leftovers = await readdir5(join10(dshHome, "sessions", h.project)).catch(() => null);
                 if (leftovers !== null && leftovers.length === 0) {
-                  await rm4(join8(dshHome, "sessions", h.project), { recursive: true, force: true });
+                  await rm4(join10(dshHome, "sessions", h.project), { recursive: true, force: true });
                 }
               }
               globalRegexCache = null;
@@ -19204,7 +20779,7 @@ ${rp.firstMes}
                 } catch {
                 }
               }
-              const rpRoot = join8(dshHome, "rp");
+              const rpRoot = join10(dshHome, "rp");
               let slugs = [];
               try {
                 slugs = await readdir5(rpRoot);
@@ -19216,14 +20791,14 @@ ${rp.firstMes}
                 for (const slug of slugs.sort()) {
                   let characterName = slug;
                   try {
-                    const rp = JSON.parse(await readFile7(join8(rpRoot, slug, "rp.json"), "utf8"));
+                    const rp = JSON.parse(await readFile8(join10(rpRoot, slug, "rp.json"), "utf8"));
                     if (typeof rp.characterName === "string" && rp.characterName.trim()) characterName = rp.characterName.trim();
                   } catch {
                     continue;
                   }
                   const entry = { slug, name: characterName };
                   try {
-                    const dir = join8(rpRoot, slug);
+                    const dir = join10(rpRoot, slug);
                     const canonical = await realpath2(dir).catch(() => dir);
                     let entity = await registry.resolveByPath(canonical);
                     let created = false;
@@ -19268,14 +20843,14 @@ ${rp.firstMes}
                 for (const slug of slugs.sort()) {
                   let characterName = slug;
                   try {
-                    const rp = JSON.parse(await readFile7(join8(rpRoot, slug, "rp.json"), "utf8"));
+                    const rp = JSON.parse(await readFile8(join10(rpRoot, slug, "rp.json"), "utf8"));
                     if (typeof rp.characterName === "string" && rp.characterName.trim()) characterName = rp.characterName.trim();
                   } catch {
                     continue;
                   }
                   const entry = { slug, name: characterName };
                   try {
-                    const dir = join8(rpRoot, slug);
+                    const dir = join10(rpRoot, slug);
                     const canonical = await realpath2(dir).catch(() => dir);
                     if (existingPaths.has(canonical)) {
                       entry.created = false;
@@ -19326,23 +20901,23 @@ ${rp.firstMes}
               const errors = [];
               let slugs = [];
               try {
-                slugs = await readdir5(join8(dshHome, "rp"));
+                slugs = await readdir5(join10(dshHome, "rp"));
               } catch {
               }
               for (const slug of slugs) {
                 if (slug === "_start") continue;
                 try {
-                  const dir = join8(dshHome, "rp", slug);
+                  const dir = join10(dshHome, "rp", slug);
                   const st = await stat(dir);
                   if (!st.isDirectory()) continue;
                   let rawCard = "";
                   try {
-                    rawCard = await readFile7(join8(dir, "card.json"), "utf8");
+                    rawCard = await readFile8(join10(dir, "card.json"), "utf8");
                   } catch {
                     continue;
                   }
-                  const rpPath = join8(dir, "rp.json");
-                  const rp = JSON.parse(await readFile7(rpPath, "utf8"));
+                  const rpPath = join10(dir, "rp.json");
+                  const rp = JSON.parse(await readFile8(rpPath, "utf8"));
                   const card = importCharacterJson(rawCard, slug);
                   let filled = false;
                   if (card && card.embeddedRegex.length > 0 && (!Array.isArray(rp.regex) || rp.regex.length === 0)) {
@@ -19357,7 +20932,7 @@ ${rp.firstMes}
                   const th = cext.tavern_helper && typeof cext.tavern_helper === "object" ? cext.tavern_helper.scripts : void 0;
                   let thCount = 0;
                   if (Array.isArray(th) && th.length > 0) {
-                    await writeFile4(join8(dir, "tavern-helper-scripts.json"), JSON.stringify({ scripts: th }, null, 1), "utf8");
+                    await writeFile4(join10(dir, "tavern-helper-scripts.json"), JSON.stringify({ scripts: th }, null, 1), "utf8");
                     thCount = th.length;
                   }
                   cards.push({ slug, embeddedRegex: card?.embeddedRegex.length ?? 0, filled, tavernHelperScripts: thCount });
@@ -19366,16 +20941,16 @@ ${rp.firstMes}
                 }
               }
               try {
-                const batches = (await readdir5(join8(dshHome, "rp-import"))).filter(isValidBatchId).sort().reverse();
+                const batches = (await readdir5(join10(dshHome, "rp-import"))).filter(isValidBatchId).sort().reverse();
                 for (const b of batches) {
-                  const dir = join8(dshHome, "rp-import", b);
+                  const dir = join10(dshHome, "rp-import", b);
                   let stRoot = "data/default-user";
                   try {
-                    const meta = JSON.parse(await readFile7(join8(dir, "meta.json"), "utf8"));
+                    const meta = JSON.parse(await readFile8(join10(dir, "meta.json"), "utf8"));
                     if (typeof meta.manifest?.stRoot === "string" && meta.manifest.stRoot) stRoot = meta.manifest.stRoot;
                   } catch {
                   }
-                  const oaiDir = join8(dir, "unpacked", stRoot, "OpenAI Settings");
+                  const oaiDir = join10(dir, "unpacked", stRoot, "OpenAI Settings");
                   let files = [];
                   try {
                     files = (await readdir5(oaiDir)).filter((f) => f.endsWith(".json"));
@@ -19385,21 +20960,21 @@ ${rp.firstMes}
                   if (files.length === 0) continue;
                   let presetDirs = [];
                   try {
-                    presetDirs = await readdir5(join8(dshHome, "rp-presets"));
+                    presetDirs = await readdir5(join10(dshHome, "rp-presets"));
                   } catch {
                     break;
                   }
                   for (const pid of presetDirs.sort()) {
                     try {
-                      const p = JSON.parse(await readFile7(join8(dshHome, "rp-presets", pid, "preset.json"), "utf8"));
+                      const p = JSON.parse(await readFile8(join10(dshHome, "rp-presets", pid, "preset.json"), "utf8"));
                       if (typeof p.displayName !== "string") continue;
                       const file = files.find((f) => f.replace(/\.json$/i, "") === p.displayName);
                       if (!file) continue;
-                      const st = JSON.parse(await readFile7(join8(oaiDir, file), "utf8"));
+                      const st = JSON.parse(await readFile8(join10(oaiDir, file), "utf8"));
                       const scripts = st.extensions?.tavern_helper?.scripts;
                       if (!Array.isArray(scripts) || scripts.length === 0) continue;
                       await writeFile4(
-                        join8(dshHome, "rp-presets", pid, "tavern-helper-scripts.json"),
+                        join10(dshHome, "rp-presets", pid, "tavern-helper-scripts.json"),
                         JSON.stringify({ scripts }, null, 1),
                         "utf8"
                       );
@@ -19414,11 +20989,11 @@ ${rp.firstMes}
               }
               let stateFixed = 0;
               try {
-                for (const f of await readdir5(join8(dshHome, "rp", "state"))) {
+                for (const f of await readdir5(join10(dshHome, "rp", "state"))) {
                   if (!f.endsWith(".json") || f.endsWith(".undo.jsonl")) continue;
                   try {
-                    const fp = join8(dshHome, "rp", "state", f);
-                    const parsed = JSON.parse(await readFile7(fp, "utf8"));
+                    const fp = join10(dshHome, "rp", "state", f);
+                    const parsed = JSON.parse(await readFile8(fp, "utf8"));
                     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
                     if (Object.keys(parsed).some((k) => STATE_RESERVED_KEYS.has(k))) continue;
                     const sid = f.replace(/\.json$/, "");
@@ -19455,15 +21030,15 @@ ${rp.firstMes}
               } else {
                 const batchId = String(payload.batchId ?? "");
                 if (!isValidBatchId(batchId)) return send(400, { error: "batchId \u6216 settingsJson \u5FC5\u7ED9\u5176\u4E00" });
-                const batchDir = join8(dshHome, "rp-import", batchId);
-                root = await findStDataRoot(join8(batchDir, "unpacked"));
+                const batchDir = join10(dshHome, "rp-import", batchId);
+                root = await findStDataRoot(join10(batchDir, "unpacked"));
                 if (!root) return send(404, { error: "\u6279\u6B21\u5185\u627E\u4E0D\u5230 settings.json\uFF08\u4E0D\u662F ST data \u7ED3\u6784\uFF1F\uFF09" });
                 try {
-                  settings = JSON.parse(await readFile7(join8(root, "settings.json"), "utf8"));
+                  settings = JSON.parse(await readFile8(join10(root, "settings.json"), "utf8"));
                 } catch {
                 }
                 try {
-                  secrets = JSON.parse(await readFile7(join8(root, "secrets.json"), "utf8"));
+                  secrets = JSON.parse(await readFile8(join10(root, "secrets.json"), "utf8"));
                 } catch {
                 }
               }
@@ -19492,11 +21067,11 @@ ${rp.firstMes}
                 });
               }
               const yamlStr = (s) => `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
-              const credPath = join8(dshHome, ".credentials.yaml");
+              const credPath = join10(dshHome, ".credentials.yaml");
               if (parsed.keyValue) {
                 let cred = "";
                 try {
-                  cred = await readFile7(credPath, "utf8");
+                  cred = await readFile8(credPath, "utf8");
                 } catch {
                 }
                 const line = `${parsed.keyRef}: ${yamlStr(parsed.keyValue)}`;
@@ -19504,10 +21079,10 @@ ${rp.firstMes}
                 cred = re.test(cred) ? cred.replace(re, line) : cred.trimEnd() + (cred.trim() ? "\n" : "") + line + "\n";
                 await writeFile4(credPath, cred, { encoding: "utf8", mode: 384 });
               }
-              const settingsPath = join8(dshHome, "settings.yaml");
+              const settingsPath = join10(dshHome, "settings.yaml");
               let doc = "";
               try {
-                doc = await readFile7(settingsPath, "utf8");
+                doc = await readFile8(settingsPath, "utf8");
               } catch {
               }
               if (/^llm-pi-ai:/m.test(doc)) {
@@ -19551,8 +21126,15 @@ agent-default-model:
                   setImmediate(r);
                 });
                 const rel = String(f?.path ?? "");
-                const binary = f?.binary && f.binary !== false || typeof f?.content === "object" && f.content !== null;
+                const asObj = f?.content !== null && typeof f?.content === "object" ? f.content : null;
+                const hasB64Shape = asObj !== null && typeof asObj.base64 === "string";
+                const explicitBinary = f?.binary === true;
+                const binary = explicitBinary || hasB64Shape;
                 const content = String(f?.content ?? "");
+                if (asObj !== null && !binary) {
+                  failed.push(`${String(f?.path ?? "")}: content \u662F\u5BF9\u8C61\u4F46\u6CA1\u6709 base64 \u5B57\u6BB5\uFF0C\u4E5F\u4E0D\u662F binary:true\uFF08\u7591\u4F3C\u4E0A\u6E38\u6F0F\u4E86 JSON.stringify\uFF09`);
+                  continue;
+                }
                 const segs = rel.split("/").filter((s) => s.length > 0);
                 const safe = rel.length > 0 && !rel.startsWith("/") && segs.every((s) => s !== "." && s !== "..") && allowPrefixes.some((p) => segs.join("/").startsWith(p));
                 if (!safe) {
@@ -19560,12 +21142,12 @@ agent-default-model:
                   continue;
                 }
                 try {
-                  const abs = join8(dshHome, rel);
+                  const abs = join10(dshHome, rel);
                   if (!resolve2(abs).startsWith(resolve2(dshHome) + sep2)) {
                     failed.push(`${rel}: \u8D8A\u754C`);
                     continue;
                   }
-                  await mkdir5(dirname6(abs), { recursive: true });
+                  await mkdir6(dirname8(abs), { recursive: true });
                   if (binary) {
                     const b64 = String(f?.content?.base64 ?? f?.content ?? "");
                     await writeFile4(abs, Buffer.from(b64, "base64"));
@@ -19607,15 +21189,49 @@ agent-default-model:
               if (group.activeSeq === targetSeq) return send(200, { ok: true, note: "already active" });
               const target = group.members.find((m) => m.seq === targetSeq);
               if (!target) return send(400, { error: "target member missing" });
+              const existingView = session.surface?.nodes ?? [];
+              if (!existingView.includes(group.activeSeq)) {
+                return send(400, { error: "\u5F53\u524D\u53D8\u4F53\u4E0D\u5728\u6A21\u578B\u89C6\u56FE\uFF08\u53EF\u80FD\u5DF2\u88AB\u56DE\u9000/\u6298\u53E0\uFF09\uFF0C\u65E0\u6CD5\u5207\u6362" });
+              }
+              const agent = ctx.agents?.get(sessionId);
+              const idle = agent?.phase?.kind === "idle";
+              const plan = planAssistantRewrite(eventsForGroups, idle);
               const ev = buildVariantSwitchEvent(sessionId, eventsForGroups.length, group.activeSeq, target.text);
               if (!ev) return send(400, { error: "empty target text" });
-              session.append(ev.type, ev.data, {
-                surfaceOp: ev.surfaceOp,
-                sourceEventSeqs: ev.sourceEventSeqs
+              if (plan.openTurn) session.append("turn/start", { turn: plan.turn });
+              session.append("step/start", { turn: plan.turn, step: plan.step });
+              const activeEv = sessionEventAt(session, group.activeSeq);
+              const activeBlocks = (() => {
+                const dm = activeEv?.data ?? {};
+                const inner = dm.message && typeof dm.message === "object" ? dm.message : dm;
+                return Array.isArray(inner.content) ? inner.content : [];
+              })();
+              const shadowedTokens = activeBlocks.reduce((t, b) => t + (b && (b["type"] === "text" || b["type"] === "reasoning") && typeof b["text"] === "string" ? Math.ceil(b["text"].length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
+              session.append("compaction/prune", {
+                shadowedRange: { start: group.activeSeq, end: group.activeSeq },
+                shadowedSeqs: [group.activeSeq],
+                shadowedTokenCount: shadowedTokens
               });
+              appendReplace(session, "user/message", {
+                id: `dsht-variant-mark-${randomUUID2()}`,
+                role: "user",
+                content: [{ type: "text", text: `[\u53D8\u4F53\u5207\u6362] \u5DF2\u5207\u6362\u5230\u8BE5\u697C\u5C42\u7684\u7B2C ${group.members.findIndex((m) => m.seq === targetSeq) + 1}/${group.members.length} \u4E2A\u53D8\u4F53\u3002` }],
+                source: markerSource("dsht-rp", "surgical", { variantOf: targetSeq, shadowedSeqs: [group.activeSeq] })
+              }, { start: group.activeSeq, end: group.activeSeq }, [group.activeSeq]);
+              session.append(ev.type, {
+                ...ev.data,
+                turn: plan.turn,
+                step: plan.step,
+                message: { ...ev.data.message, id: `dsht-variant-${sessionId}-${eventsForGroups.length}` }
+              }, { surfaceOp: "append" });
+              session.append("step/end", { turn: plan.turn, step: plan.step });
+              if (plan.openTurn) session.append("turn/end", { turn: plan.turn, reason: { kind: "completed" } });
+              if (plan.openTurn && agent?.phase && typeof agent.phase.lastTurn === "number" && agent.phase.lastTurn < plan.turn) {
+                agent.phase.lastTurn = plan.turn;
+              }
               group.activeSeq = targetSeq;
               groups.set(targetSeq, group);
-              console.log(`[dsht-rp] variant switch: session=${sessionId} \u2192 seq ${targetSeq}`);
+              console.log(`[dsht-rp] variant switch: session=${sessionId} \u2192 seq ${targetSeq}\uFF08marker replace + append\uFF0Cturn=${plan.turn}\uFF09`);
               try {
                 await flushLiveSession(ctx.sessions, session);
               } catch (e) {
@@ -19666,7 +21282,7 @@ agent-default-model:
               let macrosUser = "";
               if (slugQ) {
                 try {
-                  const rp = JSON.parse(await readFile7(join8(dshHome, "rp", slugQ, "rp.json"), "utf8"));
+                  const rp = JSON.parse(await readFile8(join10(dshHome, "rp", slugQ, "rp.json"), "utf8"));
                   char = typeof rp?.macros?.char === "string" && rp.macros.char ? rp.macros.char : String(rp?.characterName ?? "");
                   macrosUser = typeof rp?.macros?.user === "string" ? rp.macros.user : "";
                 } catch {
@@ -19685,7 +21301,7 @@ agent-default-model:
             if (sub === "/rp/mvu/extra-analyze" && req.method === "POST") {
               const sessionId = String(payload.sessionId ?? "");
               if (!sessionId) return send(400, { error: "sessionId required" });
-              const settings = await readFile7(join8(dshHome, "rp", "mvu-settings.json"), "utf8").then((t) => JSON.parse(t)).catch(() => ({}));
+              const settings = await readFile8(join10(dshHome, "rp", "mvu-settings.json"), "utf8").then((t) => JSON.parse(t)).catch(() => ({}));
               const enabled = settings.enableExtraAnalysis === true || settings.extra_analysis_enabled === true || settings.extraAnalysis && settings.extraAnalysis.enabled === true;
               if (!enabled) return send(200, { ok: false, applied: 0, note: "\u989D\u5916\u6A21\u578B\u89E3\u6790\u672A\u5F00\u542F\uFF08mvu-settings.enableExtraAnalysis\uFF09" });
               const session = ctx.sessions?.get(sessionId);
@@ -19695,7 +21311,8 @@ agent-default-model:
                 for (let i = snap.length - 1; i >= 0; i--) {
                   const ev = snap[i];
                   if (ev?.type === "assistant/message") {
-                    replyText = messageText(ev.data.message ?? {});
+                    const replyMsg = ev.data?.message;
+                    replyText = replyMsg !== void 0 ? messageText(replyMsg) : "";
                     break;
                   }
                 }
@@ -19764,19 +21381,19 @@ ${replyText.slice(0, 8e3)}
             if (sub === "/rp/status") {
               let latestBatch = null;
               try {
-                const dirs = (await readdir5(join8(dshHome, "rp-import"))).sort().reverse();
+                const dirs = (await readdir5(join10(dshHome, "rp-import"))).sort().reverse();
                 for (const d of dirs) {
                   if (!isValidBatchId(d)) continue;
-                  const dir = join8(dshHome, "rp-import", d);
+                  const dir = join10(dshHome, "rp-import", d);
                   let meta = {};
                   try {
-                    meta = JSON.parse(await readFile7(join8(dir, "meta.json"), "utf8"));
+                    meta = JSON.parse(await readFile8(join10(dir, "meta.json"), "utf8"));
                   } catch {
                   }
                   let report = null;
                   for (const rf of ["migration-report.md", "REPORT.md"]) {
                     try {
-                      const text = await readFile7(join8(dir, rf), "utf8");
+                      const text = await readFile8(join10(dir, rf), "utf8");
                       const rows = [];
                       for (const line of text.split("\n")) {
                         const m = line.match(/^\|\s*([^|]+?)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|/);
@@ -19807,18 +21424,86 @@ ${replyText.slice(0, 8e3)}
               }
               return send(200, { latestBatch, api });
             }
+            if (subPath === "/rp/build-info") {
+              return send(200, await buildInfoPayload());
+            }
+            if (subPath === "/rp/update-config") {
+              const hasSource = typeof payload.source === "string";
+              if (!hasSource) {
+                const cfg = await readUpdateCfg();
+                const kind2 = cfg.source === "" ? "" : cfg.kind === "" ? guessUpdateKind(cfg.source, "") : cfg.kind;
+                return send(200, { source: cfg.source, kind: kind2 });
+              }
+              const source = String(payload.source ?? "").trim();
+              const kindHint = typeof payload.kind === "string" ? payload.kind : "";
+              if (source === "") {
+                await writeUpdateCfg({ source: "", kind: "" });
+                logLine("update-config: \u66F4\u65B0\u6E90\u5DF2\u6E05\u7A7A");
+                return send(200, { ok: true, source: "", kind: "" });
+              }
+              if (!/^https?:\/\//i.test(source)) {
+                return send(400, { error: "\u66F4\u65B0\u6E90\u5FC5\u987B\u662F http(s) \u7EDD\u5BF9\u5730\u5740" });
+              }
+              const kind = guessUpdateKind(source, kindHint);
+              await writeUpdateCfg({ source, kind });
+              logLine(`update-config: \u5DF2\u4FDD\u5B58\u66F4\u65B0\u6E90\uFF08${kind}\uFF09`);
+              return send(200, { ok: true, source, kind });
+            }
+            if (subPath === "/rp/check-update") {
+              const info = await buildInfoPayload();
+              const current = typeof info.appVersion === "string" ? info.appVersion : null;
+              const cfg = await readUpdateCfg();
+              const overrideUrl = typeof payload.source === "string" ? payload.source.trim() : "";
+              const source = overrideUrl !== "" ? overrideUrl : cfg.source;
+              const kind = guessUpdateKind(source, overrideUrl !== "" ? typeof payload.kind === "string" ? payload.kind : "" : cfg.kind);
+              const base = { current, dshVersion: info.dshVersion, sentinel: info.sentinel, source, kind };
+              if (source === "") {
+                return send(200, { ok: false, reason: "unconfigured", message: "\u8FD8\u6CA1\u914D\u7F6E\u66F4\u65B0\u6E90\u2014\u2014\u9700\u8981\u5148\u786E\u5B9A\u53D1\u5E03\u6E20\u9053\uFF08GitHub Releases \u6216\u81EA\u5EFA JSON\uFF09", ...base });
+              }
+              if (!/^https?:\/\//i.test(source)) {
+                return send(200, { ok: false, reason: "bad-source", message: "\u66F4\u65B0\u6E90\u5FC5\u987B\u662F http(s) \u7EDD\u5BF9\u5730\u5740", ...base });
+              }
+              if (current === null || parseVersion(current) === null) {
+                return send(200, { ok: false, reason: "no-current-version", message: `\u8BFB\u4E0D\u5230\u672C\u673A\u7248\u672C\u53F7\uFF08${current ?? "null"}\uFF09\uFF0C\u65E0\u6CD5\u6BD4\u8F83`, ...base });
+              }
+              let feed;
+              try {
+                feed = normalizeUpdateFeed(await fetchJsonWithTimeout(source), kind);
+              } catch (e) {
+                const msg = e?.name === "AbortError" ? "\u8BF7\u6C42\u8D85\u65F6\uFF0812 \u79D2\uFF09" : e?.message ?? "\u672A\u77E5\u9519\u8BEF";
+                logLine(`check-update \u5931\u8D25\uFF1A${msg}`);
+                return send(200, { ok: false, reason: "fetch", message: `\u62C9\u53D6\u66F4\u65B0\u6E90\u5931\u8D25\uFF1A${msg}`, ...base });
+              }
+              const relation = relateVersions(current, feed.version);
+              const hasUpdate = relation === "newer";
+              const abi = typeof info.appAbi === "string" ? info.appAbi : "";
+              const apks = feed.assets.filter((a) => a.name.toLowerCase().endsWith(".apk"));
+              const picked = pickDownloadAsset(feed.assets, abi);
+              const downloadUrl = picked !== null ? picked.url : feed.url;
+              logLine(`check-update: ${current} \u2192 ${feed.version}\uFF08${relation}\uFF09`);
+              return send(200, {
+                ok: true,
+                ...base,
+                latest: { version: feed.version, url: feed.url, notes: feed.notes },
+                relation,
+                hasUpdate,
+                downloadUrl,
+                asset: picked,
+                apkCount: apks.length
+              });
+            }
             if (sub === "/rp/workspaces") {
               const list = [];
               try {
-                const rpDir = join8(dshHome, "rp");
+                const rpDir = join10(dshHome, "rp");
                 const dirs = await readdir5(rpDir);
                 for (const slug of dirs.sort()) {
                   try {
-                    const text = await readFile7(join8(rpDir, slug, "rp.json"), "utf8");
+                    const text = await readFile8(join10(rpDir, slug, "rp.json"), "utf8");
                     const o = JSON.parse(text);
                     let alternateGreetings = [];
                     try {
-                      const card = JSON.parse(await readFile7(join8(rpDir, slug, "card.json"), "utf8"));
+                      const card = JSON.parse(await readFile8(join10(rpDir, slug, "card.json"), "utf8"));
                       const raw = Array.isArray(card.data?.alternate_greetings) ? card.data.alternate_greetings : Array.isArray(card.alternate_greetings) ? card.alternate_greetings : [];
                       alternateGreetings = raw.map((g) => String(g ?? "").trim()).filter((g) => g !== "");
                     } catch {
@@ -19851,11 +21536,11 @@ ${replyText.slice(0, 8e3)}
             if (sub === "/rp/books") {
               const books = [];
               try {
-                const skillsDir = join8(dshHome, "skills");
+                const skillsDir = join10(dshHome, "skills");
                 for (const dir of (await readdir5(skillsDir)).sort()) {
                   const lorePath = `skills/${dir}/references/lore.json`;
                   try {
-                    const text = await readFile7(join8(dshHome, lorePath), "utf8");
+                    const text = await readFile8(join10(dshHome, lorePath), "utf8");
                     const parsed = JSON.parse(text);
                     books.push({
                       slug: dir,
@@ -19870,7 +21555,7 @@ ${replyText.slice(0, 8e3)}
               }
               let global2 = [];
               try {
-                const g = JSON.parse(await readFile7(join8(dshHome, "rp", "global-books.json"), "utf8"));
+                const g = JSON.parse(await readFile8(join10(dshHome, "rp", "global-books.json"), "utf8"));
                 global2 = Array.isArray(g?.books) ? g.books.filter((b) => typeof b?.lorePath === "string").map((b) => ({ name: String(b.name ?? b.lorePath), lorePath: String(b.lorePath) })) : [];
               } catch {
               }
@@ -19879,10 +21564,10 @@ ${replyText.slice(0, 8e3)}
             if (sub === "/rp/bind-books") {
               const slug = String(payload.slug ?? "");
               if (!slug) return send(400, { error: "slug required" });
-              const rpPath = join8(dshHome, "rp", slug, "rp.json");
+              const rpPath = join10(dshHome, "rp", slug, "rp.json");
               let rp;
               try {
-                rp = JSON.parse(await readFile7(rpPath, "utf8"));
+                rp = JSON.parse(await readFile8(rpPath, "utf8"));
               } catch {
                 return send(404, { error: `rp.json not found: ${slug}` });
               }
@@ -19901,8 +21586,8 @@ ${replyText.slice(0, 8e3)}
               const files = exportSingleCardFiles(card, dshHome);
               let written = 0;
               for (const f of files) {
-                const abs = join8(dshHome, f.path);
-                await mkdir5(dirname6(abs), { recursive: true });
+                const abs = join10(dshHome, f.path);
+                await mkdir6(dirname8(abs), { recursive: true });
                 await writeFile4(abs, f.content, "utf8");
                 written++;
               }
@@ -19922,8 +21607,8 @@ ${replyText.slice(0, 8e3)}
                     source: { kind: "user" }
                   }, { surfaceOp: "append" });
                   welcomeSession.append("assistant/message", {
-                    turn: 1,
-                    step: 1,
+                    // settlement 三件套（live 会话必为 v2+，stream 是必需成员）
+                    ...assistantSettlement(1, 1),
                     message: {
                       id: `dsht-imp-res-${Date.now()}`,
                       role: "assistant",
@@ -19945,18 +21630,18 @@ ${replyText.slice(0, 8e3)}
             if (sub === "/rp/export-card") {
               const slug = String(payload.slug ?? "");
               if (!slug) return send(400, { error: "slug required" });
-              const wsDir = join8(dshHome, "rp", slug);
+              const wsDir = join10(dshHome, "rp", slug);
               try {
                 let json = "";
                 try {
-                  json = await readFile7(join8(wsDir, "card.json"), "utf8");
+                  json = await readFile8(join10(wsDir, "card.json"), "utf8");
                 } catch {
-                  const rp = JSON.parse(await readFile7(join8(wsDir, "rp.json"), "utf8"));
+                  const rp = JSON.parse(await readFile8(join10(wsDir, "rp.json"), "utf8"));
                   json = buildStV2FromRp(rp).replaceAll("{{char}}", rp.characterName).replaceAll("{{user}}", rp.macros?.user ?? "\u7528\u6237");
                 }
                 let avatar = null;
                 try {
-                  const b64 = await readFile7(join8(wsDir, "avatar.png"), "base64");
+                  const b64 = await readFile8(join10(wsDir, "avatar.png"), "base64");
                   avatar = new Uint8Array(Buffer.from(b64, "base64"));
                 } catch {
                 }
@@ -19975,20 +21660,20 @@ ${replyText.slice(0, 8e3)}
             if (sub === "/rp/export-bundle") {
               const slug = String(payload.slug ?? "");
               if (!slug) return send(400, { error: "slug required" });
-              const wsDir = join8(dshHome, "rp", slug);
+              const wsDir = join10(dshHome, "rp", slug);
               try {
                 const files = [];
                 let json = "";
                 try {
-                  json = await readFile7(join8(wsDir, "card.json"), "utf8");
+                  json = await readFile8(join10(wsDir, "card.json"), "utf8");
                 } catch {
-                  const rp = JSON.parse(await readFile7(join8(wsDir, "rp.json"), "utf8"));
+                  const rp = JSON.parse(await readFile8(join10(wsDir, "rp.json"), "utf8"));
                   json = buildStV2FromRp(rp).replaceAll("{{char}}", rp.characterName).replaceAll("{{user}}", rp.macros?.user ?? "\u7528\u6237");
                 }
                 files.push({ path: "card.json", content: json });
                 let avatar = null;
                 try {
-                  const b64 = await readFile7(join8(wsDir, "avatar.png"), "base64");
+                  const b64 = await readFile8(join10(wsDir, "avatar.png"), "base64");
                   avatar = new Uint8Array(Buffer.from(b64, "base64"));
                 } catch {
                 }
@@ -20023,8 +21708,8 @@ ${replyText.slice(0, 8e3)}
               session.append("turn/start", { turn });
               session.append("step/start", { turn, step: 1 });
               session.append("assistant/message", {
-                turn,
-                step: 1,
+                // settlement 三件套（live 会话必为 v2+，stream 是必需成员）
+                ...assistantSettlement(turn, 1),
                 message: {
                   id: `dsht-open-${randomUUID2()}`,
                   role: "assistant",
@@ -20079,32 +21764,33 @@ ${replyText.slice(0, 8e3)}
                 }
               }
               const appendMessage = (turn, step, role2, text, data) => {
+                const mid = `dsht-th-${randomUUID2()}`;
+                if (data !== null || role2 === "system") {
+                  upsertThFloors(dshHome, sessionId, {
+                    [mid]: { ...data !== null ? { data } : {}, ...role2 === "system" ? { system: true } : {} }
+                  });
+                }
                 if (role2 === "user") {
-                  const source2 = { kind: "plugin", plugin: "dsht-tavern-helper" };
-                  if (data !== null) source2["thData"] = data;
                   live.append("user/message", {
-                    id: `dsht-th-${randomUUID2()}`,
+                    id: mid,
                     role: "user",
                     content: [{ type: "text", text }],
-                    source: source2
+                    source: { kind: "plugin", plugin: "dsht-tavern-helper" }
                   }, { surfaceOp: "append" });
                   return;
                 }
-                const source = {
-                  kind: "model",
-                  provider: "dsht-tavern-helper",
-                  model: "th-system",
-                  ...role2 === "system" ? { thSystem: true } : {},
-                  ...data !== null ? { thData: data } : {}
-                };
                 live.append("assistant/message", {
-                  turn,
-                  step,
+                  // settlement 三件套（live 会话必为 v2+，stream 是必需成员）
+                  ...assistantSettlement(turn, step),
                   message: {
-                    id: `dsht-th-${randomUUID2()}`,
+                    id: mid,
                     role: "assistant",
                     content: [{ type: "text", text }],
-                    source
+                    source: {
+                      kind: "model",
+                      provider: "dsht-tavern-helper",
+                      model: role2 === "system" ? "th-system" : "th-append"
+                    }
                   }
                 }, { surfaceOp: "append" });
               };
@@ -20155,6 +21841,7 @@ ${replyText.slice(0, 8e3)}
               if (!live) return send(404, { error: "session not live" });
               const view = live.surface?.nodes;
               if (!Array.isArray(view)) return send(409, { error: "session surface unavailable" });
+              const thFloors = readThFloors(dshHome, sessionId);
               const snap = sessionEventsSnapshot(live);
               const shadowedSeqs = /* @__PURE__ */ new Set();
               for (const ev0 of snap) {
@@ -20175,12 +21862,13 @@ ${replyText.slice(0, 8e3)}
                 if (source && typeof source === "object" && source["form"] === "snapshot") continue;
                 const content = msg.content;
                 const text = Array.isArray(content) ? content.filter((b) => b !== null && typeof b === "object" && b.type === "text").map((b) => String(b.text ?? "")).join("\n") : typeof content === "string" ? content : "";
-                const isTh = !!(source && typeof source === "object" && source["thSystem"] === true);
+                const isTh = !!(source && typeof source === "object" && (source["thSystem"] === true || source["model"] === "th-system"));
                 if (!text && !isTh) continue;
                 if (typeof ev.seq === "number") exportSeqs.push(ev.seq);
               }
               let updated = 0;
               const errors = [];
+              const pendingAssistantEdits = [];
               for (const t of targets) {
                 const mid = Number(t.message_id ?? -1);
                 const seq = exportSeqs[mid];
@@ -20199,42 +21887,79 @@ ${replyText.slice(0, 8e3)}
                 const oldText = Array.isArray(oldMsg.content) ? oldMsg.content.filter((b) => b?.type === "text").map((b) => String(b.text ?? "")).join("\n") : "";
                 const text = t.message !== void 0 ? String(t.message ?? "") : oldText;
                 const oldSource = oldMsg.source && typeof oldMsg.source === "object" ? oldMsg.source : {};
-                const oldThData = oldSource["thData"] !== void 0 ? oldSource["thData"] : null;
+                const oldSidecar = lookupThFloor(thFloors, oldMsg.id, seq);
+                const oldThData = oldSource["thData"] !== void 0 ? oldSource["thData"] : oldSidecar?.data !== void 0 ? oldSidecar.data : null;
                 const data = t.data !== void 0 ? t.data : oldThData;
                 const oldBlocks = Array.isArray(oldMsg.content) ? oldMsg.content : [];
                 let shadowedTokens = oldBlocks.reduce((t2, b) => t2 + (b && (b["type"] === "text" || b["type"] === "reasoning") && typeof b["text"] === "string" ? Math.ceil(b["text"].length / 4) + 4 : 4 + Math.ceil(JSON.stringify(b).length / 4)), 0) + 4;
                 live.append("compaction/prune", { shadowedRange: { start: seq, end: seq }, shadowedSeqs: [seq], shadowedTokenCount: shadowedTokens });
-                const turn = typeof oldData.turn === "number" ? oldData.turn : 1;
-                const step = typeof oldData.step === "number" ? oldData.step : 1;
                 if (isUser) {
-                  const source = { kind: "plugin", plugin: "dsht-tavern-helper" };
-                  if (data !== null && typeof data === "object") source["thData"] = data;
-                  live.append("user/message", {
-                    id: `dsht-th-${randomUUID2()}`,
+                  const newId = `dsht-th-${randomUUID2()}`;
+                  if (data !== null && typeof data === "object") upsertThFloors(dshHome, sessionId, { [newId]: { data } });
+                  appendReplace(live, "user/message", {
+                    id: newId,
                     role: "user",
                     content: [{ type: "text", text }],
-                    source
-                  }, { surfaceOp: { op: "replace", start: seq, end: seq }, sourceEventSeqs: [seq] });
+                    source: { kind: "plugin", plugin: "dsht-tavern-helper" }
+                  }, { start: seq, end: seq }, [seq]);
                 } else {
-                  const source = {
-                    kind: "model",
-                    provider: "dsht-tavern-helper",
-                    model: "th-edit",
-                    ...oldSource["thSystem"] === true ? { thSystem: true } : {},
-                    ...data !== null && typeof data === "object" ? { thData: data } : {}
-                  };
-                  live.append("assistant/message", {
-                    turn,
-                    step,
-                    message: {
-                      id: `dsht-th-${randomUUID2()}`,
-                      role: "assistant",
-                      content: [{ type: "text", text }],
-                      source
-                    }
-                  }, { surfaceOp: { op: "replace", start: seq, end: seq }, sourceEventSeqs: [seq] });
+                  const markerSourceObj = markerSource(
+                    "dsht-tavern-helper",
+                    "surgical",
+                    { editedFrom: seq, shadowedSeqs: [seq] }
+                  );
+                  appendReplace(live, "user/message", {
+                    id: `dsht-th-mark-${randomUUID2()}`,
+                    role: "user",
+                    content: [{ type: "text", text: "[\u6D88\u606F\u5DF2\u7F16\u8F91] \u8BE5\u697C\u5C42\u7684\u539F\u6587\u5DF2\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF0C\u7F16\u8F91\u540E\u7684\u5185\u5BB9\u968F\u540E\u8FFD\u52A0\u3002" }],
+                    source: markerSourceObj
+                  }, { start: seq, end: seq }, [seq]);
+                  pendingAssistantEdits.push({
+                    text,
+                    thSystem: oldSource["thSystem"] === true || oldSource["model"] === "th-system" || oldSidecar?.system === true,
+                    thData: data
+                  });
                 }
                 updated++;
+              }
+              if (pendingAssistantEdits.length > 0) {
+                const agent = ctx.agents?.get(sessionId);
+                const idle = agent?.phase?.kind === "idle";
+                const plan = planAssistantRewrite(sessionEventsSnapshot(live), idle);
+                if (plan.openTurn) live.append("turn/start", { turn: plan.turn });
+                for (let i = 0; i < pendingAssistantEdits.length; i++) {
+                  const pe = pendingAssistantEdits[i];
+                  const step = plan.step + i;
+                  live.append("step/start", { turn: plan.turn, step });
+                  const newId = `dsht-th-${randomUUID2()}`;
+                  if (pe.thData !== null && typeof pe.thData === "object" || pe.thSystem) {
+                    upsertThFloors(dshHome, sessionId, {
+                      [newId]: {
+                        ...pe.thData !== null && typeof pe.thData === "object" ? { data: pe.thData } : {},
+                        ...pe.thSystem ? { system: true } : {}
+                      }
+                    });
+                  }
+                  live.append("assistant/message", {
+                    // settlement 三件套（live 会话必为 v2+，stream 是必需成员）
+                    ...assistantSettlement(plan.turn, step),
+                    message: {
+                      id: newId,
+                      role: "assistant",
+                      content: [{ type: "text", text: pe.text }],
+                      source: {
+                        kind: "model",
+                        provider: "dsht-tavern-helper",
+                        model: pe.thSystem ? "th-system" : "th-edit"
+                      }
+                    }
+                  }, { surfaceOp: "append" });
+                  live.append("step/end", { turn: plan.turn, step });
+                }
+                if (plan.openTurn) live.append("turn/end", { turn: plan.turn, reason: { kind: "completed" } });
+                if (plan.openTurn && agent?.phase && typeof agent.phase.lastTurn === "number" && agent.phase.lastTurn < plan.turn) {
+                  agent.phase.lastTurn = plan.turn;
+                }
               }
               if (updated > 0) {
                 try {
@@ -20258,7 +21983,7 @@ ${replyText.slice(0, 8e3)}
                 return send(400, { error: `\u65E0\u6CD5\u89E3\u6790\uFF08\u4E0D\u662F\u6709\u6548\u7684 ST \u9884\u8BBE JSON\uFF09\uFF1A${e.message}` });
               }
               const { preset, regex, skipped, skills } = imported;
-              const presetDir = join8(dshHome, "rp-presets", preset.id);
+              const presetDir = join10(dshHome, "rp-presets", preset.id);
               const files = [
                 { name: "preset.json", content: JSON.stringify(preset, null, 1) }
               ];
@@ -20280,13 +22005,13 @@ ${replyText.slice(0, 8e3)}
               }
               if (install.outcome !== "unchanged") {
                 for (const block of skills) {
-                  await mkdir5(join8(dshHome, block.dir), { recursive: true });
-                  await writeFile4(join8(dshHome, block.dir, "SKILL.md"), renderPresetSkillMd(preset.displayName, block), "utf8");
+                  await mkdir6(join10(dshHome, block.dir), { recursive: true });
+                  await writeFile4(join10(dshHome, block.dir, "SKILL.md"), renderPresetSkillMd(preset.displayName, block), "utf8");
                 }
                 for (const ps of preset.pendingSkills ?? []) {
                   const dir = pendingSkillDir(ps.name);
-                  await mkdir5(join8(dshHome, dir), { recursive: true });
-                  await writeFile4(join8(dshHome, dir, "SKILL.md"), renderPendingSkillMd(preset.displayName, ps), "utf8");
+                  await mkdir6(join10(dshHome, dir), { recursive: true });
+                  await writeFile4(join10(dshHome, dir, "SKILL.md"), renderPendingSkillMd(preset.displayName, ps), "utf8");
                 }
                 presetCache.delete(preset.id);
                 presetRegexCache.delete(preset.id);
@@ -20320,9 +22045,9 @@ ${replyText.slice(0, 8e3)}
               if (builtinPresets.some((b) => b.id === preset.id)) {
                 return send(400, { error: "\u5185\u7F6E\u9884\u8BBE\u4E0D\u53EF\u8986\u76D6\uFF08\u5148\u5728\u7BA1\u7406\u9762\u677F\u590D\u5236\u4E3A\u81EA\u5B9A\u4E49\uFF09" });
               }
-              await mkdir5(join8(dshHome, "rp-presets", preset.id), { recursive: true });
-              await writeFile4(join8(dshHome, "rp-presets", preset.id, "preset.json"), JSON.stringify(preset, null, 1), "utf8");
-              await markPresetUserOwned(join8(dshHome, "rp-presets", preset.id));
+              await mkdir6(join10(dshHome, "rp-presets", preset.id), { recursive: true });
+              await writeFile4(join10(dshHome, "rp-presets", preset.id, "preset.json"), JSON.stringify(preset, null, 1), "utf8");
+              await markPresetUserOwned(join10(dshHome, "rp-presets", preset.id));
               presetCache.delete(preset.id);
               await syncRpPresetToAgent(preset);
               console.log(`[dsht-rp] preset/save: ${preset.id}`);
@@ -20332,7 +22057,7 @@ ${replyText.slice(0, 8e3)}
               const presetId = String(payload.presetId ?? "");
               if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(presetId)) return send(400, { error: "presetId \u975E\u6CD5" });
               if (builtinPresets.some((b) => b.id === presetId)) return send(400, { error: "\u5185\u7F6E\u9884\u8BBE\u4E0D\u53EF\u5220\u9664" });
-              await rm4(join8(dshHome, "rp-presets", presetId), { recursive: true, force: true });
+              await rm4(join10(dshHome, "rp-presets", presetId), { recursive: true, force: true });
               await removeRpPresetAgent(presetId);
               presetCache.delete(presetId);
               presetRegexCache.delete(presetId);
@@ -20369,10 +22094,10 @@ ${replyText.slice(0, 8e3)}
               const macroName = String(payload.name ?? "").trim().toLowerCase();
               if (!macroName) return send(400, { error: "name required" });
               const result = await (macroWriteChain = macroWriteChain.then(async () => {
-                const macrosFile = join8(dshHome, "rp", "macros.json");
+                const macrosFile = join10(dshHome, "rp", "macros.json");
                 let disk = {};
                 try {
-                  disk = JSON.parse(await readFile7(macrosFile, "utf8"));
+                  disk = JSON.parse(await readFile8(macrosFile, "utf8"));
                 } catch {
                 }
                 try {
@@ -20387,7 +22112,7 @@ ${replyText.slice(0, 8e3)}
                 } catch (e) {
                   return { status: 400, body: { error: e.message } };
                 }
-                await mkdir5(join8(dshHome, "rp"), { recursive: true });
+                await mkdir6(join10(dshHome, "rp"), { recursive: true });
                 await atomicWriteFile(macrosFile, JSON.stringify(disk, null, 2));
                 console.log(`[dsht-rp] macro ${sub === "/macros/register" ? "registered" : "unregistered"}: {{${macroName}}}\uFF08\u5171 ${Object.keys(disk).length} \u4E2A\u81EA\u5B9A\u4E49\u5B8F\uFF09`);
                 return { status: 200, body: { ok: true, macros: listCustomMacros() } };
@@ -20419,9 +22144,9 @@ ${replyText.slice(0, 8e3)}
             }
             if (sub === "/regex/save-global") {
               const scripts = Array.isArray(payload.scripts) ? payload.scripts : [];
-              await mkdir5(join8(dshHome, "rp", "regex"), { recursive: true });
+              await mkdir6(join10(dshHome, "rp", "regex"), { recursive: true });
               await snapshotRpFiles(String(payload.sessionId ?? "") || await latestRpSessionId(), ["rp/regex/global.json"]);
-              await writeFile4(join8(dshHome, "rp", "regex", "global.json"), JSON.stringify({ scripts }, null, 1), "utf8");
+              await writeFile4(join10(dshHome, "rp", "regex", "global.json"), JSON.stringify({ scripts }, null, 1), "utf8");
               globalRegexCache = null;
               console.log(`[dsht-rp] regex/save-global: ${scripts.length} scripts`);
               return send(200, { ok: true, count: scripts.length });
@@ -20430,10 +22155,10 @@ ${replyText.slice(0, 8e3)}
               const slug = String(payload.slug ?? "");
               const scripts = Array.isArray(payload.scripts) ? payload.scripts : [];
               if (!slug) return send(400, { error: "slug required" });
-              const rpPath = join8(dshHome, "rp", slug, "rp.json");
+              const rpPath = join10(dshHome, "rp", slug, "rp.json");
               let rp;
               try {
-                rp = JSON.parse(await readFile7(rpPath, "utf8"));
+                rp = JSON.parse(await readFile8(rpPath, "utf8"));
               } catch {
                 return send(404, { error: `rp.json not found: ${slug}` });
               }
@@ -20447,7 +22172,7 @@ ${replyText.slice(0, 8e3)}
               const presetId = String(payload.presetId ?? "");
               if (!presetId) return send(400, { error: "presetId required" });
               try {
-                const text = await readFile7(join8(dshHome, "rp-presets", presetId, "regex.json"), "utf8");
+                const text = await readFile8(join10(dshHome, "rp-presets", presetId, "regex.json"), "utf8");
                 const o = JSON.parse(text);
                 return send(200, { presetId, scripts: Array.isArray(o.scripts) ? o.scripts : [] });
               } catch {
@@ -20458,14 +22183,14 @@ ${replyText.slice(0, 8e3)}
               const presetId = String(payload.presetId ?? "");
               const scripts = Array.isArray(payload.scripts) ? payload.scripts : [];
               if (!presetId) return send(400, { error: "presetId required" });
-              const dir = join8(dshHome, "rp-presets", presetId);
+              const dir = join10(dshHome, "rp-presets", presetId);
               try {
                 await readdir5(dir);
               } catch {
                 return send(404, { error: `\u9884\u8BBE\u4E0D\u5B58\u5728\uFF1A${presetId}` });
               }
               await snapshotRpFiles(String(payload.sessionId ?? "") || await latestRpSessionId(), [`rp-presets/${presetId}/regex.json`]);
-              await writeFile4(join8(dir, "regex.json"), JSON.stringify({ scripts }, null, 1), "utf8");
+              await writeFile4(join10(dir, "regex.json"), JSON.stringify({ scripts }, null, 1), "utf8");
               console.log(`[dsht-rp] regex/save-preset: ${presetId} \u2192 ${scripts.length} scripts`);
               return send(200, { ok: true, count: scripts.length });
             }
@@ -20530,6 +22255,25 @@ ${replyText.slice(0, 8e3)}
       }
     });
     console.log("[dsht-rp] data plane on webServer route /dsht-rp/*");
+    const disposeVersion = ctx.webServer.register({
+      kind: "exact",
+      path: "/version",
+      handler: (rawReq, rawRes) => {
+        const req = rawReq;
+        const res = rawRes;
+        if (req.method !== "GET" && req.method !== "POST") {
+          res.writeHead(405, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ error: "GET only" }));
+        }
+        if (!isTrusted(req)) {
+          res.writeHead(403, { "Content-Type": "application/json" });
+          return res.end(JSON.stringify({ error: "forbidden" }));
+        }
+        res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(JSON.stringify(stVersionPayload()));
+      }
+    });
+    console.log(`[dsht-rp] ST compat /version on webServer route /version (pkgVersion=${SILLYTAVERN_COMPAT_VERSION})`);
     const connForToken = ctx.connection;
     const launchToken = connForToken?.browserAuth?.launchToken;
     if (typeof launchToken === "string" && launchToken.length > 0) {
@@ -20541,10 +22285,10 @@ ${replyText.slice(0, 8e3)}
             if (n > 0) logLine(`\u542F\u52A8\u5373\u4FEE\uFF08token \u5C4F\u969C\u5185\uFF09\uFF1Aseq \u65AD\u53F7\u4FEE\u590D ${n} \u4E2A\u4F1A\u8BDD`);
           } catch {
           }
-          const tokenFile = join8(dshHome, "dsht-token");
-          const existing = await readFile7(tokenFile, "utf8").catch(() => "");
+          const tokenFile = join10(dshHome, "dsht-token");
+          const existing = await readFile8(tokenFile, "utf8").catch(() => "");
           if (existing.trim() !== launchToken) {
-            await mkdir5(dirname6(tokenFile), { recursive: true });
+            await mkdir6(dirname8(tokenFile), { recursive: true });
             await writeFile4(tokenFile, launchToken, "utf8");
             console.log("[dsht-rp] launch token written to dsht-token (stdout-independent channel)");
           }
@@ -20556,6 +22300,7 @@ ${replyText.slice(0, 8e3)}
     if (typeof effectFn === "function") {
       effectFn.call(ctx, () => () => {
         dispose();
+        disposeVersion();
       });
     }
   }
@@ -20582,10 +22327,12 @@ export {
   loadEjsSettings,
   loadUserProfileCached,
   makeBatchId,
+  messageDepth,
   name,
   parseInitVariables,
   parseStApiConfig,
   pickSecret,
+  planAssistantRewrite,
   processActivatedEntries,
   renderWorldInfoSnapshot,
   repairSessionSeqs,
@@ -20602,7 +22349,11 @@ export {
   sessionCwdNeedsRepair,
   sessionEventAt,
   sessionEventsSnapshot,
+  sessionHeaderCwd,
+  sessionRepairNeedsWrite,
+  shouldStripRpTools,
   spliceDepthInjections,
+  stripAssemblyTools,
   truncateHeavyToolPayloads,
   truncateSessionJsonl,
   unpackZipTo,

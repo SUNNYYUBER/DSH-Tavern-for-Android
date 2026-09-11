@@ -201,6 +201,12 @@ export interface ThContextSnapshot {
   }
   /** 当前 RP 工作区 slug（replaceTavernRegexes character 作用域需要） */
   slug?: string | null
+  /**
+   * 【心跳 58 · T-42】GLOBAL 作用域正则（ST 内部 camelCase 形状，`RegexScriptData[]`）。
+   * 宿主 `extension_settings.regex` 的种子来源——与 `chatCompletionSettings.extensions.regex_scripts`
+   *（预设内嵌通道）是**两棵独立的树**（基准 `engine.js:108-133` 的 getScriptsByType 三源分明）。
+   */
+  extensionSettingsRegex?: Array<Record<string, unknown>>
   messages?: ThChatMessage[]
   [key: string]: unknown
 }
@@ -2220,6 +2226,19 @@ window.audio = audio; // C17：对象型 API 不在函数型裸全局循环里�
 // found」）。这里给出 bundle 实际触碰的 ST 表面（读多写少；写路径归宿主，沙箱内 no-op）。
 var __dshtExtBase = {};
 try { __dshtExtBase = JSON.parse(localStorage.getItem('__dsht_extension_settings') || '{}') || {}; } catch (e) { __dshtExtBase = {}; }
+// 【心跳 58 · T-42 收口 · 同族副本】ST 全局正则键的形状兜底（与宿主 host-vendor 的
+// seedHostExtensionSettings 同判据，逐字对齐 ST extensions.js:178 的默认值 +
+// extensions/regex/index.js:1713 init() 的 !Array.isArray 兜底）。
+// 宿主侧是卡的 inject.js（跑在宿主页）读 ctx.extensionSettings.regex；
+// 本侧是 iframe 内脚本读 SillyTavern.extensionSettings.regex —— 两侧是**各自独立的副本**
+//（同一 localStorage 键，但各自在启动时读一次），只改一侧 = L61 的"假修"。
+// 铁律提醒：本文件整段是构建期模板串，此处不得出现反引号 / 正则字面量。
+var __dshtExtSeedChanged = false;
+if (!Array.isArray(__dshtExtBase['regex'])) { __dshtExtBase['regex'] = []; __dshtExtSeedChanged = true; }
+if (!Array.isArray(__dshtExtBase['regex_presets'])) { __dshtExtBase['regex_presets'] = []; __dshtExtSeedChanged = true; }
+if (__dshtExtSeedChanged) {
+  try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(__dshtExtBase)) } catch (e) { }
+}
 var __dshtExtSettings = new Proxy(__dshtExtBase, {
   set: function (t, k, v) { t[k] = v; try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(t)) } catch (e) { /* 配额满等：内存保留 */ } return true },
   deleteProperty: function (t, k) { delete t[k]; try { localStorage.setItem('__dsht_extension_settings', JSON.stringify(t)) } catch (e) { } return true },
