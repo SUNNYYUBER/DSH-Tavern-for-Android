@@ -103,6 +103,17 @@ build_one() {
   [ "$("$PY" -c "print(open(r'$ANDROID/app/src/main/java/com/dshtavern/app/NodeService.kt','rb').read()[:3]==b'\xef\xbb\xbf')")" = "False" ] \
     || die "A3: NodeService.kt 有 BOM（R35 双 BOM 会让 kotlinc 炸）"
 
+  # A7 —— 「提取官方方法引用」静态审计（心跳 55 新增）。
+  # 背景：`const f = live.append; f(...)` 会丢接收者 → 官方 Session 读 `this.log` 抛
+  # `Cannot read properties of undefined (reading 'log')`。心跳 47 的类型收窄重构引入两处，
+  # 让「重新生成 / 回退」两条 live 路径**恒 500 且零写入，死了 8 个心跳**，
+  # 而 tsc / 千条单测 / stage4-regression 三处全绿 —— 只有实机真写才照得出来。
+  # 闸门自身先跑 `--selftest`（正控/负控/零控），不过则视为闸门失效，同样中止。
+  say "[A7] 官方方法引用绑定审计"
+  "$NODE" "$WS/scripts/audit-method-binding.mjs" --selftest >/dev/null \
+    || die "A7: 审计闸门自检失败（正/负/零控未全过）——闸门本身不可信"
+  "$NODE" "$WS/scripts/audit-method-binding.mjs" || die "A7: 存在「提取方法引用未绑定接收者」的写法（会 detach 掉 this）"
+
   say "[1/6] esbuild dsh-plugin（绝对 outfile, A1）"
   "$NODE" "$ESB" "$PKG/src/dsh-plugin/index.ts" --bundle --format=esm --platform=node \
     --outfile="$DST/node_modules/dsht-rp-plugin/lib/index.js" >/dev/null
