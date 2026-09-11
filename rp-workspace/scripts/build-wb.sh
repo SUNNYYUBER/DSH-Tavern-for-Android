@@ -134,6 +134,18 @@ build_one() {
     || die "A7: 审计闸门自检失败（正/负/零控未全过）——闸门本身不可信"
   "$NODE" "$WS/scripts/audit-method-binding.mjs" || die "A7: 存在「提取方法引用未绑定接收者」的写法（会 detach 掉 this）"
 
+  # A10 —— 「前后端路由契约」静态审计（心跳 63C 新增；脚本心跳 46 就有，但**此前没接进构建**）。
+  # 背景：本闸门在心跳 63C 之前**自己有整类盲区** —— 把「服务端完全找不到该路径」降级成说明、
+  # 不计违约 ⇒ 漏掉了 3 个恒 404 的路由（`SessionsPanel.tsx` 调 `sessions-audit|archive|autoclean`
+  # 少了 `rp/` 前缀），**整个「会话管理」面板自上线起从未可用**，而 tsc / 千条单测 / 构建断言全绿。
+  # 现判据 = 「挂错 method」∪「路径根本不存在」；闸门自身先跑 `--selftest`（4 样本 6 断言）。
+  say "[A10] 前后端路由契约审计"
+  "$NODE" "$WS/scripts/audit-route-contract.mjs" --selftest >/dev/null \
+    || die "A10: 路由契约闸门自检失败（样本未全过）——闸门本身不可信"
+  grep -aq "audit-route-contract" "$WS/scripts/build-wb.sh" || die "A10: 自指断言失败"
+  "$NODE" "$WS/scripts/audit-route-contract.mjs" \
+    || die "A10: 前端 POST 调用与服务端路由不匹配（路径不存在或只在 GET 区）⇒ 该功能恒 404 被 catch 吞"
+
   say "[1/6] esbuild dsh-plugin（绝对 outfile, A1）"
   "$NODE" "$ESB" "$PKG/src/dsh-plugin/index.ts" --bundle --format=esm --platform=node \
     --outfile="$DST/node_modules/dsht-rp-plugin/lib/index.js" >/dev/null

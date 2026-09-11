@@ -15,12 +15,52 @@
  *   前端 rpApi/thApi/memApi 恒为 POST ⇒ 服务端必须在该文件的 **POST 区**里出现该路径。
  *   若某路径**只**出现在 GET 区 → 前端调用必然 404（= 静默失败），报错。
  *
+ * 【心跳 63C 扩域 · 从"挂错 method"扩到"路径根本不存在"】
+ *   起因是又一个上线后从未生效的功能（实机实证）：
+ *   `SessionsPanel.tsx` 调 `rpApi('sessions-audit')` / `'sessions-archive'` / `'sessions-autoclean'`
+ *   —— 都**少了 `rp/` 前缀**，而服务端挂的是 `/rp/sessions-*` ⇒ `/dsht-rp/sessions-audit` **恒 404**
+ *   `{"error":"unknown endpoint"}`，被 `catch { setNote('审计失败：…') }` 吞成一句提示
+ *   ⇒ **整个「会话管理」面板（审计 / 归档 / 自动清理）从未可用**（三个按钮 `disabled` 恒真，
+ *   因为 `forkedCount`/`emptyCount` 都来自永远为 null 的 `sessions`）。
+ *   ⚠️ 旧版本**抓不到**它：旧版把「服务端完全找不到该路径」降级成一条 `checked` 说明
+ *   （原文注释：「可能是别的前缀/动态拼接」）而**不计违约** ⇒ **防线自己给自己留了一个整类盲区**。
+ *   （L44 同族：防线必须能抓到自己该抓的东西。这是**同一文件里的第二次**。）
+ *   现改为：**找不到 = 违约**。动态拼接仍由字面量判据自然排除（正则只认字面量实参）。
+ *
  * 用法：node scripts/audit-route-contract.mjs      （退出码 0 = 无违约）
  *       node scripts/audit-route-contract.mjs -v   （同时列出全部已核对路由）
  */
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+// ---------------------------------------------------------------------------
+// 【心跳 63C】自检（L44：防线自身必须先过正控）
+//   本脚本是过程式的 ⇒ 自检用**子进程跑自己**，源码根指向 `fixtures/route-contract`。
+//   样本里放了 4 个已知形态：1 个 OK + 3 个**应当报违约**（缺前缀 / 只在 GET / 完全不存在）。
+//   为什么必须内建：本轮正是"防线自己有整类盲区"才漏掉了 3 个恒 404 的路由（心跳 63C）。
+// ---------------------------------------------------------------------------
+if (process.argv.includes('--selftest')) {
+  const { spawnSync } = await import('node:child_process')
+  const selfPath = fileURLToPath(import.meta.url)
+  const fx = resolve(dirname(selfPath), 'fixtures/route-contract/packages/src')
+  if (!existsSync(fx)) { console.error(`[selftest] 找不到样本目录：${fx}`); process.exit(2) }
+  const r = spawnSync(process.execPath, [selfPath], { env: { ...process.env, DSHT_AUDIT_SRC: fx }, encoding: 'utf8' })
+  const out = (r.stdout ?? '') + (r.stderr ?? '')
+  const cases = [
+    ['缺前缀样本被判违约', out.includes("rpApi('/sessions-audit')")],
+    ['只在 GET 区被判违约', out.includes("rpApi('/rp/only-get')")],
+    ['完全不存在被判违约', out.includes("rpApi('/rp/never-mounted')")],
+    ['POST 区可用的样本**不**被误报', !out.includes("rpApi('/rp/ok-post')")],
+    ['违约计数 = 3', /发现 3 处契约违约/.test(out)],
+    ['退出码 = 1', r.status === 1],
+  ]
+  for (const [name, ok] of cases) console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}`)
+  const allOk = cases.every(c => c[1])
+  console.log(`[selftest] ${allOk ? 'PASS' : 'FAIL'}`)
+  if (!allOk) { console.log('--- 子进程输出 ---\n' + out) }
+  process.exit(allOk ? 0 : 1)
+}
 
 const WS = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 // 允许覆盖源码根（负向对照用：拿 git HEAD 的旧文件跑一遍，必须能报出已知违约）
@@ -107,7 +147,9 @@ for (const { helper, server, label } of PAIRS) {
     if (where === null) continue
     const hitAny = where.get || where.post
     if (!hitAny) {
-      checked.push({ ...call, label, verdict: '未在服务端找到该路径（可能是别的前缀/动态拼接）' })
+      // 【心跳 63C】**找不到 = 违约**（旧版在此 `continue` → 整类盲区，实战漏掉了 3 个恒 404 的路由）
+      violations.push({ ...call, label, missing: true })
+      checked.push({ ...call, label, verdict: 'VIOLATION（服务端完全没有该路径 → POST 必然 404）' })
       continue
     }
     if (where.post) {
@@ -132,11 +174,12 @@ if (violations.length === 0) {
   console.log('✅ 无违约：所有前端 POST 调用在服务端 POST 区都能找到挂载点')
   process.exit(0)
 }
-console.log(`🔴 发现 ${violations.length} 处契约违约（前端 POST → 服务端只在 GET 区）：`)
+console.log(`🔴 发现 ${violations.length} 处契约违约（前端 POST → 服务端不匹配）：`)
 for (const v of violations) {
-  console.log(`  ✗ ${v.helper}('${v.path}')  ← 服务端 ${v.label} 只在 GET 区`)
+  console.log(`  ✗ ${v.helper}('${v.path}')  ← 服务端 ${v.label} ${v.missing ? '**没有这个路径**（前缀/拼写不一致？）' : '只在 GET 区'}`)
   console.log(`      调用点：${[...v.files].join(', ')}`)
 }
 console.log('')
-console.log('处置：把该路由同时挂到 POST 区（推荐抽单实现供两侧共用），或让前端改用 GET。')
+console.log('处置：路径不存在 → 对齐前后端字面量（改前端或后端，**只改一侧**，勿留两套别名）；')
+console.log('      只在 GET 区 → 把该路由同时挂到 POST 区（推荐抽单实现供两侧共用），或让前端改用 GET。')
 process.exit(1)

@@ -9,17 +9,30 @@
 
 | 事实 | 说明 |
 |---|---|
-| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v281**，阶段 0/1/2/3/4 已全部推完） |
-| 仓库最新产物 | **x86_64 debug sentinel v280（196,847,509 B）/ arm64 release sentinel v281（128,373,732 B）**，9-12 06:0x 构建（心跳 62 的壳侧预检 + T-48 门面成员），新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中（`client.js × 7` · `dsht-preflight × 5`） |
-| 设备侧 | **已装 v280**（心跳 62 完成）；实机取证：T-67 预检**仍在新包上跑**（`scanned 81 / ok 81 / repaired 0`）· **宿主门面 37 → 39 成员**、`renderExtensionTemplateAsync` 由 `undefined` → `function`（调用得 `undefined` + 逐字路径的 `console.error`）· 设备两侧副本各 ×7（无第 ⑦ 类断链） |
+| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v283**，阶段 0/1/2/3/4 已全部推完） |
+| 仓库最新产物 | **x86_64 debug sentinel v282（196,847,508 B）/ arm64 release sentinel v283（128,373,736 B）**，9-12 06:40 构建（心跳 63C 续的 T-69 修复 + **A10 构建闸首次生效**），新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中 |
+| 设备侧 | **已装 v282**（心跳 63C 续完成，`.installed-v282` 哨兵复核）；实机取证：T-67 预检在新包上跑（`scanned 81 / ok 81 / repaired 0`）· **T-69 三级验收全 PASS**（端点 200 / 产物三方 md5 一致 / **UI 面板首次可用**）· 设备副本 mtime 06:44 = 首启解压（**无第 ⑦ 类断链**） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
 | 单测 | **1149 项全绿（54 文件）** · `typecheck` 三段式 **0 错**（心跳 62B 复跑确认） |
-| 设备回归 | `stage4-regression` **20/21**（心跳 62B 复跑；唯一失败 `variant/groups` = 探针未 attach，与基线一致） |
+| 设备回归 | `stage4-regression` **20/21**（心跳 63C 续复跑，**首项 `✓ sessions-audit 可用 81 个会话` 即 T-69 修复被回归覆盖**；唯一失败 `variant/groups` = 探针未 attach，与基线一致） |
 | 未提交改动 | 心跳 62 的**新增** `packages/src/dsht-preflight/` + `tests/preflight.spec.ts` + `NodeService.kt` 注入 + 两个构建脚本 + **心跳 62B 的 T-48（`th-shim.ts` / `host-vendor.ts` + 两个 spec）** + **心跳 63 的 `audit-card-context-surface.mjs` 导入守卫 + `stage3-device/hb63/`** + 文档回写；**并发实例的** `DSH Android Roleplay App Plan.md` 等未提交改动**一份没碰**（`host-vendor.ts` 里同时也带着它的 T-25 脱敏改动，见提交说明） |
-| 本轮性质 | **心跳 63C = 审计器第三次扩域 + 覆盖率口径改造**（T-46/T-47 的**决策输入**再强化）⇒ **未改功能源码** ⇒ APK 沿用 **v280 / v281**、单测沿用 **1149 全绿**；唯一代码改动是 `audit-card-context-surface.mjs`（**10 正控 + 2 反控全 PASS**，既有 4 条正控输出**逐字不变**） |
+| 本轮性质 | **心跳 63C 续 = T-69 修复（🔴 真缺陷：「会话管理」面板自上线起从未可用）+ 防线 A10 入闸** ⇒ **改了功能源码**（`SessionsPanel.tsx` 4 处补 `rp/` 前缀，**只改一侧**）⇒ **APK 已重打**：**x86_64 debug v282（196,847,508 B）/ arm64 release v283（128,373,736 B）**，9-12 06:40 · 单测 **1149 全绿** · `typecheck` 三段式 **0 错**；新增可复跑正控 `audit-route-contract.mjs --selftest`（**6/6 PASS**）+ `scripts/fixtures/route-contract/` + `build-wb.sh` **A10** 构建闸 |
 | 发布闸门 | 🔴 **未达标**（T-25/T-61 心跳 61 复跑：受控面 **616 文件 / 合计 305 项**）⇒ **现在不能公开**；<br>✅ **`SECRET` 已由 1 → 0**（🔴 发布阻断项清除，但⚠️ 属**并发实例**在 `DSH Android Roleplay App Plan.md` 的**未提交**改动）<br>⚠️ **且密钥仍在本地 git 历史里**（仓库无远端、117 个提交从未推送 ⇒ 非对外事故）—— **P0 历史重写未做**；剩余 `WXID 16 / LOCALPATH 70 / SERVER 11 / PAYLOAD 8 / WORDLIST 200` |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
+- **心跳 63C 续** = **T-69 修复 + 实机三级验收 + 新发现 T-70**。
+  🔴 **一个「上线起从未可用」的功能被实机抓到**：设备「会话」页显示 `审计失败：unknown endpoint` +「未发现任何会话文件。」
+  （而设备实有 **81 个会话**）。**端点对质**：同页 `rp/home` / `rp/workspaces` / `rp/books` 全 **200**，唯
+  `/dsht-rp/sessions-audit` **404** ⇒ 不是插件没挂，是路径不存在。**根因**：`SessionsPanel.tsx` **4 处调用 / 3 个路径**
+  少了 `rp/` 前缀（全仓 15 个唯一 `rpApi` 路径里**正好这 3 个**），被 `catch { setNote(...) }` 吞成一句提示。
+  ① 🔴 **防线自己有整类盲区**：`audit-route-contract.mjs`（**心跳 46 正为此类缺陷而建**）把「服务端找不到该路径」
+  降级为"说明"**不计违约**（L44 同族，**同一文件第二次**）⇒ 已升级为**违约**。
+  ② **修复只改一侧**（前端对齐后端，不留后端别名）+ 防线加 `--selftest`（**6/6 PASS**，含反控）+ **接入构建 A10**。
+  ③ **最佳正控**：升级后在**修复前**跑真实源码 ⇒ **精确报出 3 处、零误报**。
+  ④ **实机三级验收全 PASS**：端点 200 / 400（vs 负控 404）· 产物**三方 md5 一致**（staging = 设备 = APK 内）
+  · **UI 面板首次可用**（「分叉残留（1）」+ 会话列表 + 归档按钮解禁）。
+  ⑤ 🆕 **T-70（性能，登记不开工）**：`/rp/sessions-audit` 暖 **6.4 s** / 冷 **48 s**（服务端为拿 `events` 逐行读完 81 个会话全文）。
+  ⑥ **沉淀 L102 / L103**；证据 `stage3-device/hb63/SESSIONS-PANEL-404-FIX.md`。
 - **心跳 63C** = **审计器第三次扩域：把「不可判定」当线索而不是结论** ⇒ 又挖出**三个整类漏检**，
   宿主面缺口 **15 → 18 个成员**、覆盖率 **13/54 → 50/54**。
   ① 三个漏检（全有语料实证 + 正控 + 反控）：**A 可选调用 `getContext?.()`**（`酒馆思维链清洗.js:14`，该文件 6 处 getContext 一条都提不出来）·
@@ -1683,6 +1696,105 @@ async listSessionDirs(project, signal) {
 或 ③ 改到 `sessions/` **之外**（预检的 `sessions-quarantine/` 正是这么设计的）；
 ③ 已核查我方产品代码：`repairSessionCwds` 只 `rename`**会话目录**（不是 project 目录），空壳 project 目录
 仍存在 ⇒ `readdir` 可成功，**不触发**本条。
+
+---
+
+### T-69　🔴→✅ **「会话管理」面板自上线起从未可用 —— 3 个路由恒 404**（心跳 63C 实机发现并修复）
+
+**症状**：设备 UI 「会话」页显示 `审计失败：unknown endpoint` + 「未发现任何会话文件。」
+（设备上明明有 81 个会话）；`forkedCount` / `emptyCount` 恒 0 ⇒ **两个清理按钮 `disabled` 恒真**，
+列表恒「审计中…」⇒ **整个面板零可用**，只剩一段说明文字（该功能是 2026-09-04 用户专门要求的）。
+
+**实机对质（决定性，CDP 同源 POST）**：
+
+| 端点 | 结果 |
+|---|---|
+| `/dsht-rp/rp/home` | **200** |
+| `/dsht-rp/rp/workspaces` | **200** |
+| `/dsht-rp/rp/books` | **200** |
+| **`/dsht-rp/sessions-audit`** | 🔴 **404 `{"error":"unknown endpoint"}`** |
+
+⇒ 不是"插件没挂"（其它路由全通），是**这个路径不存在**。
+
+**根因**：`SessionsPanel.tsx` 的 4 处调用（3 个路径）**少了 `rp/` 前缀**：
+
+```ts
+await rpApi('sessions-audit')                             // → /dsht-rp/sessions-audit   ❌
+await rpApi('sessions-archive', { sessionIds: [id] })     // → /dsht-rp/sessions-archive ❌（2 处）
+await rpApi('sessions-autoclean', { mode, dryRun: true }) // → /dsht-rp/sessions-autoclean ❌
+// 服务端挂的是 /rp/sessions-audit | /rp/sessions-archive | /rp/sessions-autoclean
+```
+
+**全仓对质**：前端 15 个唯一 `rpApi` 路径里，**正好这 3 个**缺前缀，其余全对。
+错误被 `catch { setNote('审计失败：…') }` 吞成一句提示（静默失败族）。
+
+**🔴 为什么既有防线没抓到 —— 防线自己有整类盲区**：`scripts/audit-route-contract.mjs`
+（心跳 46 正是为此类缺陷而建）把「服务端**完全找不到该路径**」写成
+`checked.push({verdict:'未在服务端找到该路径（可能是别的前缀/动态拼接）'}); continue` —— **不计违约**。
+⇒ 恰好在最该报警的一类上放行。（L44 同族：防线必须能抓到自己该抓的东西 —— **同一文件里的第二次**。）
+
+**修复（只改一侧）**：
+1. **前端** 4 处加 `rp/` 前缀对齐后端；**不给后端加无前缀别名**（两套路径 = 新的静默分歧源，L36）。
+2. **防线升级**：判据扩为 `挂错 method` **∪** `路径根本不存在`（后者从"说明"升级为**违约**）。
+3. **第一次给该防线加了可复跑正控**：新增 `scripts/fixtures/route-contract/`（1 个 OK + **3 个应报违约**）
+   + `--selftest`（子进程跑自己）**6 断言全 PASS**（含"POST 区可用的样本**不**被误报"这条反控）。
+4. **接入构建 = A10**（`build-wb.sh`）：先跑 `--selftest` 再跑真实审计，不过则中止构建。
+
+**验收**：升级后在**修复前**跑真实源码 ⇒ **精确报出这 3 处、零误报**（最佳正控）·
+防线自检 **6/6 PASS** · 修复后真实审计 **0 违约** · `typecheck` 三段式 **0 错** ·
+单测 **54 文件 / 1149 全绿** · 双架构 APK 重打 · 实机复测端点返 200。
+
+**证据全文**：`stage3-device/hb63/SESSIONS-PANEL-404-FIX.md`
+
+**同轮另发现两条（未修，如实登记）**：
+- `Choose workspace` 后卡在 `Loading workspaces…`（3 秒后仍未出结果）⇒ 疑与 **T-57**
+  （`gateway/service-unavailable`，本轮 logcat **第三次独立复现**）同源，**登记待查**。
+- `E/chromium: Unable to create cache`（1 次，未见后果）—— **只记录，不推断**。
+
+---
+
+### T-70　🟡 **`/rp/sessions-audit` 慢：暖态 ≈6.4 s / 冷态 ≈48 s**（心跳 63C 续实机新发现，性能非正确性）
+
+**怎么发现的**：T-69 的 **UI 级验收**探针（`stage3-device/hb63/t69-ui-probe.js`）第一次只等 3 秒，
+面板仍是「审计中…」—— 一度以为是**没修好**；把等待拉长 + 读 `performance.getEntriesByType('resource')`
+才看清是**慢**，不是坏（4 秒后列表与计数正常渲染）。
+
+**实测数据（设备 x86_64 / 81 个会话 / emulator-5554）**：
+
+| 采样 | 耗时 | 来源 |
+|---|---|---|
+| 页面内直接 fetch（暖，第 2 次） | **6420 ms** | `performance.now()` 环绕计时 |
+| resource timing（暖，第 3 次） | **7205 ms** | `/dsht-rp/rp/sessions-audit` |
+| resource timing（暖，第 2 次） | **7116 ms** | 同上 |
+| resource timing（**冷**，装包后首调） | **47931 ms** | 同上（`startTime 18275ms`，下一请求 `66217ms` 起） |
+
+**根因（服务端，非前端）**：`rp-workspace/packages/src/dsh-plugin/index.ts:5037-5092` 的
+`collectSessionsAudit` —— 为了给出 `events`（事件数）而**逐行流式读完全部 `session.jsonl`**：
+
+```ts
+const rl = createInterface({ input: createReadStream(f, { encoding: 'utf8' }), crlfDelay: Infinity })
+for await (const row of rl) { … count++ }        // index.ts:5068-5074
+```
+
+内存是恒定的（鲁棒轮 2026-09-09 已把"整文件读入 + split"改成流式，防 OOM），
+但 **I/O 复杂度 = O(全部会话字节)**；本机最大单会话 **104,794 事件**（面板实测已列出）⇒ 秒级不可避免。
+冷态 48 s 应为首启后页缓存全空 + 并发解压余波叠加。
+
+**为什么本轮不修**：① **无正确性缺陷**（结果正确，只是慢）；② 唯一有效的优化是**行数索引 / 缓存**，
+而任何缓存**必须同时交付失效策略**（会话写入 = append，索引如何增量维护？mtime 判据够不够？）
+—— 只要没想清楚就上缓存，就是把"慢"换成**静默陈旧**，正是本项目主力缺陷族（L42 / L102 同族）；
+③ 该面板是低频功能，6.4 s 不构成可用性阻断。⇒ **登记，不开工**。
+
+**优化方向（备查，开工前先出方案）**：
+- 会话文件是 **append-only JSONL** ⇒ 行数可**增量维护**（记录 `(size, lines)` 水位，只读新增尾部字节续数）；
+- 或只读**首行 + 末行 + 文件 size**，`events` 用近似/改为"最后活跃时间 + 体积"呈现（需先问"这个数字给谁看"）；
+- **UI 侧同族问题（同轮观察，一并处理）**：`load()` 起始即 `setSessions(null)` ⇒ 刷新期间
+  **计数回落 0 且列表清空**，与"真的没有可清理项"在视觉上**不可区分**（L103 同族：
+  判据要落在"这个数字从哪来"）。合理处置 = 刷新期间**保留上一次结果** + 显示"刷新中…"，不清零。
+
+**同轮新增探针**：`stage3-device/hb63/cdp-file.mjs`（CDP 表达式从**文件**读，避开 shell 抢解释 `${}`/反引号）
+· `t69-ui-probe.js`（走产品自己的 `RP_OPEN_EVENT` 打开「会话」tab 并 dump DOM 文本 + 按钮 disabled 态）
+· `t69-ui-diag.js`（resource timing + 直接 fetch 计时 + 点「重新审计」复测）。
 
 ---
 

@@ -12551,7 +12551,7 @@ function SessionsPanel(props) {
   const load = (0, import_react16.useCallback)(async () => {
     setSessions(null);
     try {
-      const r = await rpApi("sessions-audit");
+      const r = await rpApi("rp/sessions-audit");
       const order = { "branch-parent": 0, empty: 1, forked: 2, normal: 3, subagent: 4 };
       setSessions([...r.sessions ?? []].sort((a, b) => order[a.kind] - order[b.kind] || (b.lastTime ?? 0) - (a.lastTime ?? 0)));
     } catch (e) {
@@ -12572,7 +12572,7 @@ function SessionsPanel(props) {
     try {
       for (const id of ids) {
         if (props.archiveSession !== void 0) await props.archiveSession(id);
-        else await rpApi("sessions-archive", { sessionIds: [id] });
+        else await rpApi("rp/sessions-archive", { sessionIds: [id] });
       }
       setNote(`${label}\uFF1A\u5F52\u6863 ${ids.length} \u4E2A\uFF08\u5F52\u6863\u53EA\u662F\u4FA7\u8FB9\u680F\u9690\u85CF\uFF0C\u6570\u636E\u4FDD\u7559\uFF09`);
       await load();
@@ -12586,7 +12586,7 @@ function SessionsPanel(props) {
     setBusy(true);
     setNote("");
     try {
-      const pre = await rpApi("sessions-autoclean", { mode, dryRun: true });
+      const pre = await rpApi("rp/sessions-autoclean", { mode, dryRun: true });
       const targets = pre.targets ?? [];
       if (targets.length === 0) {
         setNote("\u6CA1\u6709\u9700\u8981\u6E05\u7406\u7684\u4F1A\u8BDD");
@@ -12605,7 +12605,7 @@ ${targets.slice(0, 8).map((t) => `\xB7 ${t.workspace ?? t.sessionId.slice(0, 18)
       const ids = targets.map((t) => t.sessionId);
       for (const id of ids) {
         if (props.archiveSession !== void 0) await props.archiveSession(id);
-        else await rpApi("sessions-archive", { sessionIds: [id] });
+        else await rpApi("rp/sessions-archive", { sessionIds: [id] });
       }
       setNote(`\u81EA\u52A8\u6E05\u7406\uFF1A\u5F52\u6863 ${ids.length} \u4E2A`);
       await load();

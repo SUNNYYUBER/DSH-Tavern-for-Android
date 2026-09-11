@@ -10,6 +10,16 @@
  * - autoclean：branch-parents / empty 两种模式批量归档（dryRun 预览）
  */
 import { useCallback, useEffect, useState, type JSX } from 'react'
+/* ⚠️ 心跳 63C 修复：本文件此前调用 rpApi 的三个 `sessions-*` 路径（sessions-audit /
+ * sessions-archive / sessions-autoclean）—— **全部少了 `rp/` 前缀**，而服务端挂的是
+ * `/rp/sessions-*` ⇒ `/dsht-rp/sessions-audit` 恒 **404 `{"error":"unknown endpoint"}`**，
+ * 被下方 `catch { setNote('审计失败：…') }` 吞成一句提示。
+ * 后果：**整个会话管理面板自上线起从未可用**（`sessions` 恒 null ⇒ `forkedCount`/`emptyCount`
+ * 恒 0 ⇒ 两个清理按钮 `disabled` 恒真）。实机取证：`rp/home` / `rp/workspaces` / `rp/books`
+ * 均 200，唯 `sessions-audit` 404。
+ * 同轮把 `scripts/audit-route-contract.mjs` 的判据从「挂错 method」扩到「路径根本不存在」
+ * （旧版把"服务端找不到该路径"降级成说明、不计违约 ⇒ 整类盲区），升级后**精确报出这 3 处**。
+ * 纪律：**只改一侧**（改前端对齐后端），不留后端别名 —— 两套路径 = 新的静默分歧。 */
 import { rpApi } from './rpc.ts'
 
 interface AuditSession {
@@ -46,7 +56,7 @@ export function SessionsPanel(props: { archiveSession?: (sessionId: string) => P
   const load = useCallback(async () => {
     setSessions(null)
     try {
-      const r = await rpApi('sessions-audit') as { sessions?: AuditSession[] }
+      const r = await rpApi('rp/sessions-audit') as { sessions?: AuditSession[] }
       // 分叉残留优先、其余按最后时间倒序
       const order: Record<AuditSession['kind'], number> = { 'branch-parent': 0, empty: 1, forked: 2, normal: 3, subagent: 4 }
       setSessions([...(r.sessions ?? [])].sort((a, b) => (order[a.kind] - order[b.kind]) || ((b.lastTime ?? 0) - (a.lastTime ?? 0))))
@@ -65,7 +75,7 @@ export function SessionsPanel(props: { archiveSession?: (sessionId: string) => P
       // （host 侧带 0.1.2 cookie 链调 workspace.archive RPC）
       for (const id of ids) {
         if (props.archiveSession !== undefined) await props.archiveSession(id)
-        else await rpApi('sessions-archive', { sessionIds: [id] })
+        else await rpApi('rp/sessions-archive', { sessionIds: [id] })
       }
       setNote(`${label}：归档 ${ids.length} 个（归档只是侧边栏隐藏，数据保留）`)
       await load()
@@ -77,7 +87,7 @@ export function SessionsPanel(props: { archiveSession?: (sessionId: string) => P
     setBusy(true)
     setNote('')
     try {
-      const pre = await rpApi('sessions-autoclean', { mode, dryRun: true }) as { targets?: Array<{ sessionId: string; workspace: string | null; events: number }> }
+      const pre = await rpApi('rp/sessions-autoclean', { mode, dryRun: true }) as { targets?: Array<{ sessionId: string; workspace: string | null; events: number }> }
       const targets = pre.targets ?? []
       if (targets.length === 0) { setNote('没有需要清理的会话'); setBusy(false); return }
       const confirmText = `将归档 ${targets.length} 个会话（${mode === 'branch-parents' ? '分叉残留旧会话' : '空壳会话'}）：\n${targets.slice(0, 8).map(t => `· ${t.workspace ?? t.sessionId.slice(0, 18)}…（${t.events} 事件）`).join('\n')}${targets.length > 8 ? `\n…共 ${targets.length} 个` : ''}\n\n归档 = 侧边栏隐藏，数据保留可恢复。继续？`
@@ -85,7 +95,7 @@ export function SessionsPanel(props: { archiveSession?: (sessionId: string) => P
       const ids = targets.map(t => t.sessionId)
       for (const id of ids) {
         if (props.archiveSession !== undefined) await props.archiveSession(id)
-        else await rpApi('sessions-archive', { sessionIds: [id] })
+        else await rpApi('rp/sessions-archive', { sessionIds: [id] })
       }
       setNote(`自动清理：归档 ${ids.length} 个`)
       await load()
