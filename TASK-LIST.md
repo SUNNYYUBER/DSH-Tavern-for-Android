@@ -9,16 +9,26 @@
 
 | 事实 | 说明 |
 |---|---|
-| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v279**，阶段 0/1/2/3/4 已全部推完） |
-| 仓库最新产物 | **x86_64 debug sentinel v278（196,844,623 B）/ arm64 release sentinel v279（128,370,848 B）**，9-12 05:3x 构建（心跳 62 的壳侧预检），新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中（`node_modules/dsht-preflight/lib/index.js`） |
-| 设备侧 | **已装 v278**（心跳 62 完成）；实机取证：`preflight: … (exists=true)` + **预检真的跑了**（`扫描 81 个会话目录：ok=80 搬迁=1 隔离=0 不可读=0 失败=0`）· **四段闭环**（反控 `node exited=2 / corrupt session log=10` → 正控 `node exited=0 / corrupt=0 / 端口 3080 起`）· 收场全树 `{"scanned":81,"repaired":[],"errors":[]}` · sessions 顶层 26（= 基线） |
+| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v281**，阶段 0/1/2/3/4 已全部推完） |
+| 仓库最新产物 | **x86_64 debug sentinel v280（196,847,509 B）/ arm64 release sentinel v281（128,373,732 B）**，9-12 06:0x 构建（心跳 62 的壳侧预检 + T-48 门面成员），新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中（`client.js × 7` · `dsht-preflight × 5`） |
+| 设备侧 | **已装 v280**（心跳 62 完成）；实机取证：T-67 预检**仍在新包上跑**（`scanned 81 / ok 81 / repaired 0`）· **宿主门面 37 → 39 成员**、`renderExtensionTemplateAsync` 由 `undefined` → `function`（调用得 `undefined` + 逐字路径的 `console.error`）· 设备两侧副本各 ×7（无第 ⑦ 类断链） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1141 项全绿（54 文件）** · `typecheck` 三段式 **0 错**（心跳 62 复跑确认） |
-| 设备回归 | `stage4-regression` **20/21**（心跳 62 复跑；唯一失败 `variant/groups` = 探针未 attach，与基线一致） |
-| 未提交改动 | 心跳 62 的**新增** `packages/src/dsht-preflight/` + `tests/preflight.spec.ts` + `NodeService.kt` 注入 + 两个构建脚本 + 文档回写（本轮提交）；**并发实例仍在改** `rpc.ts`/`dsht-rp-ui/lib/*`/`host-vendor.ts` 一族（T-57 修复），我方**一份没碰** |
+| 单测 | **1149 项全绿（54 文件）** · `typecheck` 三段式 **0 错**（心跳 62B 复跑确认） |
+| 设备回归 | `stage4-regression` **20/21**（心跳 62B 复跑；唯一失败 `variant/groups` = 探针未 attach，与基线一致） |
+| 未提交改动 | 心跳 62 的**新增** `packages/src/dsht-preflight/` + `tests/preflight.spec.ts` + `NodeService.kt` 注入 + 两个构建脚本 + **心跳 62B 的 T-48（`th-shim.ts` / `host-vendor.ts` + 两个 spec）** + 文档回写；**并发实例的** `DSH Android Roleplay App Plan.md` 等未提交改动**一份没碰**（`host-vendor.ts` 里同时也带着它的 T-25 脱敏改动，见提交说明） |
 | 发布闸门 | 🔴 **未达标**（T-25/T-61 心跳 61 复跑：受控面 **616 文件 / 合计 305 项**）⇒ **现在不能公开**；<br>✅ **`SECRET` 已由 1 → 0**（🔴 发布阻断项清除，但⚠️ 属**并发实例**在 `DSH Android Roleplay App Plan.md` 的**未提交**改动）<br>⚠️ **且密钥仍在本地 git 历史里**（仓库无远端、117 个提交从未推送 ⇒ 非对外事故）—— **P0 历史重写未做**；剩余 `WXID 16 / LOCALPATH 70 / SERVER 11 / PAYLOAD 8 / WORDLIST 200` |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
+- **心跳 62 续（62B）** = **T-48 部分收口：把「未移植」（`TypeError: … is not a function`）变成
+  「已移植但环境不支持」（基准同形错误路径 + 具名记名）**。设备只读探针先把缺口钉死：宿主门面 **37** 成员、
+  `renderExtensionTemplateAsync` **连 stub 都没有**；`Handlebars` / `DOMPurify` / `/scripts/extensions/**` 路由 /
+  扩展文件存储**四者全缺**（实测全 404）⇒ **完整实现判定为不做**（三件缺一都渲染不出来，且唯一消费者
+  要么是 T-42 已否决的路线、要么根本没装在 DSHT）。
+  交付 = 两个门面（宿主 + iframe，同语义镜像）给出**与基准 catch 分支一致**的退化实现
+  （记名 + `console.error` 带路径 + `toastr.error` + 返回 `undefined`，**不 reject**）。
+  单测 **1149 全绿（+8，含 1 条反控）** · 实机 `facadeMembers 37→39`、`typeof = 'function'`、
+  `await` 得 `undefined`、`console.error` 逐字含 `scripts/extensions/regex/editor.html` ·
+  双架构 APK **v280/v281** · `stage4-regression` **20/21**（与基线同）。
 - **心跳 62** = **把 T-65 的「建议」变成上线**：T-65 的损坏发生在 `[cordis.init]` **插件树加载期**，而我方修复器
   **全在插件体内**（L88：位置不对，再正确也救不了场）⇒ 换位置：把预检塞进 **node 启动参数**
   （`NODE_OPTIONS=--import file://<abs>/dsht-preflight/lib/index.js`，官方源**零修改**）。
@@ -578,17 +588,61 @@
 - **状态**：⏳ 登记，**不做**（需先定数据模型；且当前无实测触发——DSHT 目前只跑 TH **脚本**，
   未跑扩展文件系统）。
 
-### T-48　🆕 `renderExtensionTemplateAsync`（最后一个宿主面缺口，**与 T-42 同域**）
-- **契约**：`renderExtensionTemplateAsync(extName, templateId, data, sanitize, localize)`
-  → 读 `scripts/extensions/<extName>/<templateId>.html` + 模板替换 + 消毒 + 本地化（`extensions.js:137`）。
-- **为什么它与 T-42 绑在一起**：卡里唯一的调用是 `renderExtensionTemplateAsync('regex', 'editor')`
-  （`inject.js:4555`）—— 要的是 **ST 正则扩展的 `editor.html`**，而"把 ST 正则面板搬进来"正是
-  **T-42 的 A 选项**。宿主换不出这个模板。
-- **降险事实**：该契约另有**独立消费者**——已装扩展 `chat-history-backup` 调
-  `renderExtensionTemplateAsync('third-party/chat-history-backup', 'settings')`，模板就是**它自己目录里的
-  `settings.html`**（已核实存在）。所以一旦 T-42 决定引入扩展文件存储，这个 API 应**通用实现**
-  （读文件 + 模板替换 + 缺文件即抛错，**不假装成功**）。
-- **状态**：⏳ 随 T-42 一并决策。
+### T-48　✅ **部分收口** `renderExtensionTemplateAsync`（心跳 62；**完整实现判定为不做**）
+
+**契约（逐字对质基准）**：
+`renderExtensionTemplateAsync(ext, id, data, sanitize, localize)`
+= `renderTemplateAsync('scripts/extensions/' + ext + '/' + id + '.html', data, sanitize, localize, true)`
+（`SillyTavern-reference/public/scripts/extensions.js:137`）。而 `renderTemplateAsync`
+（`templates.js:60`）的链条是：**XHR 取文件 → Handlebars 编译（按路径缓存）→ 渲染 → DOMPurify 消毒 → applyLocale**；
+任何一步失败走它自己的 `catch`：`console.error('Error rendering template', …)`
++ `toastr.error('Check the DevTools console for more information.', 'Error rendering template')`
++ **返回 `undefined`**（⚠️ 基准**不 reject** —— 返回形状必须照抄，不能自作主张改成 reject）。
+
+**设备实测的缺口（心跳 62 探针，`stage3-device/hb62/hb62-t48-probe.js`，只读）**：
+
+| 判据 | 修复前实测 |
+|---|---|
+| 宿主门面成员数 | **37**；`typeof ctx.renderExtensionTemplateAsync === 'undefined'`（**连 stub 都没有**） |
+| 同族 | `renderTemplateAsync` / `renderTemplate` / `applyLocale` **全 undefined** |
+| 引擎依赖 | `typeof window.Handlebars = 'undefined'`；`typeof window.DOMPurify = 'undefined'`（全仓亦无） |
+| 文件路由 | `/script.js` **404** · `/scripts/templates/x.html` **404** · `/scripts/extensions/regex/editor.html` **404** · `/api/extensions` **404**（`/version` 200） |
+| 扩展文件存储 | 设备上**无** `third-party` 扩展目录、**无** `chat-history-backup`（那份只在 **TT** 的 `tmp/tt-data/…` 里，属对照源，不在 DSHT 运行） |
+
+**结论：完整实现 = 无效功（不做）**。理由不是"难"，而是**三件依赖缺一都渲染不出来**，
+且**在没有模板引擎的前提下单独补任何一件都不构成"能渲染"**（与 T-63「单独补 utils 是无效功」同型）。
+也不自造迷你模板引擎：Handlebars 的 `{{#if}}` / `{{#each}}` / helper / 转义语义抄不全 = 制造**新的**静默分歧。
+（唯一两个已知消费者：① 卡的宿主注入脚本 `card.js:4555` 要 ST 正则 `editor.html` —— 那正是 T-42 **否决掉**的
+"把 ST 正则面板搬进来"路线；② `chat-history-backup` 扩展 —— **根本没装在 DSHT**。）
+
+**本轮实际交付（把"未移植"变成"已移植但环境不支持"）**：
+
+修复前卡脚本拿到的是 `TypeError: ctx.renderExtensionTemplateAsync is not a function` ——
+这是**未移植**；而"有 API 但环境不支持"是另一回事。两者在排查上完全不同（同族 L42：有意降级也必须出声）。
+故补上**与基准同一条错误路径**的退化实现：
+
+| 落点 | 位置 | 说明 |
+|---|---|---|
+| **宿主门面**（卡走的就是这个） | `host-vendor.ts:buildHostStContext` 的 `renderExtensionTemplateAsync` / `renderExtensionTemplate` | 记名 + `console.error`（带 `scripts/extensions/<ext>/<id>.html` 路径）+ `toastr.error` + 返回 `undefined`（async 版 `Promise.resolve(undefined)`） |
+| **iframe 门面**（同语义必须同步 —— T-19 硬约束） | `th-shim.ts:buildStContextFacade` 内的 `dshtRenderExtensionTemplateFailure` | 同上（该文件主体是**构建期模板串**，无法共享模块；两侧用**镜像测试**钉住同一组可观测行为） |
+
+**验收**：
+- `typecheck` 三段式 **0 错** · 全量单测 **54 文件 / 1149 全绿**（+8：宿主侧 4 + iframe 侧 4，含 1 条反控）
+- **反控**：把成员从门面拿掉 → 卡脚本重新拿到 `is not a function`（用例真跑，证明这条在承重）
+- **实机（`emulator-5554`，装 v280 后 CDP 读宿主帧真实门面）**：
+  `facadeMembers` 由 **37 → 39** · `typeof renderExtensionTemplateAsync = 'function'` ·
+  `await ctx.renderExtensionTemplateAsync('regex','editor')` → thenable → `'undefined'` ·
+  同步版返回 `'undefined'` · `console.error` 两行，**逐字含 `scripts/extensions/regex/editor.html`**
+- 双架构 APK `x86_64 debug **v280**（196,847,509 B）` / `arm64 release **v281**（128,373,732 B）`；
+  `check-apk-payload.py` 双架构均命中（`client.js × 7`）
+- 设备两侧副本一致（`dsh-runtime/…` 与 `.dsh/profiles/web/…` 各 ×7）⇒ 无第 ⑦ 类断链
+
+⚠️ **诚实边界**：本轮交付的是**接口形状**，不是"用户会看到新功能"。
+触发可达性仍取决于卡的 UI 入口是否渲染（另见 T-42/T-60 的锚点设计）；若入口可达，
+点击失败会从"毫无反应、零线索"变成"弹出 Error rendering template + 日志具名记录"。
+一旦将来要**真渲染**，前置条件是三件一起上（Handlebars + DOMPurify + `/scripts/extensions/**` 文件路由与存储）。
+
+---
 
 ### T-49　🟠→❌ **「编辑楼层」与「变体（swipe）切换」零入口** —— 心跳 52 实测**推翻**，判定为**非缺陷**
 

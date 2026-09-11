@@ -534,3 +534,48 @@ describe('host ST 门面：extension_settings.regex 种子（心跳 58 · T-42�
     expect(ctx.extensionSettings).toBe(ctx.extension_settings)
   })
 })
+
+describe('host ST 门面：扩展模板渲染 renderExtensionTemplate(Async)（心跳 62 · T-48）', () => {
+  // 唯一消费者 = 卡的**宿主注入脚本**（regex 编辑器 `card.js:4555` 走宿主门面）。
+  // 修复前：`TypeError: ctx.renderExtensionTemplateAsync is not a function`（按钮点了毫无反应、零线索）。
+  // 修复后：存在、可调、**形状与基准 catch 分支一致**（console.error + toastr + 返回 undefined）。
+  it('两个成员**存在**于宿主门面（不再 "is not a function"）', () => {
+    const ctx = buildHostStContext({ getSnapshot: () => snap() })
+    expect(typeof ctx.renderExtensionTemplateAsync).toBe('function')
+    expect(typeof ctx.renderExtensionTemplate).toBe('function')
+  })
+
+  it('调用形状与基准一致：async 版 resolve undefined（**不 reject**）、同步版返回 undefined', async () => {
+    const ctx = buildHostStContext({ getSnapshot: () => snap() })
+    const a = ctx.renderExtensionTemplateAsync as (e: unknown, t: unknown) => Promise<unknown>
+    const s = ctx.renderExtensionTemplate as (e: unknown, t: unknown) => unknown
+    await expect(a('regex', 'editor')).resolves.toBeUndefined()
+    expect(s('regex', 'editor')).toBeUndefined()
+  })
+
+  it('出声：console.error 带得走排查所需的路径（不静默失败）', () => {
+    const errs: string[] = []
+    const real = console.error
+    console.error = (...a: unknown[]) => { errs.push(a.map(String).join(' ')) }
+    try {
+      const s = buildHostStContext({ getSnapshot: () => snap() }).renderExtensionTemplate as
+        (e: unknown, t: unknown) => unknown
+      s('regex', 'editor')
+    } finally { console.error = real }
+    const joined = errs.join('\n')
+    expect(joined).toContain('Error rendering template')
+    expect(joined).toContain('scripts/extensions/regex/editor.html')
+  })
+
+  it('toastr 缺席/残缺时不抛错（提示能力缺失不许改变返回形状）', () => {
+    const ctx = buildHostStContext({ getSnapshot: () => snap() })
+    const g = globalThis as unknown as { toastr?: unknown }
+    const prev = g.toastr
+    try {
+      g.toastr = undefined
+      expect(() => (ctx.renderExtensionTemplateAsync as (e: unknown, t: unknown) => unknown)('a', 'b')).not.toThrow()
+      g.toastr = { notAnError: 1 }
+      expect(() => (ctx.renderExtensionTemplateAsync as (e: unknown, t: unknown) => unknown)('a', 'b')).not.toThrow()
+    } finally { g.toastr = prev }
+  })
+})

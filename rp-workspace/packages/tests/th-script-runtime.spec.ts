@@ -419,6 +419,65 @@ describe('shim：上下文快照 + getContext + SillyTavern 门面', () => {
     expect(ctx.chatLength).toBe(0)
     expect(ctx.chat).toEqual([])
   })
+
+  // 【T-48 / 心跳 62】扩展模板渲染：基准有、我方不实现 —— 但**不许是"不是函数"**。
+  // 基准自己的失败路径（templates.js:60-85 的 catch）就是 console.error + toastr.error + 返回 undefined
+  // （注意：**不 reject**）。这三条钉住"退化实现"的形状 + 方向 + 不可静默。
+  it('T-48：renderExtensionTemplateAsync 在门面上**存在**（不是 "is not a function"），返回 Promise<undefined>', async () => {
+    const f = makeFrame('s1')
+    pushContext(f, {})
+    expect(vm.runInContext('typeof SillyTavern.getContext().renderExtensionTemplateAsync', f.ctx)).toBe('function')
+    const v = await vm.runInContext(
+      `SillyTavern.getContext().renderExtensionTemplateAsync('regex', 'editor')`, f.ctx)
+    expect(v).toBeUndefined() // 形状与基准 catch 分支一致：resolve undefined，不 reject
+  })
+
+  it('T-48：调用会**记名**（未移植 API 在脚本管理面板可见）+ console.error 出声（不静默失败）', () => {
+    const f = makeFrame('s1')
+    pushContext(f, {})
+    const errs: string[] = []
+    const realError = console.error
+    console.error = (...a: unknown[]) => { errs.push(a.map(String).join(' ')) }
+    try {
+      runScript(f, `window.__r = SillyTavern.getContext().renderExtensionTemplate('regex', 'editor');`)
+    } finally { console.error = realError }
+    const missing = f.posted.filter(m => m.th === 'missing').map(m => m.api)
+    expect(missing).toContain('renderExtensionTemplate')
+    // 同步版：同步返回 undefined（不是 Promise）
+    expect(vm.runInContext('window.__r', f.ctx)).toBeUndefined()
+    // 出声（L42：有意降级也必须出声）——且错误文案里带得走排查所需的路径
+    expect(errs.join('\n')).toContain('Error rendering template')
+    expect(errs.join('\n')).toContain('scripts/extensions/regex/editor.html')
+  })
+
+  it('T-48：toastr 不可用/不完整时**不抛错**（提示能力缺失不许改变返回形状）', () => {
+    const f = makeFrame('s1')
+    pushContext(f, {})
+    // shim 自带 toastr 存根（typeof object）——本用例把它**打成残缺**：非法用点正是"环境给不了提示"
+    vm.runInContext(`window.toastr = { notAnError: 1 };`, f.ctx)
+    let out: unknown = 'UNSET'
+    expect(() => {
+      out = vm.runInContext(
+        `SillyTavern.getContext().renderExtensionTemplateAsync('a', 'b')`, f.ctx)
+    }).not.toThrow()
+    // 跨 realm：不能用 instanceof Promise（vm 里的是另一个 realm 的 Promise），按鸭子类型断言
+    expect(typeof (out as { then?: unknown } | undefined)?.then).toBe('function')
+    // 也覆盖"toastr 整个为空"的极端
+    vm.runInContext(`window.toastr = undefined;`, f.ctx)
+    expect(() => vm.runInContext(
+      `SillyTavern.getContext().renderExtensionTemplateAsync('a', 'b')`, f.ctx)).not.toThrow()
+  })
+
+  it('T-48 反控：若把两个成员从门面移除，卡脚本就会拿到 "is not a function"（证明这两条在承重）', () => {
+    const f = makeFrame('s1')
+    pushContext(f, {})
+    // 模拟"修复前"：门面上没有这两个成员
+    const bare = vm.runInContext('(function () { var c = SillyTavern.getContext(); c.renderExtensionTemplateAsync = undefined; return c; })()', f.ctx) as Record<string, unknown>
+    expect(bare.renderExtensionTemplateAsync).toBeUndefined()
+    let threw = ''
+    try { vm.runInContext(`(function () { var c = SillyTavern.getContext(); c.renderExtensionTemplateAsync = undefined; return c.renderExtensionTemplateAsync('regex','editor'); })()`, f.ctx) } catch (e) { threw = String((e as Error).message) }
+    expect(threw).toContain('is not a function')
+  })
 })
 
 // ---------------------------------------------------------------------------

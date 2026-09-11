@@ -1539,6 +1539,53 @@ function getOrCreateChatWorldbook() {
 }
 
 // ---- SillyTavern.getContext 门面（快照驱动、同步；缺的数据字段 undefined 保持形状）----
+
+/**
+ * 【T-48 / 心跳 62】renderExtensionTemplate(Async) 的**退化实现**（我们不做模板引擎）。
+ * 【注意】本函数在 buildShimSource 的**模板串内部** —— 源码里**不能写反引号、也不能写
+ * 「美元符号 + 花括号」的插值记号**（两者都会提前终止/污染模板串；本注释在 2026-09-12
+ * 就因为用了反引号把整个 shim 变成解析错误）。
+ *
+ * 基准契约（SillyTavern-reference/public/scripts/extensions.js:137）：
+ *   renderExtensionTemplateAsync(extName, templateId, data, sanitize, localize)
+ *     = renderTemplateAsync('scripts/extensions/' + extName + '/' + templateId + '.html',
+ *                           data, sanitize, localize, true)
+ * 而 renderTemplateAsync（同目录 templates.js:60）的链条是：
+ *   XHR 取文件 → **Handlebars** 编译（按路径缓存）→ 渲染 → **DOMPurify** 消毒 → applyLocale；
+ * 任何一步失败走它自己的 catch：console.error('Error rendering template', …)
+ *   + toastr.error('Check the DevTools console for more information.', 'Error rendering template')
+ *   + **返回 undefined**（注意：基准**不 reject** —— 返回形状必须照抄）。
+ *
+ * 我方缺的是**整条链上的三件**：Handlebars（全仓无）、DOMPurify（全仓无）、
+ * /scripts/extensions/** 文件路由 + 扩展文件存储（设备实测 404）。三者缺一都渲染不出来，
+ * 故**不做半成品**（与 T-63「单独补 utils 是无效功」同型；也拒绝自己写个迷你模板引擎 ——
+ * Handlebars 的 {{#if}} / {{#each}} / helper / 转义语义抄不全 = 制造新的静默分歧）。
+ *
+ * **为什么仍然要给这两个函数**：缺成员的后果是卡脚本拿到
+ * 「TypeError: ctx.renderExtensionTemplateAsync is not a function」—— 这是**未移植**，
+ * 而「有 API 但失败」是**已移植但环境不支持**，两者在排查上完全不是一回事
+ * （本项目在打的就是静默失败族；L42：有意降级也必须出声）。
+ * 所以给出**与基准同一条错误路径**的退化实现：记名 + console.error + toastr + 返回 undefined。
+ * 效果：卡里那两个按钮（card.js:3745 新建 / :4268 编辑）从「点了毫无反应、零线索」
+ * 变成「弹出 Error rendering template + 日志里有具名记录」。
+ */
+function dshtRenderExtensionTemplateFailure(api, extensionName, templateId, isAsync) {
+  var path = 'scripts/extensions/' + String(extensionName || '') + '/' + String(templateId || '') + '.html'
+  reportMissing(api)
+  try {
+    console.error('Error rendering template', path,
+      '未移植：需要 Handlebars 模板引擎 + DOMPurify + /scripts/extensions/** 文件路由（三者全缺）')
+  } catch (e) { /* 日志能力缺失不改变返回形状 */ }
+  // 基准同款用户可见信号；toastr 可能不在 iframe 内 —— 提示失败不许影响返回值
+  try {
+    var t = (typeof window !== 'undefined' && window.toastr) ? window.toastr : null
+    if (t && typeof t.error === 'function') {
+      t.error('Check the DevTools console for more information.', 'Error rendering template')
+    }
+  } catch (e) { /* 同上 */ }
+  return isAsync ? Promise.resolve(undefined) : undefined
+}
+
 function buildStContextFacade() {
   var ctx = getContext();
   var settings = (ctx.chatCompletionSettings && typeof ctx.chatCompletionSettings === 'object')
@@ -1570,6 +1617,18 @@ function buildStContextFacade() {
     presetName: ctx.presetName != null ? ctx.presetName : undefined,
     chat: messages,
     chatLength: messages.length,
+    // 【T-48 / 心跳 62】扩展模板渲染：基准有、我方不实现（缺 Handlebars/DOMPurify/文件路由）
+    // ⇒ 给**与基准同一条错误路径**的退化实现（记名 + console.error + toastr + 返回 undefined），
+    //   而不是让它"不是函数"。同步版基准已标 deprecated，语义同：失败同样返回 undefined。
+    //   详见 dshtRenderExtensionTemplateFailure 头注。
+    renderExtensionTemplateAsync: function (extensionName, templateId) {
+      return dshtRenderExtensionTemplateFailure(
+        'renderExtensionTemplateAsync', extensionName, templateId, true)
+    },
+    renderExtensionTemplate: function (extensionName, templateId) {
+      return dshtRenderExtensionTemplateFailure(
+        'renderExtensionTemplate', extensionName, templateId, false)
+    },
   };
 }
 

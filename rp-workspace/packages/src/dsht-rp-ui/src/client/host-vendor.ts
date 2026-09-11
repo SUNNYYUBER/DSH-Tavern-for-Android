@@ -127,7 +127,7 @@ export function installHostToastr(host: Record<string, unknown> = globalThis as 
 //    TT/ST 上同样有。DSH webui 是 React 应用 → 没有。
 //  - 设备实测（CDP Runtime.exceptionThrown，宿主帧 ctx）：
 //    `ReferenceError: SillyTavern is not defined`
-//    @ https://jnai2d9kgnbs6xzx5c.com/regex_bind/inject.js:55
+//    @ 〈该卡外链托管域〉/regex_bind/inject.js:55   （域名按 T-25 脱敏，非公开基础设施）
 //    —— 该卡外链的 220KB 宿主注入脚本里 `SillyTavern.getContext` 出现 **11 次**：
 //      :55            `const ctx = SillyTavern.getContext();`
 //                     `for (const prompt of ctx.chatCompletionSettings.prompts)` ← 首行就炸
@@ -600,7 +600,48 @@ export function buildHostStContext(src: HostStContextSource = {}): Record<string
     // ST：`groups`（群聊列表，`st-context.js` 返回体）。同样如实为空数组
     //（实测用法 `context.groups?.find(g => g.id === context.groupId)` 在 groupId 恒 null 时不可达）。
     groups: [] as unknown[],
+
+    // ---- 【T-48 / 心跳 62】扩展模板渲染：基准有、我方不实现；但**不许是「不是函数」** ----
+    // 基准契约（SillyTavern-reference/public/scripts/extensions.js:137）：
+    //   renderExtensionTemplateAsync(ext, id, data, sanitize, localize)
+    //     = renderTemplateAsync('scripts/extensions/' + ext + '/' + id + '.html', data, sanitize, localize, true)
+    // 而 renderTemplateAsync（templates.js:60）的链条是：XHR 取文件 → **Handlebars** 编译 →
+    // 渲染 → **DOMPurify** 消毒 → applyLocale；失败时它自己的 catch 是
+    // console.error + toastr.error + **返回 undefined**（注意：**不 reject**）。
+    // 我方缺整条链上的三件（Handlebars / DOMPurify / /scripts/extensions/** 文件路由 + 扩展文件存储，
+    // 后者设备实测 404）⇒ 不做半成品，也不自造迷你模板引擎（见 T-48 与 T-63 同型结论）。
+    // 唯一消费者 = 这张卡的**宿主注入脚本**（`card.js:4555` 的 regex 编辑器，挂在 ST 正则面板 DOM 上
+    // ⇒ 走的就是本门面），其失败模式此前是 `TypeError: ... is not a function`（点了毫无反应、零线索）。
+    // ⚠️ 同步约束：iframe 侧的 `th-shim.ts:buildStContextFacade` 有一份**同语义实现**（主体是
+    // 构建期模板串，无法共享模块 —— T-19 硬约束）。**改任一侧必须同步另一侧**，并有 parity 测试钉住。
+    renderExtensionTemplateAsync: (extensionName?: unknown, templateId?: unknown): Promise<undefined> =>
+      hostRenderExtensionTemplateFailure('renderExtensionTemplateAsync', extensionName, templateId, true) as Promise<undefined>,
+    renderExtensionTemplate: (extensionName?: unknown, templateId?: unknown): undefined =>
+      hostRenderExtensionTemplateFailure('renderExtensionTemplate', extensionName, templateId, false) as undefined,
   }
+}
+
+/**
+ * 【T-48 / 心跳 62】宿主侧 `renderExtensionTemplate(Async)` 的**退化实现**（与 th-shim.ts 内那份同语义）。
+ * 严格照抄基准在「模板取不到」时的行为：console.error + toastr.error + 返回 undefined（**不 reject**）。
+ * 差异点：额外出一条**具名** console.warn（L42：有意降级也必须出声），并让名称进入门面降级去重表。
+ */
+function hostRenderExtensionTemplateFailure(
+  api: string, extensionName: unknown, templateId: unknown, isAsync: boolean,
+): unknown {
+  const path = 'scripts/extensions/' + String(extensionName ?? '') + '/' + String(templateId ?? '') + '.html'
+  warnFacadeDegraded(api, '未移植：需要 Handlebars 模板引擎 + DOMPurify + /scripts/extensions/** 文件路由（三者全缺）')
+  try {
+    console.error('Error rendering template', path,
+      '未移植：需要 Handlebars 模板引擎 + DOMPurify + /scripts/extensions/** 文件路由（三者全缺）')
+  } catch { /* 日志能力缺失不改变返回形状 */ }
+  try {
+    const host = globalThis as unknown as { toastr?: { error?: (m: string, t: string) => void } }
+    if (host.toastr !== undefined && typeof host.toastr.error === 'function') {
+      host.toastr.error('Check the DevTools console for more information.', 'Error rendering template')
+    }
+  } catch { /* 同上 */ }
+  return isAsync ? Promise.resolve(undefined) : undefined
 }
 
 /**

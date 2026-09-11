@@ -10,7 +10,25 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
-> 最后更新：2026-09-12（心跳 62 —— **把 T-65 的「建议」变成上线：在「插件树加载期」之前插进一道壳侧静态预检，并用设备四段验收证明它在承重**：
+> 最后更新：2026-09-12（心跳 62 续 · 62B —— **T-48 部分收口：先把"该不该做完整实现"用只读探针问死，再只做该做的那一半**：
+> ① **量的三件事**（改代码之前）：宿主门面 **37** 成员且 `renderExtensionTemplateAsync` **连 stub 都没有**（`typeof = 'undefined'`）；
+> `Handlebars` / `DOMPurify` **全仓全无**；`/script.js` · `/scripts/templates/*` · `/scripts/extensions/**` · `/api/extensions` **全 404**；
+> 设备上**根本没有扩展文件存储**（`chat-history-backup` 只存在于 **TT** 的对照数据里）。
+> ② **结论：完整实现 = 无效功（不做）** —— 基准链条「取文件 → Handlebars 编译 → 渲染 → DOMPurify → applyLocale」
+> **四件缺一都渲染不出来**，单独补任何一件都不构成"能渲染"（同 T-63 同型结论）；也不自造迷你模板引擎。
+> 两个已知消费者都不成立（卡要的是 T-42 已否决的路线；扩展没装在 DSHT）。
+> ③ **只交付该做的那一半**：把「未移植」（`TypeError: … is not a function`）变成「已移植但环境不支持」——
+> 按**基准自己的 catch 分支**做退化实现：`console.error(带 scripts/extensions/<ext>/<id>.html 路径)` + `toastr.error` +
+> **返回 `undefined`（基准不 reject ⇒ 形状照抄）** + 具名降级告警。
+> ④ **两个门面都改**（卡走的是**宿主门面**；`th-shim.ts` 是构建期模板串无法共享模块 ⇒ 两侧同语义 + 镜像测试钉住）。
+> ⑤ **验收**：`typecheck` 三段式 0 错 · 单测 **54 文件 / 1149 全绿**（+8，含 1 条反控）·
+> **实机** `facadeMembers 37 → 39`、`typeof = 'function'`、`await` 得 `undefined`、`console.error` 逐字含路径 ·
+> `stage4-regression` **20/21**（与基线同）· **T-67 预检在新包上复跑通过**（`scanned 81 / ok 81 / repaired 0`）·
+> 双架构 APK **v280（x86_64 debug）/ v281（arm64 release）**，设备两侧副本各 ×7（无第 ⑦ 类断链）。
+> ⑥ 过程中的真实踩坑（→ **L70 第三次复现**）：模板串里的注释写了反引号 ⇒ 整份 `th-shim.ts` 解析不了。
+> ⚠️ **诚实边界**：交付的是**接口形状**，不是"用户会看到新功能"（触发可达性取决于卡的 UI 入口）。
+>
+> 前一轮：2026-09-12 05:4x（心跳 62 —— **把 T-65 的「建议」变成上线：在「插件树加载期」之前插进一道壳侧静态预检，并用设备四段验收证明它在承重**：
 > ① **动因（L88）**：我方修复器全在**插件体内**，而 T-65 的损坏发生在 `[cordis.init]` 插件树加载**期**（`assertStoredIdentity`）⇒ 修复器根本轮不到执行；比插件树更早的位置只有两处 —— 更外层进程（Kotlin）与 node 启动参数，二者叠加 = `NODE_OPTIONS="… --import file://<abs>/dsht-preflight/lib/index.js"`（官方源**零修改**）。
 > ② **新交付 `dsht-preflight`**：纯文件扫描 `sessions/<project>/<sid>/session[.vN].jsonl`，按 `header.cwd`/`header.id` 重算期望目录名（逐字照抄官方 `projectKey`/`encodeSegment`，**只按字面值、绝不 realpath**）→ 不符则 `rename` 搬正（**只搬，不写一个字节文件内容**）；目标已存在 → **隔离**到 `sessions/` **之外**的 `sessions-quarantine/`；rename 失败 → 目录原封不动（rename 原子）；一切异常 **fail-open**。
 > ③ **两道闸**：入口闸（`argv[1]` 必须是 DSH 主入口 —— 因 `NODE_OPTIONS` 会被子进程继承）+ **反控闸 `DSHT_PREFLIGHT_DISABLE=1`**。
@@ -137,6 +155,75 @@
 | **P-1** | 更新开关要用**哪个 GitHub 仓库**（公开 or 私有？影响鉴权） | 需你定；**公开**最简单（无需 token） | 阶段三发布前必须定；代码已就绪，只差填地址 |
 
 | ~~**T-49**~~ ❌ | ~~「改楼层」和「换变体（swipe）」在界面上根本点不到~~ | **心跳 52 实测推翻 = 非缺陷**：**编辑入口本来就在** —— user 气泡操作条里有 `✎ 编辑`（`data-testid=dsht-rp-edit`），实测点开就地编辑器（预填原文）+ 取消还原，全程零请求零数据变更；**变体条**也已接槽位，只是「只有 1 个变体时按设计返回 null」（当前 `groups=1`）。心跳 51 的「0 命中」是**窗口化 + 只采样 title/aria-label** 造成的假阴性 | — |
+
+## 心跳 62 续（62B）做了什么（**先把"该不该做"用证据问死，再只做该做的那一半**）
+
+> 一句话：**T-48 是"最后一个宿主面缺口"，但"补上它"有两种做法 —— 做完整实现，或只把"未移植"变成"已移植但环境不支持"。
+> 本轮先花 10 分钟用只读探针把前者问死，再花半小时做完后者。**
+> ⚠️ 交付的是**接口形状**，不是"用户会看到新功能"—— 这一点写进了 T-48 正文，不当成已修完。
+
+### 1. 先量的三件事（只读探针，改代码之前）
+
+`stage3-device/hb62/hb62-t48-probe.js`（CDP 读宿主帧真实 globals）：
+
+| 判据 | 实测 |
+|---|---|
+| 门面成员 | **37** 个成员；`typeof ctx.renderExtensionTemplateAsync = 'undefined'`（**连 stub 都没有**）；同族 `renderTemplate(Async)` / `applyLocale` 同样全缺 |
+| 引擎依赖 | `window.Handlebars = 'undefined'`、`window.DOMPurify = 'undefined'`（**全仓也搜不到**） |
+| 文件路由 | `/script.js` · `/scripts/templates/x.html` · `/scripts/extensions/regex/editor.html` · `/api/extensions` **全 404**（唯 `/version` 200） |
+| 扩展存储 | 设备上**无** `third-party` 目录、**无** `chat-history-backup`（那份只在 **TT** 的 `tmp/tt-data/…`，是**对照源**，不在 DSHT 运行） |
+
+### 2. 由证据得出的两个决定
+
+**决定一：完整实现不做。** 基准链条（`extensions.js:137` → `templates.js:60`）是
+「XHR 取文件 → **Handlebars** 编译 → 渲染 → **DOMPurify** 消毒 → `applyLocale`」——
+**四件缺一都渲染不出来**，且单独补任何一件都不构成"能渲染"（与 **T-63**「单独补 `utils` 是无效功」同型）。
+也不自造迷你模板引擎：`{{#if}}` / `{{#each}}` / helper / 转义语义抄不全 = 制造**新的**静默分歧。
+两个已知消费者也都不成立：
+
+- 卡的宿主注入脚本 `card.js:4555` 要的是 ST 正则 `editor.html` —— 那正是 **T-42 已否决**的"把 ST 正则面板搬进来"路线；
+- `chat-history-backup` 扩展 —— **根本没装在 DSHT**（扩展文件系统都没跑）。
+
+**决定二：只做"接口形状"这一半。** 修复前卡脚本拿到的是
+`TypeError: ctx.renderExtensionTemplateAsync is not a function` —— 这是**未移植**；
+而"有 API 但环境不支持"是另一回事，两者排查代价完全不同（**L42**：有意降级也必须出声）。
+所以按**基准自己的 catch 分支**做退化实现：
+
+```
+console.error('Error rendering template', 'scripts/extensions/<ext>/<id>.html', 原因)
++ toastr.error('Check the DevTools console for more information.', 'Error rendering template')
++ 返回 undefined          ← ⚠️ 基准**不 reject**，形状必须照抄（不自作主张改成 reject）
++ 额外一条具名降级告警进 warnFacadeDegraded 去重表
+```
+
+### 3. 两个门面都要改（这是本轮最容易做漏的地方）
+
+| 门面 | 位置 | 谁在用 |
+|---|---|---|
+| **宿主门面** | `host-vendor.ts:buildHostStContext` | **卡的宿主注入脚本走的就是这个**（regex 面板 DOM 在宿主页） |
+| iframe 门面 | `th-shim.ts:buildStContextFacade` | 卡脚本在沙箱 iframe 内 |
+
+**只改 iframe 侧等于没修** —— 而 `th-shim.ts` 主体是**构建期模板串**，无法 `import` 共享模块（T-19 硬约束）
+⇒ 两侧各写一份同语义实现，用**镜像测试**（同一组可观测行为，两侧各一套）钉住不漂移。
+
+### 4. 过程中的一次真实踩坑（→ L70 第三次复现）
+
+一次性往 `th-shim.ts`（模板串内部）的注释里写了 **10 处反引号** ⇒ 整份文件**当文件就解析不了**
+（`vite:oxc: Expected a semicolon`，报错位置**正好落在第一个反引号**上）。
+判别特征值得记住：**报错行看起来完全像注释、位置指向一个反引号** ⇒ 立刻想到"模板串被提前终止"。
+同族陷阱：注释里写 **`${`** 会被当成插值。
+
+### 5. 验收（全实测）
+
+| 判据 | 结果 |
+|---|---|
+| `typecheck` 三段式 | **core / ui / tests 全 0 错** |
+| 全量单测 | **54 文件 / 1149 全绿**（+8：宿主侧 4 + iframe 侧 4） |
+| **反控** | 把成员从门面拿掉 ⇒ 卡脚本重新拿到 `is not a function`（用例真跑，证明在承重） |
+| **实机**（装 v280 后 CDP 读宿主帧） | `facadeMembers` **37 → 39** · `typeof = 'function'` · `await …('regex','editor')` → `'undefined'` · 同步版 `'undefined'` · `console.error` 两行**逐字含 `scripts/extensions/regex/editor.html`** |
+| 设备回归 | `stage4-regression` **20/21**（唯一失败 `variant/groups` = 探针未 attach，与基线同） |
+| **T-67 回归** | 预检在新包上**复跑通过**：`ts` 刷新、`scanned 81 / ok 81 / repaired 0` |
+| 产物 | APK `x86_64 debug` **196,847,509 B sentinel v280** / `arm64 release` **128,373,732 B sentinel v281**；`check-apk-payload.py` 双架构命中 `client.js × 7`；**设备两侧副本各 ×7**（无第 ⑦ 类断链） |
 
 ## 心跳 62 做了什么（**把「修复不了的那一类损坏」变成「根本不会发生」：在插件树之前插进一道壳侧静态预检**）
 
