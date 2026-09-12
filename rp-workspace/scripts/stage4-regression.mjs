@@ -68,30 +68,48 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 
 // ---- 0. 会话清单（顺带定位可用 sessionId）----
 const audit = await call('dsht-rp', 'rp/sessions-audit', {})
-let sid = SID
+let cands = []
 if (audit.json && Array.isArray(audit.json.sessions)) {
   check('sessions-audit 可用', true, `${audit.json.sessions.length} 个会话`)
-  if (!sid) {
-    const cand = audit.json.sessions.filter(s => s.kind === 'normal' && s.events > 4)
-      .sort((a, b) => (b.lastTime ?? 0) - (a.lastTime ?? 0))[0]
-    sid = cand?.sessionId ?? ''
-  }
+  cands = audit.json.sessions.filter(s => s.kind === 'normal' && s.events > 4)
+    .sort((a, b) => (b.lastTime ?? 0) - (a.lastTime ?? 0)).map(s => s.sessionId)
 } else {
   check('sessions-audit 可用', false, audit.raw)
 }
-console.log(`\n使用会话: ${sid}\n`)
 
 // ---- 1. 打开会话（attach；需 slug + sessionId）----
+// 【心跳 65 修 · L113】attach 只对**运行时 live 的会话**成功（其余恒 404
+// `session not live`）。而「磁盘上最近修改（lastTime）」≠「运行时 live」——
+// 仅按 lastTime 取首个候选，会在「用户开着一个空会话、磁盘上另有更近的旧会话」时
+// 把 21/21 误报成 20/21（这就是本心跳实测到的假失败）。
+// ⇒ 判据改为**行为探测**：先试页面记录的当前会话，再按 lastTime 降序逐个 open-chat，
+//    第一个返回 200 的即 live 会话。全部失败才判失败（不再把 404 当通过）。
 const wsList = await call('dsht-rp', 'rp/workspaces', {})
 let slug = ''
 if (wsList.json && Array.isArray(wsList.json.workspaces)) {
   // 按审计里的会话 cwd 找所属 slug；找不到就用第一个
   slug = wsList.json.workspaces[0]?.dir ?? wsList.json.workspaces[0]?.slug ?? ''
 }
-const openR = await call('dsht-rp', 'rp/open-chat', { slug, sessionId: sid })
+// 页面上记录的「当前会话」是最可靠的 live 线索（本地存储，零成本）。
+let current = ''
+try {
+  const raw = await ev(`(()=>{try{return localStorage.getItem('dsh.sessions.current')}catch(e){return null}})()`)
+  if (typeof raw === 'string') current = JSON.parse(raw)?.sessionId ?? ''
+} catch { /* 无记录则跳过 */ }
+let sid = SID || ''
+let openR = null
+const ordered = (sid ? [sid] : (current ? [current] : []))
+  .concat(cands.filter(c => c !== sid && c !== current))
+for (const c of ordered) {
+  const r = await call('dsht-rp', 'rp/open-chat', { slug, sessionId: c })
+  if (r.status === 200) { sid = c; openR = r; break }
+  openR = openR ?? r
+}
+if (sid === '') { sid = ordered[0] ?? ''; openR = openR ?? await call('dsht-rp', 'rp/open-chat', { slug, sessionId: sid }) }
+console.log(`\n使用会话: ${sid}${current && current !== sid ? `（页面当前=${current}）` : ''}\n`)
 check('open-chat（attach 会话）',
-  openR.status === 200 || (openR.status === 404 && /not live/i.test(openR.raw ?? '')),
-  `HTTP ${openR.status} ${openR.raw}`)
+  openR !== null && openR.status === 200,
+  `HTTP ${openR?.status} ${openR?.raw}${openR && openR.status !== 200 ? '  ← 无 live 会话（先在 UI 打开一个会话）' : ''}`)
 
 // ---- 2. 世界书（TH 门面 /worldbook/list）----
 const books = await call('dsht-tavern-helper', 'worldbook/list', { sessionId: sid })
@@ -162,7 +180,7 @@ check('mvu variables/patch（UpdateVariable）', mvuPatch.status === 200, `HTTP 
 // 清理：MVU 无删除路由 → 用 adb 直接删一次性文件（best-effort，失败只提示不算失败）
 try {
   const { execFileSync } = await import('node:child_process')
-  const adb = process.env.ADB_PATH ?? 'C:/Users/Administrator/.android/sdk/platform-tools/adb.exe'
+  const adb = process.env.ADB_PATH ?? `${process.env.USERPROFILE ?? process.env.HOME ?? ''}/.android/sdk/platform-tools/adb.exe`
   execFileSync(adb, ['-s', 'emulator-5554', 'shell',
     `run-as com.dshtavern.app rm -f files/.dsh/rp/state/${PROBE_SID}.json`], { stdio: 'pipe' })
   check('mvu 探针清理（adb rm）', true, '一次性状态文件已删')

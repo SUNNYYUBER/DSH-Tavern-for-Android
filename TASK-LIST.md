@@ -9,17 +9,55 @@
 
 | 事实 | 说明 |
 |---|---|
-| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v283**，阶段 0/1/2/3/4 已全部推完） |
-| 仓库最新产物 | **x86_64 debug sentinel v290（196,851,409 B）/ arm64 release sentinel v291（128,377,632 B）**，9-12 11:57 构建（**心跳 64 的 T-72 修复** `name1` 帧内两面补齐），新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**核验**命中（`pushContextSnapshotToFrames`×3 · `hostUserName`×3 · `name1: ctx.name1`×1） |
-| 设备侧 | **已装 v290**（x86_64 debug，装机 200，`.installed-v290` 哨兵复核，旧 v288 被自动清理）；实机取证：**7 个 TH 脚本帧 live 读数** · **T-72 实机验收 7/7 PASS**（帧内**顶层**与 **getContext** 两面 `name1` 均取到 `"示例人设乙"`，帧面签名 `[23,13,40,false]` = 修复前 `[22,11,40,false]` 的 **+1/+2** 精确对上改动面）· T-67 预检在新包上跑（`scanned 81 / ok 81 / repaired 0`）· **T-69 三级验收全 PASS** · 设备副本 mtime = 首启解压（**无第 ⑦ 类断链**） |
+| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v299**，阶段 0/1/2/3/4 已全部推完） |
+| 仓库最新产物 | **x86_64 debug sentinel v298（196,853,392 B）/ arm64 release sentinel v299（128,379,624 B）**，9-12 15:01 / 15:02 构建（**心跳 65 的 T-76 修复**：首启陈旧 token 竞态）；**四路 md5 一致** `9004dfbc848d07f84204dd787afee87e`（staging = 设备 `dsh-runtime` = 设备 `profiles/web` = APK 内 `assets/dsh-runtime.zip`） |
+| 设备侧 | **已装 v298**（x86_64 debug）；实机取证：**7 个 TH 脚本帧** · **T-74/T-75 验收 7/7 PASS × 11 判据**（帧面签名 `[26,16,41,false]` = 修复前 `[23,13,40,false]` 的 **+3/+3/+1** 精确对上改动面）· **T-76 验收：用 `T_old` 加载主框架 0 次 / 就绪前零发布 / `sessionController is unavailable` 0 次**，端到端**直接恢复上次 RP 会话、卡死态未出现** · 冷启对照工作区 26 项正常加载 |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1186 项全绿（56 文件）** · `typecheck` 三段式 **0 错**（心跳 64 复跑确认） |
-| 设备回归 | `stage4-regression` **21/21**（心跳 64 续首次全绿 —— 因本轮 RP 会话已 attach，`variant/groups` 由"探针未 attach"变为 `HTTP 200 groups=0`；此前基线为 **未 attach 20/21**） |
-| 未提交改动 | 心跳 62 的**新增** `packages/src/dsht-preflight/` + `tests/preflight.spec.ts` + `NodeService.kt` 注入 + 两个构建脚本 + **心跳 62B 的 T-48（`th-shim.ts` / `host-vendor.ts` + 两个 spec）** + **心跳 63 的 `audit-card-context-surface.mjs` 导入守卫 + `stage3-device/hb63/`** + 文档回写；**并发实例的** `DSH Android Roleplay App Plan.md` 等未提交改动**一份没碰**（`host-vendor.ts` 里同时也带着它的 T-25 脱敏改动，见提交说明） |
-| 本轮性质 | **心跳 64 = T-46 live 帧读数闭合 + T-71 高频轮询定性 + T-72 真实缺陷修复（含实机验收）+ T-73 定性**（① 首次取到**真实脚本帧**读数，`identitySame=false` 实证"非投影"、投影得失算成 **得到 27 / 丢 9（实际 8）**；② 把"看着像我方 API 被高频打"追到底 ⇒ **语料陷阱（两副本同名 id）→ 卡自带 `setInterval` → 基准同语义 → 未落盘** ⇒ **非缺陷**；③ 从"顶层直取普查"里挖出**帧内两面都缺 `name1`** ⇒ 当前活跃卡渲染 `"undefined: 内容"` ⇒ **已修，5 处源码 + 2 条单测，实机 7/7 PASS ×2 组帧样本**；④ **T-73**：`Choose workspace 卡 Loading workspaces…` ⇒ **定性为"慢"非"坏"、非我方缺陷**（文案/状态机在官方组件；服务实测 1.2–6.0 s 而历史观察窗口仅 3 s；reload 实验**未能复现**）⇒ **改了产品源码** ⇒ **APK 重打 v290 / v291** · 单测 **1186 全绿（56 文件）** · `typecheck` 三段式 **0 错** · `stage4-regression` **21/21**；证据 `stage3-device/hb64/{T46-LIVE-FRAME-EVIDENCE,T71-POLLING-CENSUS,T72-NAME1-TOPFACE-FIX,T73-WORKSPACE-PICKER-TRIAGE}.md`；沉淀 **L109 / L110 / L111** |
+| 单测 | **1195 项全绿（56 文件）** · `typecheck` 三段式 **0 错**（心跳 65 复跑确认） |
+| 设备回归 | `stage4-regression` **21/21**（心跳 65 修掉脚本「按磁盘 `lastTime` 选会话」的**形状假设**后，**不带参数即 21/21**；此前会因选中非 live 会话把 21/21 误报成 20/21） |
+| 未提交改动 | 心跳 62 的**新增** `packages/src/dsht-preflight/` + `tests/preflight.spec.ts` + `NodeService.kt` 注入 + 两个构建脚本 + 心跳 62B 的 T-48 + 心跳 63 的导入守卫 + 文档回写；**心跳 64 的 T-72（5 文件）**；**心跳 65 的 T-74/T-75（`th-shim.ts` / `host-vendor.ts` / `st-compat.ts` + 两个 spec + A11 闸门 + 普查工具）+ T-76（`NodeService.kt`）+ `stage4-regression.mjs`**；**并发实例的** `DSH Android Roleplay App Plan.md` 等**一份没碰** |
+| 本轮性质 | **心跳 65 = T-74/T-75 实机闭环 + 推翻 T-73 判定并修掉 T-76（首启启动竞态）+ 回归脚本形状假设修复**（详见下方「当前状态」） |
 | 发布闸门 | 🔴 **未达标**（T-25/T-61 心跳 61 复跑：受控面 **616 文件 / 合计 305 项**）⇒ **现在不能公开**；<br>✅ **`SECRET` 已由 1 → 0**（🔴 发布阻断项清除，但⚠️ 属**并发实例**在 `DSH Android Roleplay App Plan.md` 的**未提交**改动）<br>⚠️ **且密钥仍在本地 git 历史里**（仓库无远端、117 个提交从未推送 ⇒ 非对外事故）—— **P0 历史重写未做**；剩余 `WXID 16 / LOCALPATH 70 / SERVER 11 / PAYLOAD 8 / WORDLIST 200` |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
+- **心跳 65** = **T-74/T-75 实机闭环 + 推翻 T-73 判定、修掉 T-76（首启启动竞态）+ 回归脚本形状假设修复**。
+  ① **T-74/T-75 实机闭环**（上一轮改的 3 个成员）：装 build#3（**v296**）后 `t74-chatid-probe` **7/7 PASS × 11 判据**
+  —— `chatId` 两面同值且 == `getCurrentChatId()`；`uuidv4` 两面皆函数、两次取值互异；`mainApi` 两面 `'openai'`；
+  **把卡的闸门逐字搬进探针跑，结果 `PROCEED`**；负控 `onlineStatus` / `chat_id` / `chatIdXxx` 两面皆 absent。
+  `frame-surface-diff` 形态签名 **`[23,13,40,false] → [26,16,41,false]`** = **+3/+3/+1/0**，与改动面**逐项对上**；
+  四路 md5 一致；`stage4-regression` 21/21。
+  ② 🔴 **T-73 判定被推翻**：心跳 64 判「慢、非缺陷（服务 1.2–6.0 s vs 观察窗 3 s；reload 未复现）」。
+  本轮**直接复现**：菜单 `Loading workspaces…` **连续 60 s 不变**（20 次 × 3 s 轮询），reload 后**立刻**恢复 26 个工作区。
+  **旧测量为什么无意义**：它测的是**连接已健康**页面上的服务耗时；真出问题的页面上 `workspace.list` / `session.list`
+  **根本没发出去**（`phase` 恒 `'pending'`）—— 服务快慢与症状无关（L116）。
+  **根因（官方源 + 实机双向确证）**：DSH 自己在 `deepseek-harness/packages/bundle/web-app/src/index.ts:249-256` 写着
+  「**`dsh web:` URL 行就是就绪信号；兄弟行（`/api` 属主）仍在挂载时不得触发**」，而 `FrontendStatic` 挂载早于
+  `announceReady()` ⇒ **页面可服务 ≠ 网关就绪**，实测存在 **20 s** 窗口（14:50:58 前端启动 → 14:51:18 网关就绪）。
+  窗口内启动的前端，连接 generation **一次性失败且不再重臂**
+  （`typert gateway: session/control: active Service "sessionController" is unavailable`）
+  ⇒ `WorkspaceListState.phase` 永远 `'pending'`（`workspaces/service.ts:38-42` + `WorkspacePicker.tsx:197`）⇒ **永久 loading**。
+  **触发因子 A（我方代码 · 已修）**：`NodeService.onStartCommand` 里 `startPortProbe()`
+  （主线程立即启动、每秒读 `dsht-token`）**先于**后台线程里的「清旧 token」⇒ 探活线程读到**上一进程遗留**的 token 并发布
+  ⇒ MainActivity 立刻 `loadUrl`。**两次实机实证**：发布值与上一进程 launchToken **逐字符相同**
+  （`14:45:03` 捕获 → `14:50:18 main-frame 404 @ …?token=61h9F09G7VlD5yqB…`；冷启 `14:58:42` 捕获 → `14:59:27 …?token=-sULV_…`）。
+  **修复（一处）**：清旧**上移到 `onStartCommand` 同步执行且早于 `startPortProbe()`** + `coldStart` 守卫
+  （仅本次真要拉起 node 时清，避免重复 `onStartCommand` 误删当次有效回退通道）。
+  **验收（刻意用 install 触发哨兵 +1 = 重建首装宽窗口）**：`token file not found yet (miss #15, port open)` →
+  `15:08:47.700 dsh web: …?token=p6zD8q…` → `15:08:47.746 web token captured`（**+46 ms**）；
+  ① 用 `T_old` 加载主框架 **0 次**（修复前必现且逐字符相同）② 就绪前零发布 ③ `sessionController is unavailable` **0 次**。
+  **端到端且优于预期**：应用**直接恢复上次 RP 会话**，卡死态**完全未出现**。
+  ⚠️ **诚实边界**：因子 B（`MainActivity` 门控只认主框架 HTTP 状态 / 网络错误、**不感知后端就绪**）**本轮未修**，
+  已单独登记；若将来出现「插件把 token 写在就绪之前」的新路径，缺陷会复发。**不假装它已经好了。**
+  ③ **顺带修掉回归脚本的形状假设（L113 同族）**：`stage4-regression.mjs` 用「磁盘 `lastTime` 最近」当 live 判据、
+  且把 `open-chat` 的 **404 也算通过** ⇒ 在「用户开着空会话、磁盘另有更近旧会话」时把 21/21 **误报成 20/21**。
+  已改为**行为探测**（先试页面记录的当前会话，再按 `lastTime` 降序逐个 `open-chat`，**第一个返回 200 的即 live**），
+  判据收严为**必须 200**。修复后不带参数即 **21/21**。
+  ④ **交付**：`typecheck` 三段式 **0 错** · 单测 **56 文件 / 1195 全绿** · 四路 md5 **1 个值** `9004dfbc848d07f84204dd787afee87e`
+  · 双架构 APK **x86_64 debug v298（196,853,392 B）/ arm64 release v299（128,379,624 B）**，**已装机 v298**
+  · 哨兵（APK 内 Kotlin ⇔ 设备 `build-info`）同为 **v298** ⇒ 证明**修好的 Kotlin 确实进了这个 APK**。
+  证据全文 `stage3-device/hb65/HB65-T76-BOOT-RACE-EVIDENCE.md`（T-74/T-75 另见 `HB65-T74-T75-EVIDENCE.md`）。
+  沉淀 **L116 / L117 / L118**；新增可复用工具 `stage3-device/hb65/card-surface-census.mjs`（四形态静态普查，`--selftest` 9/9）
+  与 `rp-workspace/scripts/audit-shim-template-literal.mjs`（L70 闸门化，接进 `build-wb.sh` 作 **A11**，`--selftest` 5/5）。
 - **心跳 64** = **T-46 live 帧读数闭合 + T-71 高频轮询定性（追到底判定为非缺陷）**。
   ① **T-46 最后一处诚实边界首次闭合**：新工具 `stage3-device/hb64/frame-surface-diff.mjs`（纯只读）经 CDP 取到
   **7 个 `about:srcdoc` 脚本帧 + 1 个宿主页**，**7 帧形态签名完全一致** `[顶层 22 / getContext 11 / 父页 40 / identitySame=false]`
@@ -2082,7 +2120,7 @@ live 帧读数 → 发现「帧内 getContext(11) 有 7 个成员顶层(22) 没�
 
 ---
 
-### T-73　🟡 **`Choose workspace` 卡在 `Loading workspaces…` —— 定性为「慢」而非「坏」，非我方缺陷**（心跳 64 续）
+### T-73　🟡→🔴→✅ **`Choose workspace` 卡在 `Loading workspaces…` —— 心跳 64 判「慢/非缺陷」，**心跳 65 推翻**：实为可复现的启动竞态（已修为 T-76）**（心跳 64 定性，心跳 65 纠正）
 
 **一句话**：这个文案与状态机**都在官方组件里**（`@deepseek-ai/dsh-client-ui-workspace/lib/client.js:2660`
 的 `picker.loading`，渲染条件 `:1166` 的 `workspaceSnapshot.phase === "pending"`，数据来自**订阅/流**）；
@@ -2111,6 +2149,79 @@ live 帧读数 → 发现「帧内 getContext(11) 有 7 个成员顶层(22) 没�
 
 ---
 
+
+**⬇️ 心跳 65 的纠正（推翻上面的判定）**
+
+
+**心跳 64 的原判**（保留备查）：文案与状态机都在官方组件（`picker.loading`，渲染条件 `workspaceSnapshot.phase === "pending"`），
+数据来自**订阅我方源码**；历史观察窗仅 **3 s** 而底层服务实测 **1.2–6.0 s** ⇒ 判「慢（非坏）· 非我方缺陷 · 本轮未能复现」。
+
+**心跳 65 的纠正**：**T-73 自己在末尾登记了「留给下一轮的定性判据」，本轮照它执行，结论反转。**
+
+⚠️ **旧判据为什么无效（L116）**：那 1.2–6.0 s 是在**连接已健康**的页面上测的服务耗时。
+真出问题的页面上，`workspace.list` / `session.list` **根本没发出去**（`phase` 恒 `'pending'`）——
+**服务快慢与症状无关**。测量对象错了。同理，「reload 未能复现」也不行：**必须冷启**（这恰是 T-73 自己写下的第 ① 条判据）。
+
+**复现（照 T-73 判据 ①「必须冷启」）**：`poll-workspace-menu.js` 轮询 **20 次 × 3 s = 60 s**，
+`role=status` 恒为 `Loading workspaces…`，菜单里除「Add workspace…」外**零工作区**；手动 reload 后**立刻**恢复 26 项。
+**根因与修复** ⇒ 见 **T-76**。
+
+**结论修订**：**不是「慢」，是一条可复现的启动竞态；触发因子在我方 `NodeService` 内，已修。**
+
+---
+
+### T-74　✅ **帧内两面都缺 `chatId` ⇒ 卡的角色绑定校验恒失败；补单一来源**（心跳 65）
+
+**一句话**：基准里 `chatId` 与 `getCurrentChatId()` **本就是同一个表达式**（`st-context.js:131-133` ≡ `script.js:869`），
+而帧内**顶层与 `getContext()` 两面都没有它** ⇒ 取到 `undefined`。**语料实证**：8 处用法 / 6 个文件，
+**无属性级守卫**；当前启用的「示例卡二」预设用它做 `boundChatId` 绑定校验 ⇒ **恒失败**。`uuidv4` 同组（A 档：宿主面早有、帧面缺 ⇒ 同一门面两面不一致）。
+
+**修复（单源）**：`th-shim.ts` 加 `dshtCurrentChatId()`（唯一来源，取快照 slug）与 `dshtUuidv4()`（`crypto.randomUUID` + Math.random 兜底）；
+`buildStContextFacade()` 与顶层门面各挂一项；`getCurrentChatId()` 改调同一函数。
+
+**验收**：`t74-chatid-probe` **7/7 PASS × 11 判据**（含负控 `chat_id` / `chatIdXxx` 两面必须 absent —— 基准全树 0 命中，**补它=制造假信息，L36**）；
+签名差分 **`[23,13,40,false] → [26,16,41,false]`** = **+3/+3/+1** 与改动面逐项对上。
+
+---
+
+### T-75　✅ **`mainApi` 缺席 ⇒ 卡的闸门恒拒（功能完全不可用）**（心跳 65）
+
+**一句话**：语料里卡的闸门写作
+`'openai' !== SillyTavern.mainApi ? reject('当前 API 不是聊天补全…') : 'no_connection' === SillyTavern.onlineStatus ? reject(...) : <真实工作>`。
+`mainApi` 原为 `undefined` ⇒ 第一道闸门 `'openai' !== undefined` = **true** ⇒ **立即 reject** ⇒ **该功能整段不可用**（不是降级）。
+
+**判定与修复**：值域来自基准 `script.js:9106-9119`（`'kobold' | 'openai' | 'novel' | 'textgenerationwebui'`）；
+本项目 RP 出站**就是** chat-completions ⇒ `'openai'` 是**唯一如实值**。单源常量 `DSHT_MAIN_API`（`dsht-plugin-shared/st-compat.ts`），
+帧内两面 + 宿主面共 3 处引用。
+
+⚠️ **有意不加** `onlineStatus`（L101：语义不能从名字推；其闸门方向是**反向**的 —— 缺席恰好**放行**，加了反而可能挡死）。**负控单测**钉住它必须缺席。
+
+---
+
+### T-76　🔴→✅ **首启「工作区选择器永久卡 `Loading workspaces…`」= 启动竞态（陈旧 token + 门控不感知就绪）**（心跳 65 发现并修复）
+
+**一句话**：DSH 自己声明「`dsh web:` URL 行就是就绪信号；兄弟行（`/api` 属主）仍在挂载时不得触发」
+（`deepseek-harness/packages/bundle/web-app/src/index.ts:249-256`）——**页面可服务 ≠ 网关就绪**，实测窗口 **20 s**。
+落在窗口内启动的前端，连接 generation **一次性失败且不再重臂** ⇒ `phase` 永远 `'pending'` ⇒ 永久 loading。
+
+**触发因子 A（我方 · 已修）**：`NodeService.onStartCommand` 里 `startPortProbe()`（主线程立即启动、每秒读 `dsht-token`）
+**先于**后台线程里的「清旧 token」⇒ 探活线程读到**上一进程遗留**的 token 并发布 ⇒ MainActivity 立刻 `loadUrl`。
+**两次实机实证**：发布值与上一进程 launchToken **逐字符相同**。
+
+**修复（一处）**：清旧**上移到 `onStartCommand` 同步执行且早于 `startPortProbe()`** + `coldStart` 守卫。
+
+**验收**（刻意用 install 触发哨兵 +1 = 重建首装宽窗口）：① 用 `T_old` 加载主框架 **0 次**（修复前必现）
+② 就绪前零发布 ③ token 捕获晚于 URL 行 **46 ms** ④ `sessionController is unavailable` **0 次**；
+端到端：应用**直接恢复上次 RP 会话**，卡死态**完全未出现**。
+
+⚠️ **诚实边界（未修，已单独登记）**：**因子 B** —— `MainActivity` 门控只认主框架 HTTP 状态与网络错误
+（`:201-222` / `:745-761`），**不感知后端就绪**；页面一旦 200 即 `dshLoaded = true` 并停止重载 ⇒ 官方注释明说这是误用。
+**彻底做法** = 以 stdout URL 行为准入门控、文件通道降级为超时回退（代价：需重验「stdout 静默平台」的 APK 坑 #12 兼容性），**需独立一轮**。
+**若将来出现「插件把 token 写在就绪之前」的新路径，本缺陷会复发。**
+
+证据全文：`stage3-device/hb65/HB65-T76-BOOT-RACE-EVIDENCE.md`（T-74/T-75 见 `HB65-T74-T75-EVIDENCE.md`）。沉淀 **L116 / L117 / L118**。
+
+---
 ## 7. 长尾 / 观察项（P3，不阻塞发布）
 
 | # | 项 | 说明 |

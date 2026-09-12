@@ -146,6 +146,20 @@ build_one() {
   "$NODE" "$WS/scripts/audit-route-contract.mjs" \
     || die "A10: 前端 POST 调用与服务端路由不匹配（路径不存在或只在 GET 区）⇒ 该功能恒 404 被 catch 吞"
 
+  # A11 —— 「shim 模板串未转义反引号」闸门（心跳 65 新增）。
+  # 背景：`th-shim.ts` 的 `buildShimSource()` 把整份 iframe shim 源码包在一个 TS 模板串里
+  # （`return \`(function () { … }\``）。模板体内**任何未转义反引号都会提前终止它**，其后所有代码
+  # 被当模块级语句解析 ⇒ tsc 报一堆与真因无关的 `TS1005/TS1443`（定位成本高）。
+  # **已复现 5 次**（心跳 62 / 62B / 63C / 64 / 65）⇒ 不再靠"下次注意"，改成构建期拦住。
+  # 闸门判据不是"数反引号"：用 JS 语义扫出**真正的**终止符，再断言其后紧接的是函数结尾 ——
+  # 若有裸反引号，扫描会在那里停下 ⇒ 报出的行号**逐字指向肇事反引号**。
+  say "[A11] shim 模板串反引号闸门"
+  "$NODE" "$WS/scripts/audit-shim-template-literal.mjs" --selftest >/dev/null \
+    || die "A11: 闸门自检失败（正/负/零控未全过）——闸门本身不可信"
+  grep -aq "audit-shim-template-literal" "$WS/scripts/build-wb.sh" || die "A11: 自指断言失败"
+  "$NODE" "$WS/scripts/audit-shim-template-literal.mjs" \
+    || die "A11: th-shim.ts 模板串体内有未转义反引号（L70）——其后的 shim 源码全部失效"
+
   say "[1/6] esbuild dsh-plugin（绝对 outfile, A1）"
   "$NODE" "$ESB" "$PKG/src/dsh-plugin/index.ts" --bundle --format=esm --platform=node \
     --outfile="$DST/node_modules/dsht-rp-plugin/lib/index.js" >/dev/null

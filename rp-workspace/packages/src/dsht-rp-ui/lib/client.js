@@ -1370,6 +1370,9 @@ var ST_EVENT_TYPES = {
   ITEMIZED_PROMPTS_DELETED: "itemized_prompts_deleted"
 };
 
+// src/dsht-plugin-shared/st-compat.ts
+var DSHT_MAIN_API = "openai";
+
 // src/dsht-rp-ui/src/client/host-st-surface.ts
 var I18N_LOCALE_LS_KEY = "language";
 function createHostI18n() {
@@ -1846,6 +1849,10 @@ function buildHostStContext(src = {}) {
     // 卡脚本 `ctx.event_types` 若缺失同样会属性访问即抛 → 必须真给。
     event_types: ST_EVENT_TYPES,
     uuidv4: src.uuid !== void 0 ? src.uuid : defaultUuidv4,
+    // 【心跳 65 · T-75】基准 getContext() 含 `mainApi`（st-context.js:206: mainApi: main_api）。
+    // 第三方脚本把它当后端分类标签、且是**硬闸门**（`'openai' !== mainApi` → reject）。
+    // 值 = DSHT_MAIN_API（单源，与帧面同值）；取证与"为什么是 openai"见该常量头注。
+    mainApi: DSHT_MAIN_API,
     // ---- 心跳 50：`audit-card-context-surface.mjs` 一次性枚举出的缺口里的「可不依赖桥」部分 ----
     // i18n（语义逐条对齐 `public/scripts/i18n.js`；缺键返回原文 = ST 行为）
     t: i18n.t,
@@ -7559,6 +7566,34 @@ function dshtRenderExtensionTemplateFailure(api, extensionName, templateId, isAs
   return isAsync ? Promise.resolve(undefined) : undefined
 }
 
+// ---- \u3010\u5FC3\u8DF3 65 \xB7 T-74\u3011\u5F53\u524D\u804A\u5929 id\uFF08\u5355\u6E90\uFF09----
+// \u57FA\u51C6\u91CC getContext().chatId\uFF08st-context.js:131-133\uFF09\u4E0E getCurrentChatId()\uFF08script.js:869\uFF09
+// **\u662F\u540C\u4E00\u4E2A\u8868\u8FBE\u5F0F**\uFF1A
+//   selected_group ? groups.find(x => x.id == selected_group)?.chat_id : (characters[this_chid]?.chat)
+// \u21D2 \u540C\u6E90\u540C\u503C\u3002\u6211\u65B9\u6B64\u524D\u53EA\u6709\u540E\u8005\u3001\u524D\u8005\u7F3A\u5E2D\uFF08\u8BED\u6599 8 \u6B21 / 6 \u6587\u4EF6\u53D6\u7528\uFF0C\u89C1 facade \u5185\u6CE8\u91CA\uFF09\u3002
+// \u62BD\u6210\u5355\u5B9E\u73B0\u4E24\u5904\u5171\u7528\uFF08L82 \u4E09\u5C42\u6536\u655B\uFF1A\u5148\u8BC1**\u540C\u8BED\u4E49**\u518D\u5408\u4E00\uFF0C\u4E0D\u662F\u5F62\u72B6\u50CF\u5C31\u5408\uFF09\u3002
+// \u26A0\uFE0F \u672C\u533A\u57DF\u5728\u6A21\u677F\u4E32\u5185\uFF1A\u6CE8\u91CA\u91CC**\u7981\u7528\u53CD\u5F15\u53F7**\uFF08\u4F1A\u7EC8\u6B62\u6A21\u677F\u4E32 \u2014\u2014 L70\uFF0C\u5DF2\u590D\u73B0 5 \u6B21\uFF09\u3002
+function dshtCurrentChatId() {
+  return (latestContext && latestContext.slug != null && typeof latestContext.slug === 'string')
+    ? latestContext.slug
+    : 'current';
+}
+// RFC4122 v4\u3002\u5B9E\u73B0\u5F62\u6001\u9010\u5B57\u5BF9\u9F50\u57FA\u51C6 utils.js:1972\uFF08crypto.randomUUID \u4F18\u5148 + Math.random \u515C\u5E95\uFF09\u3002
+// \u4E3A\u4EC0\u4E48\u81EA\u5EFA\u800C\u4E0D\u590D\u7528 host-vendor \u7684 defaultUuidv4\uFF1A\u672C shim \u8DD1\u5728**\u811A\u672C\u5E27\u5185**\uFF0C
+// \u5BBF\u4E3B\u9762\u6A21\u5757\u5728\u53E6\u4E00\u4FA7\uFF08\u8DE8\u4E0D\u8FC7\u53BB\uFF0C\u4E0D\u53EF\u4F9D\u8D56\uFF09\u3002
+function dshtUuidv4() {
+  try {
+    if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch (e) { }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    var r = Math.random() * 16 | 0;
+    var v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 function buildStContextFacade() {
   var ctx = getContext();
   var settings = (ctx.chatCompletionSettings && typeof ctx.chatCompletionSettings === 'object')
@@ -7593,6 +7628,34 @@ function buildStContextFacade() {
     // \u4E24\u9762\uFF08\u9876\u5C42 / getContext\uFF09\u53D6**\u540C\u4E00\u4EFD\u5FEB\u7167\u5B57\u6BB5**\uFF0C\u4FDD\u8BC1\u540C\u6E90\u3002
     name1: ctx.userName,
     name2: charName,
+    // \u3010\u5FC3\u8DF3 65 \xB7 T-74\u3011chatId \u2014\u2014 \u57FA\u51C6 getContext() \u6210\u5458\uFF08st-context.js:131-133\uFF09\uFF0C
+    // \u4E0E getCurrentChatId()\uFF08script.js:869\uFF09**\u540C\u4E00\u4E2A\u8868\u8FBE\u5F0F** \u21D2 \u590D\u7528\u540C\u4E00\u5B9E\u73B0\uFF08\u5355\u6E90\uFF09\u3002
+    // \u5B9E\u6D4B\u7528\u6CD5\uFF08\u8BED\u6599 8 \u6B21 / 6 \u6587\u4EF6\uFF0C**\u5168\u90E8\u65E0\u5C5E\u6027\u7EA7\u5B88\u536B**\uFF09\uFF1A
+    //  \xB7 \u7384\u72D0\u9884\u8BBE\u65CF\uFF08\u542F\u7528\u4E2D\uFF09: const ctx = SillyTavern?.getContext?.();
+    //      if (ctx.chatId) return String(ctx.chatId);
+    //    \u5931\u8D25\u540E\u7684\u515C\u5E95\u94FE\u662F chat.file_name -> chatMetadata.file_name -> chatMetadata.chat_id -> name\u3002
+    //    \u800C\u8BE5\u94FE\u5728\u6211\u65B9**\u6574\u6761\u65AD\u88C2**\uFF1A\u6211\u65B9 chat \u662F\u6D88\u606F\u6570\u7EC4\uFF08\u65E0 file_name\uFF09\u3001\u5E27\u5185\u65E0 chatMetadata
+    //    \u21D2 \u6700\u7EC8\u843D\u5230 name\u3002\u8BE5\u503C\u7528\u4E8E**\u804A\u5929\u7ED1\u5B9A\u6821\u9A8C**
+    //    \uFF08String(parsed.boundChatId || '') === scope.chatId\uFF0Cscope \u4E3A\u8BE5 getContext \u7684\u522B\u540D\uFF09
+    //    \u21D2 undefined \u6052\u4E0D\u7B49 \u21D2 \u7ED1\u5B9A\u6821\u9A8C**\u6052\u5931\u8D25**\uFF08\u9759\u9ED8\u4EA7\u9519\u503C\uFF0C\u975E\u964D\u7EA7\uFF09\u3002
+    //  \xB7 \u4E16\u754C\u4E66\u63A7\u5236 0708\uFF08\u5F53\u524D\u6D3B\u8DC3\u5361\uFF09: getContext().chatId || getContext().chat_id || ''
+    //    \u21D2 \u9759\u9ED8\u964D\u7EA7\u4E3A\u7A7A\u4E32\u3002
+    // \u26A0\uFE0F \u540C\u65F6\u51FA\u73B0\u7684\u86C7\u5F62 chat_id **\u5224\u300C\u4E0D\u8865\u300D**\uFF1A\u57FA\u51C6\u5168\u6811 chat_metadata.chat_id **0 \u547D\u4E2D**
+    //    \uFF08\u53EA\u6709 chat_id_hash\uFF0Cmacros.js:316/323\uFF1BT-47 \u5DF2\u5BF9 chatMetadata.chat_id \u540C\u5224\uFF09
+    //    \u21D2 \u771F ST \u4E5F\u8BFB undefined\uFF0C\u8865\u7A7A\u58F3\u8FDD\u53CD L36 \u4E14\u662F**\u5236\u9020\u5047\u4FE1\u606F**\u3002
+    // \u26A0\uFE0F \u672C\u533A\u57DF\u5728\u6A21\u677F\u4E32\u5185\uFF1A\u6CE8\u91CA\u91CC**\u7981\u7528\u53CD\u5F15\u53F7**\uFF08\u4F1A\u7EC8\u6B62\u6A21\u677F\u4E32 \u2014\u2014 L70\uFF0C\u5DF2\u590D\u73B0 5 \u6B21\uFF09\u3002
+    chatId: dshtCurrentChatId(),
+    // \u3010\u5FC3\u8DF3 65 \xB7 T-74\u3011uuidv4 \u2014\u2014 \u57FA\u51C6 getContext() \u6210\u5458\uFF08st-context.js:242\uFF0C\u6765\u81EA utils.js:1972\uFF09\u3002
+    // \u5B9E\u6D4B\u7528\u6CD5\uFF1A\u5E27\u5185\u9876\u5C42\u76F4\u53D6 2 \u6B21 / 2 \u6587\u4EF6\uFF08\u68A6\u9CB8\u601D\u5BA2\u300C\u683C\u5F0F\u8865\u5168 1.2\u300D\uFF0C**enabled**\uFF09\uFF0C\u65E0\u5C5E\u6027\u7EA7\u5B88\u536B
+    // \uFF08\u5BBF\u4E3B\u9762\u65E9\u6709\u6B64\u6210\u5458\uFF1Ahost-vendor.ts:533\uFF1B\u5E27\u9762\u7F3A \u21D2 \u540C\u4E00\u95E8\u9762\u4E24\u9762\u4E0D\u4E00\u81F4\uFF09\u3002
+    uuidv4: dshtUuidv4,
+    // \u3010\u5FC3\u8DF3 65 \xB7 T-75\u3011mainApi \u2014\u2014 \u57FA\u51C6 getContext() \u6210\u5458\uFF08st-context.js:206: mainApi: main_api\uFF09\u3002
+    // \u7B2C\u4E09\u65B9\u811A\u672C\u628A\u5B83\u5F53**\u540E\u7AEF\u5206\u7C7B\u6807\u7B7E**\u4E14\u662F**\u786C\u95F8\u95E8**\uFF08\u68A6\u9CB8\u601D\u5BA2\u300C\u683C\u5F0F\u8865\u5168 1.2\u300D\uFF0C\u8BBE\u5907\u4E0A enabled\uFF09\uFF1A
+    //   'openai' !== SillyTavern.mainApi ? Promise.reject(new Error('\u5F53\u524D API \u4E0D\u662F\u804A\u5929\u8865\u5168\u2026')) : \u771F\u6B63\u5E72\u6D3B
+    // \u6211\u65B9\u6B64\u524D\u7F3A\u5B83 \u21D2 undefined \u21D2 \u8BE5\u6BD4\u8F83\u6052 true \u21D2 \u76F4\u63A5 reject \u21D2 \u6574\u6761\u529F\u80FD\u4E0D\u53EF\u7528\uFF08\u95F8\u95E8\u5F0F fatal\uFF09\u3002
+    // \u503C\u53D6\u81EA dsht-plugin-shared/st-compat.ts \u7684 DSHT_MAIN_API\uFF08**\u5355\u6E90**\uFF0C\u4E0E\u5BBF\u4E3B\u9762\u540C\u503C\uFF09\uFF1B
+    // \u4E3A\u4EC0\u4E48\u4E0D\u8865\u76F8\u90BB\u7684 onlineStatus\uFF1A\u89C1\u8BE5\u5E38\u91CF\u6CE8\u91CA\uFF08\u6211\u65B9\u7F3A\u7701 undefined \u6070\u597D\u4F7F\u90A3\u9053\u95F8\u95E8**\u653E\u884C**\uFF09\u3002
+    mainApi: ${JSON.stringify(DSHT_MAIN_API)},
     presetName: ctx.presetName != null ? ctx.presetName : undefined,
     chat: messages,
     chatLength: messages.length,
@@ -8336,7 +8399,14 @@ Object.defineProperty(window, 'SillyTavern', {
       // \u503C\u540C\u6E90\u4E8E\u5FEB\u7167\u5B57\u6BB5 userName\uFF08\u4E0E getContext \u9762**\u540C\u4E00\u4EFD**\uFF0C\u4E0D\u5404\u5199\u4E00\u904D\uFF09\u3002
       name1: ctx.name1,
       name2: ctx.characterName,
-      getCurrentChatId: function () { return (latestContext && latestContext.slug != null && typeof latestContext.slug === 'string') ? latestContext.slug : 'current'; }, // \u5B57\u7B26\u4E32 chat id\uFF08\u6BD4\u8F83/\u6587\u4EF6\u540D\u7528\uFF09
+      // \u3010\u5FC3\u8DF3 65 \xB7 T-74\u3011\u4E0E getContext \u9762**\u540C\u6E90**\uFF08\u57FA\u51C6\u9876\u5C42 \u2261 {...getContext(), getContext}\uFF0C
+      // iframe/predefine.js:26-35\uFF09\u2014\u2014\u4E24\u4E2A\u6210\u5458\u90FD\u53D6\u81EA\u540C\u4E00\u4EFD facade \u5BF9\u8C61\uFF0C\u4E0D\u5404\u5199\u4E00\u904D\u3002
+      chatId: ctx.chatId,
+      uuidv4: ctx.uuidv4,
+      // \u3010\u5FC3\u8DF3 65 \xB7 T-75\u3011\u4E0E getContext \u9762\u540C\u6E90\uFF08\u57FA\u51C6\u9876\u5C42 \u2261 {...getContext(), getContext}\uFF09\u3002
+      mainApi: ctx.mainApi,
+      // \u3010\u5FC3\u8DF3 65 \xB7 T-74\u3011\u6539\u8D70\u5355\u6E90 helper\uFF08\u4E0E getContext \u9762\u7684 chatId \u5171\u7528\u540C\u4E00\u5B9E\u73B0\uFF09\u3002
+      getCurrentChatId: function () { return dshtCurrentChatId(); },
       // \u2014\u2014 \u5F39\u7A97\uFF08\u6C99\u7BB1\u65E0 UI\uFF0CTEXT/ALERT \u81EA\u52A8\u786E\u8BA4\uFF1BCONFIRM \u4FDD\u5B88\u53D6\u6D88\u5E76 console \u8BB0\u540D\uFF09\u2014\u2014
       POPUP_TYPE: { TEXT: 'text', CONFIRM: 'confirm', INPUT: 'input', DISPLAY: 'display' },
       POPUP_RESULT: { NEGATIVE: 0, AFFIRMATIVE: 1, CANCELLED: 2 },

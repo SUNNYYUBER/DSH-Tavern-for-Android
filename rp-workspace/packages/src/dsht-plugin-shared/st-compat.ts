@@ -37,6 +37,48 @@
 /** 与基准 `TauriTavern/src/compat-version.js` 逐字一致的 ST 兼容版本 */
 export const SILLYTAVERN_COMPAT_VERSION = '1.18.0'
 
+/**
+ * `getContext().mainApi` 的取值（单源）—— 心跳 65 · T-75。
+ *
+ * ## 为什么必须有（实测缺陷，不是"语义待定"）
+ * 基准 `st-context.js:206` 是 `mainApi: main_api`，值来自持久化设置
+ * （`script.js:9106-9119` 的迁移分支给出值域：`'kobold' | 'openai' | 'novel' | 'textgenerationwebui'`；
+ * 聊天补全模式即 `'openai'`）。该字段在第三方脚本里被当作**后端分类标签**用，而且是**硬闸门**：
+ *
+ * ```js
+ * // 梦鲸思客预设「格式补全 1.2」（**设备上 enabled**，语料实测）
+ * function k() {
+ *   return 'openai' !== SillyTavern.mainApi
+ *     ? Promise.reject(new Error('当前 API 不是聊天补全，无法使用提示词查看器方式提取提示词。'))
+ *     : 'no_connection' === SillyTavern.onlineStatus
+ *       ? Promise.reject(new Error('未连接到 API，无法提取提示词。'))
+ *       : new Promise(/* 真正干活 *\/)
+ * }
+ * ```
+ *
+ * **我方缺陷**：帧内两面都没有 `mainApi`（`undefined`）⇒ `'openai' !== undefined` 恒 **true**
+ * ⇒ 直接 reject ⇒「提示词查看器 / 格式补全」**整条功能不可用**（静默失败族，且是闸门式 fatal）。
+ *
+ * ## 为什么值是 `'openai'`（而不是"随便填一个"）
+ * 该标签回答的问题是「后端是不是聊天补全通道」。本项目的 RP 出站请求**就是** chat-completions
+ * 语义（`llm/stream` 收 messages 数组、`golden/` 抓包逐字为 messages+可选 tools），
+ * 且 ST 在聊天补全模式下给的正是 `'openai'`。⇒ 这是**唯一如实值**，不是占位符。
+ * 值域里其余三项（kobold / novel / textgenerationwebui）描述的都是本项目**不存在**的后端类型。
+ *
+ * ## 刻意**不**一起补的相邻字段
+ * `onlineStatus`（基准 `st-context.js:139: onlineStatus: online_status`）**判「不补」**：
+ *  · **它的语义不是"在线/离线开关"，而是当前 AI 后端的在线标识 / 模型名** —— 值域含
+ *    `'no_connection'`（初值）与 `'koboldcpp/ggml-model-…'` 之类，且**有生命周期**
+ *    （写入点唯一，改完 `emitAndWait(event_types.ONLINE_STATUS_CHANGED)`）。
+ *    详见 **LEARNINGS L101**（该条正是为纠正"从名字推语义"而写）。
+ *  · 我方**没有** ST 式连通性检查 ⇒ 任何常量（含 `'no_connection'`）都是**编造连通性结论**，
+ *    且会让 `if (online_status === 'no_connection') return;` 这类分支走向**错误的一侧**。
+ *  · 卡里那道闸门写成 `'no_connection' === onlineStatus` ⇒ 我方缺省 `undefined` 使比较为 **false**
+ *    ⇒ **不阻塞**（与 `mainApi` 的 `!== 'openai'` 方向相反，故不构成缺陷）。
+ *  ⇒ 登记为**已知差异**；将来我方有真实连通态（或真实后端标识）再补。
+ */
+export const DSHT_MAIN_API = 'openai'
+
 /** 卡脚本 `:2214` 同式的版本编码：major*10000 + minor*100 + patch（解析失败 → 旧版基线 10000） */
 export function stVersionNumber(version: string = SILLYTAVERN_COMPAT_VERSION): number {
   const parts = String(version).split('.').map(p => Number.parseInt(p, 10))

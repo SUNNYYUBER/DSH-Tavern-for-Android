@@ -36,7 +36,7 @@ class NodeService : Service() {
         private const val RUNTIME_DIR = "dsh-runtime"
         private const val RUNTIME_ZIP = "dsh-runtime.zip"
         /** 解压哨兵：§4.16.2 前端 dsht-rp-ui client 变更随 runtime.zip 重发布 → v97（覆盖安装强制重解压） */
-        private const val RUNTIME_SENTINEL = ".installed-v291"
+        private const val RUNTIME_SENTINEL = ".installed-v299"
         private const val DSH_PORT = 3080
         private const val OUTPUT_CAP = 200
         private const val PROOT_ROOTFS_DIR = "proot-rootfs"
@@ -130,8 +130,28 @@ class NodeService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startAsForeground()
         serviceAlive = true
+        // ★ T-76（心跳 65）旧 token 必须**同步**清掉，且必须早于 startPortProbe()。
+        // 原实现把"清旧"写在下面的后台线程里（要等 Thread.start() 被调度），而探活线程
+        // 在此处立即启动并每秒读一次 dsht-token、在 webToken==null 时发布首个非空值
+        // ⇒ 存在窗口：探活线程先读到**上一进程遗留**的 token 并发布。
+        // 实机实证（两次冷启）：发布值逐字符等于上一进程的 launchToken，随后 MainActivity
+        // 立刻用它 loadUrl（日志 `main-frame http 404 @ …?token=<陈旧值>`）。
+        // 危害：陈旧 token ⇒ 页面在"静态前端已可服务、RPC 网关（/api 属主、sessionController）
+        // 尚未挂载"的窗口内就启动 ⇒ 前端连接 generation 一次性失败且不再重臂
+        //（`typert gateway: session/control: active Service "sessionController" is unavailable`）
+        // ⇒ workspace.list/session.list 永远停在 phase='pending' ⇒ 工作区选择器永久卡在
+        // "Loading workspaces…"，只有手动 reload 能恢复。首装/升级（重解压 ≈4 min）窗口最大
+        // ⇒ 首启几乎必现；热启窗口小 ⇒ 不易复现（这正是心跳 64 判定"非缺陷"的原因）。
+        // 依据：DSH 自身把 `dsh web:` 那行 stdout 定义为**唯一就绪信号**
+        //（deepseek-harness/packages/bundle/web-app/src/index.ts:249-256）。
+        // 只在**本次真的要拉起 node 进程**时清旧（重复 onStartCommand 时不清，
+        // 免得把当次有效的回退通道删掉）。
+        val coldStart = started.compareAndSet(false, true)
+        if (coldStart) {
+            try { File(File(filesDir, ".dsh"), "dsht-token").delete() } catch (_: Throwable) { }
+        }
         startPortProbe()
-        if (started.compareAndSet(false, true)) {
+        if (coldStart) {
             Thread {
                 try {
                     // 异常退出检测（详见 ALIVE_MARKER 注释）：标记残留 = 上次进程级被杀
@@ -143,8 +163,8 @@ class NodeService : Service() {
                         Log.w(TAG, "previous run did not exit cleanly (marker=$prev)")
                     }
                     try { marker.writeText("${System.currentTimeMillis()}") } catch (_: Throwable) { }
-                    // token 文件清旧（每次 node 进程的 launchToken 都不同——旧值必 401）
-                    try { File(File(filesDir, ".dsh"), "dsht-token").delete() } catch (_: Throwable) { }
+                    // token 文件清旧已**上移到 onStartCommand 同步执行**（T-76：必须早于
+                    // startPortProbe()，否则探活线程会先发布上一进程的陈旧 token）。此处不再重复。
                     state = "EXTRACTING"
                     ensureRuntime()
                     ensureRpPluginPatch()

@@ -33,6 +33,9 @@
 // 就绪，可接受。
 import thVendorSource from './th-vendor.gen.txt?raw'
 import { deepMergeIncoming } from '../../../dsht-plugin-shared/deep-merge.ts'
+// 【心跳 65 · T-75】`mainApi` 取值单源（同时被宿主面 host-vendor.ts 使用）。
+// 插值进模板串（与 opts.version 同一手法），保证宿主面/帧面**不可能漂移**。
+import { DSHT_MAIN_API } from '../../../dsht-plugin-shared/st-compat.ts'
 
 // ---------------------------------------------------------------------------
 // 协议常量与类型
@@ -1602,6 +1605,34 @@ function dshtRenderExtensionTemplateFailure(api, extensionName, templateId, isAs
   return isAsync ? Promise.resolve(undefined) : undefined
 }
 
+// ---- 【心跳 65 · T-74】当前聊天 id（单源）----
+// 基准里 getContext().chatId（st-context.js:131-133）与 getCurrentChatId()（script.js:869）
+// **是同一个表达式**：
+//   selected_group ? groups.find(x => x.id == selected_group)?.chat_id : (characters[this_chid]?.chat)
+// ⇒ 同源同值。我方此前只有后者、前者缺席（语料 8 次 / 6 文件取用，见 facade 内注释）。
+// 抽成单实现两处共用（L82 三层收敛：先证**同语义**再合一，不是形状像就合）。
+// ⚠️ 本区域在模板串内：注释里**禁用反引号**（会终止模板串 —— L70，已复现 5 次）。
+function dshtCurrentChatId() {
+  return (latestContext && latestContext.slug != null && typeof latestContext.slug === 'string')
+    ? latestContext.slug
+    : 'current';
+}
+// RFC4122 v4。实现形态逐字对齐基准 utils.js:1972（crypto.randomUUID 优先 + Math.random 兜底）。
+// 为什么自建而不复用 host-vendor 的 defaultUuidv4：本 shim 跑在**脚本帧内**，
+// 宿主面模块在另一侧（跨不过去，不可依赖）。
+function dshtUuidv4() {
+  try {
+    if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch (e) { }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    var r = Math.random() * 16 | 0;
+    var v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 function buildStContextFacade() {
   var ctx = getContext();
   var settings = (ctx.chatCompletionSettings && typeof ctx.chatCompletionSettings === 'object')
@@ -1636,6 +1667,34 @@ function buildStContextFacade() {
     // 两面（顶层 / getContext）取**同一份快照字段**，保证同源。
     name1: ctx.userName,
     name2: charName,
+    // 【心跳 65 · T-74】chatId —— 基准 getContext() 成员（st-context.js:131-133），
+    // 与 getCurrentChatId()（script.js:869）**同一个表达式** ⇒ 复用同一实现（单源）。
+    // 实测用法（语料 8 次 / 6 文件，**全部无属性级守卫**）：
+    //  · 示例卡二预设族（启用中）: const ctx = SillyTavern?.getContext?.();
+    //      if (ctx.chatId) return String(ctx.chatId);
+    //    失败后的兜底链是 chat.file_name -> chatMetadata.file_name -> chatMetadata.chat_id -> name。
+    //    而该链在我方**整条断裂**：我方 chat 是消息数组（无 file_name）、帧内无 chatMetadata
+    //    ⇒ 最终落到 name。该值用于**聊天绑定校验**
+    //    （String(parsed.boundChatId || '') === scope.chatId，scope 为该 getContext 的别名）
+    //    ⇒ undefined 恒不等 ⇒ 绑定校验**恒失败**（静默产错值，非降级）。
+    //  · 世界书控制 0708（当前活跃卡）: getContext().chatId || getContext().chat_id || ''
+    //    ⇒ 静默降级为空串。
+    // ⚠️ 同时出现的蛇形 chat_id **判「不补」**：基准全树 chat_metadata.chat_id **0 命中**
+    //    （只有 chat_id_hash，macros.js:316/323；T-47 已对 chatMetadata.chat_id 同判）
+    //    ⇒ 真 ST 也读 undefined，补空壳违反 L36 且是**制造假信息**。
+    // ⚠️ 本区域在模板串内：注释里**禁用反引号**（会终止模板串 —— L70，已复现 5 次）。
+    chatId: dshtCurrentChatId(),
+    // 【心跳 65 · T-74】uuidv4 —— 基准 getContext() 成员（st-context.js:242，来自 utils.js:1972）。
+    // 实测用法：帧内顶层直取 2 次 / 2 文件（梦鲸思客「格式补全 1.2」，**enabled**），无属性级守卫
+    // （宿主面早有此成员：host-vendor.ts:533；帧面缺 ⇒ 同一门面两面不一致）。
+    uuidv4: dshtUuidv4,
+    // 【心跳 65 · T-75】mainApi —— 基准 getContext() 成员（st-context.js:206: mainApi: main_api）。
+    // 第三方脚本把它当**后端分类标签**且是**硬闸门**（梦鲸思客「格式补全 1.2」，设备上 enabled）：
+    //   'openai' !== SillyTavern.mainApi ? Promise.reject(new Error('当前 API 不是聊天补全…')) : 真正干活
+    // 我方此前缺它 ⇒ undefined ⇒ 该比较恒 true ⇒ 直接 reject ⇒ 整条功能不可用（闸门式 fatal）。
+    // 值取自 dsht-plugin-shared/st-compat.ts 的 DSHT_MAIN_API（**单源**，与宿主面同值）；
+    // 为什么不补相邻的 onlineStatus：见该常量注释（我方缺省 undefined 恰好使那道闸门**放行**）。
+    mainApi: ${JSON.stringify(DSHT_MAIN_API)},
     presetName: ctx.presetName != null ? ctx.presetName : undefined,
     chat: messages,
     chatLength: messages.length,
@@ -2379,7 +2438,14 @@ Object.defineProperty(window, 'SillyTavern', {
       // 值同源于快照字段 userName（与 getContext 面**同一份**，不各写一遍）。
       name1: ctx.name1,
       name2: ctx.characterName,
-      getCurrentChatId: function () { return (latestContext && latestContext.slug != null && typeof latestContext.slug === 'string') ? latestContext.slug : 'current'; }, // 字符串 chat id（比较/文件名用）
+      // 【心跳 65 · T-74】与 getContext 面**同源**（基准顶层 ≡ {...getContext(), getContext}，
+      // iframe/predefine.js:26-35）——两个成员都取自同一份 facade 对象，不各写一遍。
+      chatId: ctx.chatId,
+      uuidv4: ctx.uuidv4,
+      // 【心跳 65 · T-75】与 getContext 面同源（基准顶层 ≡ {...getContext(), getContext}）。
+      mainApi: ctx.mainApi,
+      // 【心跳 65 · T-74】改走单源 helper（与 getContext 面的 chatId 共用同一实现）。
+      getCurrentChatId: function () { return dshtCurrentChatId(); },
       // —— 弹窗（沙箱无 UI，TEXT/ALERT 自动确认；CONFIRM 保守取消并 console 记名）——
       POPUP_TYPE: { TEXT: 'text', CONFIRM: 'confirm', INPUT: 'input', DISPLAY: 'display' },
       POPUP_RESULT: { NEGATIVE: 0, AFFIRMATIVE: 1, CANCELLED: 2 },

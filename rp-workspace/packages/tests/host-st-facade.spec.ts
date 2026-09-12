@@ -694,6 +694,150 @@ describe('host ST 门面：saveChat（T-47 A 档）+ 宿主页 SillyTavern 顶�
   })
 
   /**
+   * 【心跳 65 · T-74】`chatId` —— 基准 getContext() 成员（`st-context.js:131-133`），
+   * 与 `getCurrentChatId()`（`script.js:869`）**是同一个表达式** ⇒ 同源同值。
+   * 我方此前只有后者、前者缺席（语料 8 次 / 6 文件取用，**全部无属性级守卫**）。
+   *
+   * 为什么必须补（实测用法，不是推测）：
+   *  · 示例卡二预设族（**启用中**）：`const ctx = SillyTavern?.getContext?.(); if (ctx.chatId) return String(ctx.chatId);`
+   *    失败后兜底链是 `chat.file_name` → `chatMetadata.file_name` → `chatMetadata.chat_id` → name，
+   *    而该链在我方**整条断裂**（`chat` 是消息数组无 file_name；帧内无 `chatMetadata`）⇒ 落到 name。
+   *    该值用于**聊天绑定校验**（`String(parsed.boundChatId || '') === scope.chatId`）
+   *    ⇒ `undefined` 恒不等 ⇒ **校验恒失败**（静默产错值）。
+   *  · 世界书控制 0708（**当前活跃卡**）：`getContext().chatId || getContext().chat_id || ""` ⇒ 降级为 ""。
+   *
+   * **两面各断一次**（L49：并集口径会掩盖单面缺失）。
+   */
+  it('镜像：chatId 在两面都可取，且与 getCurrentChatId() 同源同值', () => {
+    const sandbox = makeShimSandbox({ slug: 'rp/wuwa-solaris-3', character: { name: '小玉' } })
+    const st = sandbox.SillyTavern as {
+      chatId?: unknown
+      getCurrentChatId?: () => unknown
+      getContext?: () => Record<string, unknown>
+    }
+    expect(st.chatId).toBe('rp/wuwa-solaris-3')
+    expect(st.getContext?.().chatId).toBe('rp/wuwa-solaris-3')
+    // 同源判据：两面与 getCurrentChatId() 必须**恒等**（基准里就是同一个表达式）
+    expect(st.chatId).toBe(st.getCurrentChatId?.())
+  })
+
+  /**
+   * 边界：快照无 slug 时 `chatId` 与 `getCurrentChatId()` 仍**同源**——
+   * 不允许一个返回 `'current'`、另一个返回 `undefined`（那会让卡的绑定校验按"两面"分叉）。
+   * 兜底值 `'current'` 是 `getCurrentChatId()` 既有契约，本轮**不改**（改它会动既有行为）。
+   */
+  it('边界：无 slug 时 chatId 与 getCurrentChatId() 取值一致（同源不分叉）', () => {
+    const sandbox = makeShimSandbox({ character: { name: '小玉' } })
+    const st = sandbox.SillyTavern as {
+      chatId?: unknown
+      getCurrentChatId?: () => unknown
+      getContext?: () => Record<string, unknown>
+    }
+    expect(st.chatId).toBe(st.getCurrentChatId?.())
+    expect(st.chatId).toBe('current')
+    expect(st.getContext?.().chatId).toBe('current')
+  })
+
+  /**
+   * **反控（L36「不能多」+ 不制造假信息）**：蛇形 `chat_id` **必须不提供**。
+   * 基准全树 `chat_metadata.chat_id` **0 命中**（只有 `chat_id_hash`，`macros.js:316/323`）
+   * ⇒ 真 ST 读到的也是 `undefined`。补空壳 = 比基准"多"且让卡拿到编造值。
+   * （语料里 `getContext().chat_id` 4 次 —— 那些卡在真 ST 上同样是 `undefined`，属卡片自身缺陷。）
+   */
+  it('反控：蛇形 chat_id 不提供（基准也没有 —— L36 不能多）', () => {
+    const sandbox = makeShimSandbox({ slug: 'rp/x' })
+    const st = sandbox.SillyTavern as { chat_id?: unknown; getContext?: () => Record<string, unknown> }
+    expect(st.chat_id).toBeUndefined()
+    expect(st.getContext?.().chat_id).toBeUndefined()
+  })
+
+  /**
+   * 【心跳 65 · T-74】`uuidv4` —— 基准 getContext() 成员（`st-context.js:242` ← `utils.js:1972`）。
+   * 帧内顶层直取实测 2 次 / 2 文件（梦鲸思客「格式补全 1.2」，**enabled**），无属性级守卫。
+   * 实现形态**逐字对齐基准**：`crypto.randomUUID` 优先 + `Math.random` 兜底。
+   * 本沙箱**没有** `crypto` ⇒ 走的正是兜底分支（另一条分支由 `crypto` 注入用例覆盖）。
+   */
+  it('镜像：uuidv4 在两面都是函数，返回 RFC4122 v4 形状且两次不同', () => {
+    const sandbox = makeShimSandbox({ slug: 'rp/x' })
+    const st = sandbox.SillyTavern as { uuidv4?: () => unknown; getContext?: () => Record<string, unknown> }
+    expect(typeof st.uuidv4).toBe('function')
+    expect(typeof st.getContext?.().uuidv4).toBe('function')
+    const a = String((st.uuidv4 as () => unknown)())
+    const b = String((st.uuidv4 as () => unknown)())
+    expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(b).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(a).not.toBe(b)
+  })
+
+  it('uuidv4 主分支：有 crypto.randomUUID 时直接用它（基准同路径）', () => {
+    const sandbox = makeShimSandbox({ slug: 'rp/x' })
+    let called = 0
+    ;(sandbox as Record<string, unknown>).crypto = {
+      randomUUID: () => { called += 1; return '11111111-2222-4333-8444-555555555555' },
+    }
+    const st = sandbox.SillyTavern as { uuidv4?: () => unknown }
+    expect((st.uuidv4 as () => unknown)()).toBe('11111111-2222-4333-8444-555555555555')
+    expect(called).toBe(1)
+  })
+
+  /**
+   * 【心跳 65 · T-75】`mainApi` —— 基准 getContext() 成员（`st-context.js:206: mainApi: main_api`）。
+   *
+   * 它是**硬闸门**（设备上 enabled 的梦鲸思客「格式补全 1.2」逐字）：
+   * ```js
+   * 'openai' !== SillyTavern.mainApi
+   *   ? Promise.reject(new Error('当前 API 不是聊天补全，无法使用提示词查看器方式提取提示词。'))
+   *   : 'no_connection' === SillyTavern.onlineStatus
+   *     ? Promise.reject(new Error('未连接到 API，无法提取提示词。'))
+   *     : new Promise(/* 真正干活 *\/)
+   * ```
+   * 我方此前**两面都没有** ⇒ `undefined` ⇒ `'openai' !== undefined` 恒 true ⇒ **直接 reject**
+   * ⇒ 整条功能不可用（闸门式 fatal，属静默失败族）。
+   *
+   * 值与宿主面**同源**（`dsht-plugin-shared/st-compat.ts:DSHT_MAIN_API`，单一常量）。
+   */
+  it('镜像：mainApi 在【顶层】【getContext】两面都 = openai（真构建产物，两面各断）', () => {
+    const sandbox = makeShimSandbox({ slug: 'rp/x' })
+    const st = sandbox.SillyTavern as { mainApi?: unknown; getContext?: () => Record<string, unknown> }
+    expect(st.mainApi).toBe('openai')
+    expect(st.getContext?.().mainApi).toBe('openai')
+  })
+
+  it('宿主面 getContext 也含 mainApi（基准有 ⇒ 不能少；与帧面同值）', () => {
+    expect((buildHostStContext() as Record<string, unknown>).mainApi).toBe('openai')
+  })
+
+  /**
+   * **行为级判据**（比断言形状更强）：把卡那段闸门逐字搬进来跑 ——
+   * 必须**进入真正干活的分支**，而不是 reject。
+   */
+  it('行为级：卡的 mainApi 闸门放行（不再 reject「当前 API 不是聊天补全」）', () => {
+    const sandbox = makeShimSandbox({ slug: 'rp/x' })
+    const st = sandbox.SillyTavern as { mainApi?: unknown }
+    const gate = () => ('openai' !== st.mainApi
+      ? Promise.reject(new Error('当前 API 不是聊天补全，无法使用提示词查看器方式提取提示词。'))
+      : Promise.resolve('PROCEED'))
+    return expect(gate()).resolves.toBe('PROCEED')
+  })
+
+  /**
+   * **反控（L36「不能多」+ 不制造假信息）**：`onlineStatus` **必须不提供**。
+   *
+   * 它不是缺陷：基准默认 `'no_connection'`（`script.js:929`），但卡的闸门写成
+   * `'no_connection' === onlineStatus` —— 我方缺省 `undefined` 使该比较为 **false** ⇒ **放行**。
+   * 而该字段的真语义是**真实连通状态**，我方没有 ST 式连通性检查 ⇒ 任何常量（含 `'no_connection'`）
+   * 都是**编造连通性结论**。⇒ 登记为已知差异，禁止"顺手补一个"。
+   */
+  it('反控：onlineStatus 不提供（缺省恰好使那道闸门放行，给值反而是在编造连通性）', () => {
+    const sandbox = makeShimSandbox({ slug: 'rp/x' })
+    const st = sandbox.SillyTavern as { onlineStatus?: unknown; getContext?: () => Record<string, unknown> }
+    expect(st.onlineStatus).toBeUndefined()
+    expect(st.getContext?.().onlineStatus).toBeUndefined()
+    // 卡那道闸门的另一半：缺省值必须**不触发** reject
+    expect('no_connection' === st.onlineStatus).toBe(false)
+  })
+
+  /**
    * 宿主页 `SillyTavern` **顶层只有基准那 3 个键** —— 基准源逐字：
    * `src/script.js:374-381  globalThis.SillyTavern = { libs, getContext, i18n: { t, translate } };`
    * ⚠️ 顶层**不是** `getContext()` 的展开：那层 spread 只存在于**脚本 iframe**

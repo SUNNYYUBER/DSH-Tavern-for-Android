@@ -22,6 +22,8 @@ import type { ThContextSnapshot } from './th-shim.ts'
 import { createThEventSource, type ThEventSource } from './th-event-source.ts'
 // ST 事件名表（生成物；来源 public/scripts/events.js:3，104 条）
 import { ST_EVENT_TYPES } from './st-event-types.gen.ts'
+// 【心跳 65 · T-75】`mainApi` 取值单源（帧面 th-shim.ts 亦引用同一常量 ⇒ 两面不可能漂移）。
+import { DSHT_MAIN_API } from '../../../dsht-plugin-shared/st-compat.ts'
 // 宿主面第二批成员（i18n / 弹窗 / 函数工具注册）——批次依据见该文件头（心跳 50 的静态枚举）
 import {
   POPUP_RESULT, POPUP_TYPE, callGenericPopup, createHostI18n, createHostToolManager,
@@ -531,6 +533,10 @@ export function buildHostStContext(src: HostStContextSource = {}): Record<string
     // 卡脚本 `ctx.event_types` 若缺失同样会属性访问即抛 → 必须真给。
     event_types: ST_EVENT_TYPES,
     uuidv4: src.uuid !== undefined ? src.uuid : defaultUuidv4,
+    // 【心跳 65 · T-75】基准 getContext() 含 `mainApi`（st-context.js:206: mainApi: main_api）。
+    // 第三方脚本把它当后端分类标签、且是**硬闸门**（`'openai' !== mainApi` → reject）。
+    // 值 = DSHT_MAIN_API（单源，与帧面同值）；取证与"为什么是 openai"见该常量头注。
+    mainApi: DSHT_MAIN_API,
 
     // ---- 心跳 50：`audit-card-context-surface.mjs` 一次性枚举出的缺口里的「可不依赖桥」部分 ----
     // i18n（语义逐条对齐 `public/scripts/i18n.js`；缺键返回原文 = ST 行为）
