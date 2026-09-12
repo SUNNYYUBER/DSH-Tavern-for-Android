@@ -1,0 +1,111 @@
+{
+  "_comment": "卡事件面审计的已知未修基线（T-80）。缺集 ⊆ 本表 ⇒ 闸门通过；出现表外的新缺口 ⇒ exit 1（红线）。修掉某项后请从 `known` 删除并移入 `_converged`（收敛 + 留取证）。分档依据 = 基准 emit 处 + 参数形状 + 我方数据源可行性。",
+  "_generated_by": "scripts/audit-card-event-surface.mjs",
+  "_baseline_date": "2026-09-12",
+  "known": {
+    "GENERATION_AFTER_COMMANDS": {
+      "task": "T-80",
+      "bucket": "生成栈",
+      "baseline": "SillyTavern-reference/public/script.js:4262",
+      "shape": "(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage }, dryRun)",
+      "reason": "需在「指令解析之后、生成之前」挂钩；我方无该钩子面（同 D-4 族的核心约束）"
+    },
+    "character_message_rendered": {
+      "task": "T-80",
+      "bucket": "呈现层",
+      "baseline": "SillyTavern-reference/public/script.js:3741 / :6634 / :6659 / :6681（基准 ×12）",
+      "shape": "(messageId, type)  // type = 'normal' | 'swipe' | ...",
+      "reason": "语义是「渲染完成后」；我方脚本帧内恒无聊天 DOM（T-77 已证）⇒ 无真实渲染时机。补发 = 语义近似，且 type 取值需先定，否则从「不回调用」变成「回调拿到错 type」"
+    },
+    "chat_completion_settings_ready": {
+      "task": "T-80",
+      "bucket": "生成栈",
+      "baseline": "SillyTavern-reference/public/scripts/openai.js:3052",
+      "shape": "generate_data",
+      "reason": "参数是完整请求体 generate_data；我方请求体在 DSH 宿主侧组装，插件拿不到（同 D-4/D-6 族约束）"
+    },
+    "generate_after_data": {
+      "task": "T-80",
+      "bucket": "生成栈",
+      "baseline": "SillyTavern-reference/public/script.js:5259",
+      "shape": "(generate_data, dryRun)",
+      "reason": "同上：需 generate_data 句柄，属宿主侧对象"
+    },
+    "generate_after_combine_prompts": {
+      "task": "T-80",
+      "bucket": "生成栈（**心跳 74 由别名形态枚举面新增现形** —— 此前闸门看不见 `te.GENERATE_AFTER_COMBINE_PROMPTS`）",
+      "baseline": "SillyTavern-reference/public/script.js:4710（另 :6034，基准 emit ×2）",
+      "shape": "({ prompt: string, dryRun: false })（文本补全分支；chat 补全分支走 `CHAT_COMPLETION_PROMPT_READY`）",
+      "reason": "🔴 **不是纯通知** —— 基准 `script.js:4710-4712` 逐字：`const eventData = { prompt, dryRun:false }; await emit(GENERATE_AFTER_COMBINE_PROMPTS, eventData); prompt = eventData.prompt;`，上一行注释原文 `// Allow extensions to modify the prompt before generation` ⇒ **同页同步可变回路**（监听者改 `prompt` 决定真正发出的内容）。我方 prompt 组装在 **DSH 宿主侧**（`system-prompt/assemble` 瀑布 + 请求体由宿主构造），卡在 WebView 帧 ⇒ 帧内投只读副本 = 卡以为改到了实际没改（L126 的②，**比不投更坏**）。同族 = `generate_after_data` / `worldinfo_scan_done` / `mag_variable_update_ended`。⇒ 判「**不做 + 登记**」。⚠️ **同族第二项见下**（`chat_completion_prompt_ready`，基准对它用法逐字同构）。"
+    },
+    "chat_completion_prompt_ready": {
+      "task": "T-80",
+      "bucket": "生成栈（**心跳 74 修掉「注释算发射」的假绿后才现形** —— 此前 4 条提及它的注释把它判成了「已发射」）",
+      "baseline": "SillyTavern-reference/public/script.js:4713-4716（chat 补全分支；基准 emit ×1）",
+      "shape": "({ chat: any[], dryRun: false }) —— **可变数组**（发射后立刻 `prompt = eventData.chat`）",
+      "reason": "🔴 **不是纯通知** —— 基准逐字 `const eventData = { chat: prompt, dryRun:false }; await emit(CHAT_COMPLETION_PROMPT_READY, eventData); prompt = eventData.chat;`，与 `generate_after_combine_prompts` **同构同注释**（`// Allow extensions to modify the prompt before generation`）⇒ 同页同步可变回路。我方请求体在 **DSH 宿主侧**组装、卡在 WebView 帧 ⇒ 投只读副本 = 卡以为改到了实际没改（L126 的②）。⇒ 判「**不做 + 登记**」。**取证（修复后实测）**：全包 `grep chat_completion_prompt_ready` 只命中 **4 条注释**（`dsh-plugin/index.ts:3693/3889/3892/4128`，均为「与 TT 侧配对 diff」的说明）+ 2 张常量表 ⇒ **零发射点**；此前被注释误判为已发射是本轮 `stripComments` 修复的直接动因。"
+    },
+    "mag_variable_update_ended": {
+      "task": "T-81",
+      "bucket": "MVU 扩展命名空间（**第 4 张表** —— 心跳 73 才发现原闸门只扫三张 ST 表，整类看不见）",
+      "baseline": "JS-Slash-Runner/@types/iframe/exported.mvu.d.ts:99-115（`Mvu.events.VARIABLE_UPDATE_ENDED: 'mag_variable_update_ended'`；监听器形状 `(variables, variables_before_update)`）",
+      "shape": "(variables: MvuData, variables_before_update: MvuData) —— **两个实时对象**（消费端就地改 `variables` 并期望回写）",
+      "reason": "🔴 **不是纯通知**（同 worldinfo_scan_done 族）：语料 `剧情逻辑_0703.js:1266` 的 handler **就地改 `vars.stat_data.女性角色` / `vars.stat_data.NPC漂泊者`**（回滚 AI 越权改动 = 否决语义），依赖 `vars` 是**活对象**且改动会被持久化。我方变量更新发生在**服务端 cordis 层**（`dsh-plugin/index.ts` 的 `parseUpdateVariable` / `/rp/mvu/extra-analyze`），帧内只有**只读快照**（`/dsht-mvu/variables`）⇒ 投一份只读副本 = 让卡以为拦截成功而实际没有（L126 的②，**比不投更坏**）。⇒ 判「**不做 + 明示降级**」：本项已登记（不静默放过），且**降级会出声** —— `th-shim.ts` 的 `warnDeadRegistration()` 在该事件被注册时打一次性 console.warn 说明原因（L42）。**注册侧已修**（`Mvu.events` 常量此前完全缺失 ⇒ 注册落到 `'undefined'` 键）。"
+    },
+    "settings_loaded_after": {
+      "task": "T-80",
+      "bucket": "跨层（**心跳 74 由别名形态枚举面新增现形**）",
+      "baseline": "SillyTavern-reference/public/script.js:9095",
+      "shape": "(settings: object) —— **可变对象**（订阅者可改，基准紧随其后回读）",
+      "reason": "🔴 **不是纯通知** —— 基准 `script.js:9095` 上一行注释原文 `// Allow subscribers to mutate settings`，`await emit(SETTINGS_LOADED_AFTER, settings)` 之后立刻 `$('#max_context').val(max_context)` / `$('#max_context_counter').val(...)` 等**回读被改后的值** ⇒ 同页同步可变回路。我方设置加载在**宿主侧**（快照/落盘路径），且与帧内**不在同一 tick、更非同页对象** ⇒ 投只读副本 = 卡以为改到了 settings 而实际没有（L126 的②）。⇒ 判「**不做 + 登记**」。"
+    },
+    "world_info_activated": {
+      "task": "T-80",
+      "bucket": "跨层（**非低成本，见心跳 68 取证**）",
+      "baseline": "SillyTavern-reference/public/scripts/world-info.js:902",
+      "shape": "Array.from(allActivatedEntries.values()) —— **完整 WI 条目对象**（world/uid/comment/key/content/constant/position/depth…）",
+      "reason": "① 形状缺口：我方 `dsh-plugin/index.ts:4331` 已 `ctx.emit(null,'dsht-rp/wi-activated',{entries:[{comment,reason}]})`，`:4338` 又把 `traceRuntime.activatedEntries` 收成 `{comment,reason,position}` 三字段；`/dsht-rp/trace`（`:6334`）**已暴露**该精简形，但基准要的是完整条目 ⇒ 直接投 = L126 的「②补了但形状错」。② 消费模式缺口：语料 `世界书控制_0708.js:4140-4159` 是**干跑同步收集**（调 `getWorldInfoPrompt(mock,…)` 期间同步收事件、取 `detail[i].uid`）⇒ 我方扫描在服务端 cordis 层、卡在 WebView 帧，**同步回路结构性不可达**。③ 可做的只有「观测型」消费（`示例预设 V17.1:55449` 读 world/uid/comment/constant 做日志）——须先扩 trace 载荷到完整条目，改动落在 `dsh-plugin/index.ts`。"
+    },
+    "worldinfo_entries_loaded": {
+      "task": "T-80",
+      "bucket": "跨层（**通道已存在，缺的是形状+时机**）",
+      "baseline": "SillyTavern-reference/public/scripts/world-info.js:4492",
+      "shape": "{ globalLore, characterLore, chatLore, personaLore }（四组完整 WI 条目数组）",
+      "reason": "**读取面已就绪**：facade 已有 `/worldbook/list`·`/worldbook/get`（`dsht-plugin-tavern-helper/index.ts:647-654`），UI 侧 `rpApi`/`thApi`（`rpc.ts:104/118`）可直接拉 ⇒ 无需新通道。**缺的是分档与时机**：基准在 `checkWorldInfo()` 内（生成期）发射，四组分别来自 getGlobalLore/getCharacterLore/getChatLore/getPersonaLore；我方须先确认这四组的等价来源与「何时算已加载」，否则会把生成期语义挪到开局期（违反 L36 的「时机也要对」）。"
+    },
+    "worldinfo_scan_done": {
+      "task": "T-80",
+      "bucket": "跨层（**结构性不可实现，须判「不做 + 明示」**）",
+      "baseline": "SillyTavern-reference/public/scripts/world-info.js:5056（发射点在 `while` 扫描循环内）",
+      "shape": "args = { state:{current,next,loopCount}, new:{...}, activated:{...}, sortedEntries, recursionDelay, budget, timedEffects }",
+      "reason": "🔴 **不是纯通知**：基准紧接发射之后 `if (args.state.next !== scanState) { scanState = args.state.next }`，并注释「Some fields are allowed to be changed by listeners」—— 监听者**改 `args.state.next`** 即驱动 ST 的**递归世界书扫描**（同批还有 `budget.current/overflowed`、`recursionDelay.currentLevel`、`activated.text` 被回读）。这是**同页同步可变回路**：我方扫描在服务端、卡在 WebView 帧，**结构上无法同步回写** ⇒ 只投「只读快照」会让卡以为自己安排了递归而实际没有（L126 的「②静默做错事」，比不投更坏）。⚠️ 本项与相邻两项**须同批评估**（卡常三者成组注册）。"
+    }
+  },
+  "_converged": {
+    "_note": "已修好、从 `known` 移除的项（保留取证：为什么不再缺）。不要重新加回 `known`。",
+    "preset_changed": {
+      "task": "T-80",
+      "fixed_in": "心跳 74（2026-09-12）",
+      "baseline": "SillyTavern-reference/public/scripts/openai.js:6826（`{ apiId: 'openai', name: presetName }`；另 kobold/novel/textgen 各一处）",
+      "why_no_longer_missing": "原登记理由（「apiId 取值未定、卡可能按 apiId 分支」）经**全语料普查证伪**：54 脚本里 `PRESET_CHANGED` 的消费端**恰 3 处**（`_示例卡二_` V14.7 / V17.1、`梦鲸思客预设助手_1_7`），**全部零参回调、不读任何载荷** ⇒ 形状风险 = 0。`apiId` 填 `DSHT_MAIN_API`（'openai'）= 我方实际主 API（T-74 实机两面均读作 `'openai'`），非编造。触发点 = `RpPresetSwitch.select()` 的 `preset/select` **成功之后**，与基准「应用预设 delta 之后」同位；**同时补 `oai_preset_changed_after`**（基准 :6825，无参、消费端同样零参），顺序逐字对齐基准（AFTER → PRESET_CHANGED）。"
+    },
+    "oai_preset_changed_after": {
+      "task": "T-80",
+      "fixed_in": "心跳 74（2026-09-12）",
+      "baseline": "SillyTavern-reference/public/scripts/openai.js:6825（**无参**）",
+      "why_no_longer_missing": "心跳 74 扩展枚举器（新增「动态别名绑定」形态）后**首次现形** —— 此前闸门看不见 `te.OAI_PRESET_CHANGED_AFTER`（语料 `_示例卡二_.js:30989` / `:55380`）。纯通知：基准无参、语料消费端零参（`syncSmoothStreamState('oai_preset_changed_after')` 一族重同步）。与 `preset_changed` 同一触发点、同一批次投递。"
+    },
+    "settings_updated": {
+      "task": "T-80",
+      "fixed_in": "心跳 74（2026-09-12）",
+      "baseline": "SillyTavern-reference/public/script.js:9285（`/api/settings/save` 成功后；**无参**）",
+      "why_no_longer_missing": "语义 = 「设置已持久化」，基准 `openai.js:1077` 甚至用 `once(SETTINGS_UPDATED)` 当同步原语。同批现形（语料 `_示例卡二_.js:30998` 族）。落地 = **只**在两条「卡发起」的落盘路径（`saveHostExtensionSettingsDebounced` 计时器回调 + `flushHostExtensionSettings`）投递，**不在 `saveHostExtensionSettings()` 本体** —— 因为 `seedHostExtensionSettings` 分支（`host-vendor.ts:602`）在**启动期**也调它，放本体会变成「启动即发」，而基准此时发的是 `settings_loaded_after`（L36：时机也要对）。广播式（settings 是全局的）。"
+    },
+    "generation_stopped": {
+      "task": "T-80",
+      "fixed_in": "心跳 68（2026-09-12）",
+      "baseline": "SillyTavern-reference/public/script.js:5559（`stopGeneration()` 内、**无参数**）",
+      "why_no_longer_missing": "判据 = 节点态 `running → interrupted` 跃迁。DSH 权威契约：`deepseek-harness/packages/core/agent-loop/src/agent.ts:355` 只在 `signal.aborted` 时给 `assistant/message` 写 `interrupted: true`，`core/session/src/types.ts:273` 明文该标记 = 「回合被取消」，正常结束写 `settled` ⇒ 与 ST「用户点停止」一一对应。实现见 `dsht-rp-ui/src/client/RpScriptHost.tsx` 的 `advance()`；实机验收见 `stage3-device/hb68/`。单命名空间（TH 的 `iframe_events` 不含该项，`@types/iframe/event.d.ts:172-183`）。"
+    }
+  }
+}

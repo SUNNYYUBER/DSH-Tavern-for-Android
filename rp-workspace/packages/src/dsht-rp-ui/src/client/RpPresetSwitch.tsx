@@ -9,6 +9,8 @@
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import { rpApi } from './rpc.ts'
+import { DSHT_MAIN_API } from '../../../dsht-plugin-shared/st-compat.ts'
+import { emitThEventToFrames } from './th-host-events.ts'
 import { notifyDisplayMutation } from './RpNativeChat.tsx'
 
 interface PresetLite { id: string; displayName: string }
@@ -54,6 +56,18 @@ export function RpPresetSwitch({ useSession, sessionId }: HeaderActionProps): JS
     try {
       await rpApi('preset/select', { sessionId, presetId: presetId || null })
       setCurrent(presetId)
+      // 【T-80 心跳 74】对齐基准 `scripts/openai.js:6825-6826` 的**顺序与时机**：
+      // 应用预设 delta 成功后先 `OAI_PRESET_CHANGED_AFTER`（无参），再 `PRESET_CHANGED`（{apiId,name}）。
+      // 两条都不存在"补了但形状/时机错"的风险（L126）：
+      //   · AFTER 基准无参、语料消费端零参；
+      //   · PRESET_CHANGED 的语料 3 处消费端（示例卡二×2 / 梦鲸思客预设助手）**全部零参、不读载荷**
+      //     ⇒ 基线里"apiId 取值未定、卡可能按 apiId 分支"的顾虑已被全语料普查**证伪**。
+      //   · `apiId` 填 `DSHT_MAIN_API`（'openai'）= 我方实际主 API，非编造。
+      emitThEventToFrames('oai_preset_changed_after', [], sessionId)
+      emitThEventToFrames('preset_changed', [{
+        apiId: DSHT_MAIN_API,
+        name: presets.find(p => p.id === presetId)?.displayName ?? presetId,
+      }], sessionId)
       // 【2026-09-08 鲁棒性】display epoch 必须随预设切换 bump（旧代码只 invalidateWsCache
       // 清缓存——useDisplayRegexes 的 effect 依赖 [slug, sessionId, epoch]，epoch 不变则
       // 已挂载楼层永不重取预设作用域 display 正则，切换后显示面滞留旧正则直到重开会话）。

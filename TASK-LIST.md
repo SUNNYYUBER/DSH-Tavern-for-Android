@@ -9,17 +9,137 @@
 
 | 事实 | 说明 |
 |---|---|
-| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v299**，阶段 0/1/2/3/4 已全部推完） |
-| 仓库最新产物 | **x86_64 debug sentinel v298（196,853,392 B）/ arm64 release sentinel v299（128,379,624 B）**，9-12 15:01 / 15:02 构建（**心跳 65 的 T-76 修复**：首启陈旧 token 竞态）；**四路 md5 一致** `9004dfbc848d07f84204dd787afee87e`（staging = 设备 `dsh-runtime` = 设备 `profiles/web` = APK 内 `assets/dsh-runtime.zip`） |
-| 设备侧 | **已装 v298**（x86_64 debug）；实机取证：**7 个 TH 脚本帧** · **T-74/T-75 验收 7/7 PASS × 11 判据**（帧面签名 `[26,16,41,false]` = 修复前 `[23,13,40,false]` 的 **+3/+3/+1** 精确对上改动面）· **T-76 验收：用 `T_old` 加载主框架 0 次 / 就绪前零发布 / `sessionController is unavailable` 0 次**，端到端**直接恢复上次 RP 会话、卡死态未出现** · 冷启对照工作区 26 项正常加载 |
+| 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v303**，阶段 0/1/2/3/4 已全部推完） |
+| 仓库最新产物 | **x86_64 debug sentinel v302（196,853,392 B）/ arm64 release sentinel v303（128,381,252 B）**，9-12 18:2x / 18:3x 构建（**心跳 66 的 T-76 因子 B 修复**：token 就绪门控）；**四路 md5 一致** `593a1d4a48ad8963e4aaf40e11063bb2`（staging = 设备 `dsh-runtime` = 设备 `profiles/web` = APK 内 `assets/dsh-runtime.zip`） |
+| 设备侧 | **已装 v302**（x86_64 debug）；实机取证：**7 个 TH 脚本帧** · **T-74/T-75 验收 7/7 PASS × 11 判据**（帧面签名 `[26,16,41,false]`）· **T-76 因子 A 验收通过** · **T-76 因子 B 验收：负控 `held` ×1 / 文件通道放行 0 次 / 哨兵 loadUrl 0 次 / node 退出 0；正控就绪行出现、token 经 stdout 捕获** · 冷启对照工作区 26 项正常加载 |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1195 项全绿（56 文件）** · `typecheck` 三段式 **0 错**（心跳 65 复跑确认） |
-| 设备回归 | `stage4-regression` **21/21**（心跳 65 修掉脚本「按磁盘 `lastTime` 选会话」的**形状假设**后，**不带参数即 21/21**；此前会因选中非 live 会话把 21/21 误报成 20/21） |
-| 未提交改动 | 心跳 62 的**新增** `packages/src/dsht-preflight/` + `tests/preflight.spec.ts` + `NodeService.kt` 注入 + 两个构建脚本 + 心跳 62B 的 T-48 + 心跳 63 的导入守卫 + 文档回写；**心跳 64 的 T-72（5 文件）**；**心跳 65 的 T-74/T-75（`th-shim.ts` / `host-vendor.ts` / `st-compat.ts` + 两个 spec + A11 闸门 + 普查工具）+ T-76（`NodeService.kt`）+ `stage4-regression.mjs`**；**并发实例的** `DSH Android Roleplay App Plan.md` 等**一份没碰** |
-| 本轮性质 | **心跳 65 = T-74/T-75 实机闭环 + 推翻 T-73 判定并修掉 T-76（首启启动竞态）+ 回归脚本形状假设修复**（详见下方「当前状态」） |
-| 发布闸门 | 🔴 **未达标**（T-25/T-61 心跳 61 复跑：受控面 **616 文件 / 合计 305 项**）⇒ **现在不能公开**；<br>✅ **`SECRET` 已由 1 → 0**（🔴 发布阻断项清除，但⚠️ 属**并发实例**在 `DSH Android Roleplay App Plan.md` 的**未提交**改动）<br>⚠️ **且密钥仍在本地 git 历史里**（仓库无远端、117 个提交从未推送 ⇒ 非对外事故）—— **P0 历史重写未做**；剩余 `WXID 16 / LOCALPATH 70 / SERVER 11 / PAYLOAD 8 / WORDLIST 200` |
+| 单测 | **1329 项全绿（61 文件）** · `typecheck` 三段式 **0 错**（心跳 69 复跑确认） |
+| 设备回归 | `stage4-regression` **21/21**（**21/21 已确认**；脚本「按磁盘 `lastTime` 选会话」的**形状假设**已于心跳 65 修掉，心跳 66 又修掉其「CDP 空响应时报错指向自己」的问题） |
+| **本轮主线** | **心跳 69 = §6.5 核心判据「真跑完整卡脚本」达成** —— 抓出并修掉一个**上一轮复刻探针永远抓不到**的真缺陷（`eventSource.events` 缺席 ⇒ 卡 bootstrap 在 `RegexBinding()` 前中断）。四段核心功能**逐段取证全部执行、零异常**。见下方「当前状态」 |
+| 未提交改动 | 心跳 62 的**新增** `packages/src/dsht-preflight/` + `tests/preflight.spec.ts` + `NodeService.kt` 注入 + 两个构建脚本 + 心跳 62B 的 T-48 + 心跳 63 的导入守卫 + 文档回写；**心跳 64 的 T-72（5 文件）**；**心跳 65 的 T-74/T-75 + T-76（`NodeService.kt`）+ `stage4-regression.mjs`**；**心跳 66 的 T-76 因子 B（`NodeService.kt` 就绪门控 / `MainActivity.kt` 等待屏 / `build-wb.sh` A12 / `stage4-regression.mjs`）**；**并发实例的** `DSH Android Roleplay App Plan.md` 等**一份没碰** |
+| 本轮性质 | **心跳 66 = ① T-76「因子 B」闭环（可复现对照 → 否掉 v1 实现 → 最终修复 → 闸门 A12 → 设备验收）② T-47 C 档「问死」执行完毕（只读，零风险，不依赖 T-46 决策）③ 阶段三发布卫生闸门复跑刷新 ④ 回归脚本报错指向自己修复**（详见下方「当前状态」） |
+| 发布闸门 | 🔴 **未达标**（**心跳 66 复跑**：受控面 **626 文件 / 合计 296 项 / exit 1**；心跳 61 为 616 / 305）⇒ **现在不能公开**；<br>✅ **`SECRET` 已由 1 → 0**（🔴 发布阻断项清除，但⚠️ 属**并发实例**在 `DSH Android Roleplay App Plan.md` 的**未提交**改动）<br>⚠️ **且密钥仍在本地 git 历史里**（仓库无远端、117 个提交从未推送 ⇒ 非对外事故）—— **P0 历史重写未做**；剩余 `WORDLIST 217 / LOCALPATH 47 / WXID 15 / SERVER 9 / PAYLOAD 8`（⚠️ **WXID 15 条全部来自并发实例的 `Plan 文档`**，非我方产物） |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
+- **🟢 心跳 71 = 补上 goal 的两个「未验环节」**（此前都是间接证据，本轮补成直接证据）。
+  ① **真实加载路径**（此前全部验证都是"手工把 `t37-inject.js` 注入宿主页"= 模拟"它已经在跑了"）：
+  本轮按**加载器原文**（`SoliUmbra_预设内置正则_v2.js:1-23`：`window.frameElement` → `parentElement`
+  爬到宿主 `body` → `appendChild(<script src="…/regex_bind/inject.js">)`）在设备上实跑：
+  | 环节 | 实测 |
+  |---|---|
+  | 同源链可走（`frameElement` → 宿主 `body`） | **7/7 个 TH 帧全部 `true`** |
+  | 宿主门面在帧内可见 | **`true`** |
+  | 按加载器原文执行 | `ok: true`（`getScriptId`/jQuery/`SillyTavern` 帧内齐备） |
+  | 宿主页真的出现外链标签 | **1 个**（`…/regex_bind/inject.js`） |
+  | 卡脚本真的加载并执行 | `topVersionNumber: 11800` + `hasSPresetToolBinding: true` |
+  ⇒ **从真实链路（TH 脚本帧 → 宿主页 → 外链卡脚本）到四段功能执行，全程打通**。
+  ② **T-78 的前置实测（goal 明确要求：先验安卓 node 的 `worker_threads`）**：
+  此前只在**本机** node 验过 API —— 本轮在**设备**上跑（用 `nativeLibraryDir/libnode.so` + `LD_LIBRARY_PATH` 补依赖 so）：
+  ```
+  RESULT: {"version":"v26.4.0","platform":"android","arch":"x64",
+           "workerThreadsAvailable":true,"workerMessage":"pong","workerMs":133}
+  ```
+  ⇒ **安卓 node 支持 worker_threads**；但 T-78 的实现是**同步防护组合**，
+  理由**不是"不可用"**而是**契约约束**：`triggerWorldInfo` 是同步函数且被 browser bundle 消费
+  （`import/browser-entry.ts` → `app.js`，WebView 内无 `node:worker_threads`）⇒ 改 async 会破坏既有契约。
+  ⇒ **选型依据已如实记录**（是"选了同步路线"，不是"退而求其次"）。
+- **🟢 心跳 70 = 对心跳 69 的结论做「逐条反查」——两个可疑读数查清，均**不是缺陷**（判据修正，非改代码）**。
+  ① **`regexBinding_onSortableStart === false` 的定性**：
+  心跳 69 用它当 `RegexBinding()` 的"已完成"证据，读出 false ⇒ 一度怀疑"执行了但没做完整"。
+  **逐里程碑打点查清**：`RegexBinding` 本体内 `if (versionNumber >= 11305) { … return; }`（`:3567`→**`:3721`**），
+  而 `:3877` 的 `regexBinding_onSortableStart` **位于该分支之外** ⇒ **新版路径下永不执行 = 设计语义**
+  （卡原文注释：`11305+ has built-in regex binding; ST is source of truth, only sync FROM ST`）。
+  **实测证据**（4 处打点 + 零异常）：
+  ```
+  ['11305分支:进入(:3567)', '清理legacy前(:3596) regexLen=1',
+   '注入执行顺序按钮(:3605)', '到达return(:3721)']
+  页面异常: (无)
+  ```
+  ⇒ 该分支**从进入逐行走到末尾 return，一步不缺**。**我上一轮选错了特征副作用**（选中的正是新版路径故意不做的那段）。
+  沉淀 **L133**（判"执行了"时，特征副作用必须落在"该分支真的会走的那一支"；取证法 = **逐里程碑打点**，无需预判分支结构）。
+  ② **`ReferenceError: Vue is not defined` 的归属**：
+  心跳 69 实测出现过一次。本轮带**帧归属**采集 12 秒 ⇒ **异常 `(无)`**；
+  帧普查显示每个 TH 脚本帧**自己**从 `testingcf.jsdelivr.net` 拉 `vue` + `vue-router`，
+  且当前**全部帧 `innerVue: "object"`**（已就绪）⇒ 该异常是 **CDN 瞬时未就绪**的竞态，
+  属**卡侧 CDN 依赖**（与 T-37(c) 既有结论一致：真 ST/TT 同样如此，**非我方缺陷**）。
+  ⇒ goal 的「零 ReferenceError」判据在**我方可控范围内成立**（我方不引入任何 ReferenceError；
+  卡侧 CDN 竞态不归我方）。
+- **🔴 心跳 69 = §6.5 的「核心判据」真正达成**（方法：**把那张卡 220,854 B 的脚本原样注入宿主页跑**，而非复刻部分链路）。
+  ① 🔴 **抓出一个真缺陷（上一轮复刻探针永远抓不到）**：
+  `TypeError: Cannot read properties of undefined (reading 'chat_completion_settings_ready')`
+  —— 卡在 `inject.js:2966`（与 `:3110`）直接读 `ctx.eventSource.events[ctx.eventTypes.X]`，
+  **按裸函数数组操作并就地替换元素**；而我方 `ThEventSource` 用内部 `Map` + 包装对象 ⇒
+  `events` 属性缺席 ⇒ **bootstrap 在 `RegexBinding()` 之前整段中断**（四段功能一段都没跑）。
+  ② **基准对照（逐字）**：`eventSource = new EventEmitter([...])`（`events.js:113`），实现明文
+  `this.events = {}`（`lib/eventemitter.js:32`）、数组放**裸函数**（`:54`）⇒ 是**公开属性**且形状是裸数组。
+  ③ **修法（两件缺一不可，否则"抛错变静默失效"= 更坏）**：
+  (a) 暴露 `events`（键=事件名，值=**裸函数数组**）；
+  (b) **以 `events` 为权威存储**（内部只旁路存 `once` 元数据），`emit` 从它取快照
+  ⇒ 第三方**就地替换元素 / 直接 push** 均生效。
+  ④ **设备实测（冷启后注入整脚本）**：
+  ```
+  四段已执行: ['RegexBinding','ChatSquash','MacroNest','syncSPresetToolRegistrations']
+  四段执行中的异常: []
+  页面异常: (无)          ← 修复前是 TypeError 中断
+  SPresetImports: 8 个符号 · versionNumber: 11800 · eventSource有events: true
+  ```
+  ⑤ **单测 +8**（含**承重反控**：就地在 `events` 数组里替换元素/追加函数，`emit` 必须调用新函数 ——
+  反控注入后 **14 条转红**，恢复即 24/24 绿）。
+  ⑥ **沉淀 L132**：验第三方脚本兼容性时，「我复刻了它的调用序列」是**假证据**；
+  「把它的成品原样跑一遍」才是真证据 —— 复刻部分链路 = 按自己的理解出题再自己答对。
+- **🔴 心跳 67 = §6.5「ST 资产兼容族」四件全部落地 + 设备实测通过**（用户明确要求「彻底解决，不接受『基准也不做』作为不修的理由」）。
+  ① **T-63 四个 ST 标准模块面**：新增 `assets/st-modules/{script.js, scripts/utils.js, scripts/preset-manager.js, scripts/openai.js}`
+  + `index.ts` 注册四条 exact 路由（**资产缺失返真 404，绝不空壳**）。
+  设备实测：四个端点 **全 200**（修复前全 404）、MIME `text/javascript`、
+  **卡的 4 条静态 import 全部解析成功（missing=[]）**、`displayVersion='SillyTavern 1.18.0'`、
+  `utils` 语义正确（`café`→`cafe`）、`presetManager` 同实例且六方法齐、`sendOpenAIRequest` **真 reject**（不返回假值）。
+  ② **T-42 真接引擎**：卡的 `extension_settings.regex` 写入 → 复用既有 `/dsht-rp/rp/regex/save-global` 落到 node 侧 `rp/regex/global.json`。
+  设备端到端：卡式写回后宿主 `1→2` 条 ⇒ **node 侧文件真变化**（27186→27574 B，13 字段逐字完整）⇒ 取证后**精确还原**。
+  ③ **T-48 扩展文件路由 + 真渲染**：`/scripts/extensions/**` + `/scripts/templates/**` 路由（**路径穿越被拒**）、
+  Handlebars 4.7.9 + DOMPurify 3.4.2（与基准 `package.json` 同锚定）进 UI bundle、退役心跳 62 的退化实现。
+  设备实测：无文件→**真 404**；有文件→200 + `text/html`；**真渲染**出 HTML（变量已代入）；
+  sanitize=true 清掉 `onerror` / false 保留（**证明消毒真在起作用**）。
+  ④ **核心判据（§6.5 共同验收口径）**：把卡的 loader 逐字复刻到宿主页执行 ——
+  `versionNumber=11800` · **两个 `module_imported` 容器都建立** · `SPresetImports` 八符号全拿到 · **页内异常 0 条**。
+  ⑤ **T-78 世界书正则安全防护**（单源 `lore/safe-regex.ts`）：四道闸门（pattern 长/flags 白名单/危险模式静态拒绝/文本截断）。
+  **实测反控**：防护停用时同一恶意输入 **8804 ms**，生效时整个测试文件 **16 ms**。
+  ⑥ **T-79 卡正文防冒充**（单源 `dsht-plugin-shared/card-fence.ts`）：nonce 围栏 + 越权标记消毒；
+  **残余 `{{` 实测 55 处**（非罕见，故必须处理）；两处卡正文注入点收敛到唯一漏斗。
+  ⑦ **顺带修掉一个静默缺陷**：`build-wb.sh` **从不复制 assets 树**（`build-plugins.sh` 会），
+  于是"源码新增的 assets 资产"在 build-wb 这条路**永远进不了包** ⇒ 新增断言 **A13**。
+  **验收**：`typecheck` 三段式 0 错 · 单测 **61 文件 / 1321 全绿**（+126）· 四处反控全部真跑并转红 · 设备四项实测通过。
+- **心跳 66** = **T-76「因子 B」全闭环（可复现对照 → 否掉 v1 实现 → 最终修复 → 闸门 A12 → 设备验收）+ 回归脚本报错指向自己修复**。
+  ① **先建可复现对照（改代码之前）**：冷启 **+25 s** 往设备 `files/.dsh/dsht-token` 植入哨兵串 ⇒ **+26 s** 即
+  `web token captured from dsht-token file (34 chars)` ⇒ **+42 s** `main-frame http 404 @ …?token=PLANTED_FACTORB_CONTROL_1234567890`，
+  而官方 `dsh web:` 就绪行在 **+107 s** ⇒ **早 65 s 放行**（修复前必现）。定性缺陷 → **可判据化缺陷**。
+  ② **机理**：垃圾 token → 404 → T-45 有界重载自愈；**合法 token + 网关未挂载** → 页面 200 但 RPC generation **一次性失败且不再重臂**
+  ⇒ `phase` 恒 `'pending'` ⇒ **永久 loading**。生产端数据依赖：`dsh-plugin/index.ts:7466-7487` 只在 `await repairAllSessionSeqs()`
+  （实测 38 s ~ >200 s）之后写 token ⇒ **文件合法地早于 `announceReady()` 落盘**。
+  ③ 🔴 **否掉自己的 v1 实现（L119）**：v1 用「我方网关路由非 404」当就绪代理。实测 **TCP / `/` / 我方路由 / DSH 自己的 `/api` 前缀
+  四条面一起在 +77.0 s 转"非 404"，权威就绪行在 +117.1 s** ⇒ **代理早 40 s**，负控里照样提前放行 ⇒ **整段删除**。
+  ④ **最终修复（`NodeService.kt` 单点收口）**：`@Volatile readySignalSeen`；文件通道放行条件 = `readySignalSeen || stdoutSilent(≥90 s 零行) || failopen(≥300 s)`；
+  未就绪只记一行 **held（可听）**不发布；`MainActivity` 等待屏分别显示「端口」「就绪信号」。
+  ⑤ **闸门 A12**（`build-wb.sh`）：断言四处接线（`readySignalSeen` / `STDOUT_SILENT_MS` / 放行条件包裹 / MainActivity 显示），
+  **正控 4/4、负控 3/3**；APK dex 语义核验 x86_64 `classes3.dex` / arm64 `classes.dex` 各 **3 命中**。
+  ⑥ **设备验收全过**：负控 `held` ×1 / **文件通道放行 0 次**（修复前 1 次且早 65 s）/ 哨兵 loadUrl 0 / node 退出 0；
+  正控就绪行出现、token 经 stdout 捕获、node 退出 0；`stage4-regression` **21/21**。
+  ⑦ **交付**：`typecheck` 三段式 **0 错** · 单测 **56 文件 / 1195 全绿** · 四路 md5 **1 个值** `593a1d4a48ad8963e4aaf40e11063bb2`
+  · 双架构 APK **x86_64 debug v302（196,853,392 B）/ arm64 release v303（128,381,252 B）**，**已装机 v302**。
+  ⑧ 顺带修 `stage4-regression.mjs` 一处**报错指向自己**（CDP 空响应报 `SyntaxError: Unexpected end of JSON input`）→ 改为分别提示「不可达 / 空 / 非 JSON」。
+  证据全文 `stage3-device/hb66/T76-FACTOR-B-EVIDENCE.md`。沉淀 **L119–L122**。
+- **心跳 66 · 追加（同一心跳内继续推进不依赖决策的零风险项）**：
+  ⑨ **T-47 C 档「问死」执行完毕**（只读）：8 个成员 **3 已实现**（`generate`/`generateRaw`/`mainApi`，
+  心跳 63C 表误记为"缺口"—— grep 两包目录会把无关词计入）· **1 已出声 stub**（`stopGenerationById`/`stopAllGeneration`）·
+  **4 判「不做」**（`getTokenCountAsync` 补了=制造假精度·`generateQuietPrompt`+`executeSlashCommandsWithOptions` 同一守卫链且只在
+  **非活跃旧卡副本 `b7s7x3`**·`getPresetManager` 无消费者）⇒ **C 档对决策贡献 = 0**。
+  证据 `stage3-device/hb66/C-BUCKET-WENSI.md`。
+  ⑩ 🔴 **副产物（比 C 档本身更值钱）**：**`window.parent.SillyTavern.getContext()` 是卡的真实可达路径**
+  （`梦鲸思客预设助手_1_7.js` 的 `L()` 逐字这么写）⇒ 证明**宿主面 40 成员确实是被卡读到的面**、T-46 投影无机制障碍；
+  且 **帧面已存在 `characters: []` / `characterId: -1` 空占位**（`th-shim.ts:2480`）而宿主面反而"缺"
+  ⇒ 口径由**「缺失」改为「空占位（已存在）」**（不改行为——那正是 T-47 B 档待决项）。
+  ⑪ **阶段三发布卫生闸门复跑刷新**：受控文件 **626** 个 / 合计 **296 项** / **exit 1**（仍不能公开）；
+  `SECRET` **0**（阻断项已清）；剩余 `WORDLIST 217 · LOCALPATH 47 · WXID 15 · SERVER 9 · PAYLOAD 8`。
+  ⚠️ **WXID 15 条集中在 `DSH Android Roleplay App Plan.md`**（**并发实例的未提交文件**，非我方产物）。
 - **心跳 65** = **T-74/T-75 实机闭环 + 推翻 T-73 判定、修掉 T-76（首启启动竞态）+ 回归脚本形状假设修复**。
   ① **T-74/T-75 实机闭环**（上一轮改的 3 个成员）：装 build#3（**v296**）后 `t74-chatid-probe` **7/7 PASS × 11 判据**
   —— `chatId` 两面同值且 == `getCurrentChatId()`；`uuidv4` 两面皆函数、两次取值互异；`mainApi` 两面 `'openai'`；
@@ -555,7 +675,50 @@
   要么在字符串里再抄一份（**违反单源纪律，不做**）。
 - 触发条件：出现**卡脚本在 iframe 内**用 `ctx.eventSource` 的实测报错时再升。
 
-### T-42　🔴 **当前前线**：卡的注入脚本要挂到 ST 的正则面板 DOM（`#saved_regex_scripts`），我们没有
+### §6.5　✅ **ST 资产兼容族：T-42 / T-48 / T-63 统一实施**（2026-09-12 拍板全部彻底解决；**心跳 67–71 逐件落地并设备实测，族内全部完成**）
+
+> **这一族为什么合在一起**：三件事同根 —— **卡把 DSHT 误当成 ST 前端**。
+> 它们各自单独修都只是"换个坑"（T-56 的教训），必须**一起做**才算修好。
+
+**共同判据（唯一验收口径）**：**一张真实卡的宿主注入脚本能在 DSHT 里完整跑完，零 `ReferenceError` / 零 `TypeError`**，
+且卡的四段核心功能全部执行（`RegexBinding` / `ChatSquash` / `MacroNest` / `syncSPresetToolRegistrations`）。
+
+| 件 | 内容 | 归属 |
+|---|---|---|
+| **① 版本与模块面** | `GET /version` ✅ 已有（T-56）· `GET /script.js` + `/scripts/{utils,preset-manager,openai}.js` | **T-63** |
+| **② 正则面板与全局正则** | `#saved_regex_scripts` 锚点 ✅ 已有（T-56 ④）· `extension_settings.regex` ✅ 已有（T-60）· **面板 DOM 本体 + 我方正则引擎接线** | **T-42** |
+| **③ 扩展模板渲染** | Handlebars + DOMPurify + `/scripts/extensions/**` 文件路由与存储 + 接线 | **T-48** |
+
+**实施顺序（按依赖，不按编号）**：
+1. **T-48 的 ③ 文件路由与存储** —— 它是 T-42/T-63 的公共基础设施（`/scripts/**` 同一注册面）。
+2. **T-63** —— 版本/模块面，让卡走**新版分支**（否则后面全在旧版路径上打补丁）。
+3. **T-42** —— 正则面板本体 + 引擎接线（**必须真接线**，不做"空容器"；见 T-42 的 C 方案禁令）。
+4. **T-48 的 ④ 接线** —— 把退化实现换成真渲染（依赖 1 已就绪）。
+
+**纪律（三条沿用，不得放宽）**：
+- ❌ **不塞空壳**：给不存在的实现塞空壳 = 把「静默缺失」换成「错误地看起来能用」，**比不修更糟**。
+- ❌ **不做半吊子**：只摆 DOM 容器而不接引擎（T-42 的 C 方案）= 造出新的静默失败。
+- ❌ **不另写一份**：`sendOpenAIRequest` / 模板引擎 / 正则引擎都必须**复用我方既有实现**，
+  不允许为了"让 import 成功"而另起一套（L61：同一语义多副本 = 假修）。
+
+**与 NT 的对照（记录，但不作为"不修"的依据）**：开源项目 dsh-NextTavern（`github.com/a86582751/dsh-nexttavern`）
+**明确不实现**这三件事（不跑卡注入脚本、无模板引擎、无 TH 兼容）。**我们不走这条路** ——
+它的用户是"没有历史包袱的新用户"，我们的用户是"要把 ST 资产搬过来"。
+⇒ 这三件是我们的**差异化承诺**，不是可以对齐掉的负担。
+
+---
+
+### T-42　✅ **卡的注入脚本已能完整跑完（含正则真接引擎）**　（曾标「当前前线」；**心跳 67 收口 + 设备端到端实测**）
+- **心跳 67 结论（三条，均有设备实证）**：
+  ① **「补面板 DOM 本体」是多余的** —— 卡在 `versionNumber >= 11305` 下 `renderPresetRegexes()` **直接 return**
+    （`inject.js:4196-4198`），它**主动不往我方渲染**（L36「不能多」）。故面板 DOM 不需要我方伪造。
+  ② **真缺口 = 卡写进 `extension_settings.regex` 的正则没进 node 侧引擎**（此前只停在 localStorage）
+    ⇒ 已接：复用既有 `/dsht-rp/rp/regex/save-global` 落到 `rp/regex/global.json`，
+    **防回流**（seed 引起的变更不触发写回，有单测钉住）。
+  ③ **端到端实证**：卡式写回（改 `extensionSettings.regex` + `saveSettingsDebounced`）→ 宿主 `1→2` 条
+    ⇒ node 侧文件 **27186→27574 B / md5 变更 / scripts 1→2**，落盘条目 **13 字段逐字完整** ⇒ 取证后精确还原。
+- **共同验收判据（§6.5）已达成**：卡的 loader 逐字复刻执行 → `versionNumber=11800`、
+  **两个 `module_imported` 容器都建立**、`SPresetImports` 八符号全拿到、**页内异常 0 条**。
 - **暴露方式**：T-40 / T-41 修完后**再跑同一个采集器**，错误**第四次前移**（L35 又一次生效）：
   `TypeError: Failed to execute 'observe' on 'MutationObserver': parameter 1 is not of type 'Node'`
   @ `RegexBinding@inject.js:3885 ← (anon)@inject.js:2311`（**宿主帧**）。
@@ -612,6 +775,11 @@
     + `extension_settings.regex` 这个全局引用**，**不是正则引擎本身**。
   - 复用面：我方已有 `dsht-rp-ui/src/client/RegexPanel.tsx` + `/regexes/get`、`/regexes/replace`
     等路由，A 方案可在此之上做挂载适配，不必从零造面板。
+- 🔴 **拍板（2026-09-12）**：**选 A，且必须彻底解决**（T-42 与 T-48 / T-63 同属一族，统一见 **§6.5**）。
+  明确**不接受**「基准（TT）也不做 ⇒ 我们可以不修」这一理由 —— 我们的验收基准是「与 TT 一致」，
+  但我们的**产品承诺**是「把 ST 资产搬过来还能跑」。已实测有真实卡（Kemini 系列）走这条路径，
+  且该卡 bootstrap 会因此整段中断。判据 = **卡的宿主注入脚本能在 DSHT 里完整跑完**
+  （`RegexBinding` / `ChatSquash` / `MacroNest` / `syncSPresetToolRegistrations` 四段全执行）。
 
 ### T-43　🟠→✅ 会话修复链的「跳过」不可见（心跳 49 新暴露，**同日收口**）
 - **现象**：设备侧 `POST /rp/repair-sessions` 返回 `scanned 80  repaired 0  skipped 2`，
@@ -938,8 +1106,8 @@ iframe 面在同一批语料上缺 **25** 个成员（`name1` 5 文件 · `callG
 |---|---|---|
 | **A · 可低成本补**（**只剩 1 个**） | ✅ **`saveChat`（心跳 63D 已完成）** | 基准 `saveChat: saveChatConditional`（`script.js:9352`，**无参 async**）；我方持久化自管 ⇒ **出声 no-op + resolve** |
 | **B · 需定语义**（**6 个**） | `characters` + `characterId`（**必须成对**：基准是「角色数组 + 数组下标」，我方是「一会话一角色、以 slug 标识」）· `chatMetadata`（基准是**会被持久化的每聊天元数据**，我方无此存储）· **`onlineStatus`**（**不是连接状态**，见下）· **`powerUserSettings`**（子路径 `persona_description` **与** `reasoning`；脚本还会**写** `reasoning.auto_parse/prefix/suffix` —— 若给只读/临时对象 = 写入静默消失）· **`extensionPrompts`**（与 `setExtensionPrompt` **成对**，单独给一个恒空 map 会让脚本的写入落空）· **`variables`**（真 ST **新变量系统**；我方已有 TH 变量体系 ⇒ 需定**映射**而非新建） | **需拍板语义归属**；⚠️ 拒绝"给空容器"——会让卡的写入**静默消失**（本项目主力缺陷族） |
-| **C · 体系型（同 T-42/T-48 型）** | `generate` · `generateRaw` · `generateQuietPrompt` · `stopGeneration` · `mainApi` · `executeSlashCommandsWithOptions` · `getTokenCountAsync` · `getPresetManager` | 移植 = 移植 ST 生成栈 / 斜杠命令体系 / preset 体系 ⇒ **先按 T-48 的办法用只读探针问死"完整实现是否无效功"**，再决定；不自造迷你实现。<br>✅ **紧张度已下降**：其中 **4 个有 `typeof` 守卫**（`getTokenCountAsync` 5/6 · `generateRaw` 2/2 · `executeSlashCommandsWithOptions` 1/1 · `generateQuietPrompt` 1/1）⇒ 缺失只**静默降级**不抛 |
-| **D · 相邻域** | `updateMessageBlock` · `messageFormatting` | 与 T-42（正则/DOM）/ 显示管线相邻，随该域一起评 |
+| **C · 体系型（同 T-42/T-48 型）** | `generate` · `generateRaw` · `generateQuietPrompt` · `stopGeneration` · `mainApi` · `executeSlashCommandsWithOptions` · `getTokenCountAsync` · `getPresetManager` | 移植 = 移植 ST 生成栈 / 斜杠命令体系 / preset 体系 ⇒ **先按 T-48 的办法用只读探针问死"完整实现是否无效功"**，再决定；不自造迷你实现。<br>✅ **紧张度已下降**：其中 **4 个有 `typeof` 守卫**（`getTokenCountAsync` 5/6 · `generateRaw` 2/2 · `executeSlashCommandsWithOptions` 1/1 · `generateQuietPrompt` 1/1）⇒ 缺失只**静默降级**不抛<br>✅✅ **心跳 66 已"问死"（只读，零风险）—— 结论：C 档不构成决策**：<br>&nbsp;&nbsp;· **已实现（真桥）3 个**：`generate` / `generateRaw`（`th-shim.ts:1844` · `:3040-3042` → `/generate-raw`）· `mainApi`（`:1699`，T-75）；**心跳 63C 的普查表把它们记成"缺口"是口径差**（grep 两个包目录会把无关词计入）。<br>&nbsp;&nbsp;· **已出声 stub 1 个**：语料实际调的是 `stopGenerationById` / `stopAllGeneration`，二者已在 `UNSUPPORTED_APIS`（`:438-440`）。<br>&nbsp;&nbsp;· **判「不做」4 个**（全部有卡侧守卫）：`getTokenCountAsync`（卡注释自述"猜出来的比没有更糟"⇒ 补估算器 = 制造假精度）· `generateQuietPrompt` + `executeSlashCommandsWithOptions`（**同一处守卫链**，两者缺席则分支整体跳过；且只出现在 **`b7s7x3` 0605 旧卡副本**，**非活跃卡**）· `getPresetManager`（reasoning preset 体系，我方无消费者）。<br>📄 证据全文 `stage3-device/hb66/C-BUCKET-WENSI.md` |
+| **D · 相邻域** | `updateMessageBlock`（✅ **心跳 66 已实现 = T-77**）· `messageFormatting`（仍待评） | 与 T-42（正则/DOM）/ 显示管线相邻；**T-42 已于心跳 58 收口 ⇒ D 档不再"随该域一起评"，可独立判定**。<br>✅ **`updateMessageBlock`（心跳 66）**：基准 `script.js:2587` 是**同步 · 返回 undefined · 纯 DOM 重渲染**且**未找到元素即 early-return**；我方脚本帧内**恒无聊天 DOM** ⇒ **永久命中该早退分支** ⇒ **忠实实现 = 照抄那个分支**（不提供 ⇒ 卡侧 TypeError，基准绝不会发生；造替代 ⇒ 违反 L36）。两处调用**此前无 `typeof` 守卫**。见 **T-77**、经验 **L123**。<br>⏳ **`messageFormatting`**（1 文件 3 次）：返回 HTML 字符串，用在卡自己的总结层弹窗渲染；我方已有正则/格式化管线与 `formatAsTavernRegexedString` 桥 ⇒ **需单独问死「复用管线是否等价」**，不与上一项同批做 |
 
 #### ⚠️ 心跳 63C 纠一处**档位误判**：`onlineStatus` **不是**"连接状态"
 
@@ -998,7 +1166,42 @@ online_status = value;
 **1 组必须成对建模型**（`characters` + `characterId`）。
 
 **证据全文**：`stage3-device/hb63/T46-CORPUS-CENSUS.md`（63B）· `stage3-device/hb63/T46-CORPUS-CENSUS-2.md`（**63C，含 18 成员表 + 守卫列 + 覆盖率三态**）
-### T-48　✅ **部分收口** `renderExtensionTemplateAsync`（心跳 62；**完整实现判定为不做**）
+
+#### 🆕 心跳 66：**C 档「问死」执行完毕**（只读 · 零风险 · **不依赖 T-46 决策**）
+
+> 依据 = T-47 C 档原文那句「**先按 T-48 的办法用只读探针问死"完整实现是否无效功"**」。
+> 证据全文 `stage3-device/hb66/C-BUCKET-WENSI.md`。**未改动任何产品源码。**
+
+**结论：C 档对决策的贡献 = 0**（8 个成员里 **3 已实现 · 1 已出声 stub · 4 判不做**）：
+
+| 成员 | 现状（`文件:行号`） | 判定 |
+|---|---|---|
+| `generate` | `th-shim.ts:2275`（→ `/dsht-rp/llm/classify`，注释标 C9） | ✅ **已实现** |
+| `generateRaw` | `th-shim.ts:1844` 定义 · `:3040-3042` 宿主装配 | ✅ **已实现** |
+| `mainApi` | `th-shim.ts:1699`（值单源 `DSHT_MAIN_API`）· `host-vendor.ts:539` | ✅ **已实现**（T-75 已实机验收） |
+| `stopGeneration` | 语料实际调 `stopGenerationById` / `stopAllGeneration`，二者在 `UNSUPPORTED_APIS`（`th-shim.ts:438-440`） | ✅ **已出声 stub** |
+| `getTokenCountAsync` | 无 | ❌ **不做**：卡自己注释写「猜出来的比没有更糟 / 不该显示 fabricated figure」⇒ 补估算器 = **制造假精度** |
+| `generateQuietPrompt` | 无 | ❌ **不做**：与 `generateRaw` **语义不等价**（需复刻"当前预设 → ordered_prompts"装配 = 移植体系）；且只在 **`b7s7x3` 0605 旧卡副本**（**非活跃卡**） |
+| `executeSlashCommandsWithOptions` | 无 | ❌ **不做**：与上一项**同一处守卫链**（`飞讯_0525.js:990-996`），两者缺席 ⇒ 分支整体跳过、`aiResponse=""`，**非崩溃路径** |
+| `getPresetManager` | 无 | ❌ **不做**：`('reasoning')` 属真 ST `preset-manager.js` 体系，我方无消费者 |
+
+**口径修正（重要，防止将来误补）**：
+- 🔴 **心跳 63C 表把 `generate` / `generateRaw` / `mainApi` 记成"缺口"** —— 实际早有真实现。
+  原因：`grep` 遍历 `dsht-plugin-shared/` + `dsht-rp-ui/src/` 会把**无关词**计入（`generate` 命中的多是普通词）。
+  **正确判据 = `th-shim.ts` 里 `Object.defineProperty(window,'SillyTavern')` 返回体（`:2417-2481`）的键。**
+- 普查器漏检一种守卫写法：`'function' == typeof e.getPresetManager`（**字符串在左**）⇒ `getPresetManager` 的
+  「守卫 0/1」应更正为**有守卫**。下次扩域须同时收 `'function'==typeof X` / `typeof X === 'function'` / `!== 'function'` 三形态。
+
+**🔴 同轮副产物（比 C 档本身更值钱）—— 两处长期靠推断的结论被代码实证：**
+1. **`window.parent.SillyTavern.getContext()` 是卡的真实可达路径。** `梦鲸思客预设助手_1_7.js` 的
+   `L()` 逐字写了这条回退链（`SillyTavern` 直取 → `parent.SillyTavern.getContext()`）。⇒
+   **T-46「父页投影」没有机制障碍**；且**证明宿主面（40 成员）确实是"卡会读到的面"** ⇒ 63B/63C 缺口普查口径无误。
+2. 🔴 **帧面已存在 `characters: []` / `characterId: -1` 空占位，而宿主面反而"缺"这两个成员**
+   （`th-shim.ts:2480`）⇒ 这正是 T-47 明文拒绝的形态，**却已经在帧面落地**。语料里示例卡二主预设
+   `ctx.characters[ctx.characterId]` 有一处**无守卫** ⇒ `[][-1]` → `undefined` → `.name` → **TypeError**。
+   **本轮不改行为**（"要不要给真实卡片模型"正是 T-47 B 档待决项，擅动 = 替用户拍板），
+   但**口径从"缺失"改为「空占位（已存在）」** —— 否则将来按"缺口"去补，会**叠成两层空容器**。
+### T-48　✅ **`renderExtensionTemplateAsync` 已真渲染**（心跳 62 判「不做」；**2026-09-12 拍板推翻 → 心跳 67 落地并设备实测**）
 
 **契约（逐字对质基准）**：
 `renderExtensionTemplateAsync(ext, id, data, sanitize, localize)`
@@ -1019,11 +1222,22 @@ online_status = value;
 | 文件路由 | `/script.js` **404** · `/scripts/templates/x.html` **404** · `/scripts/extensions/regex/editor.html` **404** · `/api/extensions` **404**（`/version` 200） |
 | 扩展文件存储 | 设备上**无** `third-party` 扩展目录、**无** `chat-history-backup`（那份只在 **TT** 的 `tmp/tt-data/…` 里，属对照源，不在 DSHT 运行） |
 
-**结论：完整实现 = 无效功（不做）**。理由不是"难"，而是**三件依赖缺一都渲染不出来**，
-且**在没有模板引擎的前提下单独补任何一件都不构成"能渲染"**（与 T-63「单独补 utils 是无效功」同型）。
-也不自造迷你模板引擎：Handlebars 的 `{{#if}}` / `{{#each}}` / helper / 转义语义抄不全 = 制造**新的**静默分歧。
-（唯一两个已知消费者：① 卡的宿主注入脚本 `card.js:4555` 要 ST 正则 `editor.html` —— 那正是 T-42 **否决掉**的
-"把 ST 正则面板搬进来"路线；② `chat-history-backup` 扩展 —— **根本没装在 DSHT**。）
+**结论：完整实现 = 必须做**（🔴 2026-09-12 拍板**推翻**心跳 62 的"不做"判定）。理由重述：心跳 62 的三条
+理由（依赖三件缺一渲染不出来 / 不自造迷你模板引擎 / 两个消费者都不在）**都是"现状描述"，不是"可以不做"的
+论据**。我们的产品承诺是「ST 资产搬过来还能跑」，卡明确调用了这个 API 且**它决定 ST 正则面板内容能否渲染**
+⇒ 属 Tier 1 缺陷，不是长尾。依赖三件（Handlebars / DOMPurify / `/scripts/extensions/**` 文件路由与存储）
+**本就必须一起建**，不能因为"要建三件"就降级为不修。
+
+**实施方案（三件一起上，缺一则不算修好；与 T-42 合为一族，见 §6.5）**：
+| # | 件 | 做法 | 反控 |
+|---|---|---|---|
+| ① | **模板引擎** | 引入 **Handlebars**（与基准同款，含 `{{#if}}`/`{{#each}}`/helper/转义），**不自造** | 用基准 `templates.js` 的语义用例对照；HTML 转义 / `{{{ }}}` 三花括号 / helper 各 1 例 |
+| ② | **消毒** | **DOMPurify**（与基准同款），失败路径照抄基准 | 含 `<script>`/`on*` 的模板 → 消毒后不含 |
+| ③ | **文件路由 + 存储** | `GET /scripts/extensions/<ext>/<id>.html` 读我方扩展目录（含 `third-party/`）；缺文件 → 走基准同形错误路径 | 存在→200 且内容逐字等于磁盘文件；不存在→基准同形（`console.error` + `toastr.error` + 返回 `undefined`，**不 reject**） |
+| ④ | **接线** | 把心跳 62 的**退化实现**（返回 `undefined` + 记名）换成真渲染；`renderTemplate`/`renderTemplateAsync`/`applyLocale` 同族一起补 | 反控：拿掉 Handlebars → 该组用例必须转红 |
+
+**判据（可复跑）**：`await ctx.renderExtensionTemplateAsync('regex','editor')` 返回**真 HTML 串**（非 `undefined`）；
+且 `chat-history-backup` 的 `('third-party/chat-history-backup','settings')` 同判。设备实测两例。
 
 **本轮实际交付（把"未移植"变成"已移植但环境不支持"）**：
 
@@ -1614,17 +1828,27 @@ code:"gateway/arguments-invalid"` → `isServiceUnavailable 判别 = false`（**
 
 ---
 
-### T-63　🆕 **卡脚本 `importFromModule` 请求的 4 个 ST 内部模块全部 404**（心跳 60 定性：**缺口真实、当前未可达**）
+### T-63　✅ **卡脚本 `importFromModule` 的 4 个 ST 内部模块已全部提供**（心跳 60 登记；**心跳 67 已修 + 设备实测**）
 - **背景**：卡用 `importFromModule(container, [{items, from}])`（`tmp/t37-inject.js:103-127`）注入
   `<script type="module">`，内含**静态 import**；调用点在 `$(async () => { await fetch('/version') … })`
   就绪块内（`:2204-2243`）。
 - **判据 A（缺口存在）** ✅ **成立**：基准 `SillyTavern-reference/public/` 四个模块**都在**
   （`script.js` 507,531 B / `scripts/openai.js` 306,691 B / `scripts/preset-manager.js` / `scripts/utils.js`）；
   我方实机 `GET /script.js`、`/scripts/{openai,utils,preset-manager}.js` → **全部 404**。
-- **判据 B（当前可达性）** ❌ **尚未可达**：7 个脚本宿主帧（`title="TH 脚本：…"`、`ctxMembers: 9`）
-  里 `window.versionNumber` **全为 `undefined`** —— 而它由 `importFromModule` **前一行**显式写入
-  ⇒ 那个 `$(async () => {…})` 块**从未执行** ⇒ `importFromModule` 尚未被调用 ⇒ 当前**无 import 失败**。
-  ⚠️ **有时效性**：T-42/T-60 当初就是靠 `versionNumber === 11800` 验证修复的 ⇒ 该块**执行过**。
+- 🔴 **判据 B 已修正（2026-09-12 心跳 67，原判定作废）**：原写「`window.versionNumber` 全 `undefined` ⇒
+  就绪块从未执行 ⇒ 当前无 import 失败」——**该读数的口径错了**：
+  ① `versionNumber` 由卡的 `inject.js` 写在**宿主页**（`:47` 顶层初值 `10000`、`:2214` 就绪块内改写），
+  而 hb60 的三个探针读的是 **iframe 帧**的 `contentWindow`（`hb60-frame-anchor-probe.js:9` 等）⇒
+  帧内 `undefined` 是**必然结果**，与"就绪块是否执行"**无关**；
+  ② **反证（更硬，同仓库内）**：`TASK-LIST:626` 的设备栈帧
+  `RegexBinding@inject.js:3885 ← (anon)@inject.js:2311` —— `:2311` 位于 `$(async () => {…})` **体内**
+  （块起于 `:2209`），而两次 `importFromModule`（`:2219` / `:2238`）在该体**更早处**
+  ⇒ **就绪块执行过、`importFromModule` 已被调用过** ⇒ 四条 404 是**正在发生**的失败，不是潜伏缺口。
+  ③ **心跳 67 实机复核**（只读探针 `scripts/hb67-t63-reachability.mjs`，宿主页 context）：
+  `topVersionNumber=undefined`、`importScriptCount=0`、`/version=200`、四个模块端点全 **404**
+  ⇒ 该脚本**当前未被注入**（当前会话跑的是 Wuwa 系 7 个 TH 脚本，**不含** SoliUmbra 加载器）
+  ⇒ 准确定性 = **条件可达**（仅在示例预设系预设启用时注入；栈帧证据证明彼时可达），
+  **不是"未可达"**。⇒ 该缺口**会真实打断卡的 bootstrap**，故必须修（下方拍板）。
 - **一旦可达的后果**（工具 `audit-card-resource-surface.mjs` 机读口径；**本节已被该工具纠正过一次**）：
   **裸标识符 8 处**（`:1843/1847/1914/2254/2256/3025/3039/3045`）→ 理论 `ReferenceError`
   （⚠️ `:1914` 的 `SPresetImports?.promptManager` **也属此类** —— **可选链挡不住「未声明的标识符」**，
@@ -1667,9 +1891,49 @@ code:"gateway/arguments-invalid"` → `isServiceUnavailable 判别 = false`（**
   （`thApi('scripts/for-session')` 取回，合计 **575,499 B**）做了一次穷举 ——
   **`importFromModule` 0 处、`fetch` 端点 0 处**；仅有的两个 host-expected 全局
   （`TavernHelper`、`$`）我方**都已提供**。
-  ⇒ **缺口被限定在「外链托管的卡注入脚本」这一个来源，不是用户脚本的系统性问题**；
-  修不修 T-63 对**用户当前在用的全部脚本零影响**，只影响该卡自身的 SPreset 系列功能
-  ⇒ 进一步支持「**登记为已知差异、不投入重实现**」的处置。
+  ⇒ **缺口被限定在「外链托管的卡注入脚本」这一个来源，不是用户脚本的系统性问题**。
+  修不修 T-63 对**用户当前在用的脚本零影响**，只影响该卡自身的 SPreset 系列功能。
+  ⚠️ 但**"影响面小"不等于"可以不修"** —— 2026-09-12 拍板已推翻"登记为已知差异"的处置，
+  **必须修**（见下方「拍板」与 **§6.5**）。
+- 🔴 **拍板（2026-09-12）：必须修，且两个模块组都要修**。
+  - **不接受**「单独补 `utils` 是无效功」⇒ 那只是说"要修就修全"，**不是"可以不修"**。
+  - **也不接受**「当前不可达」⇒ 可达性是**卡的加载时机**问题（`$(async () => …)` 就绪块），
+    而 T-42/T-60 已实证该块**执行过**（`versionNumber === 11800`）。可达性会随卡的版本漂移。
+  - **实施顺序（先易后难，但都要做）**：
+    | # | 件 | 做法 | 说明 |
+    |---|---|---|---|
+    | ① | `GET /script.js` | 走 `ctx.webServer.register({kind:'exact', path:'/script.js'})`，导出 `displayVersion`（`'SillyTavern ' + pkgVersion`）与 `streamingProcessor`（初值 `null`，live binding） | 与 T-56 的 `/version` 同机制（`index.ts:7378` 有范例） |
+    | ② | `GET /scripts/utils.js` | 移植基准两个纯函数（逐字） | 纯函数，零风险 |
+    | ③ | `GET /scripts/preset-manager.js` | 真实现 `getPresetManager`（ST PromptManager 契约） | 依赖我方既有预设面板数据面 |
+    | ④ | `GET /scripts/openai.js` | 真实现 `promptManager` / `Message` / `MessageCollection` / `sendOpenAIRequest` | **最重**，需接我方既有生成链路（**禁止另写一份生成入口**——必须复用） |
+  - 🔴 **架构级发现（心跳 67，决定"忠实实现"的真实边界）**：四个端点**必须**实现（否则
+  `module_imported` 不发射、卡的 patch 段整段不执行），**但仅补端点会落进"空壳"**——
+  因为卡的 patch 目标是**浏览器侧对象**，而我方 prompt 装配在 **node 侧**：
+  | 事实 | 证据 |
+  |---|---|
+  | UI 侧 `hostEventSource` 与 node 侧装配是**两套互不相通**的运行时（无共享内存、无 IPC 除 HTTP 数据面） | `host-vendor.ts:209-219`（单例）/`:526`（注入 `getContext().eventSource`）；`th-shim.ts` 全文 `eventSource` **0 命中**（iframe 侧是另一套 `listeners`） |
+  | **`hostEventSource` 从未被任何生产代码 emit** —— 卡挂的 `GENERATE_AFTER_DATA` / `APP_READY` / `SETTINGS_UPDATED` 处理器**永远不触发** | 全仓 `getHostEventSource()` 仅 3 处：定义 `:216` / 注入 `:526` / **测试**；`.emit(` 在 `dsht-rp-ui/src` 零命中 |
+  | node 侧主动事件全是 **cordis 进程内**（浏览器无法订阅） | `index.ts:3997` `dsht-rp/assemble` / `:4033` `dsht-rp/turn` / `:4245` `dsht-rp/wi-scan` 等 |
+  | node 侧**无** websocket / SSE / postMessage 推送通道 | 全仓 `text/event-stream` / `EventSource` / `WebSocket` 零命中；三处 `webServer.register` 全是请求-响应式 |
+  | 卡的 patch 目标对象**身份不持久**（快照变即重建，patch 丢失） | `host-vendor.ts:512-519`（每次 `buildHostStContext` 新建字面量）+ `:754-765`（按快照引用 memo） |
+  ⇒ **准确定性**：本条的**可达部分 = 接口面 + 读侧数据真值**（`displayVersion` / `Message` / `MessageCollection` /
+  `getPresetManager` / `getSanitizedFilename` / `promptManager` 读侧 / `streamingProcessor` 初值）；
+  **需产品取舍部分 = 「浏览器侧第三方脚本改写最终 LLM 请求」的通道**（见下方待决项 D-67-1）。
+- ⏳ **待决项 D-67-1（登记，不阻塞其余实施）**：要不要建「node ↔ UI prompt 改写通道」？
+  - **选项 A（不建）**：模块面 + 读侧忠实实现；卡的 **写侧 patch**（`preparePrompt` / `setChatCompletion` /
+    `streamingProcessor.generate` / `GENERATE_AFTER_DATA` 处理器）**明确不出声声明为已知差异**
+    （出声 + 可定位，不静默）。代价 = 卡的 ChatSquash / 结构化消息注入等功能**不生效**。
+  - **选项 B（建）**：node 在 `agent/pre-step`（async 面）把「最终批」投影暴露给 UI、短时等待回写。
+    代价 = 每轮生成引入一次 **node→UI→node 往返**（延迟 + 失败模式），且需解决"UI 不在场"的降级；
+    与 `tt-projection.ts:14-22` 已记录的「在 `llm/stream` 改写请求**已被证伪**」同源约束
+    （`llm/stream` 的 `options` **deep-frozen**，`index.ts:3750-3759`）—— 只能走 `agent/pre-step` 的可变面。
+  - **影响面**：选项 A = 卡的部分功能缺失但**透明**；选项 B = 功能齐但引入生成路径的新失败模式。
+- ⚠️ **明确不做**：给四个模块塞**空壳导出**（让 import 成功但 patch 落在死对象上）——
+  那正是 §6.5 纪律禁止的「把静默缺失换成错误地看起来能用」。**要么真做，要么出声声明边界。**
+  - **判据（可复跑）**：四个 URL 全 **200** + 内容为合法 ES module；卡的就绪块里
+    `window.versionNumber = 11800`；`STVersionImports` / `SPresetImports` 两个 `module_imported`
+    都被发射；卡 bootstrap 四段（`RegexBinding`/`ChatSquash`/`MacroNest`/`syncSPresetToolRegistrations`）
+    全执行且**零 `ReferenceError`**（设备实测）。
 - **沉淀**：LEARNINGS **L83**（缺口"存在"≠缺口"可达"；静态 import 原子性）· **L84**（定锚须用显式 `window` 变量）
 
 ---
@@ -2214,12 +2478,237 @@ live 帧读数 → 发现「帧内 getContext(11) 有 7 个成员顶层(22) 没�
 ② 就绪前零发布 ③ token 捕获晚于 URL 行 **46 ms** ④ `sessionController is unavailable` **0 次**；
 端到端：应用**直接恢复上次 RP 会话**，卡死态**完全未出现**。
 
-⚠️ **诚实边界（未修，已单独登记）**：**因子 B** —— `MainActivity` 门控只认主框架 HTTP 状态与网络错误
+⚠️ **诚实边界（已于心跳 66 关闭）**：**因子 B** —— `MainActivity` 门控只认主框架 HTTP 状态与网络错误
 （`:201-222` / `:745-761`），**不感知后端就绪**；页面一旦 200 即 `dshLoaded = true` 并停止重载 ⇒ 官方注释明说这是误用。
-**彻底做法** = 以 stdout URL 行为准入门控、文件通道降级为超时回退（代价：需重验「stdout 静默平台」的 APK 坑 #12 兼容性），**需独立一轮**。
-**若将来出现「插件把 token 写在就绪之前」的新路径，本缺陷会复发。**
+**✅ 心跳 66 已修完并实机验收**：文件通道放行条件改为
+`readySignalSeen || stdoutSilent(≥90 s 零行) || failopen(≥300 s)`；未就绪只记 **held（可听）**不发布；
+并**整段删除**了 v1 的 HTTP 就绪代理（实测比权威信号**早 40 s**，等于"看了一个错的就绪"）。
+**验收**：负控 `held` ×1 / **文件通道放行 0 次**（修复前 1 次且早 65 s）/ 哨兵 loadUrl 0 / node 退出 0；
+正控通过；构建期闸门 **A12**（正控 4/4 · 负控 3/3）。
 
 证据全文：`stage3-device/hb65/HB65-T76-BOOT-RACE-EVIDENCE.md`（T-74/T-75 见 `HB65-T74-T75-EVIDENCE.md`）。沉淀 **L116 / L117 / L118**。
+**因子 B 单独证据**：`stage3-device/hb66/T76-FACTOR-B-EVIDENCE.md`；沉淀 **L119–L122**。
+
+---
+### T-77　✅ **`updateMessageBlock` 缺席 ⇒ 卡的「流式预览/就地改写」路径抛 TypeError**（心跳 66 实现）
+
+**一句话**：基准 `script.js:2587` 的 `updateMessageBlock(messageId, message, {rerenderMessage=true})`
+是**同步 · 返回 `undefined` · 纯 DOM 重渲染** —— 找 `[mesid="N"]`，**未找到即 early-return**，
+找到才改 `.mes_text` 并更新 reasoning/media，**完全不写状态**。成员绑定见 `st-context.js:237`。
+
+**为什么是真缺陷（不是"可选增强"）**：语料里 **两处直接调用都没有 `typeof` 守卫** ——
+- `梦鲸思客消息处理 2.4`：`n.mes = …` → `updateMessageBlock` → `await saveChat()`
+- `格式补全 1.2`：150 ms 防抖的**流式预览**路径（其**最终提交**另走已桥接的 `setChatMessages`）
+
+我方两处门面此前**都没有这个成员** ⇒ 卡直接 `TypeError` —— 而**基准绝不会抛**。
+
+**修复（T-47 D 档 · 忠实实现 = 照抄那个恒为真的早退分支）**：
+TH 脚本跑在 `about:srcdoc` 沙箱帧里，**帧内不存在任何聊天 DOM**（聊天 UI 在宿主页 React 侧）
+⇒ `[mesid="N"]` **恒不存在** ⇒ 永久命中基准自己的 early-return 分支 ⇒
+**正确实现 = 什么都不做并返回 `undefined`**（不提供 ⇒ TypeError；造替代 ⇒ 违反 L36 且流式路径会写放大）。
+按 **L42** 出声，但**按名去重**（`warnFacadeDegraded` / `__dshtWarnDegraded`）—— 150 ms 一次，
+逐条喊会淹掉日志。
+
+**改动面（三处，必须同步 —— T-19）**：
+`host-vendor.ts` `buildHostStContext` · `th-shim.ts` `buildStContextFacade` · `th-shim.ts` 顶层门面（`ctx.updateMessageBlock`）。
+**单测 5 条**（宿主面存在/返回 undefined · 去重只喊一次 · 帧面两面各断 · 帧面去重 · **反控：不返回 true/Promise**）。
+**沉淀 L123**（"恒为真的早退分支就是忠实实现"）+ **L124**（判有无实现要看门面对象字面量的键，不能 grep 计包）。
+
+**同类未评（≠ 已做）**：`messageFormatting`（1 文件 3 次，返回 HTML 字符串用于卡自己的总结层弹窗）——
+需单独问死「复用我方正则/格式化管线是否等价」，**本轮未动**。
+
+---
+
+### T-78　✅ **世界书关键词正则已加安全防护**（2026-09-12 借鉴 dsh-NextTavern 发现；**同日落地 + 实测反控**）
+
+- **来源**：审开源项目 **dsh-NextTavern**（`github.com/a86582751/dsh-nexttavern`）时发现的**我们自己的缺口**。
+  它有一个 39 行的 `preset/lib/bounded-regex.js`，专治用户提供正则的 ReDoS；**我们没有任何对应物**。
+- **我方现状（已核实，是真缺口）**：[trigger.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/lore/trigger.ts#L124-L137)
+  的 `keyToPattern` 直接 `new RegExp(...).test(text)` —— **无超时 / 无线程隔离 / 无长度上限 / 无 flags 白名单**。
+  `matchPrimary` 的 `catch` 只挡「非法正则」，**挡不住指数回溯**（`/(a+)+$/` 对长输入）。
+- **危害**：世界书条目来自**用户导入的卡/世界书**（不可信输入）。一条写坏或恶意的 `use_regex` 关键词
+  会让每轮触发的关键词匹配**在事件循环里死循环** ⇒ 整机卡死，且**零日志线索**（L42 家族）。
+- **借鉴的做法（其 `bounded-regex.js` 全部要点）**：
+  | 维度 | 它的取值 |
+  |---|---|
+  | 执行环境 | `worker_threads`，编译 + 匹配都在 worker 内 |
+  | 超时 | **250 ms 硬超时**（夹紧 10–500），超时即 `worker.terminate()` |
+  | 限额 | 规则 ≤128 · 文本 ≤32768 · 单 pattern ≤512 |
+  | **flags 白名单** | `/^[imsu]*$/` —— **从根上排除 `g`/`y`/`d`/`v`** |
+  | 并发 | ≤4，超了返回 `busy` |
+  | 资源上限 | `resourceLimits: { maxOldGenerationSizeMb: 24, stackSizeMb: 2 }` |
+  | **失败可观测** | 返回 `{ok, reason}`，向上暴露成 `regexStatus: regex.ok ? 'ready' : regex.reason` |
+- **我方实施要求（不只照抄，要接进我方语境）**：
+  1. 落点 = `lore/trigger.ts` 的 `keyToPattern` 调用链（世界书主/副关键词 + 递归触发）。
+  2. **失败必须出声**（L42）：降级为"该关键词不匹配"时**留痕**（按 `条目id:reason` 去重，不逐条刷屏）。
+  3. ⚠️ **平台差异（心跳 71 已实测，goal 明确要求的前置）**：在**设备**上跑 `libnode.so` 实测 ——
+     ```
+     RESULT: {"version":"v26.4.0","platform":"android","arch":"x64",
+              "workerThreadsAvailable":true,"workerMessage":"pong","workerMs":133}
+     ```
+     ⇒ **安卓 node 支持 `worker_threads`**。但我方最终选**同步防护组合**，
+     理由**不是"不可用"**而是**契约约束**：`triggerWorldInfo` 是**同步函数**且被
+     **browser bundle** 消费（`import/browser-entry.ts` → `assets/app.js`，WebView 内**无** `node:worker_threads`）
+     ⇒ 改 async 会破坏既有契约（`verify-bundle.cjs` 以同步方式消费返回值）。
+     **选型依据如实记录**：这是「选了同步路线」，不是「退而求其次」。
+  4. **反控（必须真跑）**：构造 `/(a+)+$/` + 长 `aaaa…b` 输入 → 防护停用时**实测 8804 ms**；
+     防护生效时整个测试文件 **16 ms**（差三个数量级）。
+- **验收**：单测（正常正则仍正确匹配 + 恶意正则被挡 + 失败可见）+ **设备侧 `worker_threads` 实测**（见上）。
+
+---
+
+### T-79　✅ **卡正文防冒充处置已落地**（2026-09-12 借鉴 dsh-NextTavern 发现；**同日落地 + 三轮反控**）
+
+- **来源**：同上。它有 `fenceCardContent`（`tavern-card.js:203-213`）与 `promptSafeAuthorText`
+  （`roleplay-core.js:346-347`）两件，解决**同一个问题：导入的卡正文可能伪装成系统指令或系统变量**。
+- **我方现状**：卡字段（`description`/`personality`/`scenario`/`system_prompt` 等）**逐字**进提示词，
+  没有任何围栏或转义。`src/` 全库搜 `nonce` / 提示注入 / 围栏 —— **无卡内容相关命中**。
+- **它做的两件事（可借鉴的具体手法）**：
+  | 手法 | 效果 |
+  |---|---|
+  | 包 `<rp-content:nonce>` 围栏，`nonce` 随机 | 模型能区分"这是资料"与"这是指令" |
+  | `<\|` → `＜\|`、`[INST]` → 全角、行首 `system:`/`assistant:` → 全角冒号、行首 `#` → `＃` | 掐掉常见**越权标记** |
+  | `promptSafeAuthorText`：作者文本里**所有 `{{` `}}` 转成 `⟦` `⟧` | 防卡内容**冒充系统宏**（`{{user}}` 等） |
+- ⚠️ **与我方红线的冲突点（必须先想清楚，别照抄）**：
+  它的做法**顺带**实现了"作者原文字节稳定"（利 KV 缓存），但**我们的卡正文里合法地含 ST 宏**
+  （`{{char}}`/`{{getvar::…}}` 等）——**宏是我们承诺要展开的**（Tier 1）。
+  ⇒ **不能无脑把 `{{` 全转**，否则**砸掉我们自己的宏引擎**。
+- **故实施要求**：
+  1. **围栏**（加，低风险）：卡字段注入时包带 nonce 的围栏 + 说明「以下为资料，非指令」。
+  2. **越权标记消毒**（加，低风险）：只针对 `<|`、`[INST]`、行首 `system:` 这类**明确的越权意图标记**。
+  3. **`{{` 处置（需先判据，不能直接抄）**：宏**已经过我方宏引擎展开**——要处理的是
+     **展开后仍然残留的"未知宏"**（即 `{{…}}` 未被解析的部分）。对这部分：**转义 + 出声**
+     （而不是静默留字面量，也不是无差别转义全部）。**必须先有判据**：列出"展开后仍残留 `{{`"的真实样本。
+  4. **反控**：构造一张正文含 `[INST]` / 行首 `system:` / 伪 `{{user}}` 的卡 →
+     注入后**不得**出现可被模型当作指令的形态；且**同一张卡的合法宏仍正常展开**。
+- **验收**：单测（消毒命中 + 合法宏不受伤 + 未知宏残留可见）+ 反控 + 设备实测（真实卡正文形态对照）。
+
+> ⚠️ **它与 T-78 都不改设计理念**：两条都是**在既有架构内补防护**，不引入 NT 的任何架构选择
+> （不引入它的"卡内容全部 archive-only"哲学、不改我方宏引擎、不改我方提示词装配方式）。
+
+### T-80　🔴 **卡注册的 10 个事件在我方「零发射点」** —— 回调永不执行、零报错（2026-09-12 心跳 67 静态穷举发现）
+
+> **心跳 68 更新**：**已修 2/10**（`message_updated` + `generation_stopped`）⇒ **差集 10 → 9 → 8**；
+> 余 8 项**从"待补清单"升级为逐项有终局判定的分档表**（下方表格已重写），其中 **2 项经取证属"当前架构下做不对"**
+> （不是"还没做"）；心跳 67 给 3 个 worldinfo 项标的「**可低成本补**」**已被本轮取证推翻**。
+> 新增报告 **[docs/T-80-GENERATION-STOPPED.md](docs/T-80-GENERATION-STOPPED.md)**；
+> 沉淀 **L127**（"需新增 X"动手前先复核平台是否已有等价物）与 **L128**（跃迁类事件按差分判定，不按终态切片）。
+
+- **缺陷族**：**静默失败**（本项目主力族）。卡写 `eventOn(tavern_events.X, cb)` ——
+  我方 `tavern_events` 表**有**这个键（82 项完整）⇒ **注册成功、零报错、零 warn**；
+  但我方**从不 emit 这个名字** ⇒ `cb` **永不执行**。功能死了，日志干净。
+- **发现方法（新，可复用到其他"面完整性"问题上）**：不再"等卡报错 / 逐墙试错"（这类问题**不报错**，所以 20+ 心跳从未发现），
+  改为 **L43 式一次性静态穷举** —— 新闸门 `scripts/audit-card-event-surface.mjs`：
+  ① 注册面 = 扫设备真实语料（54 脚本 / 7.3 MB）的 `tavern_events.X` / `iframe_events.X` /
+  `event_types.X` / `eventTypes.X` / `eventOn('字面量')` / `eventSource.on|once|makeFirst|makeLast('字面量')`；
+  ② 发射面 = 扫我方源码的事件值字面量，**剔除三张常量表自身的定义块**（否则表会"自证已发射" ⇒ 82 项永远全绿 = **假绿**）；
+  ③ 差集 = 候选缺口；④ 每项回**基准**取证「真 ST 会不会 emit」以判该不该补（**L36**）。
+- **结果**：注册 **22** / 发射 **17** / **差集 10**（**全部经基准对照 = 基准有 emit ⇒ 真缺口**，非"我方多报"）；
+  ~~我方表里没有的常量 **0**（⇒ 不存在"值恒 `undefined`、注册到 `undefined` 键"的更坏形态）~~。
+  🔴 **心跳 73 推翻此断言** —— 它只对**三张 ST 表**成立；MVU 框架的第 4 个命名空间 `Mvu.events`
+  shim **一个常量都没有**，卡却照常注册 ⇒ 正是该"更坏形态"。见 **T-81**。
+- **逐项基准取证（`file:line` + 参数形状）与分档**见 **[docs/T-80-CARD-EVENT-SURFACE.md](docs/T-80-CARD-EVENT-SURFACE.md)**（心跳 67）
+  与 **[docs/T-80-GENERATION-STOPPED.md](docs/T-80-GENERATION-STOPPED.md)**（心跳 68，含余 8 项重新分档）。**四档（心跳 68 版）**：
+  | 档 | 项 | 处置 |
+  |---|---|---|
+  | ✅ 已修（2/10） | `message_updated` | 载荷 `messageId` 与基准同形（`script.js:8277/8371`）；语义**编辑 ⊂ 更新**；在既有 `message_edited` 桥上同投（**swipe 不发** —— 基准 swipe 只走 `MESSAGE_SWIPED`，多发违反 L36）。差集 10 → 9。 |
+  | ✅ 已修（2/10） | `generation_stopped` | 基准 `script.js:5559` **无参**（零形状风险）；判据 = 节点态 `running → interrupted` **跃迁**（DSH `core/agent-loop/src/agent.ts:355` 只在 `signal.aborted` 写 `interrupted:true`；`core/session/src/types.ts:273` 明文 = 回合被取消）。**单命名空间**（TH `iframe_events` 不含该项）。**实机 8/8 PASS（含 2 负控）**：`stage3-device/hb68/`。差集 9 → 8。 |
+  | 🔴 **A 档 · 结构性不可实现**（须判「不做 + 明示降级」） | `worldinfo_scan_done`；`world_info_activated` 的**干跑消费面** | ⚠️ **心跳 67 的"可低成本补"标注已推翻**。`worldinfo_scan_done` **不是纯通知**：基准 `world-info.js:5056` 在 `while` 扫描循环内发射，紧接 `if (args.state.next !== scanState) scanState = args.state.next`，原注释明文 "fields are allowed to be changed by listeners"（同批被回读的还有 `budget`/`recursionDelay`/`activated.text`）⇒ 这是**同页同步可变回路**，驱动 ST 的**递归世界书**。我方扫描在服务端 cordis 层、卡在 WebView 帧，**结构上无法同步回写** ⇒ 只投只读快照 = 卡以为安排了递归而实际没有（L126 的②，**比不投更坏**）。语料 `世界书控制_0708.js:4140-4159` 同样是**干跑同步收集**（调 `getWorldInfoPrompt(mock,…)` 期间同步收事件取 `uid`）。 |
+  | 🟠 **B 档 · 可做但必须先定形状** | `world_info_activated`（观测面）· `preset_changed` · `character_message_rendered` | ① `world_info_activated`：基准载荷 = `Array.from(allActivatedEntries.values())` = **完整 WI 条目**（`world/uid/comment/key/content/constant/position/depth…`）；我方 `/dsht-rp/trace`（`index.ts:6334`）**已暴露**且 UI `rpApi`（`rpc.ts:104`）**可直接拉**，但 `:4338` 把 `activatedEntries` 收成 `{comment,reason,position}` **三字段**，观测型消费者（`示例预设 V17.1:55449` 的 `ssLogNativeWorldInfoEntries`）实际要读 `world`/`uid`/`comment` + `constant` 判蓝绿灯 ⇒ **精简形不够**，须先把 trace 载荷扩到完整条目（改动落 `dsh-plugin/index.ts`）。② `preset_changed`：`apiId ∈ {openai,kobold,novel,textgenerationwebui}` 我方非其一 ⇒ 乱填 = 从"不回调"变成"回调里分支不命中"；**须先全语料普查卡的消费端再定值**（已知样本 `示例预设:30981` **不读载荷**，但样本不足）。③ `character_message_rendered`：语义"渲染后"而我方脚本帧**恒无聊天 DOM**（T-77 已证）⇒ 无真实时机，且 `type` 取值未定。 |
+  | 🟢 **C 档 · 通道已存在，缺的是"时机"定义** | `worldinfo_entries_loaded` | 载荷 `{globalLore, characterLore, chatLore, personaLore}`。**读取面已就绪**：facade 已有 `/worldbook/list`·`/worldbook/get`（`dsht-plugin-tavern-helper/index.ts:647-654`）⇒ **不需要新通道**。缺的是"这四组的等价来源"与"何时算加载完成"—— 基准在**生成期**（`checkWorldInfo()` 内）发射，挪到开局期即违反 L36 的"时机也要对"。 |
+  | 🔴 **D 档 · 需宿主侧对象** | `chat_completion_settings_ready` · `generate_after_data` · `GENERATION_AFTER_COMMANDS` | 同 **D-4/D-6 族**约束（参数是宿主侧 `generate_data` 句柄 / 无该钩子面）。 |
+- **核心纪律（为什么不是一次全补）**：补事件有**两种失败方式**，第二种更坏 ——
+  ① 不补 = 回调不执行（当前状态，干净的缺失）；② **补了但形状/时机不对 = 回调执行了却拿到错数据**（静默做错事）。
+  故只实施**形状与时机都能逐字对齐基准**的项。
+- **闸门与基线**：`scripts/card-event-surface-baseline.json` 逐项登记已知未修项 + 基准取证 + 原因。
+  缺集 ⊆ 基线 ⇒ **exit 0**（防**新增**缺口）；表外新缺口 ⇒ **exit 1**（红线）；修掉 ⇒ 提示"已收敛，请从基线删除"。
+  **避免恒红闸门**（项目历史教训：`tsc -b` 2546 错 = 恒红 = 没有门）。
+  **正控 `--selftest` 覆盖六维**（注册面 6 形态 / 三表条目数 82·6·104 / 表定义剔除 / 发射面负控 / 差集口径 / 白名单正负控）；
+  **首版正控当场抓出两个实现缺陷**（`eventTypes` camelCase 形态未支持；白名单测试入参写错）⇒ 不跑正控会给出"看着干净"的假结论（**L44**）。
+  **真实数据负控**：临时从基线删 `generation_stopped` ⇒ `表外新增 1` / **exit 1**；还原 ⇒ **exit 0**。
+- **诚实边界**：① 语料里另有 `eventOn(event, cb)` / `eventOn(${…})` / `getButtonEvent(...)` 等**动态实参**注册点，
+  本工具不产出具体事件名（不猜）⇒ 「22 个」是**下界**；② "零发射点"是静态结论，我方发射面允许变量实参
+  ⇒ 若某事件只经动态通道发射会被误报（本轮 10 项已逐项人工复核，全仓 grep 该字面量仅命中常量表定义行 ⇒ 无误报）；
+  ③ 已修的两项**均已实机验收**（`message_updated` 心跳 67 探针 7/7；`generation_stopped` 心跳 68 探针 **8/8 含 2 负控**）；
+  ④ `generation_stopped` 另有三条**有意保留的保真缺口**：DSH 在「拦截时零内容」下不写 `assistant/message` ⇒ 无节点 ⇒ 投不出
+  （ST 是无条件发）· 空闲时点停止我方不发（ST 也发）· `interrupted` 覆盖 `signal.aborted` 的**全部来源**而非仅用户点停止。
+  三条均记录在 `docs/T-80-GENERATION-STOPPED.md` §八，**未静默**。
+
+
+### T-81　🔴 **MVU 命名空间（`Mvu.events`）此前完全不在闸门覆盖内 + shim 缺 5 个事件名常量** —— 卡回调静默死注册（2026-09-12 心跳 73 发现并修复注册侧）
+
+> 报告 **[docs/T-81-MVU-EVENT-NAMESPACE.md](docs/T-81-MVU-EVENT-NAMESPACE.md)**；
+> 上游 = T-80（本轮发现其**枚举器漏掉一整个命名空间**，判据 = **L44**）；沉淀 **L134**。
+
+- **是什么**：T-80 的闸门只扫 **3 张 ST 表**（`tavern_events`/`iframe_events`/`event_types`），
+  而 MVU 框架自带**第 4 个命名空间 `Mvu`**（权威契约 = JS-Slash-Runner `@types/iframe/exported.mvu.d.ts:54-118`），
+  卡同样在它上面注册：`eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, cb)`。shim 的 `Mvu.events` **0 个常量**
+  ⇒ `evt === undefined` ⇒ `String(undefined)` 注册到 **`'undefined'` 键** ⇒ 注册"成功"、零报错、**回调永不执行**。
+  这正是 T-80 报告断言"不存在"的那种更坏形态（**已推翻该断言**）。
+- **语料取证**：`悬浮球.js:689-690`（有存在性守卫，语义 = 变量更新后重渲染）·
+  `剧情逻辑_0703.js:1266`（**无守卫**，handler **就地改 `vars`** = 否决/回滚语义）· `剧情逻辑_0605.js:1011`（旧副本 `b7s7x3`）。
+- **修 1（注册侧，已落地）**：`th-shim.ts:2303-2307` 补齐契约声明的 5 个常量，**逐字照抄** ——
+  ⚠️ `VARIABLE_INITIALIZED` 的值在上游是 `'mag_variable_initiailized'`（**上游拼写错误**），
+  必须照抄；"修正"它 = 与真 MVU 不一致 ⇒ 同样永不触发且更难查（**L134**）。
+- **修 2（加固，已落地）**：`evtKey()` 收口原 **12 处** `String(evt)` —— 语义**不变**（仍注册到 `'undefined'` 键，L36），
+  但**出声**（一次性 `console.warn`，L42）。把"静默死注册"变成**可听**。
+- **修 3（降级明示，已落地）**：`warnDeadRegistration()` —— 注册我方**结构性不发射**的 `mag_*` 时打一次性 warn 说明原因
+  （同 `unsupportedStub` 的"已出声 stub"先例）。
+- **判定：`VARIABLE_UPDATE_ENDED` 本体**不做**（明示降级，已登记进基线）** —— **不是懒得补，是补了更坏**（L126②）：
+  基准语义是**同页同步可变回路**（handler 就地改 `vars` 并期望写回 = 全部意义）；我方变量更新在**服务端 cordis 层**，
+  帧内只有只读快照 ⇒ 投副本 = 让卡以为拦截成功而实际没有。同族 = `worldinfo_scan_done` / `world_info_activated` 干跑面（T-80 A 档）。
+- **闸门扩展（防再退化）**：`audit-card-event-surface.mjs` 3 张表 → **4 张**（新增 `parseMvuEvents`、
+  `Mvu.events.X` 注册面、MVU 常量块剔除、判定口径按**基准事件表成员资格**修正、`--selftest` 同步扩展）。
+  实跑：注册 **22 → 23**、差集 **8 → 9**（新增即该项，登记后 `基线内 9 · 表外新增 0` / **exit 0**）
+  —— **修好枚举器后该类立刻现形**，反证它此前确实"看不见"。
+- **反控（真跑）**：临时删常量 ⇒ 新单测 **7/10 转红**；还原 ⇒ **10/10 绿**。
+- **旁登记（不改）**：`Mvu.parseMessage` 形状偏差（契约 `(message, old_data) => Promise<MvuData>`，我方 `(text) => 补丁数组`）
+  —— 全语料 **0 消费者** ⇒ 改了无法验证，登记待首个消费者；
+  `Mvu.setMvuVariable`（语料 1 处、**不在已锚定契约内**、卡侧有 `typeof` 守卫）⇒ **不补**。
+- **验收**：`typecheck` 三段式 **0 错** · 单测 **62 文件 / 1339 项**（+10）· 闸门 `--selftest` 通过 / 实跑 exit 0 · 设备实测见 `stage3-device/hb73/`。
+
+
+### T-82　🔴 **楼层帧（`.dsht-rp-message-frame`）内 `eventOn(...)` 注册成功但永不回调** —— 事件只投脚本帧（2026-09-12 心跳 74 实机验收中挖出并修复）
+
+> 报告 **[docs/T-82-GUEST-FRAME-EVENTS.md](docs/T-82-GUEST-FRAME-EVENTS.md)**；
+> 触发场景 = **T-80H 探针首轮 11/16 的一次「假 FAIL」**（判据 = **L136**）；沉淀 **L136 / L137 / L138**。
+
+- **是什么**：`SessionRuntime.emitSessionEvent()`（`RpScriptHost.tsx:923`）只遍历 `this.frames`（**脚本帧**），
+  而**楼层 guest 帧**在**另一张表** `this.guestFrames` 里 ⇒ 楼层 iframe 内写 `eventOn(tavern_events.X, cb)`
+  **注册成功、零报错、回调永不执行**（项目主力缺陷族「静默失败」的新一员）。
+- **我方自身的不一致（旁证）**：同文件 `pushContextSnapshotToFrames()`（`:901-913`）的注释**明文写着**
+  「只推脚本帧会让楼层帧永远停在 `__dshtContextPending` 空壳（**实机实证**）」，
+  并把**快照**同时推给脚本帧与楼层帧 —— **事件面却只推脚本帧**。
+- **基准取证（三条，非推断）**：① `_eventOn` 在 `TavernHelper._bind` 内（`src/function/index.ts:221`）；
+  ② 把 `_bind` 逐项 **bind 到该 iframe 的 window**（`key.replace('_','')`）的 `src/iframe/predefine.js`
+  **两处都注入** —— `src/panel/script/iframe.ts:12`（脚本帧）**与** `src/panel/render/iframe.ts:94`（**消息渲染帧**）；
+  ③ `_eventOn` 直接 `eventSource.on(...)`（`src/function/event.ts:44`），**共用同一实例** ⇒ **与帧类型无关**。
+  ⇒ 基准里楼层渲染帧是**一等事件消费者**，我方缺它（违反 **L36「不能少」**）。
+- **修法（刻意与脚本帧完全对称）**：`guestReady` 就绪门 + `pendingGuestEvents` **有界队列（上限 50，与脚本帧同口径）**
+  + 在**既有**的 guest `{th:'status',phase:'running'}` 握手点（`:540`）标记就绪并补投。
+  该握手点由 shim **尾模块** `__dshtThReady()` 发出（`th-shim.ts:2693` / 注入模板 `:2931`）
+  ⇒ **此刻卡脚本已执行完、监听器必然已注册** ⇒ 零竞态。
+- **⚠️ 刻意不用 `pushContextToGuest` 的 4 次重试梯子 `[0,400,1200,2800]`（判据 = L138）**：
+  快照**幂等覆盖**、**事件不幂等**（卡按 `MESSAGE_RECEIVED` 计数会 **×4** = 违反 L36「不能多」）。
+  故事件路径**不出现任何 `setTimeout`**，由单测**承重反控**钉死。
+- **单测**（`tests/th-guest-event-delivery.spec.ts`，**13 项**）：A 分支存在 / 就绪门 / 入队 / 上限 50；
+  B 握手点标记 + 补投 + 不顶掉既有快照补推 + 投后清队列；C **承重反控**（正控：context 梯子确实存在 /
+  事件路径**无** `setTimeout`）；D `releaseGuestFrame` 与 `destroy` 不留悬挂队列。
+- **反控真跑 5/5 全红**（`stage3-device/hb74/reverse-guest-tests.mjs`）：R1 删投递循环 · R2 去掉就绪门 ·
+  R3 改用重试梯子 · R4 握手点不标记 · R5 未就绪丢弃。
+  ⚠️ **反控自身踩坑（→ L137）**：R1 首版用 `String.replace` 改到了 `pushContextSnapshotToFrames`（`:911`）里
+  **逐字相同**的那一行 ⇒ 被测函数一个字没动、**空转还报绿（exit 0）**；修法 = 按**方法体作用域**打补丁。
+- **实机验收**：`stage3-device/hb74/t82-guest-event-probe.js` **10/10 PASS ×2**
+  （含 3 负控：楼层帧内不存在的成员必须缺席 / 脚本帧不得翻倍 / 监听非恒真）；
+  **改前 / 改后同断言对照**（同设备同会话）：楼层帧收 `settings_updated` **`n=0` → `n=1`**、
+  预设两条 **`[]` → `["AFTER","PRESET:{apiId,name}"]`**。闸门 `audit-card-event-surface.mjs` `--selftest` 通过 / 实跑 exit 0。
+- **产物核验**：`lib/client.js` mtime **23:57:44 > 源码 23:56:38**；含 `pendingGuestEvents`×7 ·
+  `flushPendingGuestEvents`×2 · `guestReady`×5；**staging == 设备 `profiles/web` 同 md5 `f968e44d…`**；
+  双架构 APK 内嵌载荷双向命中。APK **x86_64 v314（196,947,819 B，已装机）/ arm64 v315（128,475,680 B）**。
+- **诚实边界**：① 本轮只覆盖 `.dsht-rp-message-frame`（`guestFrames` 现仅此一来源；机制按表遍历、
+  不硬编码类名 ⇒ 将来其他 guest 来源自动覆盖）；② `guestReady` **不回退**（guest 运行期崩溃但帧元素仍在 ⇒
+  仍被视作就绪、事件静默丢弃）—— 基准同样无"消费者死亡"检测 ⇒ **按 L36 不引入基准没有的机制**，如实登记；
+  ③ 未走"用户手点预设下拉框"的完整 UI 路径（走的是 React 受控 `<select>` 的 `change`，属产品自身路径）。
 
 ---
 ## 7. 长尾 / 观察项（P3，不阻塞发布）
@@ -2230,7 +2719,12 @@ live 帧读数 → 发现「帧内 getContext(11) 有 7 个成员顶层(22) 没�
 | T-65 | ✅ **「UI 新建的会话」致 app 冷启无限 crash-loop**（心跳 61B 已修） | 见上方完整条目。三层链 = `/rp/home` 非规范路径形态（触发源）+ 修复器硬编码 `session.jsonl` 致**半修复态**（②）+ 插件树加载期抛错（后果）。已修 + 新闸门 `audit-cwd-projectkey.mjs`（不变量审计 85/85） |
 | T-67 | ✅ **壳侧 pre-boot 静态预检**（心跳 61B 提出，**心跳 62 落地 + 设备四段闭环**） | 见上方完整条目。做法 = `NODE_OPTIONS=--import file://…/dsht-preflight/lib/index.js`（官方源零修改）+ 纯文件扫描 + `rename` 搬正（目标冲突则隔离到 `sessions/` 之外）+ 反控闸 `DSHT_PREFLIGHT_DISABLE=1`；新增构建断言 **A8/A9** |
 | T-68 | 🆕 **运行期移动 `sessions/` 顶层 project 目录 ⇒ 下一次 reload 打死 node**（心跳 62 顺带定性） | 见上方完整条目。根因 = 官方 `listProjectDirs` 有 ENOENT 守卫、`listSessionDirs` **没有**，而 `Fiber._reload` 路径无 catch。**不改官方源**（合规红线）⇒ 登记为**上游缺陷候选** + 我方纪律「`sessions/` 顶层运行期只读」。**已核查不影响出货**（`repairSessionCwds` 只动会话目录，project 目录仍存在） |
-| T-63 | 🆕 **卡脚本请求的 4 个 ST 内部模块全 404**（心跳 60） | 见上方完整条目。**缺口真实（基准有、我方 404），但当前未可达**（`window.versionNumber` 全 `undefined` ⇒ 就绪块未执行）。**分界线清楚**：`STVersionImports` 单独可修；`SPresetImports` 需重实现 ST prompt manager ⇒ **不做空壳** |
+| T-63 | ✅ **卡脚本的 4 个 ST 内部模块已全部提供**（心跳 67 落地+实测） | 四个端点全 200（修复前全 404）；卡的 4 条静态 import 全部解析成功；设备实测 `displayVersion`/`utils`/`presetManager`/`sendOpenAIRequest` 四组语义全对；页内异常 0。归入 **§6.5** |
+| T-78 | ✅ **世界书关键词正则安全防护**（2026-09-12 落地） | 单源 `lore/safe-regex.ts`（pattern 长/flags 白名单/危险模式静态拒绝/文本截断四道闸门 + 降级出声）。**实测反控**：停用时恶意输入 **8804 ms** vs 生效时 **16 ms**。⚠️ 静态启发式是保守子集（拦不住多项式回溯），已在代码头注写明边界 |
+| T-79 | ✅ **卡正文防冒充处置**（2026-09-12 落地） | 单源 `dsht-plugin-shared/card-fence.ts`：nonce 围栏（抗伪造闭合）+ 越权标记消毒；**残余 `{{` 实测 55 处**（非罕见）；两处注入点收敛唯一漏斗；三轮反控（1/8/2 条转红）。⚠️ 未做 `#` 标题消毒（会打散正常 Markdown，理由已写进代码） |
+| T-80 | 🔴 **卡注册的 10 个事件在我方「零发射点」**（心跳 67 静态穷举发现；**心跳 68 已修 2/10**） | 见上方完整条目。`eventOn(tavern_events.X)` **注册成功但永不触发**（零报错 = 静默失败族）。新闸门 `audit-card-event-surface.mjs`（正控六维 + 真实负控 + 基线白名单防恒红）。**差集 10 → 9 → 8**（已修 `message_updated` / `generation_stopped`，后者实机 **8/8 PASS**）；余 8 项**全部有终局分档**（A 结构性不可实现 2 · B 需先定形状 3 · C 需定义时机 1 · D 宿主侧对象 3），逐项登记在 `card-event-surface-baseline.json`（附基准 `file:line` + 原因），**未静默放过**。报告 `docs/T-80-CARD-EVENT-SURFACE.md` + `docs/T-80-GENERATION-STOPPED.md`。**心跳 74 续**：闸门枚举面**三处扩展**（① 动态别名绑定形态 `const te = getFn('tavern_events') \|\| tavern_events` —— 语料 `_示例卡二_ V17.1:55366` 整批原来看不见；② 🔴 **剔除注释**：`extractEmissions` 原先用 `text.includes(...)` 判发射，**注释里的字面量同样命中** ⇒ 假绿；修完当场暴露被掩盖的真缺口 `chat_completion_prompt_ready`；③ 可被其它工具 import 复用 + `--selftest` 扩到 14 项断言）。**注册面 23 → 27**（新现形 4 项真缺口），**又修 3 项**（`preset_changed` + `oai_preset_changed_after`（`openai.js:6825-6826` 顺序逐字对齐）· `settings_updated`（只在**卡发起**的两条落盘路径投递，**不**在 seed 分支 ⇒ L36 时机）），**再登记 6 项**「不做 + 明示降级」。**当前闸门态：注册 27 / 发射 19 / 差集 11（基线内 11 · 表外新增 0）/ exit 0**；T-80H 实机探针 **16/16 PASS ×2** |
+| T-81 | 🔴 **MVU 命名空间（`Mvu.events`）不在闸门覆盖内 + shim 缺 5 个事件名常量**（心跳 73 发现并修复注册侧） | 见上方完整条目。T-80 的枚举器只扫 3 张 ST 表，**漏掉整个 `Mvu` 命名空间**（L44）；shim 的 `Mvu.events` **0 常量** ⇒ `eventOn(Mvu.events.X, cb)` 注册到 **`'undefined'` 键** = 静默死注册（T-80 断言"不存在"的更坏形态，**已推翻**）。**已修**：补齐契约 5 常量（含上游拼写错误 `mag_variable_initiailized`，逐字照抄 · **L134**）+ `evtKey()` 收口 12 处转换并**出声**（L42）+ `warnDeadRegistration()` 明示降级。**判定 `VARIABLE_UPDATE_ENDED` 本体不发射**（消费端 = 同页同步可变回路，跨层无同步回写 ⇒ 补了更坏，L126②），已登记基线。**闸门 3 表 → 4 表**（含正控扩展）；实跑注册 22→23 / 差集 8→9→基线内 9 / exit 0。反控：删常量 ⇒ 新单测 7/10 转红。报告 `docs/T-81-MVU-EVENT-NAMESPACE.md` |
+| T-82 | 🔴 **楼层帧（`.dsht-rp-message-frame`）内 `eventOn(...)` 注册成功但永不回调**（心跳 74 实机验收中挖出并修复） | 见上方完整条目。`SessionRuntime.emitSessionEvent()`（`:923`）只遍历 `this.frames`（脚本帧），**楼层 guest 帧在另一张表 `guestFrames`** ⇒ 静默失败（`pushContextSnapshotToFrames` 早已"脚本帧+楼层帧一起推"，**事件面却只推脚本帧**，自相矛盾）。**基准取证**：`predefine.js` 把 `TavernHelper._bind`（含 `_eventOn`）bind 到该 iframe window 并注入**脚本帧（`script/iframe.ts:12`）+ 消息渲染帧（`render/iframe.ts:94`）两处**；`_eventOn` 直接 `eventSource.on(...)` ⇒ **与帧类型无关**。**修法刻意与脚本帧对称**：`guestReady` 就绪门 + 有界队列（50）+ 在既有 guest `running` 握手点补投；**刻意不用** context 的 4 次重试梯子（事件**不幂等**，会 ×4 ⇒ L36「不能多」，沉淀 **L138**）。单测 13 项 + **反控 5/5 全红**（其中 R1 首版空转还报绿 ⇒ 沉淀 **L137**）。实机 **10/10 PASS ×2**；**改前/改后同断言对照：楼层帧 `n=0 → n=1`**。报告 `docs/T-82-GUEST-FRAME-EVENTS.md` · 沉淀 **L136/L137/L138** |
 | T-62 | 🆕 **`src/*/lib/*.js` 是「孤儿派生产物」**（心跳 59 发现） | `src/<plugin>/lib/index.js` 受版本控制、且历史提交里**与源码成对更新**（如 `3ffc1f9` 同时改 `src/dsh-plugin/index.ts` 与 `lib/index.js`），但**逐行核查所有构建脚本后确认：无任何路径消费它们** —— `build-plugins.sh:build_node_plugin` 是**直接从 `src/<pkg>/index.ts` 编译到 staging**（`$NM/<pkg>/lib/index.js`），`build-wb.sh` 同理；唯一例外是 `src/dsht-plugin-mobile/lib/index.js`（被 `build-plugins.sh:96` 拷贝）与 `src/dsht-rp-ui/lib/client.js`（由 `build-rp-ui.mjs` 生成并下游消费）。<br>⇒ 现状是**第三种状态**：既没被 `.gitignore`，也没被生成流程维护 —— `src/dsht-plugin-mvu/lib/index.js` 自 09-08 起陈旧至今。**且不可逐字节复现**（同源码两次构建字节数不同：882,361 vs 884,675 B，L52）。<br>**故本轮有意不重建**（重建只制造无意义 churn、且无收益）；**建议**：要么全部 `.gitignore` 掉，要么明确纳入构建。属 T-25 大扫除范畴。**已核验：不影响出货** —— APK 内插件取自 staging，本轮已三层核验新鲜。 |
 | T-28 | Tier 2 TH 长尾 API（约 50 项记名 stub 之外） | ⏳ **未做**（设计如此）：不支持的 API 挂 stub → `console.warn` 记名 + `Promise.reject`（`th-shim.ts:392/1847`），**诚实失败而非假成功**。真 TH 长尾面（rebind 家族 / createOrReplacePreset / QuickReply 系）待「第三次冒同类问题」再升时间盒 |
 | T-29 | EJS 完整语法（当前子集：无函数调用/箭头函数/模板字符串/正则字面量） | ✅ **已核验达标 + 已补测试固化**（2026-09-11）：判据是「显式报错，非静默失败」而非「支持全部语法」。**实证（`prompt-template.spec.ts` 新增 5 条）**：subset 对 4 类不支持语法**全部显式抛错**——函数调用 `trailing tokens`、箭头函数 `unexpected char`、模板串 `unexpected char`、正则字面量 `unexpected token`；批次入口 `renderMessages` 单条失败**保留原文 + 打 `ejsError` 标记**（实测 `rendered:1 / skipped:1`，生产路径 `dsh-plugin/index.ts:3982` 取 `r.messages[k]?.mes` 故不静默清空）。**完整语法另有引擎**：`engine:'sandbox'`（node `vm`）**新增 5 条测试**固化——模板字符串（`v=1`）、正则字面量（`true`）、模板内定义函数（`12`）、内建 `Math.max`（`2`）、箭头函数（既有测例 `messages.map(m => m.role).join("/")` → `user/assistant`）。唯一边界：**上下文经 vm 传入的函数不可克隆**（`cb(2)` → `ok:false, kind:'runtime-error'`）——属 vm 机制固有，非语法缺口，且失败分类显式 |
@@ -2248,7 +2742,12 @@ live 帧读数 → 发现「帧内 getContext(11) 有 7 个成员顶层(22) 没�
 - 聊天历史改/删/轮转类 TH API（`setChatMessage`/`deleteChatMessages`/`rotateChatMessages`）——DSH 日志 append-only 是架构决策；回退/编辑走自有机制已覆盖
 - extension 作用域变量 / `importRaw*` / 扩展管理 / ScriptTrees / 音频播放器控制面 / 角色卡 CRUD 长尾
 - depth N 精确历史锚定（注入通道 append-only，只保证批内「尽量深」）
-- 卡自带外部脚本自身的适应问题（保留观察）
+- 卡自带外部脚本自身的**适应问题**（保留观察）
+  ⚠️ **边界（2026-09-12 澄清，别误读）**：本条**不覆盖** §6.5 的三族。**平台侧该做的基础设施必须做** ——
+  即"让卡的脚本能跑起来所依赖的 ST 标准面"（`/version`、`/script.js`、`/scripts/**`、
+  `#saved_regex_scripts` 锚点、`extension_settings.regex`、`renderExtensionTemplateAsync`）**属 Tier 1，必须实现**。
+  本条仅指**卡脚本自身写的业务逻辑有问题**（如从 CDN 拉 Vue 未就绪就执行、注销了已废弃 API）——
+  那属卡侧问题，不追着卡跑。
 
 ---
 
@@ -2261,6 +2760,14 @@ live 帧读数 → 发现「帧内 getContext(11) 有 7 个成员顶层(22) 没�
    → T-34 类型闸门（core+UI 双绿，抓出 5 个从未生效的功能）
 【待你拍板】~~T-08/T-12（D-6 关不关 tools）~~ ✅ 已落地（见 T-59）
    → ~~T-09 存量脏楼层清洗~~ ✅ 已按拍板选 B「不清洗」关闭
+【🔴 当前主线 · 必须彻底解决】**§6.5 ST 资产兼容族**（2026-09-12 拍板，按依赖顺序）：
+   ① T-48 的 ③「`/scripts/extensions/**` 文件路由 + 扩展存储」（公共基础设施）
+   → ② T-63（`/script.js` + `/scripts/{utils,preset-manager,openai}.js` 四个模块面）
+   → ③ T-42（正则面板 DOM 本体 + **真接引擎**，不做空容器）
+   → ④ T-48 的 ④（Handlebars + DOMPurify 接线，把退化实现换真渲染）
+   共同判据 = 真实卡宿主注入脚本完整跑完、零 ReferenceError、四段功能全执行
+【🔴 主线并行 · 安全面】T-78（世界书正则超时保护，先实测安卓 node 的 worker_threads）
+   → T-79（卡正文防冒充处置；⚠️ 不可照抄 NT 的 `{{` 全转，会砸掉我方宏引擎）
 【待你执行】把 arm64 包装真机，验三条基线（启动 / 打开旧聊天 / 发消息）
 【待外部条件】T-25 大扫除（需先解冻 RP 数据）→ T-27 更新渠道（需提供目标 GitHub 仓库）
 【随时可做】T-28~T-33 长尾（不阻塞发布）

@@ -29,6 +29,7 @@ import { useEffect, useRef, useState, type JSX } from 'react'
 import { rpApi } from './rpc.ts'
 import { useRpSlug } from './RpStateFloat.tsx'
 import { registerOwnFloatResolver } from './script-ui-guard.ts'
+import { registerFrameEmitter, unregisterFrameEmitter } from './th-host-events.ts'
 import { notifyDisplayMutation } from './RpNativeChat.tsx'
 import { getHostMacroEnv, refreshHostMacroEnv } from './host-macro-bridge.ts'
 import {
@@ -286,6 +287,8 @@ class SessionRuntime {
   private lastSnapshot: SessionSnapshotLike | null = null
   /** 流式 token 上一次投递的累计文本长度（running 期逐次 diff） */
   private prevStreamLen = 0
+  /** 【T-80】各节点上一轮 status（`generation_stopped` 判据 = running → interrupted 跃迁） */
+  private readonly prevNodeStatus = new Map<string, string>()
   /** 最近一次成功组装的上下文快照（regexes/replace preset 作用域解析 presetId 用） */
   /** 快照最新值（P3a：getRpContextSnapshot 读它做楼层帧 bootstrap） */
   contextSnapshot: ThContextSnapshot | null = null
@@ -384,8 +387,34 @@ class SessionRuntime {
     }
   }
 
+  /** 【T-82】guest 楼层帧就绪标记 + 事件积压队列。
+   *  为什么需要：guest 不在 `statuses` 里，脚本帧那套 `phase !== 'running' ⇒ 入队`
+   *  的就绪门对它不生效 —— 直接投会落在 shim 消息监听器安装之前（丢事件）；
+   *  而**不能**照抄 `pushContextToGuest` 的 4 次重试梯子 —— 快照幂等覆盖，
+   *  事件**不幂等**（卡按 `MESSAGE_RECEIVED` 计数会翻 4 倍）= L36「不能多」。
+   *  就绪握手点与既有 `:540` 同一处：guest 的 `{th:'status',phase:'running'}` 是
+   *  shim 尾模块 `__dshtThReady()` 发的，此刻卡脚本已执行完、监听器必然已注册。 */
+  private readonly guestReady = new Set<string>()
+  private readonly pendingGuestEvents = new Map<string, Array<{ eventType: string; args: unknown[] }>>()
+
+  /** guest 就绪后补投积压事件（与脚本帧 `flushPendingEvents` 对称；队列上限同为 50） */
+  private flushPendingGuestEvents(scriptId: string): void {
+    const q = this.pendingGuestEvents.get(scriptId)
+    if (!q || q.length === 0) return
+    this.pendingGuestEvents.delete(scriptId)
+    const frame = this.guestFrames.get(scriptId)
+    for (const ev of q) {
+      frame?.contentWindow?.postMessage({
+        '__dsht_th': true, secret: this.secret, scriptId,
+        th: 'event', eventType: ev.eventType, args: ev.args,
+      }, '*')
+    }
+  }
+
   releaseGuestFrame(scriptId: string): void {
     this.guestFrames.delete(scriptId)
+    this.guestReady.delete(scriptId)
+    this.pendingGuestEvents.delete(scriptId)
   }
 
   /** 桥消息路由判定（脚本帧 + guest 楼层帧统一入口） */
@@ -406,6 +435,8 @@ class SessionRuntime {
     for (const f of this.frames.values()) f.remove()
     this.frames.clear()
     this.guestFrames.clear() // guest 楼层帧由 React 卸载自清理，这里只摘路由
+    this.guestReady.clear()
+    this.pendingGuestEvents.clear()
     this.container?.remove()
     this.container = null
     this.uiListeners.clear()
@@ -537,6 +568,12 @@ class SessionRuntime {
         if (msg.phase === 'running' && msg.scriptId.startsWith('msgframe-')
           && this.guestFrames.has(msg.scriptId) && this.contextSnapshot) {
           this.pushContextToGuest(msg.scriptId)
+        }
+        // 【T-82】同一握手点标记 guest 就绪并补投积压事件——与脚本帧的
+        //「phase→running ⇒ flushPendingEvents」完全对称（见 emitSessionEvent 的 guest 分支）
+        if (msg.phase === 'running' && this.guestFrames.has(msg.scriptId)) {
+          this.guestReady.add(msg.scriptId)
+          this.flushPendingGuestEvents(msg.scriptId)
         }
         return
       }
@@ -931,6 +968,25 @@ class SessionRuntime {
         th: 'event', eventType, args,
       }, '*')
     }
+    // 【T-82 心跳 74 续】guest 楼层帧（`.dsht-rp-message-frame`）同样是**一等事件消费者**。
+    // 基准取证：真 TH 的 `src/iframe/predefine.js` 把 `TavernHelper._bind`（含 `_eventOn`，
+    // `src/function/index.ts:221`）逐项 **bind 到该 iframe 的 window** 并注入**两处** ——
+    // `src/panel/script/iframe.ts:12`（脚本帧）与 `src/panel/render/iframe.ts:94`（消息渲染帧）；
+    // 而 `_eventOn` 直接 `eventSource.on(...)`（`src/function/event.ts:44`）⇒ 与帧类型无关。
+    // 我方原先只投 `this.frames` ⇒ 楼层帧内 `eventOn(...)` **注册成功、永不回调**（静默失败，
+    // 与 `pushContextSnapshotToFrames` 早已"脚本帧 + 楼层帧一起推"的形态自相矛盾，见 :907 注释）。
+    for (const scriptId of this.guestFrames.keys()) {
+      if (!this.guestReady.has(scriptId)) {
+        const q = this.pendingGuestEvents.get(scriptId) ?? []
+        if (q.length < 50) q.push({ eventType, args }) // 未就绪 ⇒ 入队，待 running 信标补投
+        this.pendingGuestEvents.set(scriptId, q)
+        continue
+      }
+      this.guestFrames.get(scriptId)?.contentWindow?.postMessage({
+        '__dsht_th': true, secret: this.secret, scriptId,
+        th: 'event', eventType, args,
+      }, '*')
+    }
   }
 
   /** 脚本就绪（phase → running）后补投积压事件 */
@@ -980,6 +1036,20 @@ class SessionRuntime {
     const chat = snapshot.chat
     const order = chat?.order?.length ?? 0
     const running = snapshot.running === true
+    // 【T-80 · 2026-09-12】节点终态跃迁侦查（`generation_stopped` 判据，消费处在下方
+    // 「running → !running」块）。**只认跃迁**：`prev === 'running' && now === 'interrupted'`。
+    // 冷加载 / 重连 / 切会话时快照里既存的历史 interrupted 节点**不进** stoppedKeys
+    // ⇒ 不误报（负控）。逐节点记 status 供下一轮比较。
+    const stoppedKeys: string[] = []
+    if (chat?.nodes) {
+      for (const n of chat.nodes.values()) {
+        const key = typeof n.key === 'string' ? n.key : ''
+        if (!key) continue
+        const status = typeof n.data?.status === 'string' ? n.data.status : ''
+        if (this.prevNodeStatus.get(key) === 'running' && status === 'interrupted') stoppedKeys.push(key)
+        this.prevNodeStatus.set(key, status)
+      }
+    }
     if (this.prevOrder >= 0 && chat?.order && chat.nodes) {
       if (order > this.prevOrder) {
         // 逐楼层投递：kind 在节点顶层（'user' / 'assistant-step' / 'steering' 等）
@@ -1022,6 +1092,18 @@ class SessionRuntime {
       this.emitSessionEvent('generation_ended', [order])
       this.emitSessionEvent('js_generation_ended', [order])
       this.emitSessionEvent('js_stream_token_received_fully', [])
+      // 【T-80】`generation_stopped`（基准 `script.js:5559`）——**仅在 `stopGeneration()` 里发射、
+      // 无参数** ⇒ 零形状风险，缺的只是「这一轮是被停止的」判据。该判据 DSH 已有：
+      // `core/agent-loop/src/agent.ts:355` 只在 `signal.aborted` 时给 `assistant/message` 写
+      // `interrupted: true`（`core/session/src/types.ts:273` 明文「回合被取消」），正常结束写
+      // `settled` ⇒ 与 ST「用户点了停止」一一对应，故直接用节点态跃迁，不另造标志位。
+      // **顺序对齐基准**：ST 的 `stopGeneration()` 内 `abortController.abort()` 之后先经
+      // `hideStopButton()`（`script.js:3477`）发 GENERATION_ENDED，回到函数体才发
+      // GENERATION_STOPPED ⇒ 本事件排在 generation_ended **之后**。
+      // **单命名空间**：TH `@types/iframe/event.d.ts:172-183` 的 `iframe_events` **不含**
+      // GENERATION_STOPPED（只在 `tavern_events:207`）⇒ 只投酒馆名，不造假 `js_` 变体（L36）。
+      // 已知边界：DSH 在「拦截时零内容」下不写 assistant/message（无节点）⇒ 该极窄场景投不出。
+      for (let i = 0; i < stoppedKeys.length; i++) this.emitSessionEvent('generation_stopped', [])
       // 生成结束后消息面已变：重拉快照推给 iframe（getContext 同步面保持新鲜）
       this.loadContextSnapshot()
     }
@@ -1063,7 +1145,15 @@ class SessionRuntime {
         }
       } catch { /* 数据面不可达 */ }
       if (floor < 0 && eventType === 'message_deleted') floor = 0
-      if (floor >= 0) this.emitSessionEvent(eventType, [floor])
+      if (floor >= 0) {
+        this.emitSessionEvent(eventType, [floor])
+        // 【T-80 · 2026-09-12】`tavern_events.MESSAGE_UPDATED` 同投（载荷 = messageId，与基准同形）。
+        // 基准：`script.js:8277` / `:8371`（编辑落盘后）、`slash-commands.js:5856/5922`（命令改消息）。
+        // 之前只发 `message_edited`，而卡普遍注册的是 `MESSAGE_UPDATED`（语料 6 个脚本引用）
+        // ⇒ 卡回调永不执行、零报错（静默失败族）。二者语义包含关系：编辑 ⊂ 更新，
+        // 故在**编辑**这一路径上同投是安全的超集方向（swipe 不发 —— 基准 swipe 只走 MESSAGE_SWIPED）。
+        if (eventType === 'message_edited') this.emitSessionEvent('message_updated', [floor])
+      }
     })()
   }
 
@@ -1155,19 +1245,24 @@ function runtimeFor(sessionId: string, slug: string): SessionRuntime {
   // 单会话活跃：挂载新会话的运行时时，销毁其他会话的残留运行时
   //（实测：iframe 挂 document.body 跨视图存活，离开会话后脚本仍在首页刷白屏）
   for (const [sid, rt] of runtimes) {
-    if (sid !== sessionId) { rt.destroy(); runtimes.delete(sid) }
+    if (sid !== sessionId) { rt.destroy(); runtimes.delete(sid); unregisterFrameEmitter(sid) }
   }
   let rt = runtimes.get(sessionId)
   if (rt === undefined) {
-    rt = new SessionRuntime(sessionId, slug)
-    runtimes.set(sessionId, rt)
+    const created = new SessionRuntime(sessionId, slug)
+    runtimes.set(sessionId, created)
+    // T-80 心跳 74：把「宿主页 → 本会话脚本帧」的事件通道登记到叶子注册表。
+    // 为什么必须经它：宿主页的 `th-event-source.ts` 与帧内 shim 的 eventSource 是**两个实例**，
+    // 在宿主 event source 上 emit **到不了卡**；唯一通道是本 runtime 的 `emitSessionEvent`。
+    registerFrameEmitter(sessionId, (eventType, args) => created.emitSessionEvent(eventType, args))
+    rt = created
   }
   return rt
 }
 
 /** 离开一切 RP 会话（首页/非 RP 会话视图）：销毁全部运行时 */
 function destroyAllRuntimes(): void {
-  for (const rt of runtimes.values()) rt.destroy()
+  for (const [sid, rt] of runtimes) { rt.destroy(); unregisterFrameEmitter(sid) }
   runtimes.clear()
 }
 
