@@ -25,6 +25,11 @@ import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
 const ST_REF = 'D:/SillyTavern-1.16.0/TauriTavern-Canary/SillyTavern-reference/public/scripts/st-context.js'
+/**
+ * 【心跳 63D】**基准真正在跑的那份**（TT 自己的源码）—— 语义取证以它为准（本项目第一取证源）。
+ * 与 `ST_REF` 是两份不同的文件；成员集合实测等价，但值绑定有差异（见 `crossCheckStAuthority`）。
+ */
+const ST_RUNNING = 'D:/SillyTavern-1.16.0/TauriTavern-Canary/src/scripts/st-context.js'
 const OUR_CTX = 'D:/DSH RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/host-vendor.ts'
 
 /**
@@ -196,6 +201,69 @@ export function readStSurface(file = ST_REF) {
   return objectMembers(text, brace).map(m => m.name)
 }
 
+/**
+ * 【心跳 63D】权威面的**双副本一致性**核查（防"取证源漂移"这类静默失效）。
+ *
+ * ## 为什么需要
+ * 本项目把 `ST_REF`（vendored 的 ST 原始副本：`SillyTavern-reference/public/scripts/st-context.js`）
+ * 当**权威面**用，但**真正在跑的是 TT 自己的源码** `src/scripts/st-context.js`
+ *（本项目铁律：一切差异以 **TauriTavern** 为第一取证源）。两份是**不同的文件**，
+ * 若某天只升级其中一份，本工具会拿一份"看着权威"的过期清单继续判缺口 —— 而它是绿的。
+ * 实测（2026-09-12）：两份的 `getContext()` **成员集合完全一致（各 145）**，
+ * 但**有两处绑定不同**：`generate`（TT=`generateSafely` / ref=`Generate`）与 ref 多出
+ * `parseReasoningFromString` / `getReasoningTemplateByName` 两个值绑定（成员名同集合）。
+ * ⇒ 结论：**成员集合口径两份等价**（故既有缺口数字不需重算）；但**语义取证必须以 TT 为准**
+ *（尤其 T-47 的 C 档 `generate` —— 基准给的是 `generateSafely`，不是 `Generate`）。
+ *
+ * 返回 `{ skipped }`（副本不在）或 `{ ok, refCount, runCount, onlyRef, onlyRunning, bindingDiffs }`。
+ */
+export function crossCheckStAuthority(refFile = ST_REF, runningFile = ST_RUNNING) {
+  if (!fs.existsSync(runningFile)) return { skipped: true, reason: `基准运行副本不在：${runningFile}` }
+  const refKeys = readStSurface(refFile)
+  const runKeys = readStSurface(runningFile)
+  const refSet = new Set(refKeys)
+  const runSet = new Set(runKeys)
+  const onlyRef = refKeys.filter(k => !runSet.has(k))
+  const onlyRunning = runKeys.filter(k => !refSet.has(k))
+  const refBind = memberBindings(refFile)
+  const runBind = memberBindings(runningFile)
+  const bindingDiffs = []
+  for (const k of refKeys) {
+    if (!runSet.has(k)) continue
+    const a = refBind.get(k)
+    const b = runBind.get(k)
+    if (a === b) continue
+    // 两边都取到值才比较；简写属性（`characters,`）两边都是 shorthand ⇒ 天然相等
+    bindingDiffs.push({ member: k, ref: a, running: b })
+  }
+  return {
+    skipped: false,
+    ok: onlyRef.length === 0 && onlyRunning.length === 0,
+    refCount: refKeys.length,
+    runCount: runKeys.length,
+    onlyRef,
+    onlyRunning,
+    bindingDiffs,
+  }
+}
+
+/** `getContext()` 返回体里每个成员的**右值表达式**（简写属性记为 `(shorthand)`） */
+function memberBindings(file) {
+  const text = fs.readFileSync(file, 'utf8')
+  const fn = text.indexOf('export function getContext')
+  if (fn < 0) throw new Error(`找不到 getContext: ${file}`)
+  const brace = topLevelReturnBrace(text, fn)
+  if (brace < 0) throw new Error(`找不到顶层 return { : ${file}`)
+  const out = new Map()
+  for (const m of objectMembers(text, brace)) {
+    const at = m.raw.indexOf(':')
+    // 归一化空白后再比：嵌套对象在多行/单行之间的排版差异**不是语义差异**
+    // （否则 `variables` / `symbols` 这类嵌套字面量会产生一堆纯排版噪声，把真差异淹掉）
+    out.set(m.name, at < 0 ? '(shorthand)' : m.raw.slice(at + 1).replace(/,\s*$/, '').replace(/\s+/g, ' ').trim())
+  }
+  return out
+}
+
 /** 我方宿主面 `buildHostStContext()` 顶层成员 */
 export function readOurSurface(file = OUR_CTX, marker = 'export function buildHostStContext') {
   const text = fs.readFileSync(file, 'utf8')
@@ -349,9 +417,22 @@ export function readScriptAccessesFromText(text) {
 
   // 5) 顶层直取 `SillyTavern.<member>`（**不经 getContext**）
   //
-  // 【心跳 63 新增】真 ST 的 `window.SillyTavern` 是 `st-context.js` 导出的那个对象 ——
-  // 它**既带 `getContext()` 也带全部直接成员**（= getContext 的展开），所以顶层直取
-  // 与 `getContext().x` 指向**同一个成员集合**，用同一份权威面判定即可。
+  // 【心跳 63 新增 / 心跳 63D 修正理由】
+  // 真 TH 的**脚本 iframe** 里 `window.SillyTavern` 顶层 **≡ getContext() 展开 + getContext** ——
+  // 依据是 TH 自己的投影（`src/iframe/predefine.js:26-35`）：
+  //     Object.defineProperty(window,'SillyTavern',{ get: () => {
+  //       const SillyTavern = _.get(window.parent,'SillyTavern');
+  //       const getContext = () => ({ ...SillyTavern.getContext(), writeExtensionField: … });
+  //       return { ...getContext(), getContext }; } })
+  // ⇒ 在**帧内**顶层直取与 `getContext().x` 指向**同一成员集合**，用同一份权威面判定即可。
+  //
+  // 🔴 **修正（心跳 63D）**：此前的注释把它写成了「真 ST 的 `window.SillyTavern` 就是 getContext 的展开」——
+  // 那句话**只在 iframe 成立**。基准**宿主页**的顶层是 `src/script.js:374-381`：
+  //     globalThis.SillyTavern = { libs, getContext, i18n: { t, translate } };
+  // **没有**那层 spread。而本工具的语料是 **TH 脚本**（成对跑：卡片注入脚本 in 宿主页 / TH 脚本 in iframe），
+  // 顶层直取这一形态来自 iframe 侧语料，故这里按「getContext 展开」判定是**正确的**；
+  // 但绝不能据此去撑大宿主页顶层（那是"多"，违反 L36 —— 见 `host-vendor.ts:installHostSillyTavern` 注记）。
+  //
   // 真实语料实证（此前整类漏检 ⇒「缺口 0」是被低估的结论）：
   //   · `格式肘击大师v1_3.js:72-73` → `SillyTavern.characterId` / `SillyTavern.characters`
   //   · `梦鲸思客消息处理 2.4` → `SillyTavern.POPUP_RESULT` / `POPUP_TYPE` / `callGenericPopup` /
@@ -513,8 +594,27 @@ function selftest() {
   console.log(`[selftest] 存在性守卫 typeof → ${probe11Got}`)
   if (!probe11Ok) console.log(`[selftest] 期望 → chat,getTokenCountAsync`)
 
+  // 【心跳 63D】权威面双副本一致性（防"取证源漂移"= 又一条静默失效）
+  // 判据：vendored `SillyTavern-reference` 与**基准真正在跑的** `src/scripts/st-context.js`
+  // 必须在 `getContext()` **成员集合**上一致；不一致 ⇒ 既有缺口数字要按新基准重算，
+  // 本工具**拒绝**在不知道以谁为准的情况下继续（宁可红，不给假绿）。
+  const xc = crossCheckStAuthority()
+  let xcOk = true
+  if (xc.skipped) {
+    console.log(`[selftest] 权威面双副本核查 → SKIP（${xc.reason}）`)
+  } else {
+    console.log(`[selftest] 权威面成员集合：ref ${xc.refCount} / 基准运行副本 ${xc.runCount}`
+      + ` → 仅 ref 有 [${xc.onlyRef.join(',')}] · 仅运行副本有 [${xc.onlyRunning.join(',')}]`)
+    if (xc.bindingDiffs.length > 0) {
+      console.log(`[selftest] ⓘ 同成员名但绑定不同 ${xc.bindingDiffs.length} 处（成员集合口径不受影响；语义取证以基准为准）：`
+        + xc.bindingDiffs.map(d => `${d.member}: ref=${d.ref} / TT=${d.running}`).join(' · '))
+    }
+    xcOk = xc.ok
+    if (!xcOk) console.log('[selftest] ❌ 两份权威面成员集合已漂移 —— 缺口数字必须按基准重算')
+  }
+
   const allOk = ok && probeOk && probe2Ok && probe3Ok && probe4Ok
-    && probe5Ok && probe6Ok && probe7Ok && probe8Ok && probe9Ok && probe10Ok && probe11Ok
+    && probe5Ok && probe6Ok && probe7Ok && probe8Ok && probe9Ok && probe10Ok && probe11Ok && xcOk
   console.log(`[selftest] ${allOk ? 'PASS' : 'FAIL'}`)
   return allOk ? 0 : 1
 }

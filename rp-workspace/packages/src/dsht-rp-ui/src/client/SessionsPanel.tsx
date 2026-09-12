@@ -52,17 +52,26 @@ function fmtTime(t: number | null): string {
 export function SessionsPanel(props: { archiveSession?: (sessionId: string) => Promise<void> }): JSX.Element {
   const [sessions, setSessions] = useState<AuditSession[] | null>(null)
   const [busy, setBusy] = useState(false)
+  // 【心跳 63D · T-70】审计进行中标志。此前 `load()` 一进来就 `setSessions(null)`，
+  // 于是「刷新期间」= 列表清空 + 两个计数回落 0 + 显示「审计中…」，与
+  // **「真的没有可清理项」在视觉上完全不可区分**（L103 同族：判据要落在"这个数字从哪来"）。
+  // 配合 T-70 实测的 6.4 s 暖态耗时，这个混淆有真实影响（用户会以为清理已经没必要）。
+  const [refreshing, setRefreshing] = useState(false)
   const [note, setNote] = useState('')
   const load = useCallback(async () => {
-    setSessions(null)
+    setRefreshing(true)
     try {
       const r = await rpApi('rp/sessions-audit') as { sessions?: AuditSession[] }
       // 分叉残留优先、其余按最后时间倒序
       const order: Record<AuditSession['kind'], number> = { 'branch-parent': 0, empty: 1, forked: 2, normal: 3, subagent: 4 }
       setSessions([...(r.sessions ?? [])].sort((a, b) => (order[a.kind] - order[b.kind]) || ((b.lastTime ?? 0) - (a.lastTime ?? 0))))
+      // 审计成功即清掉上一次的审计失败提示（但**不**清归档/清理的成功提示）
+      setNote(prev => (prev.startsWith('审计失败') ? '' : prev))
     } catch (e) {
       setSessions([])
       setNote(`审计失败：${(e as Error).message}`)
+    } finally {
+      setRefreshing(false)
     }
   }, [])
   useEffect(() => { void load() }, [load])
@@ -122,11 +131,14 @@ export function SessionsPanel(props: { archiveSession?: (sessionId: string) => P
           onClick={() => { void autoclean('empty') }}>
           清理空壳会话（{emptyCount}）
         </button>
-        <button type="button" className="dsht-rp-btn" disabled={busy} onClick={() => { void load() }}>
-          ⟳ 重新审计
+        <button type="button" className="dsht-rp-btn" disabled={busy || refreshing} onClick={() => { void load() }}>
+          {refreshing ? '⟳ 审计中…' : '⟳ 重新审计'}
         </button>
       </div>
       {note !== '' && <p style={{ margin: '6px 0', color: 'var(--dsw-alias-label-secondary, #9ab)' }}>{note}</p>}
+      {refreshing && sessions !== null && (
+        <p className="pc-dim" style={{ margin: '6px 0' }}>刷新中…（下面显示的是**上一次**审计结果，未清零）</p>
+      )}
       {sessions === null ? <p style={{ margin: '8px 0' }}>审计中…</p> : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {sessions.map(s => (

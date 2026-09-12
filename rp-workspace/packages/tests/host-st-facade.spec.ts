@@ -9,10 +9,13 @@
  *  - `getContext()?.streamingProcessor` / `ctx.chat?.[...]` → 可选链，缺字段允许 undefined。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import vm from 'node:vm'
 import {
   __resetFacadeDegradedWarnings, __resetHostStCaches, buildHostStContext, defaultUuidv4, installHostSillyTavern,
   ensureStRegexAnchor,
 } from '../src/dsht-rp-ui/src/client/host-vendor.ts'
+// 镜像测试用：跑**真构建产物**（iframe shim 源），不 grep 源码文本（心跳 63D）
+import { buildShimSource } from '../src/dsht-rp-ui/src/client/th-shim.ts'
 import type { ThContextSnapshot } from '../src/dsht-rp-ui/src/client/th-shim.ts'
 
 /** 造一份「有内容」的会话快照（形状取自 ThContextSnapshot） */
@@ -577,5 +580,74 @@ describe('host ST 门面：扩展模板渲染 renderExtensionTemplate(Async)（�
       g.toastr = { notAnError: 1 }
       expect(() => (ctx.renderExtensionTemplateAsync as (e: unknown, t: unknown) => unknown)('a', 'b')).not.toThrow()
     } finally { g.toastr = prev }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 心跳 63D：T-47 A 档（`saveChat` 宿主面镜像）+ 宿主页 `SillyTavern` 顶层形态对齐
+// 取证三处齐（L101）：① 权威面绑定行 `st-context.js:154  saveChat: saveChatConditional`
+//   （基准运行副本 `src/scripts/st-context.js:161` 同一绑定）
+// ② 基准声明 `script.js:10666  export async function saveChatConditional(commitReason = …)`
+//   ⇒ 无必填参 · async · 真的落盘  ③ 语料真实用法：`梦鲸思客消息处理 2.4` 调用 1 次。
+// DSHT 的会话由核心持续落盘 ⇒ 正确语义 = resolve 且无需额外动作（不是降级、不是假成功）。
+// ---------------------------------------------------------------------------
+describe('host ST 门面：saveChat（T-47 A 档）+ 宿主页 SillyTavern 顶层形态（心跳 63D）', () => {
+  it('saveChat 存在且 resolve undefined（照基准「无必填参 async」的形状，绝不 reject）', async () => {
+    const ctx = buildHostStContext({ getSnapshot: () => snap() })
+    expect(typeof ctx.saveChat).toBe('function')
+    await expect((ctx.saveChat as () => Promise<unknown>)()).resolves.toBeUndefined()
+  })
+
+  it('无快照（RP 未打开）时同样可用——持久化语义与会话是否已打开无关', async () => {
+    const ctx = buildHostStContext()
+    await expect((ctx.saveChat as () => Promise<unknown>)()).resolves.toBeUndefined()
+  })
+
+  /**
+   * 镜像测试（T-19 硬约束：两侧同语义必须被钉住，任一侧漂移即报警）。
+   * 判据不是 grep 源码文本，而是**跑真构建产物**（`buildShimSource`）后取 iframe 侧的
+   * `window.SillyTavern.saveChat` 行为 —— 与宿主侧逐字比对（L36：既不能少也不能多）。
+   */
+  it('镜像：iframe 侧同一成员行为一致（真构建产物，非文本断言）', async () => {
+    const sandbox: Record<string, unknown> = {}
+    sandbox.window = sandbox
+    sandbox.parent = { postMessage: () => {} }
+    sandbox.name = 'sid'
+    sandbox.addEventListener = () => {}
+    sandbox.document = { body: { childElementCount: 0 } }
+    sandbox.setTimeout = () => 0
+    sandbox.console = console
+    vm.runInContext(
+      buildShimSource({ scriptId: 'sid', scriptName: 'sid', secret: 'sec', version: 'test' }),
+      vm.createContext(sandbox),
+    )
+    const st = sandbox.SillyTavern as { saveChat?: () => Promise<unknown> }
+    expect(typeof st.saveChat).toBe('function')
+    await expect(st.saveChat?.()).resolves.toBeUndefined()
+  })
+
+  /**
+   * 宿主页 `SillyTavern` **顶层只有基准那 3 个键** —— 基准源逐字：
+   * `src/script.js:374-381  globalThis.SillyTavern = { libs, getContext, i18n: { t, translate } };`
+   * ⚠️ 顶层**不是** `getContext()` 的展开：那层 spread 只存在于**脚本 iframe**
+   *（TH `src/iframe/predefine.js:26-35` 显式 `{ ...getContext(), getContext }`）。
+   * 这条用例是**反控**：防止日后有人"顺手把 getContext 展平到宿主顶层"（那是"多"，违反 L36，
+   * 并会把 T-46「iframe 面窄于基准」的真问题掩盖成一个假象）。
+   */
+  it('顶层键恰为 libs/getContext/i18n（不展开 getContext —— L36「不能多」）', () => {
+    const host: Record<string, unknown> = {}
+    installHostSillyTavern({ getSnapshot: () => snap() }, host)
+    expect(Object.keys(host.SillyTavern as Record<string, unknown>).sort()).toEqual(['getContext', 'i18n', 'libs'])
+  })
+
+  it('i18n.t / i18n.translate 可用（基准顶层真有这两个；t 为箭头函数，无 this 依赖）', () => {
+    const host: Record<string, unknown> = {}
+    installHostSillyTavern({ getSnapshot: () => snap() }, host)
+    const i18n = (host.SillyTavern as { i18n: { t: (s: TemplateStringsArray, ...v: unknown[]) => string; translate: (s: string) => string } }).i18n
+    expect(typeof i18n.t).toBe('function')
+    expect(typeof i18n.translate).toBe('function')
+    // 未装语言包 ⇒ 原文返回（与门面 `t`/`translate` 同语义）
+    expect(i18n.translate('未翻译的原文')).toBe('未翻译的原文')
+    expect(i18n.t`未翻译的原文`).toBe('未翻译的原文')
   })
 })

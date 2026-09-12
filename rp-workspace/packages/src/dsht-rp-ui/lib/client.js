@@ -1866,6 +1866,22 @@ function buildHostStContext(src = {}) {
     isMobile: true,
     // extension_settings 的持久化入口（localStorage 同键；落盘后保持引用稳定）
     saveSettingsDebounced: () => saveHostExtensionSettingsDebounced(ext),
+    // ---- 【T-47 · A 档 / 心跳 63D】`saveChat`：宿主面镜像（T-47 唯一「可低成本补」成员）----
+    // 基准三处齐（L101 口径）：
+    //   ① 权威面绑定行 —— `st-context.js:154  saveChat: saveChatConditional`
+    //      （TT 自己那份在 `src/scripts/st-context.js:161`，同一绑定）
+    //   ② 基准声明 —— `script.js:10666  export async function saveChatConditional(commitReason = …)`
+    //      ⇒ **无必填参 · async · 真的落盘**（ST 的聊天是「内存态 + 按需写盘」）
+    //   ③ 我们语料真实用法 —— `梦鲸思客消息处理 2.4` 调用 1 次（全语料仅此一处）
+    // DSHT 的持久化模型不同：会话由核心**持续落盘**（每条事件 append 即持久化），
+    // 没有「内存态待保存」这个状态 ⇒ 「按需保存」的正确语义 = **resolve 且无需额外动作**。
+    // 这不是降级、也不是"假装成功"（L42 要防的是后者）：它确实达成了调用方要的效果
+    //（数据已在盘上），故**不发出降级告警**——发声只留给"没做到"的情形。
+    // ⚠️ **必须与 iframe 侧逐字同语义**：`th-shim.ts:2347` 早已是
+    //   `saveChat: function () { return Promise.resolve(); }`（注释「生成/持久化写路径：宿主自管」）
+    // ⇒ 本行只是把它**镜像到宿主面**（T-47 原文：「先补宿主面在『投影』与『不投影』两条路线下
+    //    都是净收益，故 A 档可先行」）。**改任一侧必须同步另一侧**（T-19 硬约束）。
+    saveChat: () => Promise.resolve(),
     // ---- 心跳 51（T-44）：缺口 6 → 1 的「四个提供者接线」----
     // 判据纪律：这里只补「真 ST 有、我们无」的成员（L36）；语义逐条对质基准源码，
     // 不实现可实现的就**显式降级并出声**，不做静默假成功（L42）。
@@ -1973,7 +1989,19 @@ function installHostSillyTavern(src = {}, host = globalThis) {
       if (cache !== null && cache.snap === snap) return cache.ctx;
       cache = { snap, ctx: buildHostStContext(src) };
       return cache.ctx;
-    }
+    },
+    // ---- 【心跳 63D】宿主页 `SillyTavern` **顶层只有基准那 4 个成员** ----
+    // 基准（TT 真实运行的源码，第一取证源）：`src/script.js:374-381`
+    //   globalThis.SillyTavern = { libs, getContext, i18n: { t, translate } };
+    // 🔴 **一个被记反的事实（本轮纠正）**：我方 63B/63C 文档写着「真 ST 的 `window.SillyTavern`
+    //   **既带 `getContext()` 也带全部直接成员（= getContext 的展开）**」——**只在脚本 iframe 成立**：
+    //   TH 的 `src/iframe/predefine.js:26-35` 显式做了 `{ ...getContext(), getContext }` 那一层 spread；
+    //   **宿主页没有这层 spread**（故宿主页里 `SillyTavern.characterId` 在**基准里也是 undefined**）。
+    // ⇒ 宿主页**绝不能**把 getContext 展平到顶层：那是"多"，违反 L36，而且会掩盖 T-46 的真实问题
+    //   （iframe 面窄于基准，其正解在 iframe 侧投影，不是把宿主顶层撑大）。
+    // 这里只补基准真有、我方漏发的 `i18n`（`getHostI18n()` 的 `t`/`translate` 是箭头函数，
+    // 无 `this` 依赖 ⇒ 可安全外借；`getCurrentLocale`/`addLocaleData` 不在基准顶层，故不发）。
+    i18n: { t: getHostI18n().t, translate: getHostI18n().translate }
   };
   return true;
 }
@@ -12547,16 +12575,20 @@ function fmtTime(t) {
 function SessionsPanel(props) {
   const [sessions, setSessions] = (0, import_react16.useState)(null);
   const [busy, setBusy] = (0, import_react16.useState)(false);
+  const [refreshing, setRefreshing] = (0, import_react16.useState)(false);
   const [note, setNote] = (0, import_react16.useState)("");
   const load = (0, import_react16.useCallback)(async () => {
-    setSessions(null);
+    setRefreshing(true);
     try {
       const r = await rpApi("rp/sessions-audit");
       const order = { "branch-parent": 0, empty: 1, forked: 2, normal: 3, subagent: 4 };
       setSessions([...r.sessions ?? []].sort((a, b) => order[a.kind] - order[b.kind] || (b.lastTime ?? 0) - (a.lastTime ?? 0)));
+      setNote((prev) => prev.startsWith("\u5BA1\u8BA1\u5931\u8D25") ? "" : prev);
     } catch (e) {
       setSessions([]);
       setNote(`\u5BA1\u8BA1\u5931\u8D25\uFF1A${e.message}`);
+    } finally {
+      setRefreshing(false);
     }
   }, []);
   (0, import_react16.useEffect)(() => {
@@ -12653,11 +12685,12 @@ ${targets.slice(0, 8).map((t) => `\xB7 ${t.workspace ?? t.sessionId.slice(0, 18)
           ]
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy, onClick: () => {
+      /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy || refreshing, onClick: () => {
         void load();
-      }, children: "\u27F3 \u91CD\u65B0\u5BA1\u8BA1" })
+      }, children: refreshing ? "\u27F3 \u5BA1\u8BA1\u4E2D\u2026" : "\u27F3 \u91CD\u65B0\u5BA1\u8BA1" })
     ] }),
     note !== "" && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { style: { margin: "6px 0", color: "var(--dsw-alias-label-secondary, #9ab)" }, children: note }),
+    refreshing && sessions !== null && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { className: "pc-dim", style: { margin: "6px 0" }, children: "\u5237\u65B0\u4E2D\u2026\uFF08\u4E0B\u9762\u663E\u793A\u7684\u662F**\u4E0A\u4E00\u6B21**\u5BA1\u8BA1\u7ED3\u679C\uFF0C\u672A\u6E05\u96F6\uFF09" }),
     sessions === null ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { style: { margin: "8px 0" }, children: "\u5BA1\u8BA1\u4E2D\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { style: { display: "flex", flexDirection: "column", gap: 6 }, children: [
       sessions.map((s) => /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { style: {
         display: "flex",

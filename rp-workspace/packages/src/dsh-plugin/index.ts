@@ -16,12 +16,10 @@
  */
 
 import { spawn } from 'node:child_process'
-import { createReadStream } from 'node:fs'
 import { access, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { createInterface } from 'node:readline'
 import { randomUUID } from 'node:crypto'
 import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
 import z from '@deepseek-ai/schemastery'
@@ -67,6 +65,11 @@ import { mergeSalvagedThFloors, upsertThFloors, readThFloors, lookupThFloor, typ
 import { planSlotSections, SLOT_ORDERS, type SlotBatch, type SlotSection } from '../dsht-plugin-shared/tt-projection.ts'
 // T-27：更新检查的版本判定内核（纯函数；服务端与前端共用同一份实现，避免两份漂移）
 import { relateVersions, parseVersion } from '../dsht-plugin-shared/version-compare.ts'
+// 【心跳 63D · T-70】有界并发映射（/rp/sessions-audit 的串行读→并行读；语义契约见该文件头）
+import { mapBounded, DEFAULT_MAP_CONCURRENCY } from '../dsht-plugin-shared/concurrency.ts'
+// 【心跳 63D · T-70】会话审计的读取原语：字节扫描取「行数 + 首/末行」，
+// 替代原本把全部字节逐行字符串化的 `readline` 读法（实测 CPU 降一个数量级）。
+import { scanJsonlEdges } from '../dsht-plugin-shared/jsonl-scan.ts'
 // T-27：更新源响应归一化 + 下载资产挑选（形状适配层单独成模块，配单测钉死两种字段形态）
 import { guessUpdateKind, normalizeUpdateFeed, pickDownloadAsset } from '../dsht-plugin-shared/update-feed.ts'
 // 【心跳 57】ST 兼容版本声明（单源）—— 宿主页 `/version` 端点。卡的宿主脚本用它做版本分叉
@@ -5050,43 +5053,63 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 } catch { /* 无 rp.json */ }
               }
               const out: Array<{ projectKey: string; workspace: string | null; sessionId: string; parentSession: string | null; isSeeded: boolean; origin: string | null; events: number; lastTime: number | null; createdAt: number | null; kind: 'branch-parent' | 'forked' | 'subagent' | 'empty' | 'normal' }> = []
+              // 【心跳 63D · T-70】两处修复，且两者**都必要**：
+              //   ① **换算法**（主修复）：`scanJsonlEdges` 用字节扫描代替 `readline` 逐行 ——
+              //      原实现为了拿一个「行数」把全部字节**逐行字符串化**（100k+ 次字符串分配）。
+              //      实测根因是 **CPU 而非 I/O**：设备裸读 65 MB 仅 **65 ms**（≈1 GB/s），
+              //      而宿主上 62.3 MB 逐行 **442 ms** vs 字节扫描 **21 ms**（**8–21×**）。
+              //   ② **有界并发**（叠加）：`mapBounded` 让多个会话的读**同时**在跑。
+              //      ⚠️ 只做②是不够的 —— 单线程 JS 里并发不产生 CPU 并行，只重叠 I/O 等待，
+              //      实测仅 1.4×（6.4 s → 5.3 s）；换算法后单文件成本降一个数量级，并发才开始有意义。
+              //
+              // 为什么不加缓存/索引：会话写入虽是 append，但修复器会**整体重写**文件
+              //（心跳 53 的 `fixPruneSurfaceSpans` 即如此），任何 `(size, mtime)` 水位都可能
+              // 把"慢"换成**静默陈旧**（本项目主力缺陷族，见 T-70 正文）。
+              // ①+② 都是**纯等价替换**：同样的输入、同样的输出，只是不再排「逐行字符串化」的队。
+              const jobs: Array<{ pk: string; sid: string }> = []
               for (const pk of await readdir(sessionsRoot).catch(() => [] as string[])) {
-                const pkDir = join(sessionsRoot, pk)
-                for (const sid of await readdir(pkDir).catch(() => [] as string[])) {
+                for (const sid of await readdir(join(sessionsRoot, pk)).catch(() => [] as string[])) jobs.push({ pk, sid })
+              }
+              const rows = await mapBounded<{ pk: string; sid: string }, (typeof out)[number]>(
+                jobs,
+                DEFAULT_MAP_CONCURRENCY,
+                async (job) => {
+                  const { pk, sid } = job
                   const f = await currentSessionLogPath(dshHome, pk, sid)
                   let header: Record<string, unknown> = {}
                   let lines = 0
                   let lastTime: number | null = null
                   try {
-                    // 【鲁棒轮 2026-09-09】流式逐行（内存恒定）——原实现整文件读入 + split：
-                    // rp-import 适配会话可到 254MB（代码下方 repairAllSessionSeqs 自己设了
-                    // 8MiB 上限），手机端审计/自动清理一扫即 OOM 崩整个 node 进程。
-                    // 只需 header（首非空行）+ 行数 + 最后一行 time。
-                    let count = 0
-                    let firstRow = ''
-                    let lastRow = ''
-                    const rl = createInterface({ input: createReadStream(f, { encoding: 'utf8' }), crlfDelay: Infinity })
-                    for await (const row of rl) {
-                      if (row.trim() === '') continue
-                      if (count === 0) firstRow = row
-                      lastRow = row
-                      count++
-                    }
-                    lines = Math.max(0, count - 1)
-                    try { header = JSON.parse(firstRow) as Record<string, unknown> } catch { /* 坏行忽略 */ }
-                    try { lastTime = Number((JSON.parse(lastRow) as { time?: unknown }).time ?? 0) || null } catch { /* 无 time */ }
-                  } catch { continue }
+                    // 【鲁棒轮 2026-09-09】内存恒定（原实现整文件读入 + split：rp-import 适配会话
+                    // 可到 254MB，手机端审计/自动清理一扫即 OOM 崩整个 node 进程）。
+                    // 【心跳 63D】内存恒定的同时把 **CPU** 也降下来：只取三样东西
+                    //（首非空行 header / 非空行数 / 末非空行 time），不再逐行产出字符串。
+                    // 语义与旧 readline 实现**逐字相同**，由 `tests/jsonl-scan.spec.ts` 的
+                    // 「新实现 ≡ 参考实现」20 条对拍用例钉住（含 CRLF / 空行 / U+00A0 / 跨块）。
+                    const edges = await scanJsonlEdges(f)
+                    header = edges.header
+                    lines = edges.lines
+                    lastTime = edges.lastTime
+                  } catch { return null }
                   const parent = typeof header.parentSession === 'string' ? header.parentSession : null
                   const seeded = header.isSeeded === true
                   const origin = typeof header.origin === 'string' ? header.origin : null
                   const createdAt = Number(header.createdAt ?? 0) || null
-                  out.push({
+                  return {
                     projectKey: pk, workspace: nameByKey.get(pk) ?? null, sessionId: sid,
                     parentSession: parent, isSeeded: seeded, origin, events: lines, lastTime, createdAt,
                     kind: origin === 'subagent' ? 'subagent' : seeded || parent !== null ? 'forked' : lines <= 0 ? 'empty' : 'normal',
-                  })
-                }
-              }
+                  } as (typeof out)[number]
+                },
+                // 读失败此前是 `catch { continue }`（静默丢弃一个会话）—— 保留该语义，但**出声**
+                //（L42：有意跳过 ≠ 可以静默；一个会话读不出来时，面板上的总数会少一个而无人知晓）
+                (err, index) => {
+                  console.warn('[dsht-rp] sessions-audit 读取失败（该会话本次不计入）:',
+                    (jobs[index] as { pk: string; sid: string }).pk, (jobs[index] as { pk: string; sid: string }).sid,
+                    (err as Error).message)
+                },
+              )
+              for (const r of rows) if (r !== null) out.push(r)
               const parents = new Set(out.filter(s => s.parentSession !== null).map(s => s.parentSession as string))
               for (const s of out) if (parents.has(s.sessionId)) s.kind = 'branch-parent'
               return out
