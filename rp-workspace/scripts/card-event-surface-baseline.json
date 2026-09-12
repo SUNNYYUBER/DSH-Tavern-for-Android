@@ -107,5 +107,6 @@
       "baseline": "SillyTavern-reference/public/script.js:5559（`stopGeneration()` 内、**无参数**）",
       "why_no_longer_missing": "判据 = 节点态 `running → interrupted` 跃迁。DSH 权威契约：`deepseek-harness/packages/core/agent-loop/src/agent.ts:355` 只在 `signal.aborted` 时给 `assistant/message` 写 `interrupted: true`，`core/session/src/types.ts:273` 明文该标记 = 「回合被取消」，正常结束写 `settled` ⇒ 与 ST「用户点停止」一一对应。实现见 `dsht-rp-ui/src/client/RpScriptHost.tsx` 的 `advance()`；实机验收见 `stage3-device/hb68/`。单命名空间（TH 的 `iframe_events` 不含该项，`@types/iframe/event.d.ts:172-183`）。"
     }
-  }
+  },
+  "_discriminator": "判「可修 vs 不做」的唯一判别器 = **基准载荷的形状**，不是「卡用不用它」：① 基准载荷**无参**（多数字符串通知，如 settings_updated / generation_stopped / message_updated）⇒ 零参发射与基准**逐字等价** ⇒ 可修；② 基准载荷带**可变对象/数组**且发射后**立刻回读**（settings_loaded_after 的 settings / generate_after_combine_prompts 的 prompt / chat_completion_prompt_ready 的 chat / generate_after_data / worldinfo_scan_done 的 args.state）⇒ 我方跨层（宿主 cordis ↔ WebView 帧）投只读副本 = **声称支持可变而实际不支持**（L126 的②，比不投更坏）⇒ 判「不做 + 登记」。⚠️ **不要**用「语料里的消费端是零参回调、不读载荷」作为可修理由 —— 那只能证明**当前**没有消费者利用可变性，不能证明**将来**不会（基准的契约明写允许改）；只有 ①（基准本身就无参）才是等价性判据。"
 }
