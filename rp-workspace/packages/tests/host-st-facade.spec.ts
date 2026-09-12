@@ -38,6 +38,30 @@ function snap(over: Partial<ThContextSnapshot> = {}): ThContextSnapshot {
 beforeEach(() => { __resetHostStCaches() })
 afterEach(() => { __resetHostStCaches() })
 
+/**
+ * 【心跳 64】在 vm 沙箱里跑**真构建产物**（iframe shim 源），返回该沙箱。
+ *
+ * `initial` 会作为 `window.__dshtInitialContext` —— 即帧内 `getContext()` 的**同步**数据源
+ * （P3a bootstrap，与宿主 `loadContextSnapshot` postMessage 推的是同一形状）。
+ * 判据是**行为**而不是源码文本（T-19：镜像两侧必须各自被钉住）。
+ */
+function makeShimSandbox(initial: Record<string, unknown> = {}): Record<string, unknown> {
+  const sandbox: Record<string, unknown> = {}
+  sandbox.window = sandbox
+  sandbox.parent = { postMessage: () => {} }
+  sandbox.name = 'sid'
+  sandbox.addEventListener = () => {}
+  sandbox.document = { body: { childElementCount: 0 } }
+  sandbox.setTimeout = () => 0
+  sandbox.console = console
+  sandbox.__dshtInitialContext = initial
+  vm.runInContext(
+    buildShimSource({ scriptId: 'sid', scriptName: 'sid', secret: 'sec', version: 'test' }),
+    vm.createContext(sandbox),
+  )
+  return sandbox
+}
+
 describe('host ST 门面：空壳形态（RP 未打开 / 快照缺失也必须不炸）', () => {
   it('无快照时 prompts / chat 仍是数组、chatLength 为 0、uuidv4 是函数', () => {
     const ctx = buildHostStContext()
@@ -624,6 +648,49 @@ describe('host ST 门面：saveChat（T-47 A 档）+ 宿主页 SillyTavern 顶�
     const st = sandbox.SillyTavern as { saveChat?: () => Promise<unknown> }
     expect(typeof st.saveChat).toBe('function')
     await expect(st.saveChat?.()).resolves.toBeUndefined()
+  })
+
+  /**
+   * 【心跳 64】`name1`（用户名）—— 真 ST **两面都有**，帧内此前**两面都缺**。
+   *
+   * 设备实测用法（不是推测，来自语料静态穷举 + live 帧读数）：
+   *  · 「世界书控制 0708」（**当前活跃卡**，`世界书控制_0708.js:4122/4130/4229`）
+   *    `(typeof SillyTavern !== "undefined") ? SillyTavern.name1 : "User"`
+   *    —— **只有对象级守卫、没有属性级守卫** ⇒ 守卫通过但取到 undefined ⇒ 渲染出 `"undefined: 内容"`；
+   *  · 「飞讯 0703」（**当前活跃卡**，`:36`）
+   *    `(typeof SillyTavern !== 'undefined' && SillyTavern.getContext().name1) ? … : '{{user}}'`
+   *    ⇒ 落到兜底**字面量** `{{user}}`（未展开的宏）。
+   *
+   * 基准两面都有：宿主 `getContext()` 的 40 成员含 `name1`/`name2`；iframe 顶层
+   * `≡ getContext()` 展开（`iframe/predefine.js:26-35` 的父页投影）。
+   * **两面各断一次**（L49：并集口径会掩盖单面缺失 —— 这正是 T-46 被遮住这么久的原因）。
+   */
+  it('镜像：name1 在【顶层】与【getContext】两面都可取（真构建产物，两面各断）', () => {
+    const sandbox = makeShimSandbox({ userName: '示例人设乙', character: { name: '小玉' } })
+    const st = sandbox.SillyTavern as {
+      name1?: unknown
+      name2?: unknown
+      getContext?: () => Record<string, unknown>
+    }
+    expect(st.name1).toBe('示例人设乙')
+    expect(st.name2).toBe('小玉')
+    const ctx = st.getContext?.() ?? {}
+    expect(ctx.name1).toBe('示例人设乙')
+    expect(ctx.name2).toBe('小玉')
+  })
+
+  /**
+   * **负控**：快照里没有 `userName`（宏环境未水合）时，两面都必须**严格 undefined**
+   * —— 不能是 `''`（卡会把它当成"用户名是空串"直接拼进去），也不能是占位串。
+   * 同时对照 `name2` **仍可用**，证明"缺失"是本字段的诚实缺省，而不是整个面塌掉。
+   */
+  it('负控：无 userName 时两面均为 undefined（不给空串/不给占位），name2 不受影响', () => {
+    const sandbox = makeShimSandbox({ character: { name: '小玉' } })
+    const st = sandbox.SillyTavern as { name1?: unknown; name2?: unknown; getContext?: () => Record<string, unknown> }
+    expect(st.name1).toBeUndefined()
+    expect((st.getContext?.() ?? {}).name1).toBeUndefined()
+    expect(st.name2).toBe('小玉')
+    expect((st.getContext?.() ?? {}).name2).toBe('小玉')
   })
 
   /**

@@ -30,7 +30,7 @@ import { rpApi } from './rpc.ts'
 import { useRpSlug } from './RpStateFloat.tsx'
 import { registerOwnFloatResolver } from './script-ui-guard.ts'
 import { notifyDisplayMutation } from './RpNativeChat.tsx'
-import { refreshHostMacroEnv } from './host-macro-bridge.ts'
+import { getHostMacroEnv, refreshHostMacroEnv } from './host-macro-bridge.ts'
 import {
   buildIframeDocument, deepMergeAssign, deepMergeInsert, getButtonEventId, handleBridgeCall,
   parseIncomingMessage, type ScriptStatus, type SessionScript, type ThBridgeDeps, type ThChatMessage,
@@ -42,6 +42,16 @@ import {
 const TH_DISPLAY_MUTATION_APIS = new Set([
   'regexes:replace', 'preset:put', 'preset:delete', 'preset:rename', 'preset:load', 'display:reload',
 ])
+
+/** 【心跳 64】宿主宏环境里的**用户名**（真 ST 全局 `name1` 的唯一来源）。
+ *  未水合 / 空串 / 取不到 ⇒ `undefined` —— **绝不给假值**（帧内两面都读该字段，
+ *  给 `''` 会让卡把用户名写成空串，给占位会让卡把它当真实名字）。 */
+function hostUserName(): string | undefined {
+  try {
+    const u = getHostMacroEnv()?.user
+    return (typeof u === 'string' && u.length > 0) ? u : undefined
+  } catch { return undefined }
+}
 
 // getTavernHelperVersion 必须返回真 TH 语义的 semver：MVU bundle 等脚本会拿它跑
 // compare-versions（>= 4.0.14 判定）——非 semver 字符串会让整包 ready 回调炸掉、Mvu 挂不上。
@@ -850,6 +860,9 @@ class SessionRuntime {
         slug: this.slug,
         characterLorebook,
         messages: Array.isArray(chat?.messages) ? chat.messages : [],
+        // 【心跳 64】用户名（真 ST 全局 `name1` / `getContext().name1`）的唯一来源。
+        // 取不到（宏环境未水合）时保持 undefined —— 帧内两面都读该字段，**不给假值**。
+        userName: hostUserName(),
       }
       this.contextSnapshot = snapshot
       // T-37：宿主页 SillyTavern.getContext() 读同一份快照（引用不变 → 门面记忆化命中，
@@ -858,23 +871,43 @@ class SessionRuntime {
       // T-44：当前活跃会话 id（宿主门面 chatId/getCurrentChatId）
       lastActiveSessionId = this.sessionId
       // T-44：同步宏环境预热（身份/变量/自定义宏；单源复用显示期数据面，失败静默保留旧值）
-      refreshHostMacroEnv(this.slug, this.sessionId)
-      for (const [scriptId, frame] of this.frames) {
-        frame.contentWindow?.postMessage({
-          '__dsht_th': true, secret: this.secret, scriptId,
-          th: 'context', context: snapshot,
-        }, '*')
-      }
-      // 【P3a 2026-09-07】guest 楼层帧同样要收快照——卡内脚本（示例游戏开场白状态栏等）
-      // 在楼层 iframe 直接调 getContext/getCharWorldbookNames；只推脚本帧会让楼层帧
-      // 永远停在 __dshtContextPending 空壳 → 「未绑定主世界书」误报（实机实证）。
-      // 推送同样受 shim 监听器安装竞态影响 → 走重试梯子。
-      for (const scriptId of this.guestFrames.keys()) {
-        this.pushContextToGuest(scriptId)
-      }
+      // 【心跳 64】+ 就绪回调：宏环境是**异步**水合的，而本函数在同一轮同步里就推快照
+      // ⇒ 首帧 `name1` 恒 undefined。就绪时**原地补字段并重推一次**
+      //（postMessage 是结构化克隆，帧内拿到的是独立副本 ⇒ 只改宿主对象不重推对帧内无效）。
+      // 原地改字段（不换对象）⇒ 宿主门面的引用稳定性不受影响（T-37 的身份比较仍成立）。
+      refreshHostMacroEnv(this.slug, this.sessionId, () => {
+        if (this.destroyed) return
+        const u = hostUserName()
+        if (u === undefined) return
+        const snap = this.contextSnapshot
+        if (snap === null || snap.userName === u) return
+        snap.userName = u
+        this.pushContextSnapshotToFrames()
+      })
+      this.pushContextSnapshotToFrames()
     }).catch((e: Error) => {
       console.warn('[dsht-th] 上下文快照拉取失败:', (e as Error).message)
     })
+  }
+
+  /** 【心跳 64】把当前快照推给**全部脚本帧 + 楼层帧**（首次推送与宏环境就绪后的重推共用单实现）。
+   *  集中一处避免「重推时漏推楼层帧」这类静默不一致。 */
+  private pushContextSnapshotToFrames(): void {
+    const snapshot = this.contextSnapshot
+    if (snapshot === null) return
+    for (const [scriptId, frame] of this.frames) {
+      frame.contentWindow?.postMessage({
+        '__dsht_th': true, secret: this.secret, scriptId,
+        th: 'context', context: snapshot,
+      }, '*')
+    }
+    // 【P3a 2026-09-07】guest 楼层帧同样要收快照——卡内脚本（示例游戏开场白状态栏等）
+    // 在楼层 iframe 直接调 getContext/getCharWorldbookNames；只推脚本帧会让楼层帧
+    // 永远停在 __dshtContextPending 空壳 → 「未绑定主世界书」误报（实机实证）。
+    // 推送同样受 shim 监听器安装竞态影响 → 走重试梯子。
+    for (const scriptId of this.guestFrames.keys()) {
+      this.pushContextToGuest(scriptId)
+    }
   }
 
   // ---- 会话事件流（快照 diff → ST 事件投递）----

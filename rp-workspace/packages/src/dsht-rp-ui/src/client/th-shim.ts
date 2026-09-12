@@ -209,6 +209,22 @@ export interface ThContextSnapshot {
    */
   extensionSettingsRegex?: Array<Record<string, unknown>>
   messages?: ThChatMessage[]
+  /**
+   * 【心跳 64】用户名 —— 真 ST 全局 `name1` 与 `getContext().name1` 的**同一来源**。
+   *
+   * 宿主从**同步宏环境**（`getHostMacroEnv().user`，即用户 persona 名）并入本字段；
+   * 宏环境是**异步水合**的 ⇒ 首帧可能缺省，水合完成后宿主**重推快照**补齐。
+   *
+   * 为什么必须补（实测用法，非推断）：
+   * - `SillyTavern.name1` 顶层直取 —— `世界书控制 0708`（**当前活跃卡**）
+   *   `(typeof SillyTavern !== "undefined") ? SillyTavern.name1 : "User"`
+   *   **只有对象级守卫、无属性级守卫** ⇒ 守卫通过但取到 `undefined` ⇒ 渲染出 `"undefined: 内容"`。
+   * - `getContext().name1` —— `飞讯 0703`（**当前活跃卡**）
+   *   `(typeof SillyTavern !== 'undefined' && SillyTavern.getContext().name1) ? … : '{{user}}'`
+   *   ⇒ 落到兜底**字面量** `{{user}}`（未展开的宏）。
+   * 基准 `getContext()` 含 `name1`（`st-context.js:120-121`，宿主面 40 成员里两者都在）。
+   */
+  userName?: string
   [key: string]: unknown
 }
 
@@ -1614,6 +1630,12 @@ function buildStContextFacade() {
     },
     nameOverride: charName,
     characterName: charName,
+    // 【心跳 64】真 ST 的 getContext() **含** name1/name2（st-context.js:120-121；
+    // 宿主面 40 成员里两者都在，帧内此前**一个都没有** ⇒ 与基准不符，L36）。
+    // 实测用法：getContext().name1（飞讯 0703）落到兜底字面量 {{user}}。
+    // 两面（顶层 / getContext）取**同一份快照字段**，保证同源。
+    name1: ctx.userName,
+    name2: charName,
     presetName: ctx.presetName != null ? ctx.presetName : undefined,
     chat: messages,
     chatLength: messages.length,
@@ -2349,6 +2371,13 @@ Object.defineProperty(window, 'SillyTavern', {
       // —— MVU 顶层数据面 ——
       chat: __dshtStChat(),
       chatCompletionSettings: ctx.chatCompletionSettings,
+      // 【心跳 64】真 ST 的顶层 window.SillyTavern **≡ getContext() 展开**
+      //（基准 iframe/predefine.js:26-35 的父页投影逐字就是 { ...getContext(), getContext }）
+      // ⇒ 顶层与 getContext 面**两面都含** name1/name2。帧内此前只有 name2，
+      // 而「世界书控制 0708」（当前活跃卡）用 SillyTavern.name1 **顶层直取**
+      // 且**只有对象级守卫** ⇒ 取到 undefined ⇒ 渲染出 "undefined: 内容"。
+      // 值同源于快照字段 userName（与 getContext 面**同一份**，不各写一遍）。
+      name1: ctx.name1,
       name2: ctx.characterName,
       getCurrentChatId: function () { return (latestContext && latestContext.slug != null && typeof latestContext.slug === 'string') ? latestContext.slug : 'current'; }, // 字符串 chat id（比较/文件名用）
       // —— 弹窗（沙箱无 UI，TEXT/ALERT 自动确认；CONFIRM 保守取消并 console 记名）——

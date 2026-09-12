@@ -125,7 +125,22 @@ async function fetchScope(scope: 'global' | 'character' | 'chat', slug: string, 
  * - **不抛错**：数据面失败时保留旧环境（若有），门面继续可用；
  * - `sessionId` 为空 = RP 会话已关闭 → **清空**环境（否则会用上一个角色的身份做替换）。
  */
-export function refreshHostMacroEnv(slug: string | null | undefined, sessionId: string | null | undefined): void {
+export function refreshHostMacroEnv(
+  slug: string | null | undefined,
+  sessionId: string | null | undefined,
+  /**
+   * 【心跳 64】环境就绪回调（可选，向后兼容 —— 返回值仍为 `void`）。
+   *
+   * 动因：`name1`（用户名）只在宏环境里，而本函数是**异步水合**的；调用方
+   * （`RpScriptHost.loadContextSnapshot`）在**同一轮同步**里就要把上下文快照推给帧，
+   * 那时 `env` 往往还是旧值/null ⇒ 帧内 `name1` 首帧恒 undefined。
+   * 给了这个回调，调用方就能在**真正就绪时重推一次快照**。
+   *
+   * 语义保证：**只要返回值可用就一定回调**（缓存命中时**同步**回调，避免"明明有值却不通知"）。
+   * 正在水合（`inflightKey === key`）时不回调 —— 由**先发起的那一次**的回调负责通知。
+   */
+  onReady?: (env: HostMacroEnv) => void,
+): void {
   const s = typeof slug === 'string' ? slug : ''
   const sid = typeof sessionId === 'string' ? sessionId : ''
   if (!s || !sid) {
@@ -135,7 +150,7 @@ export function refreshHostMacroEnv(slug: string | null | undefined, sessionId: 
   }
   const key = `${s}::${sid}`
   const now = Date.now()
-  if (env !== null && isFresh(env, key, now)) return
+  if (env !== null && isFresh(env, key, now)) { onReady?.(env); return }
   if (inflightKey === key) return
   inflightKey = key
   void (async () => {
@@ -159,6 +174,8 @@ export function refreshHostMacroEnv(slug: string | null | undefined, sessionId: 
         scopes: { global: g, character: c, chat: ch },
         at: Date.now(),
       }
+      // 就绪通知（放在赋值之后：回调里读 getHostMacroEnv() 一定拿到新值）
+      onReady?.(env)
     } catch {
       /* 保留旧环境；门面按「原文透传」降级 */
     } finally {

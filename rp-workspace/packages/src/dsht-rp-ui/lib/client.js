@@ -6026,7 +6026,7 @@ async function fetchScope(scope, slug, sessionId) {
     return {};
   }
 }
-function refreshHostMacroEnv(slug, sessionId) {
+function refreshHostMacroEnv(slug, sessionId, onReady) {
   const s = typeof slug === "string" ? slug : "";
   const sid = typeof sessionId === "string" ? sessionId : "";
   if (!s || !sid) {
@@ -6036,7 +6036,10 @@ function refreshHostMacroEnv(slug, sessionId) {
   }
   const key = `${s}::${sid}`;
   const now = Date.now();
-  if (env !== null && isFresh(env, key, now)) return;
+  if (env !== null && isFresh(env, key, now)) {
+    onReady?.(env);
+    return;
+  }
   if (inflightKey === key) return;
   inflightKey = key;
   void (async () => {
@@ -6058,6 +6061,7 @@ function refreshHostMacroEnv(slug, sessionId) {
         scopes: { global: g, character: c, chat: ch },
         at: Date.now()
       };
+      onReady?.(env);
     } catch {
     } finally {
       if (inflightKey === key) inflightKey = null;
@@ -7583,6 +7587,12 @@ function buildStContextFacade() {
     },
     nameOverride: charName,
     characterName: charName,
+    // \u3010\u5FC3\u8DF3 64\u3011\u771F ST \u7684 getContext() **\u542B** name1/name2\uFF08st-context.js:120-121\uFF1B
+    // \u5BBF\u4E3B\u9762 40 \u6210\u5458\u91CC\u4E24\u8005\u90FD\u5728\uFF0C\u5E27\u5185\u6B64\u524D**\u4E00\u4E2A\u90FD\u6CA1\u6709** \u21D2 \u4E0E\u57FA\u51C6\u4E0D\u7B26\uFF0CL36\uFF09\u3002
+    // \u5B9E\u6D4B\u7528\u6CD5\uFF1AgetContext().name1\uFF08\u98DE\u8BAF 0703\uFF09\u843D\u5230\u515C\u5E95\u5B57\u9762\u91CF {{user}}\u3002
+    // \u4E24\u9762\uFF08\u9876\u5C42 / getContext\uFF09\u53D6**\u540C\u4E00\u4EFD\u5FEB\u7167\u5B57\u6BB5**\uFF0C\u4FDD\u8BC1\u540C\u6E90\u3002
+    name1: ctx.userName,
+    name2: charName,
     presetName: ctx.presetName != null ? ctx.presetName : undefined,
     chat: messages,
     chatLength: messages.length,
@@ -8318,6 +8328,13 @@ Object.defineProperty(window, 'SillyTavern', {
       // \u2014\u2014 MVU \u9876\u5C42\u6570\u636E\u9762 \u2014\u2014
       chat: __dshtStChat(),
       chatCompletionSettings: ctx.chatCompletionSettings,
+      // \u3010\u5FC3\u8DF3 64\u3011\u771F ST \u7684\u9876\u5C42 window.SillyTavern **\u2261 getContext() \u5C55\u5F00**
+      //\uFF08\u57FA\u51C6 iframe/predefine.js:26-35 \u7684\u7236\u9875\u6295\u5F71\u9010\u5B57\u5C31\u662F { ...getContext(), getContext }\uFF09
+      // \u21D2 \u9876\u5C42\u4E0E getContext \u9762**\u4E24\u9762\u90FD\u542B** name1/name2\u3002\u5E27\u5185\u6B64\u524D\u53EA\u6709 name2\uFF0C
+      // \u800C\u300C\u4E16\u754C\u4E66\u63A7\u5236 0708\u300D\uFF08\u5F53\u524D\u6D3B\u8DC3\u5361\uFF09\u7528 SillyTavern.name1 **\u9876\u5C42\u76F4\u53D6**
+      // \u4E14**\u53EA\u6709\u5BF9\u8C61\u7EA7\u5B88\u536B** \u21D2 \u53D6\u5230 undefined \u21D2 \u6E32\u67D3\u51FA "undefined: \u5185\u5BB9"\u3002
+      // \u503C\u540C\u6E90\u4E8E\u5FEB\u7167\u5B57\u6BB5 userName\uFF08\u4E0E getContext \u9762**\u540C\u4E00\u4EFD**\uFF0C\u4E0D\u5404\u5199\u4E00\u904D\uFF09\u3002
+      name1: ctx.name1,
       name2: ctx.characterName,
       getCurrentChatId: function () { return (latestContext && latestContext.slug != null && typeof latestContext.slug === 'string') ? latestContext.slug : 'current'; }, // \u5B57\u7B26\u4E32 chat id\uFF08\u6BD4\u8F83/\u6587\u4EF6\u540D\u7528\uFF09
       // \u2014\u2014 \u5F39\u7A97\uFF08\u6C99\u7BB1\u65E0 UI\uFF0CTEXT/ALERT \u81EA\u52A8\u786E\u8BA4\uFF1BCONFIRM \u4FDD\u5B88\u53D6\u6D88\u5E76 console \u8BB0\u540D\uFF09\u2014\u2014
@@ -8871,6 +8888,14 @@ var TH_DISPLAY_MUTATION_APIS = /* @__PURE__ */ new Set([
   "preset:load",
   "display:reload"
 ]);
+function hostUserName() {
+  try {
+    const u = getHostMacroEnv()?.user;
+    return typeof u === "string" && u.length > 0 ? u : void 0;
+  } catch {
+    return void 0;
+  }
+}
 var SHIM_VERSION = "4.8.5";
 var READY_TIMEOUT_MS = 15e3;
 var schemaFailureNotifier = null;
@@ -9535,27 +9560,45 @@ var SessionRuntime = class {
         ...ctx,
         slug: this.slug,
         characterLorebook,
-        messages: Array.isArray(chat?.messages) ? chat.messages : []
+        messages: Array.isArray(chat?.messages) ? chat.messages : [],
+        // 【心跳 64】用户名（真 ST 全局 `name1` / `getContext().name1`）的唯一来源。
+        // 取不到（宏环境未水合）时保持 undefined —— 帧内两面都读该字段，**不给假值**。
+        userName: hostUserName()
       };
       this.contextSnapshot = snapshot;
       lastContextSnapshot = snapshot;
       lastActiveSessionId = this.sessionId;
-      refreshHostMacroEnv(this.slug, this.sessionId);
-      for (const [scriptId, frame] of this.frames) {
-        frame.contentWindow?.postMessage({
-          "__dsht_th": true,
-          secret: this.secret,
-          scriptId,
-          th: "context",
-          context: snapshot
-        }, "*");
-      }
-      for (const scriptId of this.guestFrames.keys()) {
-        this.pushContextToGuest(scriptId);
-      }
+      refreshHostMacroEnv(this.slug, this.sessionId, () => {
+        if (this.destroyed) return;
+        const u = hostUserName();
+        if (u === void 0) return;
+        const snap = this.contextSnapshot;
+        if (snap === null || snap.userName === u) return;
+        snap.userName = u;
+        this.pushContextSnapshotToFrames();
+      });
+      this.pushContextSnapshotToFrames();
     }).catch((e) => {
       console.warn("[dsht-th] \u4E0A\u4E0B\u6587\u5FEB\u7167\u62C9\u53D6\u5931\u8D25:", e.message);
     });
+  }
+  /** 【心跳 64】把当前快照推给**全部脚本帧 + 楼层帧**（首次推送与宏环境就绪后的重推共用单实现）。
+   *  集中一处避免「重推时漏推楼层帧」这类静默不一致。 */
+  pushContextSnapshotToFrames() {
+    const snapshot = this.contextSnapshot;
+    if (snapshot === null) return;
+    for (const [scriptId, frame] of this.frames) {
+      frame.contentWindow?.postMessage({
+        "__dsht_th": true,
+        secret: this.secret,
+        scriptId,
+        th: "context",
+        context: snapshot
+      }, "*");
+    }
+    for (const scriptId of this.guestFrames.keys()) {
+      this.pushContextToGuest(scriptId);
+    }
   }
   // ---- 会话事件流（快照 diff → ST 事件投递）----
   /** L1a 竞态修复：加载中的 iframe 还没装消息监听——事件按 scriptId 入队，running 后补投

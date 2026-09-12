@@ -10,16 +10,66 @@
 | 事实 | 说明 |
 |---|---|
 | 源码 runtime | **0.1.5-rc.1**（源码 sentinel **v283**，阶段 0/1/2/3/4 已全部推完） |
-| 仓库最新产物 | **x86_64 debug sentinel v282（196,847,508 B）/ arm64 release sentinel v283（128,373,736 B）**，9-12 06:40 构建（心跳 63C 续的 T-69 修复 + **A10 构建闸首次生效**），新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**三层核验**命中 |
-| 设备侧 | **已装 v282**（心跳 63C 续完成，`.installed-v282` 哨兵复核）；实机取证：T-67 预检在新包上跑（`scanned 81 / ok 81 / repaired 0`）· **T-69 三级验收全 PASS**（端点 200 / 产物三方 md5 一致 / **UI 面板首次可用**）· 设备副本 mtime 06:44 = 首启解压（**无第 ⑦ 类断链**） |
+| 仓库最新产物 | **x86_64 debug sentinel v290（196,851,409 B）/ arm64 release sentinel v291（128,377,632 B）**，9-12 11:57 构建（**心跳 64 的 T-72 修复** `name1` 帧内两面补齐），新符号已在 staging → APK 内 `assets/dsh-runtime.zip` → 双架构**核验**命中（`pushContextSnapshotToFrames`×3 · `hostUserName`×3 · `name1: ctx.name1`×1） |
+| 设备侧 | **已装 v290**（x86_64 debug，装机 200，`.installed-v290` 哨兵复核，旧 v288 被自动清理）；实机取证：**7 个 TH 脚本帧 live 读数** · **T-72 实机验收 7/7 PASS**（帧内**顶层**与 **getContext** 两面 `name1` 均取到 `"示例人设乙"`，帧面签名 `[23,13,40,false]` = 修复前 `[22,11,40,false]` 的 **+1/+2** 精确对上改动面）· T-67 预检在新包上跑（`scanned 81 / ok 81 / repaired 0`）· **T-69 三级验收全 PASS** · 设备副本 mtime = 首启解压（**无第 ⑦ 类断链**） |
 | 升级进度 | **5 / 5** ✅ **达成**（阶段 4 已判定通过） |
-| 单测 | **1184 项全绿（56 文件）** · `typecheck` 三段式 **0 错**（心跳 63D 复跑确认） |
-| 设备回归 | `stage4-regression` **20/21**（心跳 63C 续复跑，**首项 `✓ sessions-audit 可用 81 个会话` 即 T-69 修复被回归覆盖**；唯一失败 `variant/groups` = 探针未 attach，与基线一致） |
+| 单测 | **1186 项全绿（56 文件）** · `typecheck` 三段式 **0 错**（心跳 64 复跑确认） |
+| 设备回归 | `stage4-regression` **21/21**（心跳 64 续首次全绿 —— 因本轮 RP 会话已 attach，`variant/groups` 由"探针未 attach"变为 `HTTP 200 groups=0`；此前基线为 **未 attach 20/21**） |
 | 未提交改动 | 心跳 62 的**新增** `packages/src/dsht-preflight/` + `tests/preflight.spec.ts` + `NodeService.kt` 注入 + 两个构建脚本 + **心跳 62B 的 T-48（`th-shim.ts` / `host-vendor.ts` + 两个 spec）** + **心跳 63 的 `audit-card-context-surface.mjs` 导入守卫 + `stage3-device/hb63/`** + 文档回写；**并发实例的** `DSH Android Roleplay App Plan.md` 等未提交改动**一份没碰**（`host-vendor.ts` 里同时也带着它的 T-25 脱敏改动，见提交说明） |
-| 本轮性质 | **心跳 63D = T-70 性能根因彻查 + 修复 + 实机验收**（**先把"慢在哪类资源"量清楚，再动手** —— 原登记把根因写成 I/O，实测证明是 **CPU**）⇒ **改了功能源码**（新增 `dsht-plugin-shared/jsonl-scan.ts` + `collectSessionsAudit` 切换 + `SessionsPanel.tsx` 不清零）⇒ **APK 已重打**：**x86_64 debug v288（196,850,436 B）/ arm64 release v289（128,376,664 B）**，9-12 09:27 · 单测 **1184 全绿** · `typecheck` 三段式 **0 错**；新增可复跑对拍单测 `tests/jsonl-scan.spec.ts`（**20 条**，19 条"新 ≡ 旧"逐字对拍） |
+| 本轮性质 | **心跳 64 = T-46 live 帧读数闭合 + T-71 高频轮询定性 + T-72 真实缺陷修复（含实机验收）+ T-73 定性**（① 首次取到**真实脚本帧**读数，`identitySame=false` 实证"非投影"、投影得失算成 **得到 27 / 丢 9（实际 8）**；② 把"看着像我方 API 被高频打"追到底 ⇒ **语料陷阱（两副本同名 id）→ 卡自带 `setInterval` → 基准同语义 → 未落盘** ⇒ **非缺陷**；③ 从"顶层直取普查"里挖出**帧内两面都缺 `name1`** ⇒ 当前活跃卡渲染 `"undefined: 内容"` ⇒ **已修，5 处源码 + 2 条单测，实机 7/7 PASS ×2 组帧样本**；④ **T-73**：`Choose workspace 卡 Loading workspaces…` ⇒ **定性为"慢"非"坏"、非我方缺陷**（文案/状态机在官方组件；服务实测 1.2–6.0 s 而历史观察窗口仅 3 s；reload 实验**未能复现**）⇒ **改了产品源码** ⇒ **APK 重打 v290 / v291** · 单测 **1186 全绿（56 文件）** · `typecheck` 三段式 **0 错** · `stage4-regression` **21/21**；证据 `stage3-device/hb64/{T46-LIVE-FRAME-EVIDENCE,T71-POLLING-CENSUS,T72-NAME1-TOPFACE-FIX,T73-WORKSPACE-PICKER-TRIAGE}.md`；沉淀 **L109 / L110 / L111** |
 | 发布闸门 | 🔴 **未达标**（T-25/T-61 心跳 61 复跑：受控面 **616 文件 / 合计 305 项**）⇒ **现在不能公开**；<br>✅ **`SECRET` 已由 1 → 0**（🔴 发布阻断项清除，但⚠️ 属**并发实例**在 `DSH Android Roleplay App Plan.md` 的**未提交**改动）<br>⚠️ **且密钥仍在本地 git 历史里**（仓库无远端、117 个提交从未推送 ⇒ 非对外事故）—— **P0 历史重写未做**；剩余 `WXID 16 / LOCALPATH 70 / SERVER 11 / PAYLOAD 8 / WORDLIST 200` |
 
 **当前状态**：升级目标（evaluate.sh 5/5）已达成。
+- **心跳 64** = **T-46 live 帧读数闭合 + T-71 高频轮询定性（追到底判定为非缺陷）**。
+  ① **T-46 最后一处诚实边界首次闭合**：新工具 `stage3-device/hb64/frame-surface-diff.mjs`（纯只读）经 CDP 取到
+  **7 个 `about:srcdoc` 脚本帧 + 1 个宿主页**，**7 帧形态签名完全一致** `[顶层 22 / getContext 11 / 父页 40 / identitySame=false]`
+  ⇒ 心跳 63 的四口径静态结论（22 / 11 / 40）**被 live 逐项确认**，且 **`identitySame=false` 实证"帧内 ST 是自建对象、不是父页投影"**。
+  **首次拿到名单级证据** ⇒ **投影得失精确算出**：相对顶层 **得到 27 / 丢 9**；相对 getContext **得到 29 / 丢 0**。
+  ⚠️ **口径修正**：丢的 9 个里含 `getContext` 自身，而投影定义**显式补回它** ⇒ **实际丢 8 个**
+  （`characterId · characters · getCharacterCardFields · getChatCompletionModel · getRequestHeaders · loadWorldInfo · registerMacro · unregisterMacro`）。
+  ⇒ **T-46 判定条件由静态推断升级为实测结论**：投影必须与「宿主面补齐这 8 个」配对，其中两个正是 T-47 待决成员
+  ⇒ **T-46 与 T-47 必须合并拍板**。
+  **另得两条新观察**：**帧内"两面互不包含"** —— getContext(11) 有 **7 个成员**（`characterName · chatLength · nameOverride · presetName ·
+  promptManager · renderExtensionTemplate · renderExtensionTemplateAsync`）**在顶层(22)里不存在**，而基准形态是"顶层 ≡ getContext 展开"
+  （我方并集仅 29）⇒ 卡在顶层直取这 7 个会得 `undefined`（**不依赖 T-46 决策即可低成本单独修**，登记）；
+  **宿主页顶层仅 3 个 key**（`getContext, i18n, libs`）⇒ 但与卡脚本**无直接可达路径**（卡跑在帧内）、投影读的是
+  `parent.SillyTavern.getContext()` ⇒ **判为不修**（无效功，L36）。
+  ② **T-71 定性（第一反应是"我方 API 性能缺陷"，追到底推翻）**：logcat 显示某帧 642.3 s 内 `vars:get` **6209 次**（9.67/s）·
+  `vars:put` **643 次**（1.00/s，**含写**）。
+  🔴 **先踩语料陷阱（本轮最重要方法学产出 → L109）**：设备上有**两个卡副本**（`b7s7x3`=0605 / `18l9cbg`=0703-0708），
+  **同名脚本 id 相同、内容不同**（「世界书控制」84,866 B vs **157,718 B**）⇒ 按 id 取语料**不确定取到哪一个**；
+  首轮取到旧版（零处 `replaceVariables`），与现象**对不上**，一度记为"真实矛盾"。
+  **纠错判据**：`c1ec74d0`（剧情逻辑 0703）**只在 `18l9cbg` 而它在页面上有帧** ⇒ 活动副本 = `18l9cbg`，换语料后一次自洽（15 处 `updateVariablesWith`）。
+  **根因链**：卡自带 `setInterval(masterLoop, 1000)` + 每轮约 9 次 `getVariables` + 1 次 `updateVariablesWith`
+  ⇒ 我方 `th-shim.ts:771-775` 的 `updateVariablesWith = 1×vars:get + 1×vars:put` ⇒ **与 `643 : 643` 精确吻合**。
+  **基准对照（判"非缺陷"的判据 → L110）**：基准 `variables.ts:211-223` 的 `updateVariablesWith` **同为 get + replaceVariables**，
+  且基准 `insertOrAssignVariables`（`:241-246`）**本身就走它** ⇒ **"每秒 1 次写"不是我方引入**。
+  **落盘判据**：`rp/variables/global.json` 仅 **182 B** 且 **31 h 未变**、活动会话 state 文件 2.2 h 未变 ⇒ **写未落盘**。
+  ⇒ **判定：非缺陷**；仅「`vars:get` 每次 `readFile`（基准内存）」登记为**观察**。
+  ③ **顺带登记两条真实差异（不阻塞、当前路径不触发）**：我方 `insertOrAssignVariables` 对**非 chat 作用域**走服务端 `vars:merge`，
+  而**基准一律走 `updateVariablesWith`** ⇒ 基准 replace 语义**全量写回（副作用：能删键）**，merge 不能（当前活跃脚本不触发）；
+  `deepMergeIncoming` 与 lodash `_.mergeWith` 在 **`undefined` 源值**上分叉（**数组替换一侧一致** ✅；lodash 跳过、我方覆盖）⇒ **低优先不改**。
+  ④ 🆕 **T-72 —— 从"量缺口"里挖出的真实用户可见缺陷（已修）**：帧内 `window.SillyTavern` **顶层与 `getContext()` 两面都没有 `name1`**（用户名），
+  而**当前活跃卡两种取法都在用**：`世界书控制_0708.js:4130` **顶层直取且只有对象级守卫**
+  （`typeof SillyTavern !== "undefined" ? SillyTavern.name1 : "User"` —— `SillyTavern` 在帧内确实存在 ⇒ 守卫通过 ⇒ `undefined`
+  ⇒ 拼出 **`"undefined: 内容"`**）；`飞讯_0703.js:36` 经 `getContext().name1` 但兜底是**未展开的宏字面量** `'{{user}}'`。
+  **基准两面都有**（我方 `name2` 在列而 `name1` 缺 —— 同一对成员只挂了一半）。宿主侧**确有真值**（CDP 实测 `{"name1":"示例人设乙"}`）。
+  **修复 5 处**（`th-shim.ts` 快照加 `userName` + 两面各补 `name1`；`host-macro-bridge.ts` 加**可选就绪回调**
+  `refreshHostMacroEnv(slug,sid,onReady?)`；`RpScriptHost.tsx` 快照并入 `hostUserName()` + 抽出 `pushContextSnapshotToFrames()`
+  单实现 + 宏环境就绪时**原地补字段并重推**）+ **2 条单测**。**两处设计取舍（有意为之）**：① 就绪重推用**原地改字段**而非换新对象
+  （`T-37` 依赖快照**引用稳定**）；② `hostUserName()` 缺省返回 `undefined`、**绝不返回 `''`**。⚠️ 过程中**再踩 L70（第三次）**：
+  在**模板串内部**的注释里写了反引号 ⇒ 终止模板串 ⇒ `tsc` 报 20+ 条 `TS1443/TS1005`。
+  ⑤ **T-46 决策的新增量化**：语料顶层直取 **21 种 / 254 次**，帧内顶层**缺席 10 种**，其中**仅 `name1`/`uuidv4` 在宿主面有**
+  ⇒ **投影只能补回 2 种**，其余 8 种（含 6 个生成栈成员）投影也补不上 ⇒ **T-46 与 T-47 必须合并拍板**（第三次确认）。
+  ⑥ **实机验收（v290 装机）**：**T-72 判据 7/7 PASS**（`t72-name1-probe.mjs`，7 个 `about:srcdoc` 帧；两面取值 `"示例人设乙"` 一致；**负控 `name3` 两面缺席** ⇒ 探针能区分存在/缺席）·
+  帧面签名由 `[22,11,40,false]` → **`[23,13,40,false]`**（**+1/+2** 与「顶层只补 `name1`、getContext 面补 `name1`+`name2`」逐项对上，`pCtx`/`identitySame` 未动）；
+  `stage4-regression` **21/21**（首次全绿，会话已 attach）。
+  ⚠️ **前置条件**：`srcdoc` 帧**只在打开 RP 会话后才存在**（冷启 iframe 数 = 0）⇒ 直接跑探针会得到与"探针坏了"同形的**假空结果**。
+  ⚠️ **诚实登记**：为取 live 帧打开了用户的真实 RP 会话；核对后产生的写入**全部附加/派生**（1 条 `session/end-seed` 元数据事件 + turn 锚点文件快照 + 卡自身变量轮询 + projcache），**会话总数 81 不变**，**不做还原**。
+  ⑦ **交付**：**已改产品源码** ⇒ 双架构 APK 重打 **x86_64 debug v290（196,851,409 B）/ arm64 release v291（128,377,632 B）**，
+  载荷新符号双向核验（`pushContextSnapshotToFrames`×3 · `hostUserName`×3 · `name1: ctx.name1`×1，两个 APK 都命中）；
+  证据 `stage3-device/hb64/{T46-LIVE-FRAME-EVIDENCE,T71-POLLING-CENSUS,T72-NAME1-TOPFACE-FIX}.md`；
+  新工具 `frame-surface-diff.mjs` / `cross-topface-gap.mjs` / `extract-script.mjs`；沉淀 **L109 / L110 / L111**。
 - **心跳 63D** = **T-70 收口（性能根因彻查 + 修复 + 实机验收）+ T-47 A 档落地**。
   🔴 **原登记把根因写错了**：写的是「I/O = O(全部会话字节) 且一次只有一个流在跑」，实测证明是 **CPU**。
   **两张判决性测量**：设备**裸磁盘**读 65 MB 仅 **65 ms**（≈1 GB/s）⇒ **I/O 带宽不是瓶颈**；
@@ -1942,6 +1992,122 @@ await rpApi('sessions-autoclean', { mode, dryRun: true }) // → /dsht-rp/sessio
 · `hb63d/{audit-baseline,audit-after,audit-trend}.js`（基线 / 等价性+耗时 / 连续采样看稳态）
 · `hb63d/t70-ui-probe.js`（UI 级 5 判据 + 负控）· `hb63d/t70-profile.mjs` / `t70-real.mjs`（宿主 A/B 对拍与真实实现测速）
 · `hb63d/verify-freshness.py`（产物新鲜度，按 `\uXXXX` 解码后判）。
+
+---
+
+### T-71　✅ **脚本高频轮询「看着像我方 API 被打」，追到底判定为「非缺陷」**（心跳 64）
+
+**症状**：实机 logcat 显示某帧 642.3 s 内 `vars:get` **6209 次**（9.67/s）· `vars:put` **643 次**（1.00/s，**含写**）· `wb:get` 428 次。
+
+**结论：非缺陷。** 依据三条，**顺序不可颠倒**（→ LEARNINGS **L110**）：
+
+1. **调用方是卡自己的设计**：卡源码（`世界书控制`）自带 `setInterval(masterLoop, 1000)`，
+   每轮约 9 次 `getVariables` + 1 次 `updateVariablesWith`。
+2. **语义与基准一致**：我方 `th-shim.ts:771-775` 的 `updateVariablesWith` = `vars:get` + `vars:put`
+   （**1:1，与实测 643:643 精确吻合**）；基准 `JS-Slash-Runner/src/function/variables.ts:211-223`
+   **同样是 get + `replaceVariables`（读改写）**，且基准的 `insertOrAssignVariables`（`:241-246`）**本身就走它**
+   ⇒ **"每秒 1 次写"不是我方引入的额外行为**。
+3. **落盘判据（排除最坏情形）**：`rp/variables/global.json` 仅 **182 B** 且 **31 小时未变**；
+   活动会话 state 文件 2.2 h 未变 ⇒ **写没有落到磁盘**。
+
+**仅登记为观察**：我方 `vars:get` 每次 `readFile`（基准为内存读取），目标文件仅 182 B，量级不构成负担。
+
+🔴 **过程中的语料陷阱（本轮最重要方法学产出 → L109）**：设备上存在**两个卡副本**
+（`b7s7x3` = 0605 版 / `18l9cbg` = 0703-0708 版），**同名脚本 id 相同、内容不同**
+（「世界书控制」84,866 B vs **157,718 B**）⇒ 按 id 取语料会**不确定地取到哪一个**。
+首轮取到旧版（零处 `replaceVariables`），与现象**对不上**，一度记为"真实矛盾"。
+**纠错判据（廉价且决定性）**：找一个**只在一个副本里存在**的 id —— `c1ec74d0`（剧情逻辑 0703）
+只出现在 `18l9cbg` **而它在页面上有帧** ⇒ 活动副本 = `18l9cbg`；换语料后一次自洽。
+
+**另登记两条真实差异（不阻塞、当前路径不触发）**：
+① 我方 `insertOrAssignVariables` 对**非 chat 作用域**走服务端 `vars:merge`，**基准一律走 `updateVariablesWith`**
+⇒ 基准 `replace` 语义**全量写回（副作用：能删键）**、merge 不能（当前活跃脚本走 `updateVariablesWith` ⇒ 不触发）；
+② `deepMergeIncoming` 与 lodash `_.mergeWith` 在 **`undefined` 源值**上分叉（**数组整体替换一侧一致** ✅；
+lodash **跳过** `undefined` 源、我方**覆盖成 `undefined`**）—— JSON 序列化路径不产生 `undefined`，仅内存直传可达 ⇒ **低优先不改**。
+
+**证据**：`stage3-device/hb64/T71-POLLING-CENSUS.md`
+
+---
+
+### T-72　🔴→✅ **`name1`（用户名）在帧内【顶层】与【getContext】两面都缺 ⇒ 用户侧消息渲染成 `"undefined: 内容"`**（心跳 64 发现并修复）
+
+**发现路径（每一步都可复跑）** → 见 `stage3-device/hb64/T72-NAME1-TOPFACE-FIX.md`：
+
+```
+live 帧读数 → 发现「帧内 getContext(11) 有 7 个成员顶层(22) 没有」
+   → 先量后做：check-topface-gap.mjs ⇒ 那 7 个**零处顶层直取** ⇒ 判定无效功 ✅
+        → 顺手做正控：语料里到底有没有「顶层直取」形态？⇒ **有，21 种 / 254 次**
+             → 换正确的问题：**顶层直取的成员里哪些在帧内顶层缺席？** ⇒ **10 种**
+                  → `name1` 出现在**当前活跃卡**，且用法**无属性级守卫** ⇒ 真缺陷
+```
+
+**方法学要点**：第一次量的是**错误集合**。真正的缺口是另一个交集（顶层直取 ∩ 帧内顶层缺席）。
+**"量了" ≠ "量对了集合"**。
+
+**定量**（语料 = 设备上 75 个真实脚本）：顶层直取 21 种 / 254 次；帧内顶层**已有 11 种 / 缺席 10 种**
+（`getTokenCountAsync`(10) `messageFormatting`(6) **`name1`(6)** `stopGeneration`(4) `updateMessageBlock`(4)
+`generate`(4) `generating`(2) `mainApi`(2) `onlineStatus`(2) `uuidv4`(2)）。
+⚠️ **`name2` 在列而 `name1` 缺** —— 同一对成员只挂了一半。
+
+**三条缺陷证据**：① live 帧读数（帧内顶层 22 / getContext 11 均无 `name1`，宿主 40 有）；
+② 宿主侧**确有真值**（CDP 同源求值 `{"name1":"示例人设乙",…}`）⇒ 不是"修了也是 undefined"；
+③ **卡的用法**（两例都在**当前活跃卡**）：
+`世界书控制_0708.js:4130` `(typeof SillyTavern !== "undefined") ? SillyTavern.name1 : "User"`
+—— **只有对象级守卫** ⇒ 守卫通过但取到 `undefined` ⇒ 渲染 `"undefined: 内容"`；
+`飞讯_0703.js:36` 走 `getContext().name1` + 兜底 `'{{user}}'` ⇒ 落到**未展开的宏字面量**。
+**对照**：同文件的 `getTokenCountAsync` **有属性级守卫** ⇒ 缺席只静默降级 —— **这正是 `name1` 成为缺陷的原因**。
+
+**修复（三处源码 + 2 条单测，全部单源）**：
+`th-shim.ts` 快照类型加 `userName` · 帧内 `getContext()` 面加 `name1/name2` · 帧内**顶层**加 `name1` ·
+`host-macro-bridge.ts` 的 `refreshHostMacroEnv` 加**可选就绪回调**（宏环境**异步水合** ⇒ 首帧拿不到用户名）·
+`RpScriptHost` 快照并入 `userName` 并抽出 `pushContextSnapshotToFrames()` 单实现、就绪时**原地补字段 + 重推**。
+
+**两处有意取舍（勿"顺手改"）**：① 就绪重推用**原地改字段**而非换新对象 —— `T-37` 依赖快照**引用稳定**
+（卡对 `preset_settings_openai` 做 `!==` 身份比较）；② `hostUserName()` 缺省返回 **`undefined`，绝不返回 `''`**
+（卡会把 `''` 当"用户名是空串"直接拼进文本）—— 负控用例钉住。
+
+**验收**：`typecheck` 三段式 **0 错** · 新增单测 **2 条**（正控两面各断 / 负控严格 undefined）·
+全量单测 **56 文件 / 1186 全绿** · 双架构 APK 重打 **v290 / v291** ·
+**实机验收 7/7 PASS × 两组独立帧样本**（新增探针 `stage3-device/hb64/t72-name1-probe.mjs`：逐帧断言
+① 顶层 `SillyTavern.name1` ② `getContext().name1` ③ 两面取值一致，三判据全 `"示例人设乙"`；**外加负控 `name3`**
+必须两面缺席 ⇒ 证明探针能区分存在/缺席；探针还**逐字复读卡的两种取法**）；
+**帧面签名差分** `[22,11,40,false]` → **`[23,13,40,false]`**（**+1/+2** 与改动面逐项精确对上）·
+`stage4-regression` **21/21**。
+
+⚠️ **过程中的坑（L70 第三次）**：在**模板串内**的注释写了反引号 ⇒ 终止模板串、`tsc` 报 20+ 条 `TS1443/TS1005`。
+**模板串内一律用单引号。**（T-73 的实验脚本里**第四次**复现同一坑）
+
+**顺带产出（T-46 决策的新量化）**：这 10 种缺席成员里**只有 `name1` / `uuidv4` 在宿主面有**
+⇒ **投影（T-46）只能补回 2 种**，其余 8 种（含 6 个生成栈成员）**投影也补不上**，须宿主面补齐。
+
+---
+
+### T-73　🟡 **`Choose workspace` 卡在 `Loading workspaces…` —— 定性为「慢」而非「坏」，非我方缺陷**（心跳 64 续）
+
+**一句话**：这个文案与状态机**都在官方组件里**（`@deepseek-ai/dsh-client-ui-workspace/lib/client.js:2660`
+的 `picker.loading`，渲染条件 `:1166` 的 `workspaceSnapshot.phase === "pending"`，数据来自**订阅/流**）；
+我方源码 **零命中**。历史观察窗口只有 **3 s**，而底层服务实测 **1.2–6.0 s** ⇒ **窗口短于耗时**，
+"3 秒没出结果"**不能**推出"坏了"。
+
+**定量**：我方 `POST /dsht-rp/rp/workspaces` = **978 / 995 / 924 ms**、**575,512 B**
+（轻端点对照 `rp/home` 125 ms · `rp/build-info` 100 ms ⇒ 重端点差一个数量级属预期，**功能正常**）；
+官方 `session/list`（页面内同源）= 首次 **6048 ms**，随后 1188–3629 ms。
+
+**决定性实验**（`stage3-device/hb64/t73-boot-race.mjs`，`Page.reload` + 启动窗口内每 500 ms 采样，零写入）：
+**未能复现** —— `Loading workspaces…` 在整段 150 s 窗口里**从未渲染**；按钮于 **+10.3 s** 出现、点击后立即出结果；
+官方 `session/list` 从 **+3.4 s** 起即 `ok:true`，**全程 28 次采样零失败**（比 `skill §4.2` 记的冷启竞态好得多，
+因为本轮是 **reload 不是冷启**）。
+
+**判定**：**慢**（非坏）· **非我方缺陷** · **本轮未能复现"一直卡住"** ·
+**不属 T-57 竞态族**（证据不足，本轮没覆盖真正冷启窗口）。
+
+⚠️ 按 **L104**（无时序证据不得判"真的没发生"）：只能说"**在这一条时间轴上未复现**"，
+不能反推"现象不存在"。
+
+**留给下一轮定死它的判据**（详见 `stage3-device/hb64/T73-WORKSPACE-PICKER-TRIAGE.md` §5）：
+① 必须**冷启**（`force-stop` + `monkey`）而非 reload；② 采样对象应是 **store 的 `phase` 本身**而非 DOM 文案
+（文案是 `phase==="pending"` 的**派生显示**，两者可能同形 —— L103 同族）；③ 同时抓 `adb logcat` 官方侧错误；
+④ 若确为竞态则**不在我方源码修**（合规红线），若为渲染性能才考虑我方 `rp/workspaces` 载荷瘦身。
 
 ---
 
