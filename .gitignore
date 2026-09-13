@@ -75,5 +75,14 @@ rp-workspace/packages/.vitest/
 # 说明：docs-archive/ 与 docs/ 是两个不同目录——前者专放「保留但不出库」的档案。
 docs-archive/
 
+# 【E2 2026-09-13】历史归档文档出库（与 Plan 文档同性质：含本机路径/真实卡名/
+# 第三方 provider 域名等 T-25 范畴内容；本机保留供追溯，不进任何未来提交）。
+# · docs/archive/    —— 早期计划文档（PROJECT_PLAN / IMPORT_REWORK_PLAN / UPDATE-SOP 等）
+# · loop-mvu-interact/ —— MVU 联动验证工作区（GOAL/LEARNINGS/verify-report 等）
+# ⚠️ loop-mvu-interact 被 golden-verify*.mjs 用**相对路径**引用 —— 出库后文件仍在
+#    本机，脚本照常可跑；但换机器 clone 后这些脚本会缺输入，届时需另行提供样本。
+docs/archive/
+loop-mvu-interact/
+
 # ===== 发布卫生扫描的词表（含真实卡名/人设名，严禁入库；T-25）=====
 rp-workspace/scripts/publish-hygiene-words.txt
