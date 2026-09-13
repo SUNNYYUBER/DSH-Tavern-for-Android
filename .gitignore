@@ -86,3 +86,6 @@ loop-mvu-interact/
 
 # ===== 发布卫生扫描的词表（含真实卡名/人设名，严禁入库；T-25）=====
 rp-workspace/scripts/publish-hygiene-words.txt
+# 脱敏映射表（原词→占位名）：同词表性质，属「扫描/清洗工具自身」——
+# 入库等于制造新的泄露副本（自指悖论），故不入库。
+rp-workspace/scripts/publish-hygiene-map.txt

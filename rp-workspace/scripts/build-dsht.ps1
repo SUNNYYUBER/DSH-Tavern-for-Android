@@ -1,4 +1,4 @@
-﻿﻿﻿﻿# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
+﻿﻿﻿# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
 # 用法：
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.8        # 完整流程：装新版本 DSH → 平台适配 → 验证 → 打包 → APK
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.7 -SkipInstall  # runtime 已就绪，只跑后半段（打包/APK/sentinel）
@@ -387,6 +387,38 @@ Dsht-Patch "$nmDst\dsh-session-title\lib\index.js" 'DSHT-TITLE-DETAG' `
     1 'P3-5a session-title 剥协议标签'
 
 # ---------------------------------------------------------------------------
+# P1-5. F2 flock 平台适配（0.1.5 会话写锁）——【C6 修复 2026-09-13】
+# 背景：0.1.5 的 dsh-session-persistence-jsonl 用 flock(2) 做会话写锁
+#   （SessionWriteLease.acquire() → open(session.lock) → tryLockExclusive(fd)），
+#   而 node-addon-system/lib/flock.js 的 loadBinding() 在 platform 非 linux/darwin 时
+#   直接抛 ERR_FLOCK_UNSUPPORTED_PLATFORM。Android 的 process.platform === 'android'，
+#   且 bionic 加载不了 linux-x64 原生模块 ⇒ resume 会话必然失败
+#   ⇒ **任何消息都发不出去**（实机报错原文：`flock is not supported on android-x64`）。
+#
+# ⚠️ 本补丁此前**只存在于 python 路径**（build-wb.sh 调 apply-platform-patches.py Step 4.6），
+#   而 build-dsht.ps1 全文无 flock —— 两条构建路径不等价：
+#     · -SkipInstall（复用已有 runtime）：补丁已在，侥幸可用；
+#     · 完整安装（pnpm install 重建 node_modules）：**补丁丢失** ⇒ 新机器首装即"发不出消息"。
+#   本段补齐 ps1 路径，marker 与 python 侧**同串**（DSHT-ANDROID-FLOCK）以保证幂等
+#   （两路各自跑、任一先跑，另一路都能识别为"已打"）。
+# 处置依据（与 python 侧同）：DSH 自己对 browser worker 已有先例 —— 单进程运行时
+#   的写锁立即成功即可。DSHTavern 运行时同为单进程 node。
+$flockJs = "$nmDst\node-addon-system\lib\flock.js"
+if (Test-Path $flockJs) {
+    Dsht-Patch $flockJs 'DSHT-ANDROID-FLOCK' `
+        'const \{ platform, arch \} = process;' `
+        ("const { platform, arch } = process;`n" +
+         "    /* DSHT-ANDROID-FLOCK: Android 无 flock(2)；单进程运行时按 DSH 对 browser worker 的同款处置：立即成功。 */`n" +
+         "    if (platform === 'android') {`n" +
+         "        binding = { tryLock: (fd, cb) => { queueMicrotask(() => cb(0)); } };`n" +
+         "        return binding;`n" +
+         "    }") `
+        1 'F2 Android flock 单进程直通'
+} else {
+    Write-Host "  ✗ F2 flock：$flockJs 不存在（node-addon-system 包缺失？）" -ForegroundColor Yellow
+}
+
+# ---------------------------------------------------------------------------
 Step 4.5 'composition 补丁：session 持久化改明文（迁移写入前置条件）'
 # WebView 无 zstd 编码器，迁移管线只能写明文 session.jsonl；官方支持 compression:'none' 配置
 # （dsh-session-persistence-jsonl 读写都按该配置的文件名后缀走）。幂等：已打补丁则跳过。
@@ -510,11 +542,49 @@ if (Test-Path $sesPersistence) {
         $orig = $sp
         $sp = $sp -replace [regex]::Escape('import { link, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from "node:fs/promises";'),
             'import { mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, truncate } from "node:fs/promises"; /* DSHT-ANDROID-RENAME-PATCH */'
-        $sp = $sp -replace [regex]::Escape('await link(tmp, finalPath);'), 'await rename(tmp, finalPath);'
+        $sp = $sp -replace [regex]::Escape('await link(tmp, finalPath);'), 'await rename(tmp, finalPath); /* DSHT-ANDROID-RENAME-LEGACY */'
         if ($sp -eq $orig) { throw "坑 #14 补丁未命中目标（DSH 升级后产物形态变了？检查 dsh-session-persistence-jsonl/lib/index.js）" }
         [IO.File]::WriteAllText($sesPersistence, $sp)
         Write-Host "  session 发布 link→rename 已打补丁（Android SELinux 禁硬链接）"
     } else { Write-Host "  link→rename 补丁已存在，跳过" }
+
+    # 【C6 修复 2026-09-13】补齐 ps1 相对 python 路径缺失的 2 处 F1 补丁。
+    # 实测差异（marker 集合比对）：python apply-platform-patches.py 的 F1 组共 4 处
+    # （PATCH import / FS defaultFileSystem / LEGACY 旧路径 / GEN generation 发布路径），
+    # 而本 ps1 此前**只做了 import + LEGACY 两处**，漏：
+    #   · F1-2 `defaultFileSystem` 暴露 rename（0.1.5 新增的 internals.fs 接口）
+    #   · F1-4 generation 发布路径 `publishCurrentExclusive`（**0.1.5 的核心新路径**）
+    # 后果：若只走 ps1 完整安装（pnpm install 重建 node_modules），这两处保持裸 link()
+    # ⇒ Android SELinux 拒绝硬链接（EACCES）⇒ **无法落盘任何新 session**。
+    # 当前 runtime 之所以完好，是因为它由 python 路径打过（巧合掩盖了缺陷）。
+    $sp2 = [IO.File]::ReadAllText($sesPersistence)
+    if ($sp2 -notmatch 'DSHT-ANDROID-RENAME-FS') {
+        $before = $sp2
+        # 0.1.5 形态：defaultFileSystem 的 lstat/link 相邻（LF）；兼容 CRLF
+        $sp2 = $sp2 -replace [regex]::Escape("`tlstat: (path) => lstat(path),`n`tlink,"),
+            "`tlstat: (path) => lstat(path),`n`tlink,`n`trename: (a, b) => rename(a, b), /* DSHT-ANDROID-RENAME-FS */"
+        if ($sp2 -eq $before) {
+            $sp2 = $sp2 -replace [regex]::Escape("`tlstat: (path) => lstat(path),`r`n`tlink,"),
+                "`tlstat: (path) => lstat(path),`n`tlink,`n`trename: (a, b) => rename(a, b), /* DSHT-ANDROID-RENAME-FS */"
+        }
+        if ($sp2 -eq $before) { Write-Host "  ⚠️ F1-2 defaultFileSystem rename 补丁锚点未命中（形态可能已变）" -ForegroundColor Yellow }
+        else { [IO.File]::WriteAllText($sesPersistence, $sp2); Write-Host "  F1-2 defaultFileSystem 暴露 rename 已打补丁" }
+    } else { Write-Host "  F1-2 rename 补丁已存在，跳过" }
+
+    $sp3 = [IO.File]::ReadAllText($sesPersistence)
+    if ($sp3 -notmatch 'DSHT-ANDROID-RENAME-GEN') {
+        $before = $sp3
+        $sp3 = $sp3 -replace [regex]::Escape('await internals.fs.link(staged, currentPath);'),
+            'await internals.fs.rename(staged, currentPath); /* DSHT-ANDROID-RENAME-GEN */'
+        if ($sp3 -eq $before) { Write-Host "  ⚠️ F1-4 generation 发布路径补丁锚点未命中（0.1.5 形态可能已变）" -ForegroundColor Yellow }
+        else { [IO.File]::WriteAllText($sesPersistence, $sp3); Write-Host "  F1-4 generation 发布路径 link→rename 已打补丁" }
+    } else { Write-Host "  F1-4 generation 补丁已存在，跳过" }
+
+    # 自检：打完 4 处后，文件内不应再有裸 link( 调用（import 行已移除 link）
+    $spFinal = [IO.File]::ReadAllText($sesPersistence)
+    $bareLink = ([regex]::Matches($spFinal, '(?<![\w.])link\(')).Count
+    if ($bareLink -gt 0) { throw "坑 #14 补丁不全：打完仍有 $bareLink 处裸 link( 调用 —— Android 上会 EACCES 无法落盘 session" }
+    Write-Host "  F1 自检：0 处裸 link( 调用 ✔"
 } else { Write-Host "  ⚠️ 未找到 dsh-session-persistence-jsonl（检查 runtime 结构）" -ForegroundColor Yellow }
 
 # ---------------------------------------------------------------------------

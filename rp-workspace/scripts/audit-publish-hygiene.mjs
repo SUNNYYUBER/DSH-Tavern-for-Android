@@ -62,6 +62,10 @@ const DOMAIN_ALLOW = new RegExp(
     String.raw`^cdn\.jsdelivr\.net`, String.raw`^unpkg\.com`, String.raw`^fonts\.googleapis\.com`,
     // 上游库的官网（vendored 库的 license 注释里带，是第三方公开信息、非本机配置）
     String.raw`^jquery\.com`, String.raw`^jqueryui\.com`, String.raw`^lodash\.com`, String.raw`^underscorejs\.org`,
+    // 【E1 分类 2026-09-13】handlebars 是随包分发的 template 引擎，其 license 注释带官网；
+    // 属第三方公开信息（同 jquery/lodash 一处性质），非本机配置、非隐私。真实命中位置：
+    // rp-workspace/packages/src/dsht-rp-ui/lib/client.js:636（打包产物里的库注释）。
+    String.raw`^handlebarsjs\.com`,
     String.raw`^api\.deepseek\.com`, String.raw`^deepseek\.com`, // 上游官方 API/官网（产品文档必写）
     String.raw`^(x|next|dl|host|src|assets)$`, // 正则截断产生的无 TLD 片段（噪声，非域名）
   ].join('|'),
