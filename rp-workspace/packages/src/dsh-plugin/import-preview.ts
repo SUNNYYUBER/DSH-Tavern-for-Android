@@ -97,6 +97,18 @@ export function classifyDropped(relPath: string): string | null {
   if (segs[0] === 'chats' && name.startsWith('.')) {
     return 'chats 目录下的插件附属隐藏文件——插件私有数据不迁移'
   }
+  // 【D3 2026-09-13】Quick Reply（快捷回复）——ST 的 QuickReplies/ 顶层目录。
+  // 背景：ST 老用户对「快捷回复」有肌肉记忆（"继续"按钮、常用指令），
+  // 而本项目无对应 UI 也无提示 ⇒ 导入后无声缺失、用户找不到。
+  // 处置：明确归类为「不迁移」并在预览页显式告知数量（而非静默丢弃）。
+  // 证据：ST_MARKERS 含 'QuickReplies'（assets/app.js:2911）；st-format.md:44 列为需分级项。
+  if (segs.some(s => s.toLowerCase() === 'quickreplies')) {
+    return 'ST 快捷回复（Quick Reply）——本版本不提供快捷回复功能，故不迁移（你的 ST 端配置不受影响）'
+  }
+  // ⚠️ 注意：**不要把 settings.json 归入此函数**。它是 ST 数据根的识别标记
+  //（import-preview.ts:37 用 names.includes('settings.json') 定位 ST 根），
+  // 且被正常消费（API 配置 / 预设 / 全局书单，见 st-migration/SKILL.md:32,56,57,59）。
+  // 曾误加此规则，会误导用户以为「设置文件不导入」——已撤销。
   return null
 }
 

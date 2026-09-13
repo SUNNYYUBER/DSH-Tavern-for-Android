@@ -443,12 +443,15 @@ export function RpOverlay(props: RpOverlayInjected): JSX.Element | null {
             无 aria-selected ⇒ 屏幕阅读器不知道这是标签页、也读不出当前选中项。 */}
         <div className="dsht-rp-tabs" role="tablist" aria-label="角色扮演功能分区">
           <button type="button" role="tab" aria-selected={tab === 'chars'} className={`dsht-rp-tab${tab === 'chars' ? ' active' : ''}`} onClick={() => { setTab('chars'); void loadWorkspaces() }}>角色</button>
-          <button type="button" role="tab" aria-selected={tab === 'persona'} className={`dsht-rp-tab${tab === 'persona' ? ' active' : ''}`} onClick={() => { setTab('persona') }}>我的</button>
+          {/* 【D2 术语桥接 2026-09-13】3 处与 ST 叫法不同的地方加 title 对照
+              （鼠标悬停可见，不改变 tab 文字宽度）；详细对照写在各面板内。
+              只加对照、不改名 —— 「我的」/「会话」是既定命名（boundary B5）。 */}
+          <button type="button" role="tab" aria-selected={tab === 'persona'} title="我的 = SillyTavern 的 User Persona / 用户设定" className={`dsht-rp-tab${tab === 'persona' ? ' active' : ''}`} onClick={() => { setTab('persona') }}>我的</button>
           <button type="button" role="tab" aria-selected={tab === 'import'} className={`dsht-rp-tab${tab === 'import' ? ' active' : ''}`} onClick={() => { setTab('import') }}>导入</button>
           <button type="button" role="tab" aria-selected={tab === 'books'} className={`dsht-rp-tab${tab === 'books' ? ' active' : ''}`} onClick={() => { setTab('books'); void loadWorkspaces() }}>世界书</button>
           <button type="button" role="tab" aria-selected={tab === 'regex'} className={`dsht-rp-tab${tab === 'regex' ? ' active' : ''}`} onClick={() => { setTab('regex'); void loadWorkspaces() }}>正则</button>
           <button type="button" role="tab" aria-selected={tab === 'preset'} className={`dsht-rp-tab${tab === 'preset' ? ' active' : ''}`} onClick={() => { setTab('preset') }}>预设</button>
-          <button type="button" role="tab" aria-selected={tab === 'sessions'} className={`dsht-rp-tab${tab === 'sessions' ? ' active' : ''}`} onClick={() => { setTab('sessions') }}>会话</button>
+          <button type="button" role="tab" aria-selected={tab === 'sessions'} title="会话 = SillyTavern 的 Chat / 聊天记录" className={`dsht-rp-tab${tab === 'sessions' ? ' active' : ''}`} onClick={() => { setTab('sessions') }}>会话</button>
         </div>
       </div>
       <div className="dsht-rp-main">

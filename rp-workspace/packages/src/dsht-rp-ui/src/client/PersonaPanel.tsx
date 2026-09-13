@@ -114,7 +114,11 @@ export function PersonaPanel(): JSX.Element {
       <div className="dsht-rp-section">
         <h3>👤 我的设定（persona）</h3>
         <p className="desc">
-          你在角色扮演里的身份：默认人设的名字填进 {'{{user}}'}，描述填进 {'{{persona}}'}。
+          {/* 【D2 术语桥接 2026-09-13】ST 老用户找的是「User Persona / 用户设定」，
+              而本项目的 tab 叫「我的」⇒ 加了 ST 原词对照，避免找不到。
+              只加对照、不改名（「我的」是既定命名，见 boundary B5）。 */}
+          你在角色扮演里的身份（<b>SillyTavern 里叫「User Persona / 用户设定」</b>）：
+          默认人设的名字填进 {'{{user}}'}，描述填进 {'{{persona}}'}。
           迁移来的 SillyTavern 人设会出现在下面的列表里。
         </p>
         {loadError !== '' && (

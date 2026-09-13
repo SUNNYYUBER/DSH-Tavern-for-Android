@@ -19,7 +19,8 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Fragment, type JSX, type ReactNode } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
-import { dshRpc, isServiceUnavailable, rpApi, type RpWorkspaceInfo } from './rpc.ts'
+import { dshRpc, humanizeError, isServiceUnavailable, rpApi, type RpWorkspaceInfo } from './rpc.ts'
+import { showDomToast } from './toast.ts'
 import { clientTimeZoneFields } from './time-zone.ts'
 import {
   isMessageWindowed, messagePlaceholderHeight, registerMessageWindowing,
@@ -1719,7 +1720,8 @@ export const RpRegenerateAction = memo(function RpRegenerateAction({
       // TH 事件桥：重新生成 = 旧回复移除语义 → message_deleted（ST MESSAGE_DELETED 对应）
       dispatchThEvent(sessionId, 'message_deleted')
     } catch (e) {
-      window.alert(`重新生成失败：${(e as Error).message}`)
+      // 【D5 2026-09-13】原为 window.alert（安卓上阻塞渲染）→ 改非阻塞 toast + 人话翻译
+      showDomToast('error', `重新生成失败：${humanizeError(e)}`)
     } finally {
       setBusy(false)
     }
@@ -1828,7 +1830,8 @@ export const RpUserNodeView = memo(function RpUserNodeView({
         setBusy(false)
       }
     } catch (e) {
-      window.alert(`回退失败：${(e as Error).message}`)
+      // 【D5 2026-09-13】window.alert → 非阻塞 toast + 人话翻译
+      showDomToast('error', `回退失败：${humanizeError(e)}`)
       setBusy(false)
     }
   }, [busy, running, seq, sessionId, inputActions, parts.text])
@@ -1881,7 +1884,8 @@ export const RpUserNodeView = memo(function RpUserNodeView({
         setEditing(false)
       }
     } catch (e) {
-      window.alert(`编辑失败：${(e as Error).message}`)
+      // 【D5 2026-09-13】window.alert → 非阻塞 toast + 人话翻译
+      showDomToast('error', `编辑失败：${humanizeError(e)}`)
       setBusy(false)
     }
   }, [busy, running, draft, seq, sessionId, node.key])

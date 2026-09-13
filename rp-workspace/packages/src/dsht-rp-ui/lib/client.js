@@ -2121,6 +2121,36 @@ var DshRpcError = class extends Error {
 function isServiceUnavailable(e) {
   return e instanceof DshRpcError && e.code === "gateway/service-unavailable";
 }
+function humanizeError(e) {
+  if (e === null || e === void 0) return "\u672A\u77E5\u9519\u8BEF";
+  const err = e;
+  const raw = err?.message ?? String(e);
+  const code = err?.code ?? "";
+  if (err?.name === "TypeError" && /fetch|network|failed to fetch/i.test(raw)) {
+    return "\u65E0\u6CD5\u8FDE\u63A5\u5230\u672C\u5730\u670D\u52A1\uFF08DSH \u8FD0\u884C\u65F6\u53EF\u80FD\u5C1A\u672A\u542F\u52A8\u6216\u5DF2\u505C\u6B62\uFF09\u2014\u2014\u8BF7\u7A0D\u5019\u91CD\u8BD5\uFF0C\u82E5\u6301\u7EED\u51FA\u73B0\u8BF7\u5230\u300C\u8BBE\u7F6E \u2192 \u63D2\u4EF6\u300D\u67E5\u770B\u8FD0\u884C\u65F6\u72B6\u6001";
+  }
+  if (code === "gateway/service-unavailable" || /service-unavailable/.test(code)) {
+    return "\u5BBF\u4E3B\u670D\u52A1\u6B63\u5728\u91CD\u8F7D\uFF0C\u7A0D\u540E\u4F1A\u81EA\u52A8\u6062\u590D\u2014\u2014\u8BF7\u518D\u70B9\u4E00\u6B21";
+  }
+  const httpMatch = raw.match(/HTTP\s+(\d{3})/);
+  if (httpMatch) {
+    const s = Number(httpMatch[1]);
+    if (s === 401 || s === 403) return "\u9274\u6743\u5931\u8D25\uFF1A\u8BF7\u68C0\u67E5 API Key \u662F\u5426\u6709\u6548\uFF08\u8BBE\u7F6E \u2192 \u6A21\u578B\uFF09";
+    if (s === 404) return "\u8BE5\u529F\u80FD\u5728\u5F53\u524D\u7248\u672C\u4E0D\u53EF\u7528\uFF08\u63A5\u53E3\u4E0D\u5B58\u5728\uFF09\u2014\u2014\u53EF\u80FD\u662F\u63D2\u4EF6\u7248\u672C\u4E0D\u5339\u914D";
+    if (s === 413) return "\u5185\u5BB9\u8FC7\u5927\u88AB\u670D\u52A1\u62D2\u7EDD\u2014\u2014\u8BF7\u51CF\u5C11\u5355\u6B21\u5BFC\u5165\u7684\u6570\u636E\u91CF";
+    if (s >= 500) return "\u672C\u5730\u670D\u52A1\u5185\u90E8\u9519\u8BEF\uFF08HTTP 5xx\uFF09\u2014\u2014\u8BF7\u91CD\u8BD5\uFF1B\u82E5\u6301\u7EED\u51FA\u73B0\u8BF7\u67E5\u770B\u8FD0\u884C\u65F6\u65E5\u5FD7";
+    if (s >= 400) return `\u8BF7\u6C42\u88AB\u62D2\u7EDD\uFF08HTTP ${s}\uFF09\u2014\u2014\u8BF7\u68C0\u67E5\u8F93\u5165\u540E\u91CD\u8BD5`;
+  }
+  if (/unknown endpoint|not found/i.test(raw) && /endpoint|route/i.test(raw)) {
+    return "\u8BE5\u63A5\u53E3\u5728\u5F53\u524D\u63D2\u4EF6\u7248\u672C\u4E2D\u4E0D\u5B58\u5728\u2014\u2014\u8BF7\u786E\u8BA4\u5DF2\u5B89\u88C5\u6700\u65B0\u7248\u63D2\u4EF6";
+  }
+  const missing = raw.match(/^(\w+)\s+required$/i);
+  if (missing) return `\u7F3A\u5C11\u5FC5\u8981\u53C2\u6570\u300C${missing[1]}\u300D\u2014\u2014\u8FD9\u662F\u5185\u90E8\u9519\u8BEF\uFF0C\u8BF7\u53CD\u9988\u6B64\u63D0\u793A`;
+  if (/JSON|Unexpected token/i.test(raw)) {
+    return "\u6587\u4EF6\u5185\u5BB9\u4E0D\u662F\u5408\u6CD5 JSON\u2014\u2014\u53EF\u80FD\u662F\u6587\u4EF6\u635F\u574F\u6216\u4E0D\u662F\u672C\u529F\u80FD\u652F\u6301\u7684\u6570\u636E\u683C\u5F0F";
+  }
+  return raw;
+}
 async function dshRpc(method, payload = {}) {
   const wire = method.replace(/\./g, "/");
   const resp = await fetch(`/api/${wire}`, {
@@ -2948,6 +2978,33 @@ var import_react12 = require("react");
 var import_react8 = require("react");
 var import_react9 = require("react");
 var import_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
+
+// packages/src/dsht-rp-ui/src/client/toast.ts
+function showDomToast(level, message) {
+  if (typeof document === "undefined") return;
+  const el = document.createElement("div");
+  el.textContent = message;
+  el.setAttribute("role", "status");
+  const bg = level === "error" ? "#b3261e" : level === "success" ? "#2e7d32" : "#37474f";
+  el.style.cssText = [
+    "position:fixed",
+    "right:16px",
+    "bottom:14vh",
+    "z-index:99999",
+    "max-width:340px",
+    "padding:8px 12px",
+    "border-radius:8px",
+    "font-size:12px",
+    "line-height:1.5",
+    "color:#fff",
+    `background:${bg}`,
+    "opacity:0.95",
+    "box-shadow:0 4px 12px rgba(0,0,0,.4)",
+    "pointer-events:none"
+  ].join(";");
+  document.body.append(el);
+  setTimeout(() => el.remove(), 4e3);
+}
 
 // packages/src/dsht-rp-ui/src/client/time-zone.ts
 var IANA_TIME_ZONE = /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$/;
@@ -9216,7 +9273,7 @@ async function thApi2(path, payload = {}, method = "POST") {
   thApiInFlight.set(key, p);
   return p;
 }
-function showDomToast(level, message) {
+function showDomToast2(level, message) {
   if (typeof document === "undefined") return;
   const el = document.createElement("div");
   el.textContent = message;
@@ -9509,7 +9566,7 @@ var SessionRuntime = class {
       const lv = level === "failure" ? "error" : "success";
       this.toasts.push({ ts: Date.now(), level: lv, message, scriptId: "dsht-mvu" });
       if (this.toasts.length > 50) this.toasts.shift();
-      showDomToast(lv, message);
+      showDomToast2(lv, message);
       this.notify();
     });
   }
@@ -11714,7 +11771,7 @@ var RpRegenerateAction = (0, import_react8.memo)(function RpRegenerateAction2({
       await regenerate(sessionId);
       dispatchThEvent(sessionId, "message_deleted");
     } catch (e) {
-      window.alert(`\u91CD\u65B0\u751F\u6210\u5931\u8D25\uFF1A${e.message}`);
+      showDomToast("error", `\u91CD\u65B0\u751F\u6210\u5931\u8D25\uFF1A${humanizeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -11782,7 +11839,7 @@ var RpUserNodeView = (0, import_react8.memo)(function RpUserNodeView2({
         setBusy(false);
       }
     } catch (e) {
-      window.alert(`\u56DE\u9000\u5931\u8D25\uFF1A${e.message}`);
+      showDomToast("error", `\u56DE\u9000\u5931\u8D25\uFF1A${humanizeError(e)}`);
       setBusy(false);
     }
   }, [busy, running, seq, sessionId, inputActions, parts.text]);
@@ -11827,7 +11884,7 @@ var RpUserNodeView = (0, import_react8.memo)(function RpUserNodeView2({
         setEditing(false);
       }
     } catch (e) {
-      window.alert(`\u7F16\u8F91\u5931\u8D25\uFF1A${e.message}`);
+      showDomToast("error", `\u7F16\u8F91\u5931\u8D25\uFF1A${humanizeError(e)}`);
       setBusy(false);
     }
   }, [busy, running, draft, seq, sessionId, node.key]);
@@ -12607,7 +12664,11 @@ function MigrationStatusPanel() {
         ] })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "dsht-rp-kv", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "k", children: "\u9884\u9002\u914D\u63D2\u4EF6" }),
+        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "k", children: [
+          "\u9884\u9002\u914D\u63D2\u4EF6",
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("br", {}),
+          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "dsht-rp-note", children: "\uFF08SillyTavern \u7684 Extensions / \u6269\u5C55\uFF09" })
+        ] }),
         /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "v", children: PROBES.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { children: [
           probeResults === null ? "\u2026" : { ok: "\u2705 \u529F\u80FD\u6B63\u5E38", degraded: "\u26A0\uFE0F \u5728\u7EBF\u4F46\u529F\u80FD\u5F02\u5E38", down: "\u274C \u672A\u54CD\u5E94" }[probeResults[i] ?? "down"],
           "\u3000",
@@ -12938,7 +12999,9 @@ function PersonaPanel() {
   return /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "dsht-rp-preset", children: /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-section", children: [
     /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("h3", { children: "\u{1F464} \u6211\u7684\u8BBE\u5B9A\uFF08persona\uFF09" }),
     /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("p", { className: "desc", children: [
-      "\u4F60\u5728\u89D2\u8272\u626E\u6F14\u91CC\u7684\u8EAB\u4EFD\uFF1A\u9ED8\u8BA4\u4EBA\u8BBE\u7684\u540D\u5B57\u586B\u8FDB ",
+      "\u4F60\u5728\u89D2\u8272\u626E\u6F14\u91CC\u7684\u8EAB\u4EFD\uFF08",
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("b", { children: "SillyTavern \u91CC\u53EB\u300CUser Persona / \u7528\u6237\u8BBE\u5B9A\u300D" }),
+      "\uFF09\uFF1A \u9ED8\u8BA4\u4EBA\u8BBE\u7684\u540D\u5B57\u586B\u8FDB ",
       "{{user}}",
       "\uFF0C\u63CF\u8FF0\u586B\u8FDB ",
       "{{persona}}",
@@ -13581,7 +13644,7 @@ function RpOverlay(props) {
           setTab("chars");
           void loadWorkspaces();
         }, children: "\u89D2\u8272" }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "persona", className: `dsht-rp-tab${tab === "persona" ? " active" : ""}`, onClick: () => {
+        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "persona", title: "\u6211\u7684 = SillyTavern \u7684 User Persona / \u7528\u6237\u8BBE\u5B9A", className: `dsht-rp-tab${tab === "persona" ? " active" : ""}`, onClick: () => {
           setTab("persona");
         }, children: "\u6211\u7684" }),
         /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "import", className: `dsht-rp-tab${tab === "import" ? " active" : ""}`, onClick: () => {
@@ -13598,7 +13661,7 @@ function RpOverlay(props) {
         /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "preset", className: `dsht-rp-tab${tab === "preset" ? " active" : ""}`, onClick: () => {
           setTab("preset");
         }, children: "\u9884\u8BBE" }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "sessions", className: `dsht-rp-tab${tab === "sessions" ? " active" : ""}`, onClick: () => {
+        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "sessions", title: "\u4F1A\u8BDD = SillyTavern \u7684 Chat / \u804A\u5929\u8BB0\u5F55", className: `dsht-rp-tab${tab === "sessions" ? " active" : ""}`, onClick: () => {
           setTab("sessions");
         }, children: "\u4F1A\u8BDD" })
       ] })
@@ -13808,7 +13871,7 @@ function RpGreetingDock(props) {
       await rpApi("rp/open-chat", { slug, sessionId });
       setDone(true);
     } catch (e) {
-      window.alert(`\u6CE8\u5165\u5F00\u573A\u767D\u5931\u8D25\uFF1A${e.message}`);
+      showDomToast("error", `\u6CE8\u5165\u5F00\u573A\u767D\u5931\u8D25\uFF1A${humanizeError(e)}`);
     } finally {
       setBusy(false);
     }

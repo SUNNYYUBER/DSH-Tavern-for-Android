@@ -134,7 +134,9 @@ export function MigrationStatusPanel(): JSX.Element {
         </div>
 
         <div className="dsht-rp-kv">
-          <span className="k">预适配插件</span>
+          {/* 【D2 术语桥接 2026-09-13】ST 老用户找的是「Extensions / 扩展」，
+              而本项目叫「预适配插件」⇒ 加 ST 原词对照。只加对照、不改名（boundary B5）。 */}
+          <span className="k">预适配插件<br /><span className="dsht-rp-note">（SillyTavern 的 Extensions / 扩展）</span></span>
           <span className="v">
             {PROBES.map((p, i) => (
               <div key={p.listName}>

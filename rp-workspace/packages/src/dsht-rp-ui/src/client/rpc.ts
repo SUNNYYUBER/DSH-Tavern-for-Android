@@ -73,6 +73,56 @@ export function isServiceUnavailable(e: unknown): boolean {
   return e instanceof DshRpcError && e.code === 'gateway/service-unavailable'
 }
 
+/**
+ * 【D5 2026-09-13】把技术性错误翻译成「用户能懂、能行动」的中文。
+ *
+ * 背景：全项目只有 `isServiceUnavailable` 一个翻译点（rpc.ts:72），其余错误
+ * **原样透传服务端 message** ⇒ 用户可能看到 `HTTP 500` / `unknown endpoint` /
+ * `scriptId required` 这类英文技术串，既看不懂也不知道该做什么。
+ *
+ * 口径：**只在能给出更好说法时替换**；无法归类的一律保留原文并加前缀，
+ * 绝不吞掉原始信息（否则排障时无从下手）。
+ * 覆盖：导入 / 保存 / 迁移三类高频路径（goal D5 要求）。
+ */
+export function humanizeError(e: unknown): string {
+  if (e === null || e === undefined) return '未知错误'
+  const err = e as { message?: string; code?: string; name?: string }
+  const raw = err?.message ?? String(e)
+  const code = err?.code ?? ''
+
+  // 1. 网络层：fetch 抛的 TypeError（离线/DNS/连接被拒）
+  if (err?.name === 'TypeError' && /fetch|network|failed to fetch/i.test(raw)) {
+    return '无法连接到本地服务（DSH 运行时可能尚未启动或已停止）——请稍候重试，若持续出现请到「设置 → 插件」查看运行时状态'
+  }
+  // 2. 网关/服务重载窗口
+  if (code === 'gateway/service-unavailable' || /service-unavailable/.test(code)) {
+    return '宿主服务正在重载，稍后会自动恢复——请再点一次'
+  }
+  // 3. HTTP 状态码
+  const httpMatch = raw.match(/HTTP\s+(\d{3})/)
+  if (httpMatch) {
+    const s = Number(httpMatch[1])
+    if (s === 401 || s === 403) return '鉴权失败：请检查 API Key 是否有效（设置 → 模型）'
+    if (s === 404) return '该功能在当前版本不可用（接口不存在）——可能是插件版本不匹配'
+    if (s === 413) return '内容过大被服务拒绝——请减少单次导入的数据量'
+    if (s >= 500) return '本地服务内部错误（HTTP 5xx）——请重试；若持续出现请查看运行时日志'
+    if (s >= 400) return `请求被拒绝（HTTP ${s}）——请检查输入后重试`
+  }
+  // 4. 路由未挂载（旧版插件）
+  if (/unknown endpoint|not found/i.test(raw) && /endpoint|route/i.test(raw)) {
+    return '该接口在当前插件版本中不存在——请确认已安装最新版插件'
+  }
+  // 5. 参数缺失（服务端返回的英文技术串）
+  const missing = raw.match(/^(\w+)\s+required$/i)
+  if (missing) return `缺少必要参数「${missing[1]}」——这是内部错误，请反馈此提示`
+  // 6. JSON 解析失败（多为导入文件损坏）
+  if (/JSON|Unexpected token/i.test(raw)) {
+    return '文件内容不是合法 JSON——可能是文件损坏或不是本功能支持的数据格式'
+  }
+  // 7. 兜底：保留原文（原文是排障的唯一线索，不可吞）
+  return raw
+}
+
 /** DSH RPC（同源 /api 信封）。返回 value；业务错误抛 DshRpcError（带 code，见该类注释）。
  * 0.1.2 坑 #21：wire 契约变更——method 必须斜杠式（namespace/method，点式被
  * claimsEndpoint 拒绝 → 404 not found），payload 必须包 {args}；响应信封不变。 */

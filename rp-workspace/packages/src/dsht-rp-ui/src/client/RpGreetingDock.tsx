@@ -9,7 +9,8 @@
  * 非角色卡工作区（cwd 不含 /rp/）不显示；选择只对当前 sessionId 记忆（会话级）。
  */
 import { useState, type JSX } from 'react'
-import { rpApi } from './rpc.ts'
+import { rpApi, humanizeError } from './rpc.ts'
+import { showDomToast } from './toast.ts'
 import { useRpSlug } from './RpStateFloat.tsx'
 
 /** dock 席位 owner props（InputZone 快照；session 形态按运行时实际字段防御性读取） */
@@ -50,7 +51,8 @@ export function RpGreetingDock(props: DockProps): JSX.Element | null {
       await rpApi('rp/open-chat', { slug, sessionId })
       setDone(true) // open-chat 落盘后会话不再为空，组件自然隐去
     } catch (e) {
-      window.alert(`注入开场白失败：${(e as Error).message}`)
+      // 【D5 2026-09-13】window.alert → 非阻塞 toast + 人话翻译
+      showDomToast('error', `注入开场白失败：${humanizeError(e)}`)
     } finally {
       setBusy(false)
     }
