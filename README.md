@@ -7,6 +7,88 @@
 
 ---
 
+## 设计思路与架构取舍
+
+这一节解释**为什么是这样做的** —— 读它能明白项目的能力边界从何而来。
+
+### 为什么自建运行时，而不是套壳浏览器？
+
+安卓上跑 Node.js 服务有几条路，我们选了最重的一条，理由如下：
+
+| 方案 | 为什么不选 / 为什么选 |
+|---|---|
+| ❌ WebView 套一个网页版 ST | ST 是 Node 服务 + 浏览器前端，套壳等于**在手机上再跑一个 ST**，性能与后台存活都不可控 |
+| ❌ Termux + 用户手动配置 | 要求用户会命令行；且 Termux 自身受 phantom process killer 困扰（见下） |
+| ❌ 云端容器 + 瘦客户端 | 需要服务器与账号，**与「全部本地运行、不上传数据」的承诺冲突** |
+| ✅ **自建宿主：把 DSH 运行时打进 APK** | 用户装上即用；数据全在本地；后台靠前台服务保活 |
+
+**代价（诚实说明）**：装机包 122MB（含 Node 二进制 + 运行时 + 依赖），首启需解压 2.4 万个文件。
+
+### 为什么把 `jniLibs/*.so` 入库（约 100 MB）？
+
+`jniLibs/` 下是 **Node 二进制 + proot + busybox + 依赖库**（14 个 `.so`，实测 100.3 MB）。
+把它们入库是**有意决策**：
+
+- ✅ **好处**：`clone` 即可构建，不需要用户自己下载 Termux deb 包并提取
+- ⚠️ **代价**：仓库永久增加约 100 MB
+- **为什么值得**：这些二进制的获取链路（Termux APT 仓库 → deb 提取 → 交叉校验 ABI）
+  极其繁琐且易错，让每个想自己构建的人都踩一遍不现实
+
+### 为什么需要 proot？
+
+**背景**：DSH 的进程级沙箱在桌面用 bubblewrap / Landlock / Windows ACL。
+但安卓上：无 bubblewrap、5.4 内核无 Landlock（主线 5.13 才合入）、
+user namespaces 对 app 域不可用 ⇒ **任何受限模式都直接拒绝执行**。
+
+**处置**：分两层
+1. **降级层**：识别到无沙箱后端时，返回 `enforcement: "unusable"`，由文件系统边界兜底
+2. **真隔离层**：用 **proot**（用户态 chroot，ptrace 拦截系统调用改写路径）包装命令，
+   达到 `enforcement: "full"`
+
+**代价（诚实说明）**：
+- proot 每条系统调用要过 ptrace（I/O 密集场景开销明显）
+- 在**量产 user 固件**上，proot 把 loader 拷到应用缓存目录再 exec，可能被
+  SELinux neverallow 拦截 ⇒ 探测失败 ⇒ **自动回退到文件系统边界**（无进程隔离）
+- ⚠️ **Android 15 起收紧 seccomp，proot 路线会被打断**（`SIGSYS`）。这是上游平台变化，
+  我们已记录并评估替代方案（见 `docs/C-ANDROID-HARNESS-ASSESSMENT-2026-09-13.md`）
+
+### 安卓平台限制（诚实说明）
+
+安卓不是一个「什么都能跑」的系统。以下是本项目**必须绕开**的平台约束：
+
+| 约束 | 表现 | 我们的处置 |
+|---|---|---|
+| **无 `bash`** | DSH 的 bash 工具硬编码 `bash -c` ⇒ spawn EACCES | 平台感知改用 `/system/bin/sh`（mksh） |
+| **无 `flock(2)`** | 会话写锁抛 `ERR_FLOCK_UNSUPPORTED_PLATFORM` ⇒ **消息发不出去** | 单进程运行时按上游对 browser worker 的同款处置：立即成功 |
+| **SELinux 禁硬链接** | 会话日志用 `link()` 原子发布 ⇒ EACCES ⇒ **无法落盘任何会话** | 改 `rename()`（单进程无并发风险） |
+| **SELinux 只允许从 `nativeLibraryDir` 执行** | 放在应用目录的二进制无法 exec | 所有需执行的二进制改名 `.so` 放 `jniLibs`（系统解压时保留 exec 位） |
+| **phantom process killer**（Android 12+） | **全系统**后台子进程超 32 个即静默 SIGKILL | 前台服务 + 电池白名单；长任务建议开启开发者选项「停用子进程限制」 |
+| **无 `zstd` 编码器**（WebView） | 默认压缩的会话日志 WebView 读不了 | 构建期补丁改 `compression: 'none'`（明文 JSONL） |
+| **`ripgrep` 不可用** | linux 预编译版是 glibc，bionic 加载不了 | 纯 JS 降级实现（glob 递归枚举 + 逐行正则） |
+| **原生模块不可用** | `sharp` / `koffi` / `node-pty` 等含原生二进制 | 平台 stub 替换（可加载但不可用，调用点抛受控错误） |
+
+> 这些补丁**全部可查、幂等、带命中数断言**，集中在
+> `rp-workspace/scripts/apply-platform-patches.py` 与 `build-dsht.ps1`。
+> 两条路径的补丁集等价性有常驻判据守护（`scripts/audit-build-path-parity.py`）。
+
+---
+
+## 第三方兼容声明（重要）
+
+为免误解，明确划清边界：
+
+1. **本项目的「酒馆助手兼容层」是自研 API 语义复刻** ——
+   不含、不打包、不再分发 [JS-Slash-Runner（酒馆助手）](https://github.com/N0VI028/JS-Slash-Runner)
+   或其生态脚本的任何源码。
+2. **你使用的第三方角色卡脚本**（如 MVU）由**你的浏览器在运行时从公开 CDN 加载** ——
+   这是用户侧行为，其许可与分发责任归属原作者。
+3. **如需离线使用某个脚本**，请自行确认该脚本的许可条款。
+4. **本项目不附赠任何角色卡 / 世界书 / 预设** —— 你的数据全部由你自己导入。
+
+上游许可清单（含逐项使用方式）见 [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md)。
+
+---
+
 ## 这是什么
 
 一个**安卓角色扮演 App**。它不重写整套生态，而是做两层事：
@@ -120,10 +202,10 @@
 ```
 DSH RolePlay/
 ├─ rp-workspace/
-│  ├─ packages/src/         自研源码（~37,000 行 / 98 文件）
+│  ├─ packages/src/         自研源码（实测 120 文件 / 44,446 行，不含 lib/ 产物）
 │  │  ├─ dsh-plugin/        RP 宿主插件（会话数据面 / 注入管线 / 导入引擎）
-│  │  ├─ dsht-plugin-*/     MVU / 酒馆助手 / 提示词模板 / 记忆 / undo / mobile
-│  │  ├─ dsht-plugin-shared/ 共享层（会话写入契约 / 修复器 / 快照）
+│  │  ├─ dsht-plugin-*/     7 个自研包：MVU / 酒馆助手 / 提示词模板 / 记忆 / undo / mobile
+│  │  │                     + dsht-plugin-shared（共享库，非独立插件）
 │  │  ├─ import/            ST 资产导入导出
 │  │  ├─ regex/ preset/ macros/ state/ lore/   兼容层各子系统
 │  │  └─ dsht-rp-ui/        客户端 UI（React + TH shim）
@@ -139,6 +221,11 @@ DSH RolePlay/
 - 现状看 [MASTER_TODO.md](MASTER_TODO.md)，行动看 [TASK-LIST.md](TASK-LIST.md)
 - 兼容契约 [ST-COMPAT-PACT.md](rp-workspace/docs/ST-COMPAT-PACT.md)
 - 功能冻结与承诺分级 [V0.3-FREEZE.md](docs/V0.3-FREEZE.md)
+- 上游许可清单 [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md)
+- 安卓 harness 工程化评估 [C-ANDROID-HARNESS-ASSESSMENT-2026-09-13.md](docs/C-ANDROID-HARNESS-ASSESSMENT-2026-09-13.md)
+- 真机验证手册（含采集命令与判读表）[B-DEVICE-VERIFY-CHECKLIST.md](docs/B-DEVICE-VERIFY-CHECKLIST.md)
+- 已知欠债（8 项「实现已写好、接线未落地」的失败测试）[KNOWN-DEBT-unwired-tests-2026-09-13.md](docs/KNOWN-DEBT-unwired-tests-2026-09-13.md)
+- AI 协作规则 [AI-COLLAB-RULES.md](AI-COLLAB-RULES.md)
 
 ---
 
