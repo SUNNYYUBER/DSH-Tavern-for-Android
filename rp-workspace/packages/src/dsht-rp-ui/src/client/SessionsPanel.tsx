@@ -146,9 +146,10 @@ export function SessionsPanel(props: { archiveSession?: (sessionId: string) => P
               display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
               border: '1px solid var(--dsw-alias-border-l2, #333)', borderRadius: 10,
             }}>
-              <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 8, whiteSpace: 'nowrap',
-                background: s.kind === 'branch-parent' ? '#5a3b1e' : s.kind === 'empty' ? '#333' : s.kind === 'forked' ? '#1e3a5a' : 'transparent',
-                color: '#ddd' }}>{KIND_LABEL[s.kind]}</span>
+              {/* 【2026-09-13 修复·硬编码色（E-4）】原 kind 徽章把背景/文字色写死在 JSX 内联
+                  样式里（#5a3b1e/#333/#1e3a5a + #ddd），浅色主题下不可读且不随主题翻转
+                  ⇒ 改为类名（样式见 style.ts 的 .dsht-rp-kind*，走语义 token）。 */}
+              <span className={`dsht-rp-kind dsht-rp-kind-${s.kind}`}>{KIND_LABEL[s.kind]}</span>
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {s.workspace ?? s.projectKey.slice(0, 14)} · {s.sessionId.slice(0, 20)} · {s.events} 事件 · {fmtTime(s.lastTime)}
               </span>

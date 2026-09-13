@@ -96,7 +96,8 @@ export function BooksPanel({ workspaces, onChanged }: {
         </div>
       )}
 
-      {loadError && <p className="dsht-rp-note">{loadError}</p>}
+      {/* 【2026-09-13 修复·读屏语义（F-6）】错误行加 role=status（读屏可播报加载失败） */}
+      {loadError && <p className="dsht-rp-note" role="status">{loadError}</p>}
       {!loadError && library.length === 0 && (
         <div className="dsht-rp-empty">书库为空——先在「导入」页导入世界书（或整包迁移 ST 数据）。</div>
       )}
@@ -154,7 +155,8 @@ export function BooksPanel({ workspaces, onChanged }: {
           </div>
         )
       })}
-      {status && <p className="dsht-rp-note" style={{ marginTop: 10 }}>{status}</p>}
+      {/* 【2026-09-13 修复·读屏语义（F-6）】状态行加 role=status（读屏可播报绑定/保存结果） */}
+      {status && <p className="dsht-rp-note" role="status" style={{ marginTop: 10 }}>{status}</p>}
     </div>
   )
 }

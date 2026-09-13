@@ -7,7 +7,7 @@
  * - 内置预设只读（复制为自定义后可改）
  * - 会话内切换入口见 RpPresetSwitch（conversation.session.header.actions 席位）
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { rpApi, thApi } from './rpc.ts'
 
@@ -47,6 +47,11 @@ export function PresetPanel(): JSX.Element {
   const [editing, setEditing] = useState<RPPresetUi | null>(null)
   const [isBuiltin, setIsBuiltin] = useState(false)
   const [status, setStatus] = useState('')
+  /** 【2026-09-13 修复·可重复提交（C-4）】保存/删除是整表覆盖写，无 busy 守卫时连点会重复提交。 */
+  const [busy, setBusy] = useState(false)
+  /** 【2026-09-13 修复·键盘不可达（F-4）】原导入区是 label.dsht-rp-drop + 隐藏 file input
+   *  （键盘不可达）——改为真 button 触发本 ref（input 放 button 外，避免 button 内嵌交互元素）。 */
+  const presetFileRef = useRef<HTMLInputElement>(null)
   // 【T-34 2026-09-11 修复 · 运行时 ReferenceError】`expandedKey`/`setExpandedKey` 此前
   // **从未声明**，却被 5 处引用（切预设时 reset、槽位/Toggle 条目展开）。产物里同样是
   // 自由变量 → 用户在预设面板点任意条目「展开编辑」即抛 ReferenceError 整屏崩。
@@ -75,6 +80,9 @@ export function PresetPanel(): JSX.Element {
 
   const save = async (): Promise<void> => {
     if (!editing) return
+    // 【2026-09-13 修复·可重复提交（C-4）】busy 守卫：保存期间忽略重复点击（整表覆盖写）
+    if (busy) return
+    setBusy(true)
     setStatus('保存中…')
     try {
       await rpApi('preset/save', { preset: editing })
@@ -82,6 +90,8 @@ export function PresetPanel(): JSX.Element {
       void load()
     } catch (e) {
       setStatus(`保存失败：${(e as Error).message}`)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -89,6 +99,9 @@ export function PresetPanel(): JSX.Element {
   const removePreset = async (): Promise<void> => {
     if (!editing) return
     if (!window.confirm(`删除预设「${editing.displayName}」？此操作不可恢复。`)) return
+    // 【2026-09-13 修复·可重复提交（C-4）】同 save：删除也不可重复提交
+    if (busy) return
+    setBusy(true)
     setStatus('删除中…')
     try {
       await rpApi('preset/delete', { presetId: editing.id })
@@ -97,6 +110,8 @@ export function PresetPanel(): JSX.Element {
       void load()
     } catch (e) {
       setStatus(`删除失败：${(e as Error).message}`)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -122,7 +137,9 @@ export function PresetPanel(): JSX.Element {
       a.href = url
       a.download = `${r.name}.json`
       a.click()
-      URL.revokeObjectURL(url)
+      // 【2026-09-13 修复·点了导出没文件（D-13）】原同步 revokeObjectURL 可能先于 WebView
+      // 读取 blob 执行 ⇒ 下载静默失败。延迟 2s 释放。
+      setTimeout(() => { URL.revokeObjectURL(url) }, 2000)
       setStatus('✓ 已导出 ST 兼容 JSON（可分享给他人经「导入 ST 预设」回灌）')
     } catch (e) {
       setStatus(`导出失败：${(e as Error).message}`)
@@ -160,11 +177,22 @@ export function PresetPanel(): JSX.Element {
       <div className="dsht-rp-section" style={{ marginBottom: 12 }}>
         <h3>🎛 RP 预设（{presets.length}）</h3>
         <p className="desc">预设 = 行为指令包（示例预设/可待这类 ST 预设的适配版即在此）。会话内可随时切换（会话头下拉）；此处管理条目开关。</p>
-        <label className="dsht-rp-drop" style={{ marginBottom: 10 }}>
-          <input type="file" accept=".json,application/json" style={{ display: 'none' }} disabled={importing}
-            onChange={e => { const f = e.target.files?.[0]; if (f) void importSt(f); e.currentTarget.value = '' }} />
+        {/* 【2026-09-13 修复·键盘不可达（F-4）】label + 隐藏 file input 改为 button + 独立 input
+            （Tab 可达、回车可点；input 在 button 之外，避免 button 内嵌交互元素）。 */}
+        <button type="button" className="dsht-rp-drop" style={{ marginBottom: 10 }} disabled={importing}
+          onClick={() => { presetFileRef.current?.click() }}>
           {importing ? '导入中…' : '导入 ST 预设（.json：SillyTavern「OpenAI Settings」里的预设文件，内嵌正则随预设导入）'}
-        </label>
+        </button>
+        <input
+          ref={presetFileRef}
+          type="file"
+          accept=".json,application/json"
+          tabIndex={-1}
+          aria-hidden="true"
+          style={{ display: 'none' }}
+          disabled={importing}
+          onChange={e => { const f = e.target.files?.[0]; if (f) void importSt(f); e.currentTarget.value = '' }}
+        />
         {presets.map(p => (
           <button key={p.id} type="button" className="dsht-rp-preset-row" onClick={() => { open(p, p.id.startsWith('demo-')) }}>
             <span className="pr-name">{p.displayName}</span>
@@ -181,9 +209,9 @@ export function PresetPanel(): JSX.Element {
             <h3 style={{ margin: 0 }}>{editing.displayName}</h3>
             <div style={{ display: 'flex', gap: 6 }}>
               {isBuiltin && <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }} onClick={() => { duplicate() }}>复制为自定义</button>}
-              {!isBuiltin && <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }} onClick={() => { void save() }}>保存</button>}
-              {!isBuiltin && <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }} onClick={() => { void removePreset() }}>删除</button>}
-              <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }} onClick={() => { void exportPreset() }}>导出</button>
+              {!isBuiltin && <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }} disabled={busy} onClick={() => { void save() }}>{busy ? '保存中…' : '保存'}</button>}
+              {!isBuiltin && <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }} disabled={busy} onClick={() => { void removePreset() }}>删除</button>}
+              <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }} disabled={busy} onClick={() => { void exportPreset() }}>导出</button>
               <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }} onClick={() => { setEditing(null) }}>收起</button>
             </div>
           </div>

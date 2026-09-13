@@ -106,8 +106,9 @@ export function MigrationStatusPanel(): JSX.Element {
       </div>
       {expanded && (
         <div className="dsht-rp-fold-body">
-        {loadError && <p className="dsht-rp-note" style={{ marginTop: 8 }}>{loadError}</p>}
-        {buildInfoError !== '' && <p className="dsht-rp-note" style={{ marginTop: 8 }}>{buildInfoError}</p>}
+        {/* 【2026-09-13 修复·读屏语义（F-6）】两处错误行加 role=status，读屏可播报 */}
+        {loadError && <p className="dsht-rp-note" role="status" style={{ marginTop: 8 }}>{loadError}</p>}
+        {buildInfoError !== '' && <p className="dsht-rp-note" role="status" style={{ marginTop: 8 }}>{buildInfoError}</p>}
 
         <div className="dsht-rp-kv" style={{ marginTop: 8 }}>
           <span className="k">数据源批次</span>

@@ -285,6 +285,10 @@ class SessionRuntime {
   private destroyed = false
   /** 最近一次 advance 的会话快照（messageId → 楼层号解析用；message_swiped/edited 桥） */
   private lastSnapshot: SessionSnapshotLike | null = null
+  /** 【2026-09-13 修复·入口消失（D-2）】脚本清单拉取失败原因（'' = 无错）。
+   *  原实现失败只 console.warn，scriptCount 恒 0 ⇒ 🧩 脚本球整体不渲染，
+   *  用户无法区分「没挂脚本」与「数据面挂了」（静默失败族）。非空时保留入口并显示错误 + 重试。 */
+  loadError = ''
   /** 流式 token 上一次投递的累计文本长度（running 期逐次 diff） */
   private prevStreamLen = 0
   /** 【T-80】各节点上一轮 status（`generation_stopped` 判据 = running → interrupted 跃迁） */
@@ -326,6 +330,7 @@ class SessionRuntime {
       .then(r => {
         if (this.destroyed) return
         this.scripts = Array.isArray(r.scripts) ? r.scripts : []
+        this.loadError = ''
         for (const s of this.scripts) this.mountScript(s)
         // 装载完成后拉一次上下文快照推给 iframe（getContext 同步面就绪）
         this.loadContextSnapshot()
@@ -335,9 +340,20 @@ class SessionRuntime {
         this.notify()
       })
       .catch(e => {
+        // 【2026-09-13 修复·入口消失（D-2）】记录失败原因（而非只 warn）——组件据此保留
+        // 脚本球入口并显示错误行 + 重试，避免「数据面挂了」被当成「没挂脚本」。
         console.warn('[dsht-th] scripts/for-session 拉取失败:', (e as Error).message)
+        this.loadError = (e as Error)?.message || '脚本清单拉取失败'
         this.notify()
       })
+  }
+
+  /** 【2026-09-13 修复·入口消失（D-2）】重试拉取脚本清单：重置 started 守卫后重新 start。 */
+  retryLoad(): void {
+    this.started = false
+    this.loadError = ''
+    this.notify()
+    this.start()
   }
 
   /** 重载全部脚本（真 TH reloadAll 同款：销毁 iframe 重建） */
@@ -1367,7 +1383,10 @@ export function RpScriptHost(props: DockProps): JSX.Element | null {
 
   if (!slug || !sessionId) return null
   const rt = rtRef.current
-  if (rt === null || rt.scriptCount === 0) return null
+  // 【2026-09-13 修复·入口消失（D-2）】失败（loadError 非空）时保留入口——
+  // 否则「数据面拉不到脚本清单」与「这个会话真的没挂脚本」在界面上一模一样（球直接消失）。
+  if (rt === null) return null
+  if (rt.scriptCount === 0 && rt.loadError === '') return null
 
   const scripts = rt.scripts
   const allButtons = scripts.flatMap(sc =>
@@ -1382,6 +1401,8 @@ export function RpScriptHost(props: DockProps): JSX.Element | null {
         type="button"
         className="dsht-rp-scriptball"
         title={`酒馆助手脚本（${scripts.length} 个已装载）`}
+        aria-label={`酒馆助手脚本（${scripts.length} 个已装载）`}
+        aria-expanded={open}
         onClick={() => setOpen(o => !o)}
       >🧩</button>
       {open && (
@@ -1407,6 +1428,15 @@ export function RpScriptHost(props: DockProps): JSX.Element | null {
             </span>
           </div>
           <div className="sf-body">
+            {/* 【2026-09-13 修复·入口消失（D-2）】清单拉取失败时的显式错误行 + 重试
+                （失败绝非「没有脚本」；读屏可播报） */}
+            {rt.loadError !== '' && (
+              <div className="sf-error" role="status" data-testid="dsht-th-scripts-loaderr" style={{ marginBottom: 8 }}>
+                ⚠ 脚本清单加载失败：{rt.loadError}
+                <button type="button" className="sf-btn" style={{ marginLeft: 8, minHeight: 26 }}
+                  onClick={() => { rt.retryLoad() }}>重试</button>
+              </div>
+            )}
             {allButtons.length > 0 && (
               <div className="th-buttons">
                 {allButtons.map(b => (

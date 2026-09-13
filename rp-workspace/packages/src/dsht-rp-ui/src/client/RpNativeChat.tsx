@@ -139,7 +139,14 @@ function fetchWorkspaces(): Promise<RpWorkspaceInfo[]> {
   if (wsCache === null) {
     wsCache = rpApi<{ workspaces: RpWorkspaceInfo[] }>('rp/workspaces')
       .then(r => r.workspaces ?? [])
-      .catch(() => [])
+      // 【2026-09-13 修复·失败被永久缓存（D-1）】原 catch 直接 `return []`（且不清 wsCache）
+      // ⇒ 一次瞬时失败被缓存成"空清单"，之后**永不重试**：输出协议静默退化为默认值
+      // （display 正则/楼层渲染全走兜底），且没有任何提示。改为不写缓存 + 留痕。
+      .catch(e => {
+        console.warn('[dsht-rp-ui] rp/workspaces 拉取失败（输出协议将退化为默认；下次读取会重试）:', (e as Error)?.message)
+        wsCache = null
+        return [] as RpWorkspaceInfo[]
+      })
   }
   return wsCache
 }
@@ -179,7 +186,14 @@ function fetchDisplayRegexes(slug: string, sessionId: string): Promise<RegexScri
       .then(r => [...(r.global ?? []), ...(r.preset ?? []), ...(r.scoped ?? [])]
         .filter(s => s.disabled !== true && !(s.promptOnly === true && s.markdownOnly !== true)
           && (s.placement.includes(1) || s.placement.includes(2) || s.placement.includes(3))))
-      .catch(() => [] as RegexScript[])
+      // 【2026-09-13 修复·失败被永久缓存（D-6）】同 D-1：原 catch 返回 []，缓存里留下
+      // 「零 display 正则」的假结果 ⇒ 直到下一次 invalidateWsCache 才可能恢复（切思维链
+      // 开关画面没反应的同族静默失败）。改为删缓存 + 留痕，下次调用重试。
+      .catch(e => {
+        console.warn('[dsht-rp-ui] regex/list 拉取失败（本轮 display 正则按空处理；下次读取会重试）:', (e as Error)?.message)
+        displayRegexCache.delete(key)
+        return [] as RegexScript[]
+      })
     displayRegexCache.set(key, p)
   }
   return p
@@ -457,7 +471,12 @@ async function refreshRollbackMask(sessionId: string): Promise<void> {
       maskCache.set(sessionId, next)
       maskListeners.get(sessionId)?.forEach(cb => cb())
     }
-  } catch { /* 掩码获取失败按 0（不隐藏） */ } finally {
+    // 【2026-09-13 修复·静默失败（D-7）】原 catch 空实现（注释「按 0（不隐藏）」）——
+    // 拉取失败时掩码保持上一次值，但**零日志**：出现「被回退的消息还显示着」这类
+    // 观感异常时无从判断是后端没返回还是前端没拉到。改为留痕（行为不变：保上次值）。
+  } catch (e) {
+    console.warn('[dsht-rp-ui] 回退掩码刷新失败（保留上次掩码）:', (e as Error)?.message)
+  } finally {
     maskInflight.delete(sessionId)
   }
 }

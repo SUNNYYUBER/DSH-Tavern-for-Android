@@ -20,10 +20,14 @@ function closeOverlay(): void {
   overlay = null
 }
 
-async function copyText(text: string, done: () => void): Promise<void> {
+/** 【2026-09-13 修复·假成功（D-9）】原签名 `copyText(text, done)` 只在成功路径调 done，
+ *  但 `document.execCommand('copy')` 返回 false 时**不抛异常**（旧 WebView/非聚焦文档常见）
+ *  ⇒ 静默不调 done，用户看到按钮无反应；而调用方也无从区分成败。
+ *  改为返回 boolean 由调用方如实反馈（已复制 / 复制失败请长按手动复制）。 */
+async function copyText(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
-    done()
+    return true
   } catch {
     // 旧 WebView 无 async clipboard：回退隐藏 textarea + execCommand
     const ta = document.createElement('textarea')
@@ -31,8 +35,10 @@ async function copyText(text: string, done: () => void): Promise<void> {
     ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none'
     document.body.append(ta)
     ta.select()
-    try { document.execCommand('copy'); done() } catch { /* 复制失败保持弹层 */ }
+    let ok = false
+    try { ok = document.execCommand('copy') } catch { ok = false }
     ta.remove()
+    return ok
   }
 }
 
@@ -66,7 +72,10 @@ async function showConfigOverlay(): Promise<void> {
   if (path && copyBtn) {
     copyBtn.disabled = false
     copyBtn.addEventListener('click', () => {
-      void copyText(path, () => { copyBtn.textContent = '已复制 ✓' })
+      // 【2026-09-13 修复·假成功（D-9）】如实反馈复制成败（并标注路径文本可长按手选）
+      void copyText(path).then(ok => {
+        copyBtn.textContent = ok ? '已复制 ✓' : '复制失败，请长按路径手动复制'
+      })
     })
   }
 }

@@ -239,6 +239,10 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
         className="dsht-rp-statefloat-ball"
         style={{ left: `${pos.x * 100}vw`, top: `${pos.y * 100}vh` }}
         title="当前状态（MVU 变量）"
+        /* 【2026-09-13 修复·读屏语义（F-1）】浮球是纯 emoji 按钮，读屏只念「🌌」；
+           aria-expanded 让面板开合状态可被播报。 */
+        aria-label="当前状态（MVU 变量）"
+        aria-expanded={open}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -249,19 +253,29 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
           <div className="sf-head">
             <span>🌌 当前状态</span>
             <span className="sf-head-actions">
-              <button type="button" className="sf-btn" onClick={() => { setViewOpen(true) }}>查看状态</button>
-              <button type="button" className="sf-btn" onClick={() => { setSearchOpen(true) }}>🔍 搜索</button>
+              {/* 【2026-09-13 修复·三面板叠加（A-4）】三个大面板此前可同时打开、互相叠压
+                  （后开的盖住先开的，✕ 只关浮球面板 ⇒ 下面的大面板成了关不掉的残留）。
+                  现改为互斥：开一个即关其它两个。 */}
               <button type="button" className="sf-btn" onClick={() => {
+                setViewOpen(true); setSearchOpen(false); setTablesOpen(false)
+              }}>查看状态</button>
+              <button type="button" className="sf-btn" onClick={() => {
+                setSearchOpen(true); setViewOpen(false); setTablesOpen(false)
+              }}>🔍 搜索</button>
+              <button type="button" className="sf-btn" aria-label="刷新状态" onClick={() => {
                 setState(null)
                 void rpApi<{ state: Record<string, unknown> }>('state', { sessionId })
                   .then(r => { setState(r.state ?? {}); setError('') })
                   .catch(e => setError((e as Error).message))
               }}>刷新</button>
-              <button type="button" className="sf-btn" onClick={() => { setOpen(false); setViewOpen(false); setSearchOpen(false) }}>✕</button>
+              {/* 关闭浮球面板时一并收起三个大面板（否则它们留在屏上且无入口关闭） */}
+              <button type="button" className="sf-btn" aria-label="关闭状态面板" onClick={() => {
+                setOpen(false); setViewOpen(false); setSearchOpen(false); setTablesOpen(false)
+              }}>✕</button>
             </span>
           </div>
           <div className="sf-body">
-            {error && <div className="sf-error">状态拉取失败：{error}</div>}
+            {error && <div className="sf-error" role="status">状态拉取失败：{error}</div>}
             {state === null && !error && <div className="sf-empty">加载中…</div>}
             {state !== null && Object.keys(state).length === 0 && !error && (
               <div className="sf-empty">（暂无 MVU 状态——这张卡可能不用变量，或还没产生变量更新）</div>

@@ -57,6 +57,14 @@ export function RpContextPanel({ sessionId, onClose }: { sessionId: string; onCl
 
   useEffect(() => { void load() }, [load])
 
+  // 【2026-09-13 修复·键盘不可达（F-2）】补 Esc 关闭（与 RpSearchPanel 同款）——
+  // 面板只有 ✕ / 点背景两种关法，键盘用户无法退出。
+  useEffect(() => {
+    const onKey = (ev: globalThis.KeyboardEvent): void => { if (ev.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [onClose])
+
   /** 设置写入（部分 patch；中文键与设置界面 Schema 一致） */
   const commit = useCallback(async (patch: Record<string, unknown>): Promise<void> => {
     setBusy(true)
@@ -157,8 +165,9 @@ export function RpContextPanel({ sessionId, onClose }: { sessionId: string; onCl
             </div>
           )
           : <div className="cp-row cp-hint">该会话暂无折叠区间（上下文较瘦，无需展开）。</div>}
-        {note !== '' && <div className="cp-row cp-note">{note}</div>}
-        {err !== '' && <div className="cp-row cp-err">{err}</div>}
+        {/* 【2026-09-13 修复·读屏语义（F-6）】提示行加 role=status，读屏可播报保存/展开结果 */}
+        {note !== '' && <div className="cp-row cp-note" role="status">{note}</div>}
+        {err !== '' && <div className="cp-row cp-err" role="status">{err}</div>}
       </div>
     </>
   )

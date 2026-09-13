@@ -223,7 +223,8 @@ export function RpLorePanel(props: { onBack?: () => void; onChanged?: () => void
         </>
       )}
 
-      {status && <p className="dsht-rp-note" style={{ marginTop: 10 }}>{status}</p>}
+      {/* 【2026-09-13 修复·读屏语义（F-6）】状态/错误行加 role=status，读屏可播报保存结果与加载失败 */}
+      {status && <p className="dsht-rp-note" role="status" style={{ marginTop: 10 }}>{status}</p>}
     </div>
   )
 }

@@ -33,6 +33,14 @@ export function RpStateView(props: { sessionId: string; onClose: () => void }): 
   }, [sessionId])
   useEffect(() => { void fetchState() }, [fetchState])
 
+  // 【2026-09-13 修复·键盘不可达（F-2）】补 Esc 关闭（与 RpSearchPanel 同款）——
+  // 弹层只有 ✕ / 点遮罩两种关法，键盘用户无法退出。
+  useEffect(() => {
+    const onKey = (ev: globalThis.KeyboardEvent): void => { if (ev.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [onClose])
+
   const rows: StateRow[] = state === null ? [] : flattenStateTree(state, collapsed)
   const hasState = state !== null && Object.keys(state).length > 0
 
@@ -51,7 +59,15 @@ export function RpStateView(props: { sessionId: string; onClose: () => void }): 
           </span>
         </div>
         <div className="sv-body">
-          {error && <div className="sv-error">状态拉取失败：{error}</div>}
+          {/* 【2026-09-13 修复·读屏语义 + 重试（F-6）】错误行加 role=status（读屏播报）
+              与重试按钮（原只有一句错误文本，用户只能关掉面板重开） */}
+          {error && (
+            <div className="sv-error" role="status">
+              状态拉取失败：{error}
+              <button type="button" className="sf-btn" style={{ marginLeft: 8, minHeight: 26 }}
+                onClick={() => { void fetchState() }}>重试</button>
+            </div>
+          )}
           {!error && state === null && <div className="sv-empty">加载中…</div>}
           {!error && !hasState && (
             <div className="sv-empty">（暂无 MVU 状态——这张卡可能不用变量，或还没产生变量更新）</div>

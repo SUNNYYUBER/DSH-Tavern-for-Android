@@ -125,6 +125,10 @@ const css = `
     background var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 .dsht-rp-drop:hover { border-color: var(--dsw-alias-state-business-primary); background: var(--dsw-alias-interactive-bg-hover); }
+/* 【2026-09-13 修复·键盘不可达（F-4）】导入区由 label 改为 button（label+隐藏 file
+ * input 键盘不可达）——button 自带 UA 底色/边框/字体，需显式覆盖回原观感。 */
+.dsht-rp-drop { background: transparent; color: var(--dsw-alias-label-secondary); font-family: inherit; }
+.dsht-rp-drop:disabled { opacity: .6; cursor: default; }
 .dsht-rp-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground);
@@ -175,10 +179,21 @@ const css = `
   width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex-shrink: 0;
   background: var(--dsw-alias-bg-layer-2);
 }
-.dsht-rp-floor-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+/* 【2026-09-13 修复·长名省略（E-3/E-5）】楼层头容器不吃剩余宽度、名字无省略，
+ * 长角色名/长模型名会把楼层头（含时间戳）撑出视口。meta 吃剩余宽度，
+ * name/sub 均走省略号单行截断。 */
+.dsht-rp-floor-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
 .dsht-rp-floor-head-user .dsht-rp-floor-meta { align-items: flex-end; }
-.dsht-rp-floor-name { font-size: 13px; line-height: 17px; font-weight: 600; color: rgba(220, 220, 210, 0.95); }
-.dsht-rp-floor-sub { font-size: 11px; line-height: 15px; color: var(--dsw-alias-label-tertiary); font-family: ui-monospace, monospace; }
+/* 【2026-09-13 修复·硬编码色（E-3）】原 color 写死 rgba(220,220,210,.95)，浅色主题
+ * 下白字白底不可读 ⇒ 改语义 token 随主题翻转；并补省略号三件套防长名溢出。 */
+.dsht-rp-floor-name {
+  font-size: 13px; line-height: 17px; font-weight: 600; color: var(--dsw-alias-label-primary);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dsht-rp-floor-sub {
+  font-size: 11px; line-height: 15px; color: var(--dsw-alias-label-tertiary); font-family: ui-monospace, monospace;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* ---- RP 会话隐藏宿主 turn-process「Thought for a while」行（纯思考折叠）----
  * 宿主行是英文 UI 且与 RP 楼层内的思考胶囊双份（真机实拍）；RP 活跃时由
@@ -430,6 +445,10 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
   background: var(--dsw-alias-bg-base); border-radius: 16px 16px 0 0;
   border-top: 1px solid var(--dsw-alias-border-l2);
   box-shadow: 0 -6px 24px rgba(0,0,0,.4);
+  /* 【2026-09-13 修复·手势条遮挡（A-2）】贴底面板内容压在系统手势条/Home 指示条下，
+   * 底部按钮点不到 ⇒ 让出 safe-area。z-index 保持 61 不动。 */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-sizing: border-box;
 }
 .dsht-rp-statefloat-panel .sf-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -531,6 +550,9 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
   width: 100%; max-height: 70%; display: flex; flex-direction: column;
   background: var(--dsw-alias-bg-base); border-radius: 16px 16px 0 0;
   border-top: 1px solid var(--dsw-alias-border-l2);
+  /* 【2026-09-13 修复·手势条遮挡（A-2）】底部操作条被系统手势条盖住 ⇒ 让出 safe-area。 */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-sizing: border-box;
 }
 .dsht-rp-drawer-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -638,9 +660,26 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
 .dsht-rp-persona-row .pr-head .rx-check { flex: 1; min-width: 0; }
 .dsht-rp-persona-row .pr-edit { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 4px 26px; }
 
+/* ---- R21 会话管理面板：kind 徽章（E-4 会话徽章 token 化）----
+ * 【2026-09-13 修复·硬编码色（E-4）】原徽章色写死在 JSX 内联样式里（#5a3b1e/#333/#1e3a5a
+ * + 文字 #ddd），浅色主题下深底浅字同深底同浅字已经不可读，且完全不走主题 token。
+ * 改为类名 + 语义 token（含字面量兜底，与既有组件口径一致）。 */
+.dsht-rp-kind {
+  font-size: 12px; padding: 2px 8px; border-radius: 8px; white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,.18));
+}
+.dsht-rp-kind-branch-parent {
+  background: var(--dsw-alias-state-warning, #d29922);
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+}
+.dsht-rp-kind-empty { background: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-label-primary-foreground, #fff); }
+.dsht-rp-kind-forked { background: transparent; color: var(--dsw-alias-label-secondary); }
+
 /* ---- 批次修复 9：配置文件路径弹层 ---- */
 .dsht-cfgdoc-mask {
-  position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center;
+  /* 【2026-09-13 修复·模态被压住（A-1）】2000 < 脚本球 10050 ⇒ 配置路径弹层被球压住。10052。 */
+  position: fixed; inset: 0; z-index: 10052; display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.45); padding: 20px; box-sizing: border-box;
 }
 .dsht-cfgdoc {
@@ -772,7 +811,9 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
 
 /* ---- PROJECT_PLAN 补全 2：状态查看双视图面板（RpStateView，表格/JSON）---- */
 .dsht-rp-stateview-mask {
-  position: fixed; inset: 0; z-index: 70; display: flex;
+  /* 【2026-09-13 修复·模态被压住（A-1/A-5）】原 z-index 70 < 脚本球 10050 /
+   * 脚本面板 10051 ⇒ 状态面板里能看到脚本球压在弹层上并抢走触摸。提到 10052。 */
+  position: fixed; inset: 0; z-index: 10052; display: flex;
   align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.45); padding: 20px; box-sizing: border-box;
 }
@@ -848,7 +889,8 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
 
 /* ---- PROJECT_PLAN §4.15 补全 4：消息搜索面板（RpSearchPanel，悬浮球入口拉起）---- */
 .dsht-rp-searchview-mask {
-  position: fixed; inset: 0; z-index: 70; display: flex;
+  /* 【2026-09-13 修复·模态被压住（A-1/A-5）】同 stateview：70 → 10052（脚本球/面板之上）。 */
+  position: fixed; inset: 0; z-index: 10052; display: flex;
   align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.45); padding: 20px; box-sizing: border-box;
 }
@@ -863,12 +905,22 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
   display: flex; align-items: center; gap: 10px;
   padding: 12px 16px 0; flex-shrink: 0;
 }
+/* 【2026-09-13 修复·搜索面板无头无滚动（E-1）】搜索面板头部/头部操作/body 原只在
+ * .dsht-rp-stateview 作用域下定义，而本面板根类是 .dsht-rp-searchview（不共用）
+ * ⇒ 头部挤压、结果列表不滚动（整页被撑长，头部随内容滚走）。此处补齐三件套：
+ * head 保持固定高、head-actions 横排、se-body 独占剩余高度并自身滚动。 */
+.dsht-rp-searchview .sv-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 12px 16px; border-bottom: 1px solid var(--dsw-alias-border-l1);
+  font-size: 14px; font-weight: 600; flex-shrink: 0;
+}
+.dsht-rp-searchview .sv-head-actions { display: flex; gap: 6px; align-items: center; }
 .dsht-rp-searchview .se-input { flex: 1; min-width: 0; }
 .dsht-rp-searchview .se-count {
   flex-shrink: 0; font-size: 12px; line-height: 18px;
   color: var(--dsw-alias-label-tertiary); white-space: nowrap;
 }
-.dsht-rp-searchview .se-body { padding-top: 8px; }
+.dsht-rp-searchview .se-body { padding-top: 8px; flex: 1; min-height: 0; overflow-y: auto; }
 .dsht-rp-searchview .se-hit {
   display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: left;
   border: none; background: transparent; padding: 8px 6px; border-radius: 8px;
@@ -960,6 +1012,10 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
   box-shadow: var(--dsw-shadow-lv1);
   color: var(--dsw-alias-label-primary);
   font-size: 12px; line-height: 18px;
+  /* 【2026-09-13 修复·键盘溢出（B-1）】面板从输入区向上弹出，内容多时向上溢出错出
+   * 视口顶部，键盘弹起后更盛（展开项与步进器被推出屏幕）⇒ 限高 50vh（dvh 兼容键盘
+   * 缩放）+ 自身滚动 + 滚动链不外溢（overscroll-behavior）。 */
+  max-height: 50vh; max-height: 50dvh; overflow-y: auto; overscroll-behavior: contain;
 }
 .dsht-rp-ctx-panel .cp-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -1145,4 +1201,23 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
 .dsht-rp-assistant-body pre span[data-dsht-hl='com'] { color: var(--dsw-alias-label-tertiary); font-style: italic; }
 .dsht-rp-assistant-body pre span[data-dsht-hl='num'] { color: var(--dsw-alias-state-warning, #d29922); }
 .dsht-rp-assistant-body pre span[data-dsht-hl='kw'] { color: var(--dsw-alias-state-business-primary); font-weight: 600; }
+
+/* ---- 【2026-09-13 修复·焦点不可见（F-5）】RP 各面板内的按钮/输入此前无可见焦点环
+ * （宿主默认 outline 被各组件自己的 outline:none / border 覆盖）⇒ 键盘 Tab 走过界面
+ * 完全看不出焦点在哪。此处补一套统一焦点环（非 media query 块，末尾独立追加）。
+ * 注意：本文件整体是模板字符串，注释内禁止出现反引号。 */
+.dsht-rp-overlay button:focus-visible,
+.dsht-rp-overlay input:focus-visible,
+.dsht-rp-overlay select:focus-visible,
+.dsht-rp-overlay textarea:focus-visible,
+.dsht-rp-overlay [tabindex]:focus-visible,
+.dsht-rp-stateview button:focus-visible,
+.dsht-rp-searchview button:focus-visible,
+.dsht-rp-statefloat-panel button:focus-visible,
+.dsht-rp-script-panel button:focus-visible,
+.dsht-rp-ctx-panel button:focus-visible,
+.dsht-cfgdoc button:focus-visible,
+.dsht-rp-tokenmeter button:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; border-radius: 6px;
+}
 `

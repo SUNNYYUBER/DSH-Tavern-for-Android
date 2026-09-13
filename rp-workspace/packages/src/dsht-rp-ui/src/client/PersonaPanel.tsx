@@ -21,12 +21,19 @@ interface PersonaFile { schemaVersion: 1; active: string | null; list: PersonaEn
 
 const EMPTY: PersonaFile = { schemaVersion: 1, active: null, list: [] }
 
-async function loadPersona(): Promise<PersonaFile> {
+/** 读取结果三态：成功 / 失败。**失败绝不返回空表** ——
+ *  【2026-09-13 修复·静默数据破坏】原实现 `catch {}` 后 `return EMPTY`，调用方仍 `setLoaded(true)`
+ *  ⇒ ① 界面显示「还没有人设——点下方新增…」（与"真的一篇都没有"无法区分）；
+ *    ② **保存按钮可用** ⇒ 用户顺手点保存，`rp/persona` 收到 `{active:null,list:[]}`
+ *       ⇒ **把用户已有的人设全部清空**。这是数据破坏级缺陷，与 PluginCards 同型。
+ *  ⇒ 现改为显式返回成败，由调用方区分「空」与「读不到」，且失败时禁止保存。 */
+async function loadPersona(): Promise<{ ok: true; file: PersonaFile } | { ok: false; error: string }> {
   try {
     const r = await rpApi<{ active?: string | null; list?: PersonaEntry[] }>('rp/persona')
-    return { schemaVersion: 1, active: r.active ?? null, list: Array.isArray(r.list) ? r.list : [] }
-  } catch { /* 路由未建/读取失败 → 空表起步 */ }
-  return EMPTY
+    return { ok: true, file: { schemaVersion: 1, active: r.active ?? null, list: Array.isArray(r.list) ? r.list : [] } }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || '人设读取失败' }
+  }
 }
 
 async function savePersona(file: PersonaFile): Promise<void> {
@@ -41,12 +48,28 @@ async function savePersona(file: PersonaFile): Promise<void> {
 export function PersonaPanel(): JSX.Element {
   const [file, setFile] = useState<PersonaFile>(EMPTY)
   const [loaded, setLoaded] = useState(false)
+  /** 读取失败原因（'' = 无错）。非空时表单区显示错误 + 重试，且保存被禁止 */
+  const [loadError, setLoadError] = useState('')
+  const [reloadSeq, setReloadSeq] = useState(0)
   const [status, setStatus] = useState('')
   const [expanded, setExpanded] = useState<number | null>(null)
+  /** 【2026-09-13 修复·可重复提交】保存是整表覆盖写，无 busy 守卫时连点会重复提交。 */
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    void loadPersona().then(f => { setFile(f); setLoaded(true) })
-  }, [])
+    let cur = true
+    setLoadError('')
+    setLoaded(false)
+    void loadPersona().then(r => {
+      if (!cur) return
+      if (r.ok) { setFile(r.file); setLoaded(true) }
+      else {
+        // 关键：**不写空表、不放行保存**（否则会把用户已有的人设覆盖成空）
+        setFile(EMPTY); setLoaded(false); setLoadError(r.error)
+      }
+    })
+    return () => { cur = false }
+  }, [reloadSeq])
 
   const patchEntry = (i: number, next: PersonaEntry): void => {
     setFile(prev => {
@@ -73,14 +96,18 @@ export function PersonaPanel(): JSX.Element {
   }
 
   const save = useCallback(async (): Promise<void> => {
+    if (saving) return
+    setSaving(true)
     setStatus('保存中…')
     try {
       await savePersona(file)
       setStatus('✓ 已保存（下一轮对话生效）')
     } catch (e) {
       setStatus(`保存失败：${(e as Error).message}`)
+    } finally {
+      setSaving(false)
     }
-  }, [file])
+  }, [file, saving])
 
   return (
     <div className="dsht-rp-preset">
@@ -90,8 +117,17 @@ export function PersonaPanel(): JSX.Element {
           你在角色扮演里的身份：默认人设的名字填进 {'{{user}}'}，描述填进 {'{{persona}}'}。
           迁移来的 SillyTavern 人设会出现在下面的列表里。
         </p>
-        {!loaded && <p className="dsht-rp-note">读取中…</p>}
-        {loaded && file.list.length === 0 && (
+        {loadError !== '' && (
+          <p className="dsht-rp-note" role="status" data-testid="dsht-rp-persona-loaderr"
+            style={{ color: 'var(--dsw-alias-state-error, #e5534b)' }}>
+            ⚠ 人设读取失败：{loadError}
+            <button type="button" className="dsht-rp-btn" style={{ marginLeft: 8, height: 26, fontSize: 12 }}
+              onClick={() => { setReloadSeq(n => n + 1) }}>重试</button>
+            <span style={{ marginLeft: 8, opacity: .8 }}>（已禁用保存，以免把现有人设覆盖为空）</span>
+          </p>
+        )}
+        {loadError === '' && !loaded && <p className="dsht-rp-note">读取中…</p>}
+        {loadError === '' && loaded && file.list.length === 0 && (
           <p className="dsht-rp-note">还没有人设——点下方「＋ 新增人设」创建一个，或先做数据迁移。</p>
         )}
         {file.list.map((p, i) => (
@@ -123,9 +159,9 @@ export function PersonaPanel(): JSX.Element {
         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
           <button type="button" className="dsht-rp-btn" style={{ background: 'transparent', color: 'var(--dsw-alias-label-primary)', border: '1px solid var(--dsw-alias-border-l2)' }}
             onClick={() => { addEntry() }}>＋ 新增人设</button>
-          <button type="button" className="dsht-rp-btn" disabled={!loaded} onClick={() => { void save() }}>保存</button>
+          <button type="button" className="dsht-rp-btn" disabled={!loaded || saving} onClick={() => { void save() }}>{saving ? '保存中…' : '保存'}</button>
         </div>
-        {status && <p className="dsht-rp-note" style={{ marginTop: 8 }}>{status}</p>}
+        {status && <p className="dsht-rp-note" role="status" style={{ marginTop: 8 }}>{status}</p>}
       </div>
     </div>
   )

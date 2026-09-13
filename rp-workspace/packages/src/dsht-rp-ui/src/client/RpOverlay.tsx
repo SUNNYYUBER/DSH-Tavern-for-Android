@@ -103,7 +103,7 @@ function AlternateGreetingsBlock({ ws, openSession, onClose }: {
           </button>
         </div>
       ))}
-      {status && <p className="dsht-rp-note" style={{ marginTop: 6 }}>{status}</p>}
+      {status && <p className="dsht-rp-note" role="status" style={{ marginTop: 6 }}>{status}</p>}
     </div>
   )
 }
@@ -118,14 +118,24 @@ function CardDetailDrawer({ ws, openSession, onClose, onSaved }: {
   const [library, setLibrary] = useState<Array<{ slug: string; name: string; lorePath: string }>>([])
   const [bound, setBound] = useState<Set<string>>(new Set(ws.books.map(b => b.lorePath)))
   const [status, setStatus] = useState('')
+  /** 【2026-09-13 修复·数据破坏级（D-4）】书库读取失败原因（'' = 无错）。
+   *  原实现 catch 里只 setStatus，而 library 保持 []，界面同时显示「书库为空」与
+   *  「书库加载失败」自相矛盾；更严重的是**保存按钮仍可点**，而 save 做的是
+   *  `library.filter(...)` 全量覆盖写 rp/bind-books ⇒ **把该角色原有世界书绑定清空**。 */
+  const [libError, setLibError] = useState('')
 
   useEffect(() => {
+    let cur = true
+    setLibError('')
     void rpApi<{ books: Array<{ slug: string; name: string; lorePath: string }> }>('rp/books')
-      .then(r => setLibrary(r.books ?? []))
-      .catch(e => setStatus(`书库加载失败：${(e as Error).message}`))
+      .then(r => { if (cur) setLibrary(r.books ?? []) })
+      .catch(e => { if (cur) { setLibrary([]); setLibError((e as Error).message || '书库加载失败') } })
+    return () => { cur = false }
   }, [])
 
   const save = async (): Promise<void> => {
+    // 书库没读到时**绝不保存**：保存是全量覆盖写，空书库 ⇒ 清空该角色全部绑定
+    if (libError !== '') { setStatus(`保存已阻止：书库未加载成功（${libError}）——请先修复后重试`); return }
     setStatus('保存中…')
     try {
       const books = library.filter(b => bound.has(b.lorePath)).map(b => ({ name: b.name, lorePath: b.lorePath }))
@@ -148,7 +158,15 @@ function CardDetailDrawer({ ws, openSession, onClose, onSaved }: {
           {/* PROJECT_PLAN 补全：备选开场白（无备选自动隐藏） */}
           <AlternateGreetingsBlock ws={ws} openSession={openSession} onClose={onClose} />
           <p className="dsht-rp-note" style={{ marginBottom: 10 }}>勾选该角色对话中激活的世界书（ST「后期换书」语义；关键词自动触发）。</p>
-          {library.length === 0 && <p className="dsht-rp-note">书库为空——先在「导入」页导入世界书。</p>}
+          {libError !== ''
+            ? (
+              <p className="dsht-rp-note" role="status" data-testid="dsht-rp-books-loaderr"
+                style={{ color: 'var(--dsw-alias-state-error, #e5534b)' }}>
+                ⚠ 书库加载失败：{libError}
+                <span style={{ marginLeft: 8, opacity: .8 }}>（已禁用保存绑定，以免覆盖清空现有绑定）</span>
+              </p>
+            )
+            : library.length === 0 && <p className="dsht-rp-note">书库为空——先在「导入」页导入世界书。</p>}
           {library.map(b => (
             <label key={b.slug} className="rx-check" style={{ display: 'flex', padding: '7px 0', borderBottom: '1px solid var(--dsw-alias-border-l1)' }}>
               <input type="checkbox" checked={bound.has(b.lorePath)} onChange={() => {
@@ -162,19 +180,24 @@ function CardDetailDrawer({ ws, openSession, onClose, onSaved }: {
               <span style={{ fontSize: 13, color: 'var(--dsw-alias-label-primary)' }}>{b.name}</span>
             </label>
           ))}
-          {status && <p className="dsht-rp-note" style={{ marginTop: 8 }}>{status}</p>}
+          {status && <p className="dsht-rp-note" role="status" style={{ marginTop: 8 }}>{status}</p>}
         </div>
         <div className="dsht-rp-drawer-foot">
           <CardExportBlock ws={ws} />
-          <button type="button" className="dsht-rp-btn" onClick={() => { void save() }}>保存绑定</button>
+          <button type="button" className="dsht-rp-btn" disabled={libError !== ''}
+            title={libError !== '' ? '书库未加载成功，保存会清空现有绑定' : undefined}
+            onClick={() => { void save() }}>保存绑定</button>
         </div>
       </div>
     </div>
   )
 }
 
-/** T3.1b 下载 base64 → 触发浏览器下载（前端双通道：anchor blob + Android 系统分享备选） */
-function downloadBase64(filename: string, base64: string): void {
+/** T3.1b 下载 base64 → 触发浏览器下载（前端双通道：anchor blob + Android 系统分享备选）
+ *  【2026-09-13 修复·假成功（D-5）】原返回 void 且 catch 只 console.error ⇒ 调用方
+ *  无法得知成败，`doExportPng`/`doExportBundle` 一律打印「✓ 已导出」——
+ *  **下载失败时用户看到的是成功提示**（静默失败族）。现改为返回 boolean，由调用方如实统计。 */
+function downloadBase64(filename: string, base64: string): boolean {
   try {
     const bin = atob(base64)
     const bytes = new Uint8Array(bin.length)
@@ -188,8 +211,10 @@ function downloadBase64(filename: string, base64: string): void {
     a.click()
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 2000)
+    return true
   } catch (e) {
     console.error('[dsht-rp-ui] download failed', e)
+    return false
   }
 }
 
@@ -202,8 +227,11 @@ function CardExportBlock({ ws }: { ws: RpWorkspaceInfo }): JSX.Element {
     setBusy(true); setStatus('打包 ST PNG 卡…')
     try {
       const r = await rpApi<{ filename: string; base64: string; hadAvatar: boolean }>('rp/export-card', { slug: ws.slug })
-      downloadBase64(r.filename, r.base64)
-      setStatus(`✓ 已导出 ${r.filename}${r.hadAvatar ? '' : '（无立绘，用占位图）'}`)
+      const ok = downloadBase64(r.filename, r.base64)
+      // 如实反馈：失败时不得显示"已导出"
+      setStatus(ok
+        ? `✓ 已导出 ${r.filename}${r.hadAvatar ? '' : '（无立绘，用占位图）'}`
+        : `✗ 导出失败：浏览器未接受下载（${r.filename}）——请重试或改用「导出卡包目录」`)
     } catch (e) {
       setStatus(`导出失败：${(e as Error).message}`)
     } finally { setBusy(false) }
@@ -213,9 +241,17 @@ function CardExportBlock({ ws }: { ws: RpWorkspaceInfo }): JSX.Element {
     setBusy(true); setStatus('打包卡包目录…')
     try {
       const r = await rpApi<{ files: Array<{ path: string; content: string; binary?: boolean }>; name: string }>('rp/export-bundle', { slug: ws.slug })
-      // 逐文件下载（简单可靠；不进 zip 以免依赖）
-      for (const f of r.files) downloadBase64(f.path, f.binary ? f.content : btoa(unescape(encodeURIComponent(f.content))))
-      setStatus(`✓ 已导出 ${r.files.length} 个文件（${r.name}）`)
+      // 逐文件下载（简单可靠；不进 zip 以免依赖）——统计成败，部分失败如实报
+      let okCount = 0
+      const failed: string[] = []
+      for (const f of r.files) {
+        const ok = downloadBase64(f.path, f.binary ? f.content : btoa(unescape(encodeURIComponent(f.content))))
+        if (ok) okCount++
+        else failed.push(f.path)
+      }
+      setStatus(failed.length === 0
+        ? `✓ 已导出 ${okCount} 个文件（${r.name}）`
+        : `⚠ 部分失败：成功 ${okCount}/${r.files.length} 个，未保存：${failed.slice(0, 3).join('、')}${failed.length > 3 ? ` 等 ${failed.length} 个` : ''}`)
     } catch (e) {
       setStatus(`导出失败：${(e as Error).message}`)
     } finally { setBusy(false) }
@@ -228,7 +264,7 @@ function CardExportBlock({ ws }: { ws: RpWorkspaceInfo }): JSX.Element {
         <button type="button" className="dsht-rp-btn" disabled={busy} onClick={() => { void doExportPng() }}>导出 ST PNG 卡</button>
         <button type="button" className="dsht-rp-btn" disabled={busy} onClick={() => { void doExportBundle() }}>导出卡包目录</button>
       </div>
-      {status && <p className="dsht-rp-note" style={{ marginTop: 8, color: 'var(--dsw-alias-label-primary)' }}>{status}</p>}
+      {status && <p className="dsht-rp-note" role="status" style={{ marginTop: 8, color: 'var(--dsw-alias-label-primary)' }}>{status}</p>}
     </div>
   )
 }
@@ -250,6 +286,10 @@ export function RpOverlay(props: RpOverlayInjected): JSX.Element | null {
    * （旧插件）时回退逐工作区 refreshSidebar（workspace.create + rename）。
    */
   const loadWorkspaces = useCallback(async () => {
+    // 【2026-09-13 修复·陈旧错误残留（D-12）】原实现只在 catch 里 setError，
+    // **成功路径从不清 error** ⇒ 第一次失败后重试成功，界面仍挂着"角色列表加载失败"，
+    // 用户无从判断当前到底成没成。故进入即清，成功路径保持干净。
+    setError(null)
     try {
       invalidateWsCache() // 渲染层协议配置缓存同步失效（迁移/绑书后不重刷页面）
       const rpList = await rpApi<{ workspaces: RpWorkspaceInfo[]; dshHome: string }>('rp/workspaces')
@@ -399,14 +439,16 @@ export function RpOverlay(props: RpOverlayInjected): JSX.Element | null {
       <div className="dsht-rp-topbar">
         <button type="button" className="dsht-rp-back" aria-label="关闭 RP 启动器" onClick={() => { setOpen(false) }}>‹</button>
         <div style={{ fontSize: 15, fontWeight: 600 }}>🎭 角色扮演</div>
-        <div className="dsht-rp-tabs">
-          <button type="button" className={`dsht-rp-tab${tab === 'chars' ? ' active' : ''}`} onClick={() => { setTab('chars'); void loadWorkspaces() }}>角色</button>
-          <button type="button" className={`dsht-rp-tab${tab === 'persona' ? ' active' : ''}`} onClick={() => { setTab('persona') }}>我的</button>
-          <button type="button" className={`dsht-rp-tab${tab === 'import' ? ' active' : ''}`} onClick={() => { setTab('import') }}>导入</button>
-          <button type="button" className={`dsht-rp-tab${tab === 'books' ? ' active' : ''}`} onClick={() => { setTab('books'); void loadWorkspaces() }}>世界书</button>
-          <button type="button" className={`dsht-rp-tab${tab === 'regex' ? ' active' : ''}`} onClick={() => { setTab('regex'); void loadWorkspaces() }}>正则</button>
-          <button type="button" className={`dsht-rp-tab${tab === 'preset' ? ' active' : ''}`} onClick={() => { setTab('preset') }}>预设</button>
-          <button type="button" className={`dsht-rp-tab${tab === 'sessions' ? ' active' : ''}`} onClick={() => { setTab('sessions') }}>会话</button>
+        {/* 【2026-09-13 修复·读屏语义（F-7）】原为纯 div+button：无 role=tablist/tab、
+            无 aria-selected ⇒ 屏幕阅读器不知道这是标签页、也读不出当前选中项。 */}
+        <div className="dsht-rp-tabs" role="tablist" aria-label="角色扮演功能分区">
+          <button type="button" role="tab" aria-selected={tab === 'chars'} className={`dsht-rp-tab${tab === 'chars' ? ' active' : ''}`} onClick={() => { setTab('chars'); void loadWorkspaces() }}>角色</button>
+          <button type="button" role="tab" aria-selected={tab === 'persona'} className={`dsht-rp-tab${tab === 'persona' ? ' active' : ''}`} onClick={() => { setTab('persona') }}>我的</button>
+          <button type="button" role="tab" aria-selected={tab === 'import'} className={`dsht-rp-tab${tab === 'import' ? ' active' : ''}`} onClick={() => { setTab('import') }}>导入</button>
+          <button type="button" role="tab" aria-selected={tab === 'books'} className={`dsht-rp-tab${tab === 'books' ? ' active' : ''}`} onClick={() => { setTab('books'); void loadWorkspaces() }}>世界书</button>
+          <button type="button" role="tab" aria-selected={tab === 'regex'} className={`dsht-rp-tab${tab === 'regex' ? ' active' : ''}`} onClick={() => { setTab('regex'); void loadWorkspaces() }}>正则</button>
+          <button type="button" role="tab" aria-selected={tab === 'preset'} className={`dsht-rp-tab${tab === 'preset' ? ' active' : ''}`} onClick={() => { setTab('preset') }}>预设</button>
+          <button type="button" role="tab" aria-selected={tab === 'sessions'} className={`dsht-rp-tab${tab === 'sessions' ? ' active' : ''}`} onClick={() => { setTab('sessions') }}>会话</button>
         </div>
       </div>
       <div className="dsht-rp-main">

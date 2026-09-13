@@ -371,7 +371,10 @@
 <script src="/dsht-rp/import-center/app.js"></script>
 
 <script>
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+// 【2026-09-13 修复·属性注入（E-6）】原只转义 [&<>"]，而 esc 被用在 **单引号属性**里
+// （如 onclick="kickoffBatch('${esc(batchId)}')"）——batchId 含单引号即可跳出属性执行脚本。
+// 补 ' → &#39;（属性值一律转义单引号，双引号属性同样安全）。
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
 const HAS_NATIVE = typeof DSHTNative !== 'undefined'
 
 function nativeOpenDsh() { if (HAS_NATIVE) DSHTNative.openDsh() }

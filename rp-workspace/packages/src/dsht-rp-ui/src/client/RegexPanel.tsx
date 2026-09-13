@@ -8,7 +8,7 @@
  * - 测试器：输入样本文本 → /dsht-rp/regex/test 显示替换结果（ST 同款）
  * - 导入/导出 JSON；保存走 /regex/save-global 或 /regex/save-scoped
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { rpApi, type RpWorkspaceInfo } from './rpc.ts'
 
@@ -64,6 +64,11 @@ export function RegexPanel({ workspaces }: { workspaces: RpWorkspaceInfo[] }): J
   const [testInput, setTestInput] = useState('')
   const [testOutput, setTestOutput] = useState('')
   const [loading, setLoading] = useState(false)
+  /** 【2026-09-13 修复·可重复提交（C-4）】保存是整表覆盖写，无 busy 守卫时连点会重复提交。 */
+  const [saving, setSaving] = useState(false)
+  /** 【2026-09-13 修复·键盘不可达（F-4）】原「导入」是 label + 隐藏 file input
+   *  （键盘不可达）——改为真按钮触发本 ref 的 click。 */
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -106,6 +111,9 @@ export function RegexPanel({ workspaces }: { workspaces: RpWorkspaceInfo[] }): J
   }, [scope, slug, workspaces])
 
   const save = async (): Promise<void> => {
+    // 【2026-09-13 修复·可重复提交（C-4）】busy 守卫：保存期间忽略重复点击
+    if (saving) return
+    setSaving(true)
     setStatus('保存中…')
     try {
       if (scope === 'global') {
@@ -121,6 +129,8 @@ export function RegexPanel({ workspaces }: { workspaces: RpWorkspaceInfo[] }): J
       void load()
     } catch (e) {
       setStatus(`保存失败：${(e as Error).message}`)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -221,20 +231,33 @@ export function RegexPanel({ workspaces }: { workspaces: RpWorkspaceInfo[] }): J
           <h3 style={{ margin: 0 }}>正则脚本（{scripts.length}）</h3>
           <div style={{ display: 'flex', gap: 6 }}>
             <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }} onClick={() => { setEditing(newScript()) }}>+ 新建</button>
-            <label className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12, cursor: 'pointer' }}>
-              <input type="file" accept=".json" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) void importJson(f); e.currentTarget.value = '' }} />
-              导入
-            </label>
+            {/* 【2026-09-13 修复·键盘不可达（F-4）】原为 label 包隐藏 file input：Tab 到不了、
+                回车点不动。改为真 button（键盘可达）+ 独立的隐藏 input（input 放 button 外，
+                button 内嵌交互元素违反 HTML 内容模型），由 ref 触发选择器。 */}
+            <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }}
+              onClick={() => { fileRef.current?.click() }}>导入</button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".json"
+              tabIndex={-1}
+              aria-hidden="true"
+              style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; if (f) void importJson(f); e.currentTarget.value = '' }}
+            />
             <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }}
               onClick={() => {
                 const blob = new Blob([JSON.stringify(scripts, null, 2)], { type: 'application/json' })
                 const a = document.createElement('a')
-                a.href = URL.createObjectURL(blob)
+                const url = URL.createObjectURL(blob)
+                a.href = url
                 a.download = `dsht-regex-${scope}.json`
                 a.click()
-                URL.revokeObjectURL(a.href)
+                // 【2026-09-13 修复·点了导出没文件（D-13）】原同步 revokeObjectURL 在 WebView 里
+                // 可能先于下载读 blob 执行 ⇒ 下载静默失败。延迟 2s 释放。
+                setTimeout(() => { URL.revokeObjectURL(url) }, 2000)
               }}>导出</button>
-            <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }} disabled={loading} onClick={() => { void save() }}>保存</button>
+            <button type="button" className="dsht-rp-btn" style={{ height: 28, padding: '0 10px', fontSize: 12 }} disabled={loading || saving} onClick={() => { void save() }}>{saving ? '保存中…' : '保存'}</button>
           </div>
         </div>
         {scripts.length === 0 && <p className="dsht-rp-note">暂无脚本。点「+ 新建」或导入 ST 正则 JSON。</p>}

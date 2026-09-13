@@ -28,6 +28,10 @@ const cellStyle = {
   textAlign: 'left' as const,
   verticalAlign: 'top' as const,
   color: 'var(--dsw-alias-label-primary)',
+  // 【2026-09-13 修复·长单元格撑破面板（E-5 同族）】表格 width:100% 但长内容（长 URL /
+  // 无空格长串）会把单元格撑到超出面板宽度 ⇒ 整表溢出、右侧列不可见。允许在任意字符处断行。
+  wordBreak: 'break-word' as const,
+  overflowWrap: 'anywhere' as const,
 }
 
 export function RpTablesView(props: { sessionId: string; onClose: () => void }): JSX.Element {
@@ -48,6 +52,13 @@ export function RpTablesView(props: { sessionId: string; onClose: () => void }):
     }
   }, [sessionId])
   useEffect(() => { void fetchSheets() }, [fetchSheets])
+
+  // 【2026-09-13 修复·键盘不可达（F-2）】补 Esc 关闭（与 RpSearchPanel 同款）。
+  useEffect(() => {
+    const onKey = (ev: globalThis.KeyboardEvent): void => { if (ev.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [onClose])
 
   const toggle = (uid: string): void => {
     setCollapsed(prev => {
@@ -71,7 +82,14 @@ export function RpTablesView(props: { sessionId: string; onClose: () => void }):
           </span>
         </div>
         <div className="sv-body">
-          {error && <div className="sv-error">表格拉取失败：{error}</div>}
+          {/* 【2026-09-13 修复·读屏语义 + 重试（F-6）】错误行加 role=status 与重试按钮 */}
+          {error && (
+            <div className="sv-error" role="status">
+              表格拉取失败：{error}
+              <button type="button" className="sf-btn" style={{ marginLeft: 8, minHeight: 26 }}
+                onClick={() => { void fetchSheets() }}>重试</button>
+            </div>
+          )}
           {!error && sheets === null && <div className="sv-empty">加载中…</div>}
           {!error && sheets !== null && active.length === 0 && (
             <div className="sv-empty">（本会话暂无启用表格——表格由剧情/指令逐步生成）</div>

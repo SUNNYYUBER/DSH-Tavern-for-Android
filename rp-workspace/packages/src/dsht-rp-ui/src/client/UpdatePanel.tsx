@@ -51,6 +51,10 @@ export function UpdatePanel(): JSX.Element {
   const [infoError, setInfoError] = useState('')
   const [source, setSource] = useState('')
   const [sourceDirty, setSourceDirty] = useState(false)
+  /** 【2026-09-13 修复·读不到被当成没配置（D-11）】配置读取失败原因（'' = 无错）。
+   *  后端在「未配置」时返回 200 + source=''，只有真读不到才抛错 —— 原实现 catch 空实现，
+   *  「首次未配置」与「rp/update-config 挂了」在界面上都是空输入框，用户会以为配置丢了。 */
+  const [configError, setConfigError] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveNote, setSaveNote] = useState('')
   const [checking, setChecking] = useState(false)
@@ -74,7 +78,12 @@ export function UpdatePanel(): JSX.Element {
       const c = await rpApi<{ source: string; kind: string }>('rp/update-config')
       setSource(c.source ?? '')
       setSourceDirty(false)
-    } catch { /* 无配置（首次）——保持空输入 */ }
+      setConfigError('')
+    } catch (e) {
+      // 【2026-09-13 修复·读不到被当成没配置（D-11）】记录失败原因（区别于「首次未配置」：
+      // 那种情况后端 200 返回空 source，走上面的成功分支）。
+      setConfigError((e as Error)?.message || '更新源配置读取失败')
+    }
   }, [])
 
   useEffect(() => { void loadInfo(); void loadConfig() }, [loadInfo, loadConfig])
@@ -161,6 +170,17 @@ export function UpdatePanel(): JSX.Element {
               />
             </span>
           </div>
+
+          {/* 【2026-09-13 修复·读不到被当成没配置（D-11）】配置读取失败时的显式错误行 + 重试
+              （读不到 ≠ 没配置；否则用户会把「读不到」误当成「配置丢了」而重填） */}
+          {configError !== '' && (
+            <p className="dsht-rp-note" role="status" data-testid="dsht-rp-updatecfg-loaderr"
+              style={{ marginTop: 6, color: 'var(--dsw-alias-state-error, #e5534b)' }}>
+              ⚠ 更新源配置读取失败：{configError}
+              <button type="button" className="dsht-rp-btn" style={{ marginLeft: 8, height: 26, fontSize: 12 }}
+                onClick={() => { void loadConfig() }}>重试</button>
+            </p>
+          )}
 
           <div className="dsht-rp-actions" style={{ marginTop: 6 }}>
             <button type="button" className="dsht-rp-btn" disabled={saving || !sourceDirty}
