@@ -1,4 +1,4 @@
-﻿﻿﻿# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
+﻿# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
 # 用法：
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.8        # 完整流程：装新版本 DSH → 平台适配 → 验证 → 打包 → APK
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.7 -SkipInstall  # runtime 已就绪，只跑后半段（打包/APK/sentinel）
@@ -7,7 +7,11 @@
 param(
     [Parameter(Mandatory = $true)][string]$DshVersion,
     [switch]$SkipInstall,
-    [ValidateSet('arm64', 'x86_64')][string]$Arch = 'arm64'
+    [ValidateSet('arm64', 'x86_64')][string]$Arch = 'arm64',
+    # 【双架构一致性】同一批源码构建的两个 ABI 应共享**同一个** RUNTIME_SENTINEL
+    #（sentinel 语义 = "runtime 内容代次"，与架构无关）。缺省 0 = 照旧自增；
+    # 双架构构建时第二次传第一次的最终值，两包即一致（否则每包 +1，装哪个都对不上）。
+    [int]$SentinelV = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -614,7 +618,9 @@ $svc = "$android\app\src\main\java\com\dshtavern\app\NodeService.kt"
 $svcText = [IO.File]::ReadAllText($svc)
 $m = [regex]::Match($svcText, '\.installed-v(\d+)')
 if (-not $m.Success) { throw "NodeService.kt 里找不到 RUNTIME_SENTINEL" }
-$oldV = [int]$m.Groups[1].Value; $newV = $oldV + 1
+$oldV = [int]$m.Groups[1].Value
+# $SentinelV -gt 0 = 双架构的第二次构建：直接钉到第一次的最终值（两包一致）
+$newV = if ($SentinelV -gt 0) { $SentinelV } else { $oldV + 1 }
 $svcText = $svcText -replace "\.installed-v$oldV", ".installed-v$newV"
 [IO.File]::WriteAllText($svc, $svcText, [System.Text.UTF8Encoding]::new($false))
 Write-Host "  RUNTIME_SENTINEL: .installed-v$oldV → .installed-v$newV（覆盖安装将重新解压）"

@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿# make-testdata.ps1 — 生成 T2.11 导入验证用最小 data.zip（真实 ST 结构）
+﻿# make-testdata.ps1 — 生成 T2.11 导入验证用最小 data.zip（真实 ST 结构）
 # 产物：pc-verify-home/testdata/data.zip（characters 子目录卡 + 世界书 key 单数 + chats）
 # 配套：node pc-verify-home/testdata/serve.cjs（4311 端口，CORS *）
 $ErrorActionPreference = 'Continue'

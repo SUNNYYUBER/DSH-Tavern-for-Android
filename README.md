@@ -224,7 +224,9 @@ DSH RolePlay/
 - 上游许可清单 [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md)
 - 安卓 harness 工程化评估 [C-ANDROID-HARNESS-ASSESSMENT-2026-09-13.md](docs/C-ANDROID-HARNESS-ASSESSMENT-2026-09-13.md)
 - 真机验证手册（含采集命令与判读表）[B-DEVICE-VERIFY-CHECKLIST.md](docs/B-DEVICE-VERIFY-CHECKLIST.md)
-- 已知欠债（8 项「实现已写好、接线未落地」的失败测试）[KNOWN-DEBT-unwired-tests-2026-09-13.md](docs/KNOWN-DEBT-unwired-tests-2026-09-13.md)
+- 已知欠债记录（8 项「实现已写好、接线未落地」的失败测试；**已全部接线清零**）[KNOWN-DEBT-unwired-tests-2026-09-13.md](docs/KNOWN-DEBT-unwired-tests-2026-09-13.md)
+- 文件级清理清单 [E5-CLEANUP-LIST.md](docs/E5-CLEANUP-LIST.md)
+- 开源前审查（含 AFPL 影响结论）[E7-PRE-RELEASE-REVIEW-2026-09-13.md](docs/E7-PRE-RELEASE-REVIEW-2026-09-13.md)
 - AI 协作规则 [AI-COLLAB-RULES.md](AI-COLLAB-RULES.md)
 
 ---
