@@ -287,7 +287,7 @@
   **结果：宿主面缺口 15 个成员**（不是 3 个，且为下界）：`characterId`(31 次) / `characters`(23) / `chatMetadata`(13) /
   `generateRaw`(6) / `getTokenCountAsync`(5) / **`powerUserSettings`**(2，全新) / `stopGeneration` / `updateMessageBlock` /
   `generate` / `executeSlashCommandsWithOptions` / `messageFormatting` / `generateQuietPrompt` / `saveChat` / `mainApi` / `onlineStatus`。
-  触发者**不是扩展**（推翻 T-47 原判）而是 **DSHT 自己启用中的预设脚本 `🦊示例卡二~`**（主预设 V17.1 / Agent V14.7 各一份，`enabled=true`）。
+  触发者**不是扩展**（推翻 T-47 原判）而是 **DSHT 自己启用中的预设脚本 `🦊示例卡乙~`**（主预设 V17.1 / Agent V14.7 各一份，`enabled=true`）。
   ⇒ **T-46 的投影方案需重新计价**（投影不会自动补上宿主面缺的那 15 个），且其中 6 个属**生成栈**，是 T-42/T-48 同型「完整实现=无效功」候选
   ⇒ 已在 **T-47** 出**四档处置**（可低成本补 / 需数据模型决策 / 生成栈先问死 / 相邻域）。
 - **心跳 63** = **T-46「可行性分档」收口 —— 结论是原判据本身错了**：T-46 长期挂着的理由是**假两难**
@@ -1089,7 +1089,7 @@ find files/.dsh -name tavern-helper-scripts.json  →  19 个文件（12 角色�
 **交叉验证：缺口不是禁用脚本制造的** —— 启用中 14 个已核验脚本里 **18 个成员全部有访问**，
 剔掉 9 个禁用脚本后**一个不少**（工具 `stage3-device/hb63/aggregate-enabled.mjs`）。
 
-**关键实例（*启用中*的脚本，不是边角料）**：`🦊示例卡二~` 在**主预设 V17.1 / Agent 预设 V14.7 各一份且 `enabled=true`**：
+**关键实例（*启用中*的脚本，不是边角料）**：`🦊示例卡乙~` 在**主预设 V17.1 / Agent 预设 V14.7 各一份且 `enabled=true`**：
 
 ```
 · characterId       （16 次）
@@ -1145,7 +1145,7 @@ online_status = value;
 | 成员 | 权威面绑定 | 基准声明 / 初值 | 我们语料里的真实用法 | 结论 |
 |---|---|---|---|---|
 | `saveChat`（A 档） | `st-context.js:154  saveChat: saveChatConditional` | `script.js:10666  export async function saveChatConditional(commitReason = CHAT_COMMIT_REASON.MUTATION)` —— **无必填参 · async · 真的落盘** | `梦鲸思客消息处理 2.4` 调用 1 次 | ✅ **语义已定，可直接做**：DSHT 会话由核心持续落盘 ⇒ 正确语义 = **resolve 且无需额外动作**。`th-shim.ts:2347` **已经是这个实现**（`saveChat: function () { return Promise.resolve(); }`，注释"宿主自管"）⇒ **只缺宿主面那一份**（镜像即可，L36） |
-| `characters` | `st-context.js:118  characters,` | `script.js:426  export let characters = []` | `ctx.characters[ctx.characterId]`（示例卡二预设，**成对使用**；一处带 `ctx.characters &&` 守卫、416 行后的另一处**没有**） | ⚠️ **形态已定，内容未定**：ST 语义 = 「角色对象数组，**按下标 `characterId` 取**」。要补就得建**真实卡片列表模型**（ST 角色对象字段很多）；**给空数组 = `characters[i]` 恒 `undefined` ⇒ 下游 `.name` 照样抛** —— 等于把一处崩换成另一处崩 |
+| `characters` | `st-context.js:118  characters,` | `script.js:426  export let characters = []` | `ctx.characters[ctx.characterId]`（示例卡乙预设，**成对使用**；一处带 `ctx.characters &&` 守卫、416 行后的另一处**没有**） | ⚠️ **形态已定，内容未定**：ST 语义 = 「角色对象数组，**按下标 `characterId` 取**」。要补就得建**真实卡片列表模型**（ST 角色对象字段很多）；**给空数组 = `characters[i]` 恒 `undefined` ⇒ 下游 `.name` 照样抛** —— 等于把一处崩换成另一处崩 |
 | `characterId` | `st-context.js:122  characterId: this_chid,` | `script.js:431  export let this_chid;`（**无初值**） | 同上，**只作 `characters[]` 的下标** | ⚠️ **必须与 `characters` 同批落地**（T-47 原文即如此）：单独给 `characterId` 反而制造 `characters[undefined]` 的**静默取错** |
 | `chatMetadata` | `st-context.js:134  chatMetadata: chat_metadata,` | `script.js:453  export let chat_metadata = {}`（随聊天重置） | 只读两个子路径：`chatMetadata.file_name`(3) · `chatMetadata.chat_id`(3) | 🔴 **应判定为「不补」（重要负面发现）**：`file_name` / `chat_id` **在基准里根本不是 `chat_metadata` 的属性** —— 全树只有 `chat_metadata.chat_id_hash`（`macros.js:316/323`），`file_name` 只出现在**备份 UI**（`chat-backups.js:175-203`）与 `chats.js:376` 的 DOM 表单上。⇒ 卡脚本在**真 ST 里读到的也是 `undefined`**，走的是同一个「未命中」分支 ⇒ **补一个 `{file_name, chat_id}` 空壳 = 补出基准没有的东西（违反 L36），零收益** |
 | `onlineStatus` | `st-context.js:132  onlineStatus: online_status,` | `script.js:600  export let online_status = 'no_connection'` | 1 文件 1 次 | ⚠️ 语义已定（**AI 后端在线标识 / 模型名**，见上文 63C 纠错），但**值必须真实可得**（当前模型 id），**不能编 `'online'`** |
@@ -1156,7 +1156,7 @@ online_status = value;
 
 `characters` 报的是「3 文件 / 23 次」，但抽查发现**其中一部分不是 ctx 上的 `characters`** ——
 例如 `飞讯_0703.js:560/639` 用的是脚本**自己的** `FEIXUN_DB.characters[k]`（本地 map）。
-⇒ **「23 次」这类计数是上界，不是精确次数**；成员**确实缺失**这一点不变（示例卡二预设的
+⇒ **「23 次」这类计数是上界，不是精确次数**；成员**确实缺失**这一点不变（示例卡乙预设的
 `ctx.characters[ctx.characterId]` 是逐字实证），但**不要把次数当影响面权重**。
 （这是"解析器按名字匹配、无法区分同名不同宿主"的**已知能力边界**，与 L99 的三态口径同族。）
 
@@ -1197,7 +1197,7 @@ online_status = value;
    `L()` 逐字写了这条回退链（`SillyTavern` 直取 → `parent.SillyTavern.getContext()`）。⇒
    **T-46「父页投影」没有机制障碍**；且**证明宿主面（40 成员）确实是"卡会读到的面"** ⇒ 63B/63C 缺口普查口径无误。
 2. 🔴 **帧面已存在 `characters: []` / `characterId: -1` 空占位，而宿主面反而"缺"这两个成员**
-   （`th-shim.ts:2480`）⇒ 这正是 T-47 明文拒绝的形态，**却已经在帧面落地**。语料里示例卡二主预设
+   （`th-shim.ts:2480`）⇒ 这正是 T-47 明文拒绝的形态，**却已经在帧面落地**。语料里示例卡乙主预设
    `ctx.characters[ctx.characterId]` 有一处**无守卫** ⇒ `[][-1]` → `undefined` → `.name` → **TypeError**。
    **本轮不改行为**（"要不要给真实卡片模型"正是 T-47 B 档待决项，擅动 = 替用户拍板），
    但**口径从"缺失"改为「空占位（已存在）」** —— 否则将来按"缺口"去补，会**叠成两层空容器**。
@@ -2438,7 +2438,7 @@ live 帧读数 → 发现「帧内 getContext(11) 有 7 个成员顶层(22) 没�
 
 **一句话**：基准里 `chatId` 与 `getCurrentChatId()` **本就是同一个表达式**（`st-context.js:131-133` ≡ `script.js:869`），
 而帧内**顶层与 `getContext()` 两面都没有它** ⇒ 取到 `undefined`。**语料实证**：8 处用法 / 6 个文件，
-**无属性级守卫**；当前启用的「示例卡二」预设用它做 `boundChatId` 绑定校验 ⇒ **恒失败**。`uuidv4` 同组（A 档：宿主面早有、帧面缺 ⇒ 同一门面两面不一致）。
+**无属性级守卫**；当前启用的「示例卡乙」预设用它做 `boundChatId` 绑定校验 ⇒ **恒失败**。`uuidv4` 同组（A 档：宿主面早有、帧面缺 ⇒ 同一门面两面不一致）。
 
 **修复（单源）**：`th-shim.ts` 加 `dshtCurrentChatId()`（唯一来源，取快照 slug）与 `dshtUuidv4()`（`crypto.randomUUID` + Math.random 兜底）；
 `buildStContextFacade()` 与顶层门面各挂一项；`getCurrentChatId()` 改调同一函数。
@@ -2722,7 +2722,7 @@ TH 脚本跑在 `about:srcdoc` 沙箱帧里，**帧内不存在任何聊天 DOM*
 | T-63 | ✅ **卡脚本的 4 个 ST 内部模块已全部提供**（心跳 67 落地+实测） | 四个端点全 200（修复前全 404）；卡的 4 条静态 import 全部解析成功；设备实测 `displayVersion`/`utils`/`presetManager`/`sendOpenAIRequest` 四组语义全对；页内异常 0。归入 **§6.5** |
 | T-78 | ✅ **世界书关键词正则安全防护**（2026-09-12 落地） | 单源 `lore/safe-regex.ts`（pattern 长/flags 白名单/危险模式静态拒绝/文本截断四道闸门 + 降级出声）。**实测反控**：停用时恶意输入 **8804 ms** vs 生效时 **16 ms**。⚠️ 静态启发式是保守子集（拦不住多项式回溯），已在代码头注写明边界 |
 | T-79 | ✅ **卡正文防冒充处置**（2026-09-12 落地） | 单源 `dsht-plugin-shared/card-fence.ts`：nonce 围栏（抗伪造闭合）+ 越权标记消毒；**残余 `{{` 实测 55 处**（非罕见）；两处注入点收敛唯一漏斗；三轮反控（1/8/2 条转红）。⚠️ 未做 `#` 标题消毒（会打散正常 Markdown，理由已写进代码） |
-| T-80 | 🔴 **卡注册的 10 个事件在我方「零发射点」**（心跳 67 静态穷举发现；**心跳 68 已修 2/10**） | 见上方完整条目。`eventOn(tavern_events.X)` **注册成功但永不触发**（零报错 = 静默失败族）。新闸门 `audit-card-event-surface.mjs`（正控六维 + 真实负控 + 基线白名单防恒红）。**差集 10 → 9 → 8**（已修 `message_updated` / `generation_stopped`，后者实机 **8/8 PASS**）；余 8 项**全部有终局分档**（A 结构性不可实现 2 · B 需先定形状 3 · C 需定义时机 1 · D 宿主侧对象 3），逐项登记在 `card-event-surface-baseline.json`（附基准 `file:line` + 原因），**未静默放过**。报告 `docs/T-80-CARD-EVENT-SURFACE.md` + `docs/T-80-GENERATION-STOPPED.md`。**心跳 74 续**：闸门枚举面**三处扩展**（① 动态别名绑定形态 `const te = getFn('tavern_events') \|\| tavern_events` —— 语料 `_示例卡二_ V17.1:55366` 整批原来看不见；② 🔴 **剔除注释**：`extractEmissions` 原先用 `text.includes(...)` 判发射，**注释里的字面量同样命中** ⇒ 假绿；修完当场暴露被掩盖的真缺口 `chat_completion_prompt_ready`；③ 可被其它工具 import 复用 + `--selftest` 扩到 14 项断言）。**注册面 23 → 27**（新现形 4 项真缺口），**又修 3 项**（`preset_changed` + `oai_preset_changed_after`（`openai.js:6825-6826` 顺序逐字对齐）· `settings_updated`（只在**卡发起**的两条落盘路径投递，**不**在 seed 分支 ⇒ L36 时机）），**再登记 6 项**「不做 + 明示降级」。**当前闸门态：注册 27 / 发射 19 / 差集 11（基线内 11 · 表外新增 0）/ exit 0**；T-80H 实机探针 **16/16 PASS ×2** |
+| T-80 | 🔴 **卡注册的 10 个事件在我方「零发射点」**（心跳 67 静态穷举发现；**心跳 68 已修 2/10**） | 见上方完整条目。`eventOn(tavern_events.X)` **注册成功但永不触发**（零报错 = 静默失败族）。新闸门 `audit-card-event-surface.mjs`（正控六维 + 真实负控 + 基线白名单防恒红）。**差集 10 → 9 → 8**（已修 `message_updated` / `generation_stopped`，后者实机 **8/8 PASS**）；余 8 项**全部有终局分档**（A 结构性不可实现 2 · B 需先定形状 3 · C 需定义时机 1 · D 宿主侧对象 3），逐项登记在 `card-event-surface-baseline.json`（附基准 `file:line` + 原因），**未静默放过**。报告 `docs/T-80-CARD-EVENT-SURFACE.md` + `docs/T-80-GENERATION-STOPPED.md`。**心跳 74 续**：闸门枚举面**三处扩展**（① 动态别名绑定形态 `const te = getFn('tavern_events') \|\| tavern_events` —— 语料 `_示例卡乙_ V17.1:55366` 整批原来看不见；② 🔴 **剔除注释**：`extractEmissions` 原先用 `text.includes(...)` 判发射，**注释里的字面量同样命中** ⇒ 假绿；修完当场暴露被掩盖的真缺口 `chat_completion_prompt_ready`；③ 可被其它工具 import 复用 + `--selftest` 扩到 14 项断言）。**注册面 23 → 27**（新现形 4 项真缺口），**又修 3 项**（`preset_changed` + `oai_preset_changed_after`（`openai.js:6825-6826` 顺序逐字对齐）· `settings_updated`（只在**卡发起**的两条落盘路径投递，**不**在 seed 分支 ⇒ L36 时机）），**再登记 6 项**「不做 + 明示降级」。**当前闸门态：注册 27 / 发射 19 / 差集 11（基线内 11 · 表外新增 0）/ exit 0**；T-80H 实机探针 **16/16 PASS ×2** |
 | T-81 | 🔴 **MVU 命名空间（`Mvu.events`）不在闸门覆盖内 + shim 缺 5 个事件名常量**（心跳 73 发现并修复注册侧） | 见上方完整条目。T-80 的枚举器只扫 3 张 ST 表，**漏掉整个 `Mvu` 命名空间**（L44）；shim 的 `Mvu.events` **0 常量** ⇒ `eventOn(Mvu.events.X, cb)` 注册到 **`'undefined'` 键** = 静默死注册（T-80 断言"不存在"的更坏形态，**已推翻**）。**已修**：补齐契约 5 常量（含上游拼写错误 `mag_variable_initiailized`，逐字照抄 · **L134**）+ `evtKey()` 收口 12 处转换并**出声**（L42）+ `warnDeadRegistration()` 明示降级。**判定 `VARIABLE_UPDATE_ENDED` 本体不发射**（消费端 = 同页同步可变回路，跨层无同步回写 ⇒ 补了更坏，L126②），已登记基线。**闸门 3 表 → 4 表**（含正控扩展）；实跑注册 22→23 / 差集 8→9→基线内 9 / exit 0。反控：删常量 ⇒ 新单测 7/10 转红。报告 `docs/T-81-MVU-EVENT-NAMESPACE.md` |
 | T-82 | 🔴 **楼层帧（`.dsht-rp-message-frame`）内 `eventOn(...)` 注册成功但永不回调**（心跳 74 实机验收中挖出并修复） | 见上方完整条目。`SessionRuntime.emitSessionEvent()`（`:923`）只遍历 `this.frames`（脚本帧），**楼层 guest 帧在另一张表 `guestFrames`** ⇒ 静默失败（`pushContextSnapshotToFrames` 早已"脚本帧+楼层帧一起推"，**事件面却只推脚本帧**，自相矛盾）。**基准取证**：`predefine.js` 把 `TavernHelper._bind`（含 `_eventOn`）bind 到该 iframe window 并注入**脚本帧（`script/iframe.ts:12`）+ 消息渲染帧（`render/iframe.ts:94`）两处**；`_eventOn` 直接 `eventSource.on(...)` ⇒ **与帧类型无关**。**修法刻意与脚本帧对称**：`guestReady` 就绪门 + 有界队列（50）+ 在既有 guest `running` 握手点补投；**刻意不用** context 的 4 次重试梯子（事件**不幂等**，会 ×4 ⇒ L36「不能多」，沉淀 **L138**）。单测 13 项 + **反控 5/5 全红**（其中 R1 首版空转还报绿 ⇒ 沉淀 **L137**）。实机 **10/10 PASS ×2**；**改前/改后同断言对照：楼层帧 `n=0 → n=1`**。报告 `docs/T-82-GUEST-FRAME-EVENTS.md` · 沉淀 **L136/L137/L138** |
 | T-62 | 🆕 **`src/*/lib/*.js` 是「孤儿派生产物」**（心跳 59 发现） | `src/<plugin>/lib/index.js` 受版本控制、且历史提交里**与源码成对更新**（如 `3ffc1f9` 同时改 `src/dsh-plugin/index.ts` 与 `lib/index.js`），但**逐行核查所有构建脚本后确认：无任何路径消费它们** —— `build-plugins.sh:build_node_plugin` 是**直接从 `src/<pkg>/index.ts` 编译到 staging**（`$NM/<pkg>/lib/index.js`），`build-wb.sh` 同理；唯一例外是 `src/dsht-plugin-mobile/lib/index.js`（被 `build-plugins.sh:96` 拷贝）与 `src/dsht-rp-ui/lib/client.js`（由 `build-rp-ui.mjs` 生成并下游消费）。<br>⇒ 现状是**第三种状态**：既没被 `.gitignore`，也没被生成流程维护 —— `src/dsht-plugin-mvu/lib/index.js` 自 09-08 起陈旧至今。**且不可逐字节复现**（同源码两次构建字节数不同：882,361 vs 884,675 B，L52）。<br>**故本轮有意不重建**（重建只制造无意义 churn、且无收益）；**建议**：要么全部 `.gitignore` 掉，要么明确纳入构建。属 T-25 大扫除范畴。**已核验：不影响出货** —— APK 内插件取自 staging，本轮已三层核验新鲜。 |

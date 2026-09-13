@@ -4,16 +4,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const GOLDEN = 'D:/DSH RolePlay/golden';
+// 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+const ROOT = path.resolve(import.meta.dirname, '../..');   // 项目根，由本文件位置推导
+const GOLDEN = path.join(ROOT, 'golden');
 const TEXT = process.argv[2] ?? '（金标对照测试）请用一两句话简单打个招呼。';
 fs.mkdirSync(path.join(GOLDEN, 'st'), { recursive: true });
 const knownBefore = new Set(fs.readdirSync(path.join(GOLDEN, 'st')));
 
 const { chromium } = await (async () => {
   const require = (await import('node:module')).createRequire(import.meta.url);
-  return require('D:/DSH RolePlay/rp-workspace/tools-pw/node_modules/playwright-core');
+  return require(path.join(import.meta.dirname, '../tools-pw/node_modules/playwright-core'));
 })();
-const EXE = 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+const EXE = process.env.DSHT_CHROME_EXE ?? '<path-to-chrome.exe>';
 
 const browser = await chromium.launch({ executablePath: EXE, headless: true });
 const page = await browser.newPage();
@@ -114,7 +116,7 @@ try {
   }
 } catch (e) {
   console.error('[run][FATAL]', e.message.slice(0, 300));
-  try { await page.screenshot({ path: 'D:/DSH RolePlay/tmp/golden-run-fail.png' }); } catch {}
+  try { await page.screenshot({ path: path.join(ROOT, 'tmp/golden-run-fail.png') }); } catch {}
 } finally {
   await browser.close();
 }

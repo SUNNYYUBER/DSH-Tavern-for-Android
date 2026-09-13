@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // golden-st-diag.mjs — 三查：index.js 可达性 / 扩展卡 DOM / console golden 痕迹
+import path from 'node:path';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { chromium } = require('D:/DSH RolePlay/rp-workspace/tools-pw/node_modules/playwright-core');
-const EXE = 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+const { chromium } = require(path.join(import.meta.dirname, '../tools-pw/node_modules/playwright-core'));
+const EXE = process.env.DSHT_CHROME_EXE ?? '<path-to-chrome.exe>';
 
 const browser = await chromium.launch({ executablePath: EXE, headless: true });
 const page = await browser.newPage();

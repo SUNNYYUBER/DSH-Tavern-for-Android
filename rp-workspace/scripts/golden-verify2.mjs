@@ -4,18 +4,22 @@
 //         ②响应判定 = MutationObserver 计数（点击前后 2s 的 DOM 突变，含 class/attribute 变化）
 // 用法: node golden-verify2.mjs [卡名正则=wuwa|solaris]
 import fs from 'node:fs';
+import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { chromium } = require('D:/DSH RolePlay/rp-workspace/tools-pw/node_modules/playwright-core');
-const EXE = 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+const ROOT = path.resolve(import.meta.dirname, '../..');   // 项目根，由本文件位置推导
+const { chromium } = require(path.join(import.meta.dirname, '../tools-pw/node_modules/playwright-core'));
+const EXE = process.env.DSHT_CHROME_EXE ?? '<path-to-chrome.exe>';
+const ADB = process.env.DSHT_ADB ?? '<path-to-adb>';
 const CARD_RE = new RegExp(process.argv[2] ?? 'wuwa|solaris', 'i');
 
 function refreshToken() {
   try {
-    execSync('C:/Users/Administrator/.android/sdk/platform-tools/adb.exe -s emulator-5554 shell "run-as com.dshtavern.app cat files/.dsh/dsht-token" > "D:/DSH RolePlay/tmp/dsht-token.txt"', { timeout: 20000 });
+    execSync(`${ADB} -s emulator-5554 shell "run-as com.dshtavern.app cat files/.dsh/dsht-token" > "${path.join(ROOT, 'tmp/dsht-token.txt')}"`, { timeout: 20000 });
   } catch (e) { console.log('[v2] token 刷新失败:', e.message.slice(0, 60)); }
-  return fs.readFileSync('D:/DSH RolePlay/tmp/dsht-token.txt', 'utf8').trim();
+  return fs.readFileSync(path.join(ROOT, 'tmp/dsht-token.txt'), 'utf8').trim();
 }
 const TOKEN = refreshToken();
 
@@ -137,6 +141,6 @@ for (const f of page.frames()) {
 }
 const fail = results.filter(r => !r.responded);
 console.log(`[v2] === 汇总: ${results.length - fail.length}/${results.length} 响应，${fail.length} 无响应 ===`);
-fs.writeFileSync('D:/DSH RolePlay/loop-mvu-interact/verify-report-v2.json', JSON.stringify({ ts: new Date().toISOString(), card: CARD_RE.source, total: results.length, failed: fail, all: results }, null, 1));
+fs.writeFileSync(path.join(ROOT, 'loop-mvu-interact/verify-report-v2.json'), JSON.stringify({ ts: new Date().toISOString(), card: CARD_RE.source, total: results.length, failed: fail, all: results }, null, 1));
 console.log('[v2] 报告: loop-mvu-interact/verify-report-v2.json');
 await browser.close();

@@ -8,7 +8,8 @@
  */
 import { execFileSync } from 'node:child_process'
 import process from 'node:process'
-const ADB = 'C:/Users/Administrator/.android/sdk/platform-tools/adb.exe'
+// 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+const ADB = process.env.DSHT_ADB ?? '<path-to-adb>'
 const argv = process.argv.slice(2)
 const PORT = '9333'
 

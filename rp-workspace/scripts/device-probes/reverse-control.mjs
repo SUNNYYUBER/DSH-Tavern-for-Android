@@ -49,7 +49,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const ADB = process.env.ADB || 'C:/Users/Administrator/.android/sdk/platform-tools/adb.exe'
+// 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+const ADB = process.env.DSHT_ADB ?? process.env.ADB ?? '<path-to-adb>'
 const PKG = 'com.dshtavern.app'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))

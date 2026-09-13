@@ -3,12 +3,16 @@
 // 用法: node golden-import.mjs [zip路径]
 import path from 'node:path';
 
-const ZIP = process.argv[2] ?? 'C:/Users/Administrator/Documents/xwechat_files/wxid_EXAMPLE123456_4649/msg/file/2026-09/tauritavern-data-20260903-162517.zip';
+// 【E2 脱敏 2026-09-13】原默认值为真实微信接收目录（含个人 wxid 与本机用户名），
+// 属 T-25 发布卫生范畴。改为占位路径，实际用时由命令行参数传入 zip 路径。
+const ZIP = process.argv[2] ?? '<path-to-tauritavern-data.zip>';
 const { chromium } = await (async () => {
   const require = (await import('node:module')).createRequire(import.meta.url);
-  return require('D:/DSH RolePlay/rp-workspace/tools-pw/node_modules/playwright-core');
+  // 【E2 脱敏 2026-09-13】原为项目绝对路径（含盘符与仓库名），改为基于本文件位置的相对解析。
+  return require(path.join(import.meta.dirname, '../tools-pw/node_modules/playwright-core'));
 })();
-const EXE = 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// 【E2 脱敏 2026-09-13】原为本机绝对路径（含用户名），改为可用环境变量覆盖的占位值。
+const EXE = process.env.DSHT_CHROME_EXE ?? '<path-to-chrome.exe>';
 
 const browser = await chromium.launch({ executablePath: EXE, headless: true });
 const page = await browser.newPage();

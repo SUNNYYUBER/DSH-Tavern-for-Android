@@ -699,7 +699,7 @@ describe('host ST 门面：saveChat（T-47 A 档）+ 宿主页 SillyTavern 顶�
    * 我方此前只有后者、前者缺席（语料 8 次 / 6 文件取用，**全部无属性级守卫**）。
    *
    * 为什么必须补（实测用法，不是推测）：
-   *  · 示例卡二预设族（**启用中**）：`const ctx = SillyTavern?.getContext?.(); if (ctx.chatId) return String(ctx.chatId);`
+   *  · 示例卡乙预设族（**启用中**）：`const ctx = SillyTavern?.getContext?.(); if (ctx.chatId) return String(ctx.chatId);`
    *    失败后兜底链是 `chat.file_name` → `chatMetadata.file_name` → `chatMetadata.chat_id` → name，
    *    而该链在我方**整条断裂**（`chat` 是消息数组无 file_name；帧内无 `chatMetadata`）⇒ 落到 name。
    *    该值用于**聊天绑定校验**（`String(parsed.boundChatId || '') === scope.chatId`）

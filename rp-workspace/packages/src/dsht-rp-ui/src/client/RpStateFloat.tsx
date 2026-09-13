@@ -1,7 +1,7 @@
 /**
  * 悬浮球原生移植（用户定案：原生移植，不让别的功能失效）。
  *
- * 意图来源：示例预设系预设 tavern_helper.scripts（示例卡二脚本）的 pw-state-float——
+ * 意图来源：示例预设系预设 tavern_helper.scripts（示例卡乙脚本）的 pw-state-float——
  * 「🌌 当前平行世界状态」悬浮窗：可拖拽浮球 → 点开当前 MVU 变量状态面板，可拖、可关。
  * 原实现深度钩 ST 内部组件（PromptManager/topDoc），不可直接执行；这里按意图原生重写：
  * - 挂载：conversation.input.dock 席位（position:fixed 视口定位，不随滚动荡走）；
@@ -93,7 +93,7 @@ function loadPos(key: string): BallPos {
       }
     } catch { /* 坏数据试下一级 */ }
   }
-  return { x: 0.92, y: 0.3 } // 示例卡二默认 bubbleTop 30vh 右侧
+  return { x: 0.92, y: 0.3 } // 示例卡乙默认 bubbleTop 30vh 右侧
 }
 
 /** F3：保存位置（会话键 + global 兜底键同写——新会话/无会话上下文都能继承最近位置） */

@@ -257,7 +257,7 @@ export function apply(ctx) {
     ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'dsht-rp-import', order: 50 }, RpImportDockEntry));
     // 批次修复 1b：角色卡工作区空白会话的「开场白选择窗」（dock 席位，order 49 在导入按钮上方）
     ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'dsht-rp-greeting', order: 49 }, RpGreetingDock));
-    // 第五轮：状态悬浮球（示例卡二 pw-state-float 意图原生移植）——dock 席位挂载，
+    // 第五轮：状态悬浮球（示例卡乙 pw-state-float 意图原生移植）——dock 席位挂载，
     // fixed 定位浮球 + 状态面板；仅 RP 会话且有消息时显示，非 RP 会话零影响。
     ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name: 'conversation.input.dock', id: 'dsht-rp-statefloat', order: 48 }, RpStateFloat));
     // 酒馆助手脚本运行时宿主（TavernHelper 移植验收点）：沙箱 iframe 层 + 🧩 脚本管理浮球。

@@ -60,7 +60,7 @@ export function RpPresetSwitch({ useSession, sessionId }: HeaderActionProps): JS
       // 应用预设 delta 成功后先 `OAI_PRESET_CHANGED_AFTER`（无参），再 `PRESET_CHANGED`（{apiId,name}）。
       // 两条都不存在"补了但形状/时机错"的风险（L126）：
       //   · AFTER 基准无参、语料消费端零参；
-      //   · PRESET_CHANGED 的语料 3 处消费端（示例卡二×2 / 梦鲸思客预设助手）**全部零参、不读载荷**
+      //   · PRESET_CHANGED 的语料 3 处消费端（示例卡乙×2 / 梦鲸思客预设助手）**全部零参、不读载荷**
       //     ⇒ 基线里"apiId 取值未定、卡可能按 apiId 分支"的顾虑已被全语料普查**证伪**。
       //   · `apiId` 填 `DSHT_MAIN_API`（'openai'）= 我方实际主 API，非编造。
       emitThEventToFrames('oai_preset_changed_after', [], sessionId)

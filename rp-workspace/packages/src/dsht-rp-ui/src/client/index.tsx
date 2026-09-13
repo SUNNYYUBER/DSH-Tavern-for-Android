@@ -363,7 +363,7 @@ export function apply(ctx: {
     RpGreetingDock,
   ))
 
-  // 第五轮：状态悬浮球（示例卡二 pw-state-float 意图原生移植）——dock 席位挂载，
+  // 第五轮：状态悬浮球（示例卡乙 pw-state-float 意图原生移植）——dock 席位挂载，
   // fixed 定位浮球 + 状态面板；仅 RP 会话且有消息时显示，非 RP 会话零影响。
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register(
     { name: 'conversation.input.dock', id: 'dsht-rp-statefloat', order: 48 },

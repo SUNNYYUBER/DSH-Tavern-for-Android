@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 // golden-candidates-check.mjs — 4 个真候选单点复查（15s 长窗 + 网络判据 + 前后截图）
 import fs from 'node:fs';
+import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { chromium } = require('D:/DSH RolePlay/rp-workspace/tools-pw/node_modules/playwright-core');
-const EXE = 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+const ROOT = path.resolve(import.meta.dirname, '../..');   // 项目根，由本文件位置推导
+const { chromium } = require(path.join(import.meta.dirname, '../tools-pw/node_modules/playwright-core'));
+const EXE = process.env.DSHT_CHROME_EXE ?? '<path-to-chrome.exe>';
+const ADB = process.env.DSHT_ADB ?? '<path-to-adb>';
 
 function refreshToken() {
   try {
-    execSync('C:/Users/Administrator/.android/sdk/platform-tools/adb.exe -s emulator-5554 shell "run-as com.dshtavern.app cat files/.dsh/dsht-token" > "D:/DSH RolePlay/tmp/dsht-token.txt"', { timeout: 20000 });
+    execSync(`${ADB} -s emulator-5554 shell "run-as com.dshtavern.app cat files/.dsh/dsht-token" > "${path.join(ROOT, 'tmp/dsht-token.txt')}"`, { timeout: 20000 });
   } catch {}
-  return fs.readFileSync('D:/DSH RolePlay/tmp/dsht-token.txt', 'utf8').trim();
+  return fs.readFileSync(path.join(ROOT, 'tmp/dsht-token.txt'), 'utf8').trim();
 }
 const TOKEN = refreshToken();
 const CANDIDATES = [
@@ -94,9 +98,9 @@ console.log('[cand] 进聊天:', inChat);
 {
   const inputs = await page.evaluate(() => Array.from(document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]')).map(e => ({ id: e.id, cls: String(e.className).slice(0, 40), ph: (e.placeholder || '').slice(0, 30), vis: !!(e.offsetWidth || e.offsetHeight) })));
   console.log('[cand] 输入区 DOM:', JSON.stringify(inputs, null, 1));
-  await page.screenshot({ path: 'D:/DSH RolePlay/tmp/cand-state.png' });
+  await page.screenshot({ path: path.join(ROOT, 'tmp/cand-state.png') });
 }
-if (!inChat) { await page.screenshot({ path: 'D:/DSH RolePlay/tmp/cand-nav-fail.png' }); await browser.close(); process.exit(1); }
+if (!inChat) { await page.screenshot({ path: path.join(ROOT, 'tmp/cand-nav-fail.png') }); await browser.close(); process.exit(1); }
 await page.waitForTimeout(10000);
 for (let k = 0; k < 2; k++) {
   await page.keyboard.press('Escape').catch(() => {});
@@ -131,7 +135,7 @@ for (const cand of CANDIDATES) {
   }
   page.off('request', onReq);
   console.log(`  → 15s 网络事件总数: ${net.length} ${net.length ? '→ 有响应（异步）' : '→ 无网络活动'}`);
-  await page.screenshot({ path: `D:/DSH RolePlay/tmp/cand-${cand.name.slice(0, 6)}.png` });
+  await page.screenshot({ path: path.join(ROOT, `tmp/cand-${cand.name.slice(0, 6)}.png`) });
 }
 await browser.close();
 console.log('[cand] 完成');

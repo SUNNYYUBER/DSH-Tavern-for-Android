@@ -411,7 +411,7 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
 .dsht-rp-card-gear:hover { background: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-label-primary-foreground, #fff); }
 /* 触屏无 hover 常显规则已迁至 dsht-plugin-mobile */
 
-/* 悬浮球（RpStateFloat，示例卡二 pw-state-float 意图原生移植）：fixed 浮球 + 底部状态面板 */
+/* 悬浮球（RpStateFloat，示例卡乙 pw-state-float 意图原生移植）：fixed 浮球 + 底部状态面板 */
 .dsht-rp-statefloat-ball {
   position: fixed; z-index: 60; width: 44px; height: 44px; margin: -22px 0 0 -22px;
   border-radius: 50%; border: 1px solid var(--dsw-alias-border-l1);

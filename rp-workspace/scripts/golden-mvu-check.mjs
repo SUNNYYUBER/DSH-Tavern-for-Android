@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 // golden-mvu-check.mjs — MVU 按钮单点复查（导航三重确认 + 15s 网络观察）
 import fs from 'node:fs';
+import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { chromium } = require('D:/DSH RolePlay/rp-workspace/tools-pw/node_modules/playwright-core');
-const EXE = 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+const ROOT = path.resolve(import.meta.dirname, '../..');   // 项目根，由本文件位置推导
+const { chromium } = require(path.join(import.meta.dirname, '../tools-pw/node_modules/playwright-core'));
+const EXE = process.env.DSHT_CHROME_EXE ?? '<path-to-chrome.exe>';
+const ADB = process.env.DSHT_ADB ?? '<path-to-adb>';
 
 function refreshToken() {
   try {
-    execSync('C:/Users/Administrator/.android/sdk/platform-tools/adb.exe -s emulator-5554 shell "run-as com.dshtavern.app cat files/.dsh/dsht-token" > "D:/DSH RolePlay/tmp/dsht-token.txt"', { timeout: 20000 });
+    execSync(`${ADB} -s emulator-5554 shell "run-as com.dshtavern.app cat files/.dsh/dsht-token" > "${path.join(ROOT, 'tmp/dsht-token.txt')}"`, { timeout: 20000 });
   } catch {}
-  return fs.readFileSync('D:/DSH RolePlay/tmp/dsht-token.txt', 'utf8').trim();
+  return fs.readFileSync(path.join(ROOT, 'tmp/dsht-token.txt'), 'utf8').trim();
 }
 const TOKEN = refreshToken();
 const browser = await chromium.launch({ executablePath: EXE, headless: true, args: ['--no-proxy-server'] });
@@ -66,7 +70,7 @@ if (!inChat) {
   inChat = await navTo('wuwa|solaris', '重试');
 }
 if (!inChat) {
-  await page.screenshot({ path: 'D:/DSH RolePlay/tmp/mvu-nav-fail.png' });
+  await page.screenshot({ path: path.join(ROOT, 'tmp/mvu-nav-fail.png') });
   console.log('[mvu] ❌ 两次导航都未进聊天——截图 mvu-nav-fail.png');
   await browser.close();
   process.exit(1);
@@ -82,7 +86,7 @@ const btn = await page.evaluate(() => {
   return null;
 });
 console.log('[mvu] 按钮找到:', btn);
-if (!btn) { await page.screenshot({ path: 'D:/DSH RolePlay/tmp/mvu-btn-missing.png' }); console.log('[mvu] 按钮不在主文档（可能在 iframe）——截图留证'); await browser.close(); process.exit(1); }
+if (!btn) { await page.screenshot({ path: path.join(ROOT, 'tmp/mvu-btn-missing.png') }); console.log('[mvu] 按钮不在主文档（可能在 iframe）——截图留证'); await browser.close(); process.exit(1); }
 
 net.length = 0;
 await page.evaluate(() => { document.querySelector('[data-mvutest="1"]').dispatchEvent(new MouseEvent('click', { bubbles: true })); });
@@ -91,6 +95,6 @@ for (let s = 1; s <= 5; s++) {
   await page.waitForTimeout(3000);
   console.log(`[mvu] t+${s * 3}s: ${net.length} 事件 | ${net.slice(-2).join(' | ') || '(无)'}`);
 }
-await page.screenshot({ path: 'D:/DSH RolePlay/tmp/mvu-btn-after.png' });
+await page.screenshot({ path: path.join(ROOT, 'tmp/mvu-btn-after.png') });
 console.log('[mvu] 截图: mvu-btn-after.png');
 await browser.close();

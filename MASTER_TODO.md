@@ -29,7 +29,7 @@
 > 54 脚本里消费端**恰 3 处且全部是零参回调、不读载荷**。
 >
 > ② 🔴 **闸门覆盖边界三处扩展（都是"枚举器边界即结论边界"，L44）**：
-> **① 动态别名形态** —— 语料 `_示例卡二_ V17.1:55366-55369` 写 `const te = getFn('tavern_events') || tavern_events;
+> **① 动态别名形态** —— 语料 `_示例卡乙_ V17.1:55366-55369` 写 `const te = getFn('tavern_events') || tavern_events;
 > const eo = getFn('eventOn'); eo(te.PRESET_CHANGED, …)` ⇒ 原枚举器**整批看不见**；
 > 用**白名单标识符判据**（`ALLOWED_IDS` ∪ 表名，id 数 ≤ 8，RHS 剥字符串后无其他标识符）+ 解构形态修复
 > ⇒ 注册面 **23 → 27**，**当场现形 4 项真缺口**。
@@ -603,7 +603,7 @@
 > `generateRaw`(2/6) · `getTokenCountAsync`(2/5) · **`powerUserSettings`**(2/2，**全新项**，子路径 `persona_description`) ·
 > `stopGeneration`(2/2) · `updateMessageBlock`(2/2) · `generate`(2/2) · `executeSlashCommandsWithOptions`(1/4) · `messageFormatting`(1/3) ·
 > `generateQuietPrompt`(1/2) · `saveChat`(1/1) · `mainApi`(1/1) · `onlineStatus`(1/1)。iframe 面同语料缺 **25** 个成员。
-> ⑥ **关键实例（*启用中*，不是边角料）**：`🦊示例卡二~` 在**主预设 V17.1 / Agent 预设 V14.7 各一份且 `enabled=true`**，访问
+> ⑥ **关键实例（*启用中*，不是边角料）**：`🦊示例卡乙~` 在**主预设 V17.1 / Agent 预设 V14.7 各一份且 `enabled=true`**，访问
 > `characterId`(16 次) / `characters`(11 次) / `chatMetadata`(9 次，子路径 `file_name`/`chat_id`) / `powerUserSettings`(1 次，行 6115)。
 > ⑦ **决策输入更新（三条）**：**T-47 的「最后 3 个成员」是错的 ⇒ 实际 15 个**，且其前提「当前无实测触发（DSHT 只跑 TH 脚本、未跑扩展文件系统）」**被推翻**
 > —— 触发它的是 **DSHT 自己启用中的预设脚本**；**T-46 的投影方案需重新计价**（投影后 iframe 顶层 = 宿主面 ∪ {getContext}，
@@ -773,7 +773,7 @@
 | # | 要你定的事 | 我的建议 | 不定会怎样 |
 |---|---|---|---|
 | ~~**T-42**~~ ✅ | ~~卡脚本要挂到 **ST 正则面板的 17 个 DOM 元素**（`#saved_regex_scripts` 等），我们前端是 DSH 的 UI，**一个都没有**~~ | **心跳 58 已真修，不用你拍板**——⚠️ 心跳 57 的「真根是缺 `/version` 端点」**已被实证推翻**：按卡逐字取法实测 `extensions.regex.length` **抛 TypeError**（我方 `extensionSettingsRegex` 恒 `undefined`），而卡在**无条件调用**的 `updateSTRegexes()` 里读它 → `RegexBinding()` 整段中断 → `ChatSquash`/`MacroNest`/工具注册**全不执行**（新旧版路径都会走到）。已按基准补 `extensions.regex` 真数据 seed（`host-vendor.ts:seedHostExtensionSettings`）+ iframe 侧同族副本。**实机验证**：`extensions.regex.length` = **1**（真数据，非空壳），反控同形报错。见 **T-60** | — |
-| **T-46**<br>**+T-47**<br>（已合并） | **iframe 门面要不要升、怎么升** + **宿主门面缺的成员怎么办**（两者是同一个决定的两半）<br>▸ 心跳 63 实测四口径：真 ST **145** / 宿主面 **39** / **iframe 顶层 22** / iframe `getContext()` **11**；卡样本 19 个成员中 **iframe 顶层缺 12 / getContext 缺 15 / 宿主面 0 缺**<br>▸ **分档已做完，原「三档」逐档坍缩**：`可经 postMessage 桥` = **空集** · `必须同步` = **不存在**（同源 + getter 直取）· `需要注入式装配` = **空集**<br>▸ **心跳 63B 全语料普查（54 脚本 / 6.5 MB）修正：宿主面缺口 = 15 个成员，不是 3 个**（且为下界）；触发者是 **DSHT 自己启用中的预设脚本 `🦊示例卡二~`**，**不是扩展** | **推荐方案 A（照抄基准：父页投影 + 宿主面补齐）**——逐字同形、约 **5 行**改动（vs 方案 B 的 22 条转发且**长期漂移**）、宿主面将来补齐多少 iframe **自动跟随**；<br>⚠️ 前提 = 补齐**会丢的 9 个自建独有成员**（含 `characters`/`characterId`）**且**宿主面本身缺的那 **15 个**；<br>⇒ 这 15 个已分四档（**A 可低成本补**：`onlineStatus` / `powerUserSettings.persona_description` / `saveChat` 出声 no-op · **B 需你定语义**：`characters`+`characterId` 成对、`chatMetadata` 存哪层 · **C 生成栈**：`generate`/`generateRaw`/`generateQuietPrompt`/`stopGeneration`/`mainApi`/`executeSlashCommandsWithOptions`/`getTokenCountAsync` ⇒ 先按 T-48 的办法问死"完整实现是否无效功" · **D 相邻域**：`updateMessageBlock`/`messageFormatting`） | 不升则 iframe 侧脚本静默少功能；<br>若只投影不补齐 ⇒ **倒退**（丢 9 个自建成员 + 仍缺 15 个宿主成员）;<br>若给空容器 ⇒ 卡的写入**静默消失**（本项目主力缺陷族）;<br>⚠️ **触发条件已部分成立**（启用中的预设脚本确实在访问这些成员），但**未观测到用户可见故障**（logcat iframe 侧报错 0 条） |
+| **T-46**<br>**+T-47**<br>（已合并） | **iframe 门面要不要升、怎么升** + **宿主门面缺的成员怎么办**（两者是同一个决定的两半）<br>▸ 心跳 63 实测四口径：真 ST **145** / 宿主面 **39** / **iframe 顶层 22** / iframe `getContext()` **11**；卡样本 19 个成员中 **iframe 顶层缺 12 / getContext 缺 15 / 宿主面 0 缺**<br>▸ **分档已做完，原「三档」逐档坍缩**：`可经 postMessage 桥` = **空集** · `必须同步` = **不存在**（同源 + getter 直取）· `需要注入式装配` = **空集**<br>▸ **心跳 63B 全语料普查（54 脚本 / 6.5 MB）修正：宿主面缺口 = 15 个成员，不是 3 个**（且为下界）；触发者是 **DSHT 自己启用中的预设脚本 `🦊示例卡乙~`**，**不是扩展** | **推荐方案 A（照抄基准：父页投影 + 宿主面补齐）**——逐字同形、约 **5 行**改动（vs 方案 B 的 22 条转发且**长期漂移**）、宿主面将来补齐多少 iframe **自动跟随**；<br>⚠️ 前提 = 补齐**会丢的 9 个自建独有成员**（含 `characters`/`characterId`）**且**宿主面本身缺的那 **15 个**；<br>⇒ 这 15 个已分四档（**A 可低成本补**：`onlineStatus` / `powerUserSettings.persona_description` / `saveChat` 出声 no-op · **B 需你定语义**：`characters`+`characterId` 成对、`chatMetadata` 存哪层 · **C 生成栈**：`generate`/`generateRaw`/`generateQuietPrompt`/`stopGeneration`/`mainApi`/`executeSlashCommandsWithOptions`/`getTokenCountAsync` ⇒ 先按 T-48 的办法问死"完整实现是否无效功" · **D 相邻域**：`updateMessageBlock`/`messageFormatting`） | 不升则 iframe 侧脚本静默少功能；<br>若只投影不补齐 ⇒ **倒退**（丢 9 个自建成员 + 仍缺 15 个宿主成员）;<br>若给空容器 ⇒ 卡的写入**静默消失**（本项目主力缺陷族）;<br>⚠️ **触发条件已部分成立**（启用中的预设脚本确实在访问这些成员），但**未观测到用户可见故障**（logcat iframe 侧报错 0 条） |
 | ~~**D-6**~~ ✅ | ~~我发给 AI 的请求里多出 **32 个工具定义**（24k 字说明书），TT 的请求体**完全没有** `tools` 字段~~ | **心跳 58 已按拍板关掉**：`system-prompt/assemble` 里按「是否 RP 会话」修剪 `tools` + 对应 `tool:<name>` section；`lightAgent`/`heavyAgent`/`agent` 三路径**保留**（其预设正文要求调用工具，硬关会造出新的静默不一致）。见 **T-59** | — |
 | ~~**D-5a**~~ ✅ | ~~手机时区显示为 `GMT` 时，系统给的时区名是 `+00:00`（非标准名），0.1.5 拒绝 → **发不出消息**。要不要做产品级兜底~~ | **已按建议 A 落地（心跳 52）**：注入层替换取样结果（`Intl.DateTimeFormat.prototype.resolvedOptions`），只换名字不换偏移；GMT 真机实测已能正常发消息并落盘 `clientTimeZone:"UTC"` | — |
 | ~~**D-5b**~~ ✅ | ~~要不要**一次性清洗存量脏楼层**（`$1` 残留 + `<interactive_input>` 包装被写回过）~~ | **心跳 58 按拍板选 B：不清洗，本项关闭**。依据（心跳 54 只读报告）：**真脏 83 条 / 13 个会话**（`$1` 字面残留 62 / 嵌套包装 1），另 35 条属**设计用途快照**不计风险；**修复已生效**（最后一次污染 09-10 08:53 UTC → 最新消息 09-11 08:12 UTC，**23.3 小时零新增**）⇒ 残留纯属存量、只影响旧会话观感；清洗属不可逆写入，收益不成比例 | — |

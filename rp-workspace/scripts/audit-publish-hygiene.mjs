@@ -109,10 +109,27 @@ const RULES = [
   {
     id: 'LOCALPATH',
     label: '本机绝对路径',
-    find: (text) =>
-      (text.match(/(?:[A-Za-z]:\\|\/(?:[a-z])\/)Users\\?\/?[A-Za-z0-9._-]+/g) ?? []).concat(
+    find: (text) => {
+      const hits = (text.match(/(?:[A-Za-z]:\\|\/(?:[a-z])\/)Users\\?\/?[A-Za-z0-9._-]+/g) ?? []).concat(
         text.match(/\/(?:Users|home)\/[A-Za-z0-9._-]+\//g) ?? [],
-      ),
+      )
+      /**
+       * 【E2 分类 2026-09-13】豁免「刻意占位」的通用示例路径。
+       * 判据：用户名段是**单字符或无意义占位**（u / user / username / someone / me /
+       * you / test / example / foo / bar / <...>），或整段形如 `<path-to-xxx>`。
+       * 理由：这类写法**不泄露任何本机信息**——任何平台、任何用户写示例都会这么写。
+       * 反例（必须报警、不得豁免）：真实用户名（如 Administrator）、真实业务目录名。
+       * 实证来源：packages/tests/*.spec.ts 的断言夹具用 `/home/u/.dsh`（标准 POSIX 示例），
+       * 被旧判据误报 5 处 —— 属假阳性而非泄露。
+       */
+      const PLACEHOLDER_USER = /^(u|user|username|users?name?|someone|me|you|test|tests?|example|sample|demo|foo|bar|baz|xxx+)$/i
+      // filter 的返回 true = **保留命中（报警）**；false = 豁免
+      return hits.filter((h) => {
+        const seg = h.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
+        if (seg.startsWith('<')) return false          // 占位串 <path-to-x> → 豁免
+        return !PLACEHOLDER_USER.test(seg)             // 占位用户名 → 豁免
+      })
+    },
   },
   {
     id: 'SERVER',

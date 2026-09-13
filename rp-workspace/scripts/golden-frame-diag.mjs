@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // golden-frame-diag.mjs — 抓 TH 脚本 iframe 内的完整错误与全局缺失清单
 import fs from 'node:fs';
-const TOKEN = fs.readFileSync('D:/DSH RolePlay/tmp/dsht-token.txt', 'utf8').trim();
+import path from 'node:path';
+// 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+const ROOT = path.resolve(import.meta.dirname, '../..');   // 项目根，由本文件位置推导
+const TOKEN = fs.readFileSync(path.join(ROOT, 'tmp/dsht-token.txt'), 'utf8').trim();
 const { chromium } = await (async () => {
   const require = (await import('node:module')).createRequire(import.meta.url);
-  return require('D:/DSH RolePlay/rp-workspace/tools-pw/node_modules/playwright-core');
+  return require(path.join(import.meta.dirname, '../tools-pw/node_modules/playwright-core'));
 })();
-const EXE = 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+const EXE = process.env.DSHT_CHROME_EXE ?? '<path-to-chrome.exe>';
 
 const browser = await chromium.launch({ executablePath: EXE, headless: true, args: ['--no-proxy-server'] });
 const page = await browser.newPage();

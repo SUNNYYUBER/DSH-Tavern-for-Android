@@ -16,7 +16,8 @@
 #   例：bash rp-workspace/scripts/hotpush-plugins.sh dsht-rp-plugin dsht-plugin-memory
 # 注意：推完必须重启 app（Node 进程持有旧模块）。
 set -u
-ADB="${ADB:-C:/Users/Administrator/.android/sdk/platform-tools/adb.exe}"
+# 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+ADB="${DSHT_ADB:-${ADB:-<path-to-adb>}}"
 PKG="${APPLICATION_ID:-com.dshtavern.app}"
 WS="$(cd "$(dirname "$0")/../.." && pwd -W)"
 SRC="$WS/rp-workspace/dsh-runtime-android/node_modules"

@@ -1,17 +1,21 @@
 #!/usr/bin/env node
 // golden-panel-check.mjs — 心跳 12：开面板→点面板内按钮（重新处理/读取初始变量）
 import fs from 'node:fs';
+import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { chromium } = require('D:/DSH RolePlay/rp-workspace/tools-pw/node_modules/playwright-core');
-const EXE = 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+const ROOT = path.resolve(import.meta.dirname, '../..');   // 项目根，由本文件位置推导
+const { chromium } = require(path.join(import.meta.dirname, '../tools-pw/node_modules/playwright-core'));
+const EXE = process.env.DSHT_CHROME_EXE ?? '<path-to-chrome.exe>';
+const ADB = process.env.DSHT_ADB ?? '<path-to-adb>';
 
 function refreshToken() {
   try {
-    execSync('C:/Users/Administrator/.android/sdk/platform-tools/adb.exe -s emulator-5554 shell "run-as com.dshtavern.app cat files/.dsh/dsht-token" > "D:/DSH RolePlay/tmp/dsht-token.txt"', { timeout: 20000 });
+    execSync(`${ADB} -s emulator-5554 shell "run-as com.dshtavern.app cat files/.dsh/dsht-token" > "${path.join(ROOT, 'tmp/dsht-token.txt')}"`, { timeout: 20000 });
   } catch {}
-  return fs.readFileSync('D:/DSH RolePlay/tmp/dsht-token.txt', 'utf8').trim();
+  return fs.readFileSync(path.join(ROOT, 'tmp/dsht-token.txt'), 'utf8').trim();
 }
 const TOKEN = refreshToken();
 const browser = await chromium.launch({ executablePath: EXE, headless: true, args: ['--no-proxy-server'] });
@@ -51,7 +55,7 @@ await page.evaluate((re) => {
 }, 'wuwa|solaris');
 const inChat = await page.waitForSelector('textarea:not(.bhn1Oq_searchInput)', { state: 'attached', timeout: 60000 }).then(() => true).catch(() => false);
 console.log('[panel] 进聊天:', inChat);
-if (!inChat) { await page.screenshot({ path: 'D:/DSH RolePlay/tmp/panel-nav-fail.png' }); await browser.close(); process.exit(1); }
+if (!inChat) { await page.screenshot({ path: path.join(ROOT, 'tmp/panel-nav-fail.png') }); await browser.close(); process.exit(1); }
 await page.waitForTimeout(10000);
 
 // 找目标按钮（全 frame）
@@ -101,7 +105,7 @@ if (!targets.length) {
 }
 
 if (!targets.length) {
-  await page.screenshot({ path: 'D:/DSH RolePlay/tmp/panel-no-target.png' });
+  await page.screenshot({ path: path.join(ROOT, 'tmp/panel-no-target.png') });
   console.log('[panel] ❌ 各面板均未找到目标按钮——截图 panel-no-target.png');
   await browser.close();
   process.exit(1);
@@ -117,7 +121,7 @@ for (const t of targets.slice(0, 2)) {
     console.log(`  t+${s * 3}s: ${net.length} | ${net.slice(-2).join(' | ') || '(无)'}`);
   }
   console.log(`  → "${t.text}" 15s 网络事件: ${net.length} ${net.length ? '→ 有响应' : '→ 无网络活动'}`);
-  await page.screenshot({ path: `D:/DSH RolePlay/tmp/panel-${t.text.slice(0, 8)}.png` });
+  await page.screenshot({ path: path.join(ROOT, `tmp/panel-${t.text.slice(0, 8)}.png`) });
 }
 await browser.close();
 console.log('[panel] 完成');

@@ -33,9 +33,9 @@ console.log(`世界书: ${bookCount}/${worldFiles.length} 本导入成功，共 
 console.log(`  constant 条目: ${constantCount}，atDepth 深度注入: ${atDepthCount}`)
 console.log(`  含弃用特性警告的书: ${warnBooks} 本（timed effects/概率/组 → diff 报告）`)
 
-// ---- 复合角色卡（挑最重的 ExampleGame + 示例世界 + XP大全）----
+// ---- 复合角色卡（挑最重的 ExampleGame + 示例世界书 + XP大全）----
 const charsDir = path.join(dataDir, 'characters')
-const targets = ['ExampleGame ExampleWorld MVU Edition 0607.png', '示例世界与黄昏之歌v4.2.png', 'XP大全.png']
+const targets = ['ExampleGame ExampleWorld MVU Edition 0607.png', '示例世界书与黄昏之歌v4.2.png', 'XP大全.png']
 for (const t of targets) {
   const p = path.join(charsDir, t)
   if (!fs.existsSync(p)) { console.log(`  [跳过] ${t} 不存在`); continue }

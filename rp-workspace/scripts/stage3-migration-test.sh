@@ -17,10 +17,12 @@
 # ============================================================================
 set -euo pipefail
 
-ROOT="D:/DSH RolePlay"
-ADB="C:/Users/Administrator/.android/sdk/platform-tools/adb.exe"
+# 【E2 脱敏 2026-09-13】项目根原为硬编码绝对路径（含盘符），改为由本脚本位置推导。
+ROOT="$(cd "$(dirname "$0")/../.." && pwd -W)"
+# 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+ADB="${DSHT_ADB:-<path-to-adb>}"
 PKG="com.dshtavern.app"
-PY="C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe"
+PY="${DSHT_PY:-<path-to-python.exe>}"
 DEV="$ROOT/stage3-device"                 # 设备数据本地镜像
 APP="/data/data/$PKG/files"
 APK_X64="$ROOT/DSH-Tavern-0.2.0-x86_64-debug.apk"

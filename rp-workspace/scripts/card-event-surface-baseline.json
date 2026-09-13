@@ -87,19 +87,19 @@
       "task": "T-80",
       "fixed_in": "心跳 74（2026-09-12）",
       "baseline": "SillyTavern-reference/public/scripts/openai.js:6826（`{ apiId: 'openai', name: presetName }`；另 kobold/novel/textgen 各一处）",
-      "why_no_longer_missing": "原登记理由（「apiId 取值未定、卡可能按 apiId 分支」）经**全语料普查证伪**：54 脚本里 `PRESET_CHANGED` 的消费端**恰 3 处**（`_示例卡二_` V14.7 / V17.1、`梦鲸思客预设助手_1_7`），**全部零参回调、不读任何载荷** ⇒ 形状风险 = 0。`apiId` 填 `DSHT_MAIN_API`（'openai'）= 我方实际主 API（T-74 实机两面均读作 `'openai'`），非编造。触发点 = `RpPresetSwitch.select()` 的 `preset/select` **成功之后**，与基准「应用预设 delta 之后」同位；**同时补 `oai_preset_changed_after`**（基准 :6825，无参、消费端同样零参），顺序逐字对齐基准（AFTER → PRESET_CHANGED）。"
+      "why_no_longer_missing": "原登记理由（「apiId 取值未定、卡可能按 apiId 分支」）经**全语料普查证伪**：54 脚本里 `PRESET_CHANGED` 的消费端**恰 3 处**（`_示例卡乙_` V14.7 / V17.1、`梦鲸思客预设助手_1_7`），**全部零参回调、不读任何载荷** ⇒ 形状风险 = 0。`apiId` 填 `DSHT_MAIN_API`（'openai'）= 我方实际主 API（T-74 实机两面均读作 `'openai'`），非编造。触发点 = `RpPresetSwitch.select()` 的 `preset/select` **成功之后**，与基准「应用预设 delta 之后」同位；**同时补 `oai_preset_changed_after`**（基准 :6825，无参、消费端同样零参），顺序逐字对齐基准（AFTER → PRESET_CHANGED）。"
     },
     "oai_preset_changed_after": {
       "task": "T-80",
       "fixed_in": "心跳 74（2026-09-12）",
       "baseline": "SillyTavern-reference/public/scripts/openai.js:6825（**无参**）",
-      "why_no_longer_missing": "心跳 74 扩展枚举器（新增「动态别名绑定」形态）后**首次现形** —— 此前闸门看不见 `te.OAI_PRESET_CHANGED_AFTER`（语料 `_示例卡二_.js:30989` / `:55380`）。纯通知：基准无参、语料消费端零参（`syncSmoothStreamState('oai_preset_changed_after')` 一族重同步）。与 `preset_changed` 同一触发点、同一批次投递。"
+      "why_no_longer_missing": "心跳 74 扩展枚举器（新增「动态别名绑定」形态）后**首次现形** —— 此前闸门看不见 `te.OAI_PRESET_CHANGED_AFTER`（语料 `_示例卡乙_.js:30989` / `:55380`）。纯通知：基准无参、语料消费端零参（`syncSmoothStreamState('oai_preset_changed_after')` 一族重同步）。与 `preset_changed` 同一触发点、同一批次投递。"
     },
     "settings_updated": {
       "task": "T-80",
       "fixed_in": "心跳 74（2026-09-12）",
       "baseline": "SillyTavern-reference/public/script.js:9285（`/api/settings/save` 成功后；**无参**）",
-      "why_no_longer_missing": "语义 = 「设置已持久化」，基准 `openai.js:1077` 甚至用 `once(SETTINGS_UPDATED)` 当同步原语。同批现形（语料 `_示例卡二_.js:30998` 族）。落地 = **只**在两条「卡发起」的落盘路径（`saveHostExtensionSettingsDebounced` 计时器回调 + `flushHostExtensionSettings`）投递，**不在 `saveHostExtensionSettings()` 本体** —— 因为 `seedHostExtensionSettings` 分支（`host-vendor.ts:602`）在**启动期**也调它，放本体会变成「启动即发」，而基准此时发的是 `settings_loaded_after`（L36：时机也要对）。广播式（settings 是全局的）。"
+      "why_no_longer_missing": "语义 = 「设置已持久化」，基准 `openai.js:1077` 甚至用 `once(SETTINGS_UPDATED)` 当同步原语。同批现形（语料 `_示例卡乙_.js:30998` 族）。落地 = **只**在两条「卡发起」的落盘路径（`saveHostExtensionSettingsDebounced` 计时器回调 + `flushHostExtensionSettings`）投递，**不在 `saveHostExtensionSettings()` 本体** —— 因为 `seedHostExtensionSettings` 分支（`host-vendor.ts:602`）在**启动期**也调它，放本体会变成「启动即发」，而基准此时发的是 `settings_loaded_after`（L36：时机也要对）。广播式（settings 是全局的）。"
     },
     "generation_stopped": {
       "task": "T-80",

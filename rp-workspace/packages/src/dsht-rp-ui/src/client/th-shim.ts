@@ -1670,7 +1670,7 @@ function buildStContextFacade() {
     // 【心跳 65 · T-74】chatId —— 基准 getContext() 成员（st-context.js:131-133），
     // 与 getCurrentChatId()（script.js:869）**同一个表达式** ⇒ 复用同一实现（单源）。
     // 实测用法（语料 8 次 / 6 文件，**全部无属性级守卫**）：
-    //  · 示例卡二预设族（启用中）: const ctx = SillyTavern?.getContext?.();
+    //  · 示例卡乙预设族（启用中）: const ctx = SillyTavern?.getContext?.();
     //      if (ctx.chatId) return String(ctx.chatId);
     //    失败后的兜底链是 chat.file_name -> chatMetadata.file_name -> chatMetadata.chat_id -> name。
     //    而该链在我方**整条断裂**：我方 chat 是消息数组（无 file_name）、帧内无 chatMetadata

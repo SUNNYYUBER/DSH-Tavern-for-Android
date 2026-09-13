@@ -129,7 +129,7 @@ export function extractRegistrations(text, tables) {
   }
 
   // ---- 形态 7：**动态别名绑定**（L44 覆盖边界；心跳 74 补） ----
-  // 语料实测（示例预设 V17.1 `_示例卡二_.js:55369`）：
+  // 语料实测（示例预设 V17.1 `_示例卡乙_.js:55369`）：
   //     const te = getFn('tavern_events') || tavern_events
   //     const eo = getFn('eventOn')
   //     eo(te.PRESET_CHANGED, () => { ... })

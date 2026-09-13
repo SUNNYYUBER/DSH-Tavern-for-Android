@@ -2,16 +2,20 @@
 // golden-verify.mjs — 逐元素点击验证（心跳 5 主工具）
 // 用法: node golden-verify.mjs probe|verify [卡名正则]
 import fs from 'node:fs';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { chromium } = require('D:/DSH RolePlay/rp-workspace/tools-pw/node_modules/playwright-core');
-const EXE = 'C:/Users/Administrator/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe';
+// 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+const ROOT = path.resolve(import.meta.dirname, '../..');   // 项目根，由本文件位置推导
+const { chromium } = require(path.join(import.meta.dirname, '../tools-pw/node_modules/playwright-core'));
+const EXE = process.env.DSHT_CHROME_EXE ?? '<path-to-chrome.exe>';
+const ADB = process.env.DSHT_ADB ?? '<path-to-adb>';
 const { execSync } = await import('node:child_process');
 function refreshToken() {
   try {
-    execSync('C:/Users/Administrator/.android/sdk/platform-tools/adb.exe -s emulator-5554 shell "run-as com.dshtavern.app cat files/.dsh/dsht-token" > "D:/DSH RolePlay/tmp/dsht-token.txt"', { timeout: 20000 });
+    execSync(`${ADB} -s emulator-5554 shell "run-as com.dshtavern.app cat files/.dsh/dsht-token" > "${path.join(ROOT, 'tmp/dsht-token.txt')}"`, { timeout: 20000 });
   } catch (e) { console.log('[verify] token 刷新失败:', e.message.slice(0, 60)); }
-  return fs.readFileSync('D:/DSH RolePlay/tmp/dsht-token.txt', 'utf8').trim();
+  return fs.readFileSync(path.join(ROOT, 'tmp/dsht-token.txt'), 'utf8').trim();
 }
 const TOKEN = refreshToken();
 const CMD = process.argv[2] ?? 'probe';
@@ -66,7 +70,7 @@ console.log(JSON.stringify(scan.slice(0, 40), null, 1));
 // iframe 清单（MVU 状态栏/脚本 UI 在 iframe 里）
 const frames = page.frames().map(f => ({ url: f.url().slice(0, 80), name: f.name() || '(main-if-frame)' }));
 console.log('[verify] frames:', JSON.stringify(frames, null, 1));
-await page.screenshot({ path: 'D:/DSH RolePlay/tmp/verify-current.png' });
+await page.screenshot({ path: path.join(ROOT, 'tmp/verify-current.png') });
 console.log('[verify] console 尾部:', logs.slice(-4).join(' / ') || '(none)');
 
 // verify 模式：逐元素点击 + 响应判定
@@ -108,7 +112,7 @@ if (CMD === 'verify') {
       ta: !!document.querySelector('#send_textarea'),
     }));
     console.log('[verify] 0元素诊断:', JSON.stringify(diag));
-    await page.screenshot({ path: 'D:/DSH RolePlay/tmp/verify-0elem.png' });
+    await page.screenshot({ path: path.join(ROOT, 'tmp/verify-0elem.png') });
   }
   const results = [];
   for (const el of els) {
@@ -131,7 +135,7 @@ if (CMD === 'verify') {
   }
   const fail = results.filter(r => !r.responded);
   console.log(`[verify] === 汇总: ${results.length - fail.length}/${results.length} 响应，${fail.length} 无响应 ===`);
-  fs.writeFileSync('D:/DSH RolePlay/loop-mvu-interact/verify-report.json', JSON.stringify({ ts: new Date().toISOString(), total: results.length, failed: fail, all: results }, null, 1));
+  fs.writeFileSync(path.join(ROOT, 'loop-mvu-interact/verify-report.json'), JSON.stringify({ ts: new Date().toISOString(), total: results.length, failed: fail, all: results }, null, 1));
   console.log('[verify] 报告: loop-mvu-interact/verify-report.json');
   await browser.close();
   process.exit(0);

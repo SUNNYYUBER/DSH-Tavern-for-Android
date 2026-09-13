@@ -19,11 +19,13 @@
 # ============================================================================
 set -euo pipefail
 
-WS="D:/DSH RolePlay/rp-workspace"
-ROOT="D:/DSH RolePlay"
+# 【E2 脱敏 2026-09-13】项目根原为硬编码绝对路径（含盘符），改为由本脚本位置推导。
+WS="$(cd "$(dirname "$0")/.." && pwd -W)"
+ROOT="$(cd "$WS/.." && pwd -W)"
 NODE="C:/nvm4w/nodejs/node.exe"
 NPM="C:/nvm4w/nodejs/npx"
-PY="C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe"
+# 【E2 脱敏 2026-09-13】原为硬编码本机路径（含用户名），改为环境变量可覆盖，避免泄露本机信息。
+PY="${DSHT_PY:-<path-to-python.exe>}"
 SRC="$WS/dsh-runtime-src"
 DST="$WS/dsh-runtime-android"
 
