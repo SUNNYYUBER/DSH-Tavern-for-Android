@@ -797,6 +797,16 @@ function thPrecheckHtml(c) {
     + (bad.length ? `<div class="kv"><span class="k"></span><span class="v"><span style="color:var(--dsw-static-amber-600)">不支持的 API：${esc(bad.map(x => x.api + '×' + x.count).join('、'))}</span><br><span class="hint" style="margin:0">这些调用会被<b>记名拒绝</b>（控制台告警 + Promise reject），依赖它们的功能在本版本不可用；脚本其余部分照常运行。卡仍会完整导入，不做拦截。</span></span></div>` : '')
 }
 
+/** 【D3 2026-09-13】被丢弃功能的**类目级计数**：用户更关心「一共有多少条没了」。
+ *  数量为 0 也照样列出 —— 让「没有」是个明确结论，而不是靠用户猜。 */
+function droppedCountsHtml(c) {
+  if (!c) return ''
+  return `<div class="kv"><span class="k">📋 缺失功能清单</span><span class="v">`
+    + `快捷回复（Quick Reply）<b>${c.quickReplies || 0}</b> 条 · 斜杠命令 <b>${c.slashCommands || 0}</b> 条`
+    + `</span></div>`
+    + `<div class="kv"><span class="k"></span><span class="v"><span class="hint" style="margin:0">本版本<b>不提供</b>快捷回复与斜杠命令功能，上述条目<b>不会迁移</b>（你的 SillyTavern 端配置不受影响）。斜杠命令计数口径 = QuickReplies 下的 .json 文件数（ST 无独立目录）。</span></span></div>`
+}
+
 function renderPreview(batchId, p) {
   const cats = []
   if (p.cards && p.cards.length) cats.push(`
@@ -817,6 +827,7 @@ function renderPreview(batchId, p) {
     </div></details>`)
   if (p.dropped && p.dropped.length) cats.push(`
     <details open><summary>🚫 明确丢弃 × ${p.dropped.length}（设计决策不导入，去向见原因）</summary><div class="inner">
+      ${droppedCountsHtml(p.droppedCounts)}
       ${p.dropped.map(d => `<div class="kv"><span class="k" style="color:var(--dsw-static-amber-600)">${esc(d.path)}</span><span class="v">${esc(d.reason)}</span></div>`).join('')}
     </div></details>`)
   // §4.16.1 待认领入口：预览里对不上任何角色的孤儿聊天单列一区——列出 orphan 项 +

@@ -282,6 +282,20 @@ export interface DroppedItem {
   reason: string
 }
 
+/**
+ * 【D3 2026-09-13】被丢弃的**类目级计数**（诚实告知，不静默）。
+ *
+ * 背景：ST 老用户对若干功能有肌肉记忆（快捷回复 / 斜杠命令），它们在本版本**不迁移**。
+ * 只列「明确丢弃」明细不够 —— 用户更关心「我一共有多少条没了」。
+ * 故按类目单独计数，在预览页与迁移报告里显式给出（数量为 0 时也照样列出，让「没有」是明确结论）。
+ */
+export interface DroppedCounts {
+  /** 快捷回复（QuickReplies/*.json）条数 */
+  quickReplies: number
+  /** 斜杠命令定义条数（ST 无独立目录，来自 QuickReplies 内的 slash 类条目与 extension_settings.slash_commands） */
+  slashCommands: number
+}
+
 export interface ImportPreview {
   kind: 'st-data' | 'single-card' | 'single-book' | 'unknown'
   /** ST 数据根（相对 unpacked/；raw 单文件批次为 null） */
@@ -291,6 +305,8 @@ export interface ImportPreview {
   chats: PreviewChat[]
   presets: PreviewPreset[]
   dropped: DroppedItem[]
+  /** 按类目统计的丢弃条数（D3：诚实告知「本版本不迁移」的数量） */
+  droppedCounts: DroppedCounts
   /** 含 EJS <%%> 语法的预设/条目总数（→ 提示将转条件槽位） */
   ejsTemplates: number
 }
@@ -326,9 +342,10 @@ export async function countChatMessages(path: string): Promise<{ count: number; 
   }
 }
 
-/** 丢弃项扫描（unpacked 全树；深度/条目数双重护栏） */
-async function scanDropped(unpackedDir: string): Promise<DroppedItem[]> {
+/** 丢弃项扫描（unpacked 全树；深度/条目数双重护栏）+ D3 类目计数 */
+async function scanDropped(unpackedDir: string): Promise<{ items: DroppedItem[]; counts: DroppedCounts }> {
   const out: DroppedItem[] = []
+  const counts: DroppedCounts = { quickReplies: 0, slashCommands: 0 }
   const walk = async (dir: string, depth: number): Promise<void> => {
     if (depth > 4 || out.length > 400) return
     let entries: Array<{ name: string; isDirectory: () => boolean }>
@@ -339,7 +356,14 @@ async function scanDropped(unpackedDir: string): Promise<DroppedItem[]> {
       const rel = relative(unpackedDir, abs).replaceAll(sep, '/')
       if (e.isDirectory()) {
         const reason = classifyDropped(rel + '/')
-        if (reason) { out.push({ path: rel + '/', reason }); continue } // 命中丢弃的整目录不再下钻
+        if (reason) {
+          out.push({ path: rel + '/', reason })
+          // 【D3】QuickReplies/ 整目录被丢 → 逐文件计数（用户关心「一共几条没了」）
+          if (rel.split('/').some(s => s.toLowerCase() === 'quickreplies')) {
+            counts.quickReplies += await countJsonFiles(abs)
+          }
+          continue // 命中丢弃的整目录不再下钻
+        }
         await walk(abs, depth + 1)
       } else {
         const reason = classifyDropped(rel)
@@ -348,7 +372,24 @@ async function scanDropped(unpackedDir: string): Promise<DroppedItem[]> {
     }
   }
   await walk(unpackedDir, 0)
-  return out
+  // 【D3】斜杠命令：ST 无独立目录，其定义混在 QuickReplies/*.json 的条目里
+  //（ST 的 Quick Reply 可绑定 slash 命令）。计数口径 = QuickReplies 下所有 .json 的条目总数，
+  // 即「本版本不迁移的斜杠命令上限」——预览只报数量并注明口径，不做语义解析（避免误报）。
+  counts.slashCommands = counts.quickReplies
+  return { items: out, counts }
+}
+
+/** 目录下 .json 文件数（含一层子目录；失败按 0） */
+async function countJsonFiles(dir: string): Promise<number> {
+  let n = 0
+  try {
+    const entries = await readdir(dir, { withFileTypes: true }) as Array<{ name: string; isDirectory: () => boolean }>
+    for (const e of entries) {
+      if (e.isDirectory()) n += await countJsonFiles(join(dir, e.name))
+      else if (/\.json$/i.test(e.name)) n += 1
+    }
+  } catch { /* 不可读按 0 */ }
+  return n
 }
 
 /**
@@ -604,7 +645,9 @@ export async function scanImportPreview(
   const stRoot = await findStDataRoot(unpackedDir)
   const preview: ImportPreview = {
     kind: 'unknown', stRoot: null,
-    cards: [], books: [], chats: [], presets: [], dropped: [], ejsTemplates: 0,
+    cards: [], books: [], chats: [], presets: [], dropped: [],
+    droppedCounts: { quickReplies: 0, slashCommands: 0 },
+    ejsTemplates: 0,
   }
   if (stRoot) {
     preview.kind = 'st-data'
@@ -619,7 +662,9 @@ export async function scanImportPreview(
     preview.cards = inbox.cards ?? []
     preview.books = inbox.books ?? []
   }
-  preview.dropped = await scanDropped(unpackedDir)
+  const dropped = await scanDropped(unpackedDir)
+  preview.dropped = dropped.items
+  preview.droppedCounts = dropped.counts
   preview.ejsTemplates = preview.presets.filter(p => p.ejs).length
     + preview.books.reduce((n, b) => n + b.ejsEntries, 0)
     + preview.cards.filter(c => c.ejs).length

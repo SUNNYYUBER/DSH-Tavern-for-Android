@@ -16550,6 +16550,7 @@ async function countChatMessages(path) {
 }
 async function scanDropped(unpackedDir) {
   const out = [];
+  const counts = { quickReplies: 0, slashCommands: 0 };
   const walk = async (dir, depth) => {
     if (depth > 4 || out.length > 400) return;
     let entries;
@@ -16566,6 +16567,9 @@ async function scanDropped(unpackedDir) {
         const reason = classifyDropped(rel + "/");
         if (reason) {
           out.push({ path: rel + "/", reason });
+          if (rel.split("/").some((s) => s.toLowerCase() === "quickreplies")) {
+            counts.quickReplies += await countJsonFiles(abs);
+          }
           continue;
         }
         await walk(abs, depth + 1);
@@ -16576,7 +16580,20 @@ async function scanDropped(unpackedDir) {
     }
   };
   await walk(unpackedDir, 0);
-  return out;
+  counts.slashCommands = counts.quickReplies;
+  return { items: out, counts };
+}
+async function countJsonFiles(dir) {
+  let n = 0;
+  try {
+    const entries = await readdir4(dir, { withFileTypes: true });
+    for (const e of entries) {
+      if (e.isDirectory()) n += await countJsonFiles(join8(dir, e.name));
+      else if (/\.json$/i.test(e.name)) n += 1;
+    }
+  } catch {
+  }
+  return n;
 }
 async function scanCardFiles(files, relPrefix, pngStems, state) {
   const out = [];
@@ -16818,6 +16835,7 @@ async function scanImportPreview(unpackedDir, opts = {}) {
     chats: [],
     presets: [],
     dropped: [],
+    droppedCounts: { quickReplies: 0, slashCommands: 0 },
     ejsTemplates: 0
   };
   if (stRoot) {
@@ -16833,7 +16851,9 @@ async function scanImportPreview(unpackedDir, opts = {}) {
     preview.cards = inbox.cards ?? [];
     preview.books = inbox.books ?? [];
   }
-  preview.dropped = await scanDropped(unpackedDir);
+  const dropped = await scanDropped(unpackedDir);
+  preview.dropped = dropped.items;
+  preview.droppedCounts = dropped.counts;
   preview.ejsTemplates = preview.presets.filter((p) => p.ejs).length + preview.books.reduce((n, b) => n + b.ejsEntries, 0) + preview.cards.filter((c) => c.ejs).length;
   return preview;
 }
