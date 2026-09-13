@@ -180,8 +180,19 @@ user namespaces 对 app 域不可用 ⇒ **任何受限模式都直接拒绝执�
 
 - **[DeepSeek](https://deepseek.com)** —— DSH 运行时（`@deepseek-ai/dsh`，MIT）
 - **[SillyTavern](https://github.com/SillyTavern/SillyTavern)** 及其社区 —— 定义了角色扮演的资产格式与交互范式，本项目的兼容目标
+- **TauriTavern（Canary 分支）** —— ST 的社区 fork，本项目**行为对齐的基准**（`/version` 兼容值、注入管线顺序、正则绑定语义等多处以其为参照；未复制其源码）
 - **[JS-Slash-Runner（酒馆助手）](https://github.com/N0VI028/JS-Slash-Runner)** —— 脚本运行时 API 的兼容基准
 - **所有角色卡 / 世界书 / 预设作者** —— 你们创作的内容是这个生态真正的价值所在
+
+---
+
+## 许可证
+
+本项目采用 **MIT** 许可证（见 [LICENSE](LICENSE)）。
+
+- 内嵌的 DSH 运行时及其官方包为 **MIT**，仅作依赖使用、未做任何修改
+- 打包物中**无 copyleft 依赖**（无 GPL/AGPL/LGPL）
+- 第三方组件逐项清单与使用方式见 [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md)
 
 ---
 
