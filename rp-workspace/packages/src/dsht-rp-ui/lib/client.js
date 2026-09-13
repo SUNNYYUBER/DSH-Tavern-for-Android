@@ -9656,6 +9656,110 @@ ${r.result}`);
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/PresetPanel.tsx
 var import_react2 = require("react");
+
+// rp-workspace/packages/src/dsht-rp-ui/src/client/toast.ts
+function showDomToast(level, message) {
+  if (typeof document === "undefined") return;
+  const el = document.createElement("div");
+  el.textContent = message;
+  el.setAttribute("role", "status");
+  const bg = level === "error" ? "#b3261e" : level === "success" ? "#2e7d32" : "#37474f";
+  el.style.cssText = [
+    "position:fixed",
+    "right:16px",
+    "bottom:14vh",
+    "z-index:99999",
+    "max-width:340px",
+    "padding:8px 12px",
+    "border-radius:8px",
+    "font-size:12px",
+    "line-height:1.5",
+    "color:#fff",
+    `background:${bg}`,
+    "opacity:0.95",
+    "box-shadow:0 4px 12px rgba(0,0,0,.4)",
+    "pointer-events:none"
+  ].join(";");
+  document.body.append(el);
+  setTimeout(() => el.remove(), 4e3);
+}
+function showDomConfirm(message, opts = {}) {
+  if (typeof document === "undefined") return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      wrap.remove();
+      document.removeEventListener("keydown", onKey, true);
+      resolve(v);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        done(false);
+      }
+    };
+    const wrap = document.createElement("div");
+    wrap.setAttribute("role", "dialog");
+    wrap.setAttribute("aria-modal", "true");
+    wrap.style.cssText = [
+      "position:fixed",
+      "inset:0",
+      "z-index:100000",
+      "display:flex",
+      "align-items:center",
+      "justify-content:center",
+      "background:rgba(0,0,0,.45)",
+      "padding:16px"
+    ].join(";");
+    const box = document.createElement("div");
+    box.style.cssText = [
+      "max-width:420px",
+      "width:100%",
+      "max-height:80vh",
+      "overflow:auto",
+      "background:var(--dsw-alias-bg-base,#1f2329)",
+      "color:var(--dsw-alias-label-primary,#e6e6e6)",
+      "border:1px solid var(--dsw-alias-border-l2,#3a3f45)",
+      "border-radius:10px",
+      "padding:16px",
+      "box-shadow:0 8px 32px rgba(0,0,0,.5)",
+      "font-size:13px",
+      "line-height:1.6"
+    ].join(";");
+    const text2 = document.createElement("div");
+    text2.style.cssText = "white-space:pre-line;word-break:break-word";
+    text2.textContent = message;
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:8px;justify-content:flex-end;margin-top:16px";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.textContent = opts.cancelText ?? "\u53D6\u6D88";
+    cancelBtn.style.cssText = "min-height:36px;padding:0 14px;border-radius:8px;cursor:pointer;border:1px solid var(--dsw-alias-border-l2,#3a3f45);background:transparent;color:inherit;font-size:13px";
+    const okBtn = document.createElement("button");
+    okBtn.type = "button";
+    okBtn.textContent = opts.okText ?? "\u786E\u5B9A";
+    okBtn.style.cssText = "min-height:36px;padding:0 14px;border-radius:8px;cursor:pointer;border:none;background:#b3261e;color:#fff;font-size:13px";
+    cancelBtn.addEventListener("click", () => {
+      done(false);
+    });
+    okBtn.addEventListener("click", () => {
+      done(true);
+    });
+    wrap.addEventListener("click", (e) => {
+      if (e.target === wrap) done(false);
+    });
+    row.append(cancelBtn, okBtn);
+    box.append(text2, row);
+    wrap.append(box);
+    document.body.append(wrap);
+    document.addEventListener("keydown", onKey, true);
+    cancelBtn.focus();
+  });
+}
+
+// rp-workspace/packages/src/dsht-rp-ui/src/client/PresetPanel.tsx
 var import_jsx_runtime2 = require("react/jsx-runtime");
 var PATH_LABELS = {
   direct: "\u76F4\u7B54",
@@ -9707,7 +9811,7 @@ function PresetPanel() {
   };
   const removePreset = async () => {
     if (!editing) return;
-    if (!window.confirm(`\u5220\u9664\u9884\u8BBE\u300C${editing.displayName}\u300D\uFF1F\u6B64\u64CD\u4F5C\u4E0D\u53EF\u6062\u590D\u3002`)) return;
+    if (!await showDomConfirm(`\u5220\u9664\u9884\u8BBE\u300C${editing.displayName}\u300D\uFF1F\u6B64\u64CD\u4F5C\u4E0D\u53EF\u6062\u590D\u3002`, { okText: "\u5220\u9664" })) return;
     if (busy) return;
     setBusy(true);
     setStatus("\u5220\u9664\u4E2D\u2026");
@@ -10063,33 +10167,6 @@ var import_react12 = require("react");
 var import_react8 = require("react");
 var import_react9 = require("react");
 var import_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
-
-// rp-workspace/packages/src/dsht-rp-ui/src/client/toast.ts
-function showDomToast(level, message) {
-  if (typeof document === "undefined") return;
-  const el = document.createElement("div");
-  el.textContent = message;
-  el.setAttribute("role", "status");
-  const bg = level === "error" ? "#b3261e" : level === "success" ? "#2e7d32" : "#37474f";
-  el.style.cssText = [
-    "position:fixed",
-    "right:16px",
-    "bottom:14vh",
-    "z-index:99999",
-    "max-width:340px",
-    "padding:8px 12px",
-    "border-radius:8px",
-    "font-size:12px",
-    "line-height:1.5",
-    "color:#fff",
-    `background:${bg}`,
-    "opacity:0.95",
-    "box-shadow:0 4px 12px rgba(0,0,0,.4)",
-    "pointer-events:none"
-  ].join(";");
-  document.body.append(el);
-  setTimeout(() => el.remove(), 4e3);
-}
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/time-zone.ts
 var IANA_TIME_ZONE = /^[A-Za-z][A-Za-z0-9_+.-]*(?:\/[A-Za-z0-9_+.-]+)+$/;
@@ -18958,7 +19035,7 @@ var RpRegenerateAction = (0, import_react8.memo)(function RpRegenerateAction2({
   const running = useSession((snapshot) => snapshot.running === true);
   const onClick = (0, import_react8.useCallback)(async () => {
     if (busy || regenerate === void 0) return;
-    if (!window.confirm("\u91CD\u65B0\u751F\u6210\u6700\u540E\u4E00\u6761\u56DE\u590D\uFF1F\uFF08\u5F53\u524D\u56DE\u590D\u4F1A\u88AB\u79FB\u9664\uFF09")) return;
+    if (!await showDomConfirm("\u91CD\u65B0\u751F\u6210\u6700\u540E\u4E00\u6761\u56DE\u590D\uFF1F\uFF08\u5F53\u524D\u56DE\u590D\u4F1A\u88AB\u79FB\u9664\uFF09", { okText: "\u91CD\u65B0\u751F\u6210" })) return;
     setBusy(true);
     try {
       await regenerate(sessionId);
@@ -19018,7 +19095,7 @@ var RpUserNodeView = (0, import_react8.memo)(function RpUserNodeView2({
   }, [data.content]);
   const rollback = (0, import_react8.useCallback)(async () => {
     if (busy || running || seq === void 0 || !sessionId) return;
-    if (!window.confirm("\u56DE\u9000\u5230\u8FD9\u6761\u6D88\u606F\uFF1F\u8BE5\u6D88\u606F\u4E0E\u5176\u540E\u7684\u5BF9\u8BDD\u5C06\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF0C\u539F\u6587\u653E\u56DE\u8F93\u5165\u6846\uFF08\u4E8B\u4EF6\u4ECD\u4FDD\u7559\u5728\u65E5\u5FD7\uFF1B\u72B6\u6001/\u53D8\u91CF\u4E00\u5E76\u56DE\u6EDA\uFF09\u3002")) return;
+    if (!await showDomConfirm("\u56DE\u9000\u5230\u8FD9\u6761\u6D88\u606F\uFF1F\u8BE5\u6D88\u606F\u4E0E\u5176\u540E\u7684\u5BF9\u8BDD\u5C06\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF0C\u539F\u6587\u653E\u56DE\u8F93\u5165\u6846\uFF08\u4E8B\u4EF6\u4ECD\u4FDD\u7559\u5728\u65E5\u5FD7\uFF1B\u72B6\u6001/\u53D8\u91CF\u4E00\u5E76\u56DE\u6EDA\uFF09\u3002", { okText: "\u56DE\u9000" })) return;
     setBusy(true);
     try {
       const r = await rpApi("rp/session-rollback", { sessionId, keepThroughSeq: seq, includeAnchor: true });
@@ -20391,7 +20468,7 @@ ${targets.slice(0, 8).map((t) => `\xB7 ${t.workspace ?? t.sessionId.slice(0, 18)
 \u2026\u5171 ${targets.length} \u4E2A` : ""}
 
 \u5F52\u6863 = \u4FA7\u8FB9\u680F\u9690\u85CF\uFF0C\u6570\u636E\u4FDD\u7559\u53EF\u6062\u590D\u3002\u7EE7\u7EED\uFF1F`;
-      if (!window.confirm(confirmText)) {
+      if (!await showDomConfirm(confirmText, { okText: "\u5F52\u6863" })) {
         setBusy(false);
         return;
       }
