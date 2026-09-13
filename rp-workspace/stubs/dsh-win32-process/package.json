@@ -1,0 +1,10 @@
+{
+  "name": "@deepseek-ai/dsh-win32-process",
+  "version": "0.1.5-rc.1",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  }
+}

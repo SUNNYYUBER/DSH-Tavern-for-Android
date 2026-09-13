@@ -1,0 +1,38 @@
+# dsht-rp-plugin —— RP 总包的 cordis patch 层（T-87 第 2 步）
+#
+# ============================================================================
+# 这个文件解决什么问题
+#
+# 官方 `dsh plugin --profile <n> add <pkg>` 的行为（`apps/cli/src/plugin.ts`）：
+#   1. 在 profile 目录跑 pnpm 安装该包（转发）；
+#   2. 然后 `reconcilePlugins()` 扫**已安装依赖**，对每个**声明了 `dsh.bundle.patch`
+#      的包**，把它的包名补进 profile 的 `dsh.profile.bundles` 层栈；
+#   3. **未声明 `dsh.bundle.patch` 的包**只会被当"普通依赖"并打一条 warning
+#      「installed as a plain dependency, not a profile layer」。
+#
+# ⇒ 没有本文件 + package.json 里的 `dsh.bundle.patch` 声明，
+#   「在 PC 上装一个插件就能用」**做不到** —— 用户还得手改 `cordis.patch.yml`。
+#   这正是 T-87 第 2 步要补的前置条件（用户 2026-09-13 拍板"做"）。
+#
+# ============================================================================
+# ⚠️ 这个 patch 层**只在 PC / 标准 DSH 部署下生效**
+#
+# Android 侧的 profile patch 由 `NodeService.ensureRpPluginPatch()` **幂等写入**
+# （同一份 `insert` 行），目的是不依赖 `dsh plugin add`（APK 里没有 pnpm 那套流程）。
+# 二者**不会叠加**：
+#   · `dsh.profile.bundles` 只在「profile 由官方 launcher 引导」时被消费；
+#   · Android 的 profile 用 `dsh-base` + `dsh-web-app` 两个官方 bundle，
+#     **不含** dsht-rp-plugin ⇒ 本文件的 `insert` 不会在 Android 上被读取。
+# ⇒ 不存在"注册两次"的风险。若将来 Android 也把本包加进 bundles，
+#   必须同时移除 `NodeService` 的 insert 写入，否则会**重复注册**（route/settings 冲突）。
+#
+# ============================================================================
+# 与 NodeService.pluginRows 的一致性契约
+#
+# 本文件的 `- insert:` 行必须与 `NodeService.pluginRows` 表达的**同一套 compose 意图**对齐
+# （T-87 后：RP 全部功能由 `dsht-rp-plugin` 一个包承载）。
+# ⚠️ 但**不要**在这里写 `dsht-mobile`：它是移动端适配（非 RP），
+#    在 PC 上不需要，且它自身没有 bundle 声明（保持独立插件）。
+- insert:
+    - id: dsht-rp
+      name: 'dsht-rp-plugin'
