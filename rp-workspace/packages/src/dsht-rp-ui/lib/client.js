@@ -6418,6 +6418,128 @@ function deepMergeIncoming(low, high) {
   return out;
 }
 
+// packages/src/dsht-plugin-shared/th-api-support.ts
+var TH_UNSUPPORTED_APIS = [
+  // 生成控制（钩 ST 生成管线；一次性补全除外）
+  "stopAllGeneration",
+  "stopGenerationById",
+  "getModelList",
+  "getProxyPresetNames",
+  // 聊天消息写路径（改/删/轮转仍记名拒绝；append/update 已走会话写桥）
+  "setChatMessage",
+  "deleteChatMessages",
+  "rotateChatMessages",
+  "formatAsDisplayedMessage",
+  "retrieveDisplayedMessage",
+  "refreshOneMessage",
+  // 世界书写 API（读路径与世界书写面桥已支持）
+  "getLorebooks",
+  "getCharLorebooks",
+  "getChatLorebook",
+  "getOrCreateChatLorebook",
+  "setChatLorebook",
+  "createLorebook",
+  "deleteLorebook",
+  "getLorebookSettings",
+  "setLorebookSettings",
+  "setCurrentCharLorebooks",
+  "createLorebookEntry",
+  "createLorebookEntries",
+  "deleteLorebookEntry",
+  "deleteLorebookEntries",
+  "setLorebookEntries",
+  "updateLorebookEntriesWith",
+  // 角色卡 / 人设 CRUD
+  "getCharacterNames",
+  "getCharacterIds",
+  "getCharacter",
+  "getCurrentCharacterId",
+  "getCurrentCharacterName",
+  "createCharacter",
+  "createOrReplaceCharacter",
+  "deleteCharacter",
+  "replaceCharacter",
+  "updateCharacterWith",
+  "getPersonaNames",
+  "getPersona",
+  "createPersona",
+  "createOrReplacePersona",
+  "deletePersona",
+  "replacePersona",
+  // 宏（类宏注册）
+  "registerMacroLike",
+  "unregisterMacroLike",
+  // 音频清单/播放器控制面（audio.bgm/ambient 基础播放已实现）
+  "getAudioList",
+  "appendAudioList",
+  "replaceAudioList",
+  "playAudio",
+  "pauseAudio",
+  "getCurrentAudio",
+  "getAudioSettings",
+  "setAudioSettings",
+  // 扩展管理 / 导入 / 杂项
+  "isAdmin",
+  "installExtension",
+  "uninstallExtension",
+  "updateExtension",
+  "reinstallExtension",
+  "isInstalledExtension",
+  "getExtensionType",
+  "getExtensionInstallationInfo",
+  "importRawCharacter",
+  "importRawChat",
+  "importRawPreset",
+  "importRawTavernRegex",
+  "importRawWorldbook",
+  "getScriptTrees",
+  "replaceScriptTrees",
+  "updateScriptTreesWith",
+  "getAllEnabledScriptButtons",
+  "writeExtensionField",
+  "updateTavernHelper"
+];
+var UNSUPPORTED_SET = new Set(TH_UNSUPPORTED_APIS);
+var KNOWN_TH_APIS = /* @__PURE__ */ new Set([
+  ...TH_UNSUPPORTED_APIS,
+  // 常见**已支持**面（自 th-shim 的 SHIM_LOCAL_APIS / SHIM_BRIDGE_APIS 摘取高频项）
+  "getContext",
+  "getChatMessages",
+  "setChatMessages",
+  "createChatMessages",
+  "getVariables",
+  "replaceVariables",
+  "insertOrAssignVariables",
+  "deleteVariable",
+  "getWorldbook",
+  "getLorebookEntries",
+  "replaceLorebookEntries",
+  "generate",
+  "generateRaw",
+  "triggerSlash",
+  "substitudeMacros",
+  "eventOn",
+  "eventOnce",
+  "eventEmit",
+  "eventRemoveListener",
+  "eventSource",
+  "getTavernRegexes",
+  "replaceTavernRegexes",
+  "formatAsTavernRegexedString",
+  "getPresetNames",
+  "getPreset",
+  "createOrReplacePreset",
+  "deletePreset",
+  "getCharWorldbookNames",
+  "rebindCharWorldbooks",
+  "rebindGlobalWorldbooks",
+  "getAudioSettings",
+  "playAudio",
+  "toastr",
+  "getRequestHeaders",
+  "getTokenCountAsync"
+]);
+
 // packages/src/dsht-rp-ui/src/client/th-shim.ts
 var TH_MSG_TAG = "__dsht_th";
 function parseIncomingMessage(data) {
@@ -6627,90 +6749,6 @@ var SHIM_BRIDGE_APIS = [
   "getOrCreateChatWorldbook",
   "substitudeMacros"
 ];
-var UNSUPPORTED_APIS = [
-  // 生成控制（钩 ST 生成管线；一次性补全除外——见 SHIM_BRIDGE_APIS generate/generateRaw）
-  "stopAllGeneration",
-  "stopGenerationById",
-  "getModelList",
-  "getProxyPresetNames",
-  // 聊天消息写路径（【P3a 2026-09-07】createChatMessages/setChatMessages 已走会话写桥（/rp/chat/append、
-  // /rp/chat/update——官方 append/replace 原语，不与宿主记录漂移）；改/删/轮转仍记名拒绝）
-  "setChatMessage",
-  "deleteChatMessages",
-  "rotateChatMessages",
-  "formatAsDisplayedMessage",
-  "retrieveDisplayedMessage",
-  "refreshOneMessage",
-  // 世界书写 API（【实机审计修复 2026-09-05】replaceLorebookEntries / rebindGlobalWorldbooks /
-  // rebindCharWorldbooks / getOrCreateChatWorldbook / getWorldbook 已走世界书写面桥（facade
-  // /worldbook/replace-entries 等端点）；其余读路径已支持：getWorldbooks / getLorebookEntries；
-  // getCurrentCharPrimaryLorebook 走 lorebook:primary）
-  "getLorebooks",
-  "getCharLorebooks",
-  "getChatLorebook",
-  "getOrCreateChatLorebook",
-  "setChatLorebook",
-  "createLorebook",
-  "deleteLorebook",
-  "getLorebookSettings",
-  "setLorebookSettings",
-  "setCurrentCharLorebooks",
-  "createLorebookEntry",
-  "createLorebookEntries",
-  "deleteLorebookEntry",
-  "deleteLorebookEntries",
-  "setLorebookEntries",
-  "updateLorebookEntriesWith",
-  // 角色卡 / 人设 CRUD
-  "getCharacterNames",
-  "getCharacterIds",
-  "getCharacter",
-  "getCurrentCharacterId",
-  "getCurrentCharacterName",
-  "createCharacter",
-  "createOrReplaceCharacter",
-  "deleteCharacter",
-  "replaceCharacter",
-  "updateCharacterWith",
-  "getPersonaNames",
-  "getPersona",
-  "createPersona",
-  "createOrReplacePersona",
-  "deletePersona",
-  "replacePersona",
-  // 宏（类宏注册）
-  "registerMacroLike",
-  "unregisterMacroLike",
-  // 音频清单/播放器控制面（audio.bgm/ambient 基础播放已实现；这套 ST 播放器 API 不移植）
-  "getAudioList",
-  "appendAudioList",
-  "replaceAudioList",
-  "playAudio",
-  "pauseAudio",
-  "getCurrentAudio",
-  "getAudioSettings",
-  "setAudioSettings",
-  // 扩展管理 / 导入 / 杂项
-  "isAdmin",
-  "installExtension",
-  "uninstallExtension",
-  "updateExtension",
-  "reinstallExtension",
-  "isInstalledExtension",
-  "getExtensionType",
-  "getExtensionInstallationInfo",
-  "importRawCharacter",
-  "importRawChat",
-  "importRawPreset",
-  "importRawTavernRegex",
-  "importRawWorldbook",
-  "getScriptTrees",
-  "replaceScriptTrees",
-  "updateScriptTreesWith",
-  "getAllEnabledScriptButtons",
-  "writeExtensionField",
-  "updateTavernHelper"
-];
 var UNSUPPORTED_REASONS = {
   setChatMessage: "DSH \u4F1A\u8BDD\u65E5\u5FD7 append-only\uFF0C\u6539\u5199\u5386\u53F2\u4F1A\u4E0E\u5BBF\u4E3B\u8BB0\u5F55\u6709\u635F\u6F02\u79FB\u2014\u2014\u5355\u6761\u6539\u5199\u8BF7\u7528 setChatMessages\uFF08\u8D70 replace \u539F\u8BED\uFF09",
   deleteChatMessages: "DSH \u4F1A\u8BDD\u65E5\u5FD7 append-only\uFF0C\u5220\u9664\u5386\u53F2\u6D88\u606F\u4F1A\u4E0E\u5BBF\u4E3B\u8BB0\u5F55\u6709\u635F\u6F02\u79FB",
@@ -6719,7 +6757,7 @@ var UNSUPPORTED_REASONS = {
 function buildShimSource(opts) {
   const tavernEventsJs = JSON.stringify(TAVERN_EVENTS);
   const iframeEventsJs = JSON.stringify(IFRAME_EVENTS);
-  const unsupportedJs = JSON.stringify(UNSUPPORTED_APIS);
+  const unsupportedJs = JSON.stringify(TH_UNSUPPORTED_APIS);
   const unsupportedReasonsJs = JSON.stringify(UNSUPPORTED_REASONS);
   const bareGlobalsJs = JSON.stringify([...SHIM_LOCAL_APIS, ...SHIM_BRIDGE_APIS]);
   return `(function () {

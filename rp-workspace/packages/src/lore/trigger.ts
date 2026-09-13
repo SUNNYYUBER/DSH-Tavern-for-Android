@@ -21,6 +21,9 @@
  */
 
 import type { LoreEntry } from './entry.ts'
+import {
+  RegexSafetyGuard, loreRegexGuard, type DegradeEvent, type ScanSession,
+} from './safe-regex.ts'
 
 /**
  * 模型可见真实消息游标（dsh-worldbook inject.ts L99-107 同款语义）：只累计事件流里
@@ -85,6 +88,12 @@ export interface TriggerConfig {
   cursor: number
   /** 调用方持久化的跨轮 timed effects（本轮判定基准；本轮新写入的会合入结果返回） */
   timedEffects: TimedEffect[]
+  /**
+   * 关键词正则安全防护器（T-78）。缺省走进程级单例 `loreRegexGuard`（跨轮去重 + 编译缓存）。
+   * 单测注入独立实例以避免用例间串扰（编译缓存与出声去重集合是实例级状态）。
+   * 只放行安全正则：超长 / 超规则数 / 非白名单 flags / 静态危险结构 / 语法错误 → 降级并不命中。
+   */
+  regexGuard?: RegexSafetyGuard
 }
 
 export const DEFAULT_TRIGGER_CONFIG: TriggerConfig = {
@@ -118,45 +127,44 @@ export interface TriggerResult {
   budgetDropped: LoreEntry[]
   /** 合并后的跨轮 timed effects（过期已清理 + 本轮新写入；调用方原样持久化，下轮回传） */
   timedEffects: TimedEffect[]
+  /**
+   * 本轮**全部**关键词防护降级事件（T-78，完整记录不去重）。
+   * 出声（默认 console.warn）按 `entryId|reason` 去重，此处每轮完整 —— 调用方可直观呈现。
+   * 空数组 = 无降级（正常路径）。
+   */
+  degradations: DegradeEvent[]
 }
 
-/** 单个关键词 → RegExp（含 /regex/ 形式、大小写、全词） */
-function keyToPattern(key: string, cfg: TriggerConfig): RegExp {
-  const regexMatch = key.match(/^\/(.+)\/(\w*)$/)
-  if (regexMatch) {
-    const flags = regexMatch[2].includes('i') || !cfg.caseSensitive ? 'i' : ''
-    return new RegExp(regexMatch[1], flags)
-  }
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  // 全词匹配：ST 真实语义用 \W 边界（非字母数字=边界；CJK 属 \w，中文词相邻不触发是 ST 已知行为）
-  // 含空格的多词关键词直接 includes 语义（ST 同款分支）
-  const whole = cfg.matchWholeWords && !/\s/.test(key)
-    ? `(?:^|\\W)(${escaped})(?:$|\\W)`
-    : escaped
-  return new RegExp(whole, cfg.caseSensitive ? '' : 'i')
+/**
+ * 单个关键词 → RegExp（含 /regex/ 形式、大小写、全词）。
+ *
+ * 【T-78 2026-09-13】已改为**经防护器编译**：限额、flags 白名单、静态 ReDoS 拒绝、
+ * 语法错误都走 `RegexSafetyGuard.compile`，降级计入 `session.degraded` 并出声。
+ * 返回 null 表示降级（该关键词本轮按「不命中」处理），调用方不再需要 try/catch。
+ */
+function keyToPattern(key: string, cfg: TriggerConfig, session: ScanSession, entryId: string): RegExp | null {
+  return session.compile(key, {
+    entryId,
+    caseSensitive: cfg.caseSensitive,
+    wholeWords: cfg.matchWholeWords,
+  })
 }
 
-/** 消息文本是否命中条目主关键词 */
-function matchPrimary(entry: LoreEntry, text: string, cfg: TriggerConfig): string | null {
+/** 消息文本是否命中条目主关键词（经防护器编译；降级关键词按不命中处理） */
+function matchPrimary(entry: LoreEntry, text: string, cfg: TriggerConfig, session: ScanSession): string | null {
   for (const key of entry.keys) {
-    try {
-      if (keyToPattern(key, cfg).test(text)) return key
-    } catch {
-      // 无效正则关键词：跳过该关键词
-    }
+    const re = keyToPattern(key, cfg, session, entry.id)
+    if (re !== null && re.test(text)) return key
   }
   return null
 }
 
-/** 副关键词逻辑（ST world_info_logic） */
-function matchSecondary(entry: LoreEntry, text: string, cfg: TriggerConfig): boolean {
+/** 副关键词逻辑（ST world_info_logic；经防护器编译，降级关键词按不命中处理） */
+function matchSecondary(entry: LoreEntry, text: string, cfg: TriggerConfig, session: ScanSession): boolean {
   if (entry.secondaryKeys.length === 0) return true
   const hits = entry.secondaryKeys.filter(k => {
-    try {
-      return keyToPattern(k, cfg).test(text)
-    } catch {
-      return false
-    }
+    const re = keyToPattern(k, cfg, session, entry.id)
+    return re !== null && re.test(text)
   })
   switch (entry.selectiveLogic) {
     case 0: return hits.length > 0        // AND_ANY：任一命中即可
@@ -227,6 +235,11 @@ export function triggerWorldInfo(
   const trace: TriggerResult['trace'] = []
   const budgetDropped: LoreEntry[] = []
 
+  // ---- 关键词正则安全防护（T-78）：一次调用 = 一次扫描会话 ----
+  // 缺省用进程级单例（跨轮去重 + 编译缓存）；单测注入独立实例避免用例间串扰。
+  const guard = cfg.regexGuard ?? loreRegexGuard
+  const session = guard.beginScan()
+
   // ---- timed effects 基准（dsh-worldbook bookCandidates L104-112 同款，MIT）----
   // 过期 effect 清理（pruneTimedEffects 语义：end<=cursor 不再生效也不带回给调用方）
   const cursor = cfg.cursor
@@ -251,7 +264,8 @@ export function triggerWorldInfo(
   const delayBlocked = (entry: LoreEntry) => (entry.delay ?? 0) > 0 && cursor < entry.delay
 
   // ---- 第 0 轮：sticky 强制 / constant 常驻 / 主关键词扫描 ----
-  const scanText = buildScanText(recentMessages, cfg.scanDepth)
+  // 扫描文本先过防护器的长度闸门（超长截断 + 出声；entryId 诚实标注为轮次）
+  const scanText = session.normalizeText(buildScanText(recentMessages, cfg.scanDepth), 'round=0')
   for (const entry of entries) {
     if (!entry.enabled) continue
     if (delayBlocked(entry)) continue
@@ -268,8 +282,8 @@ export function triggerWorldInfo(
       continue
     }
     if (entry.keys.length === 0) continue
-    const hitKey = matchPrimary(entry, scanText, cfg)
-    if (hitKey !== null && matchSecondary(entry, scanText, cfg)) {
+    const hitKey = matchPrimary(entry, scanText, cfg, session)
+    if (hitKey !== null && matchSecondary(entry, scanText, cfg, session)) {
       activate(entry, 'primary', 0, hitKey)
     }
   }
@@ -277,10 +291,13 @@ export function triggerWorldInfo(
   // ---- 递归轮：已激活条目的内容作为新扫描文本 ----
   let recursionRounds = 0
   for (let round = 1; round <= cfg.maxRecursionSteps; round++) {
-    const activatedText = [...activated.values()]
-      .filter(a => !a.entry.preventRecursion)
-      .map(a => a.entry.content)
-      .join('\n')
+    const activatedText = session.normalizeText(
+      [...activated.values()]
+        .filter(a => !a.entry.preventRecursion)
+        .map(a => a.entry.content)
+        .join('\n'),
+      `round=${round}`,
+    )
     if (activatedText === '') break
 
     let newHits = false
@@ -289,8 +306,8 @@ export function triggerWorldInfo(
       if (delayBlocked(entry)) continue
       if (cooldownActive(entry.id)) continue // sticky 生效的第 0 轮已激活，此处只剩 cooldown 抑制
       if (entry.excludeRecursion) continue // 递归轮排除的条目
-      const hitKey = matchPrimary(entry, activatedText, cfg)
-      if (hitKey !== null && matchSecondary(entry, activatedText, cfg)) {
+      const hitKey = matchPrimary(entry, activatedText, cfg, session)
+      if (hitKey !== null && matchSecondary(entry, activatedText, cfg, session)) {
         activate(entry, 'recursion', round, hitKey)
         newHits = true
       }
@@ -334,5 +351,6 @@ export function triggerWorldInfo(
     estimatedTokens: used,
     budgetDropped,
     timedEffects: [...priorEffects, ...newEffects],
+    degradations: [...session.degraded],
   }
 }

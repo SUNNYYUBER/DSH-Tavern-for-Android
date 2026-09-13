@@ -65,6 +65,10 @@ import { mergeSalvagedThFloors, upsertThFloors, readThFloors, lookupThFloor, typ
 import { planSlotSections, SLOT_ORDERS, type SlotBatch, type SlotSection } from '../dsht-plugin-shared/tt-projection.ts'
 // T-27：更新检查的版本判定内核（纯函数；服务端与前端共用同一份实现，避免两份漂移）
 import { relateVersions, parseVersion } from '../dsht-plugin-shared/version-compare.ts'
+// T-79：卡正文「防冒充系统指令」处置（唯一处置漏斗 renderGuardedCardText 消费）
+import { guardCardContent, newCardNonce, totalHits, escapeResidualMacros, type CardGuardResult } from '../dsht-plugin-shared/card-fence.ts'
+// T-48 / T-63：ST 扩展模板的文件路由内核（`/scripts/extensions/**`、`/scripts/templates/**`）
+import { handleScriptAssetRequest, SCRIPT_ASSET_PREFIXES } from './ext-asset.ts'
 // 【心跳 63D · T-70】有界并发映射（/rp/sessions-audit 的串行读→并行读；语义契约见该文件头）
 import { mapBounded, DEFAULT_MAP_CONCURRENCY } from '../dsht-plugin-shared/concurrency.ts'
 // 【心跳 63D · T-70】会话审计的读取原语：字节扫描取「行数 + 首/末行」，
@@ -1029,10 +1033,24 @@ export function extractPersonaTextFromAgentYml(yml: string): string | null {
  * （ST 系 {{trim}}/{{lastUserMessage}} 等）原样透传 → ASCII {{…}} 进消息后
  * DSH 插值器扫 persona 段即炸 "malformed prompt variable reference"。
  * 快照是静态上下文，残留宏对模型本就不可展开——全角化让 DSH 插值器不再碰。
+ *
+ * 【T-79 2026-09-13】**单源**：实现已挪到 `dsht-plugin-shared/card-fence.ts` 的
+ * `escapeResidualMacros`（与卡正文处置共用同一份转义口径），此处只做委托。
+ * 本仓铁律：同一语义不得有第二份实现（否则"改一处漏一处"）。
  */
 function neutralizeResidualMacros(text: string): string {
-  return text.includes('{{') ? text.split('{{').join('｛｛').split('}}').join('｝｝') : text
+  return escapeResidualMacros(text)
 }
+
+// ---------------------------------------------------------------------------
+// T-79：卡正文处置的唯一漏斗
+// ---------------------------------------------------------------------------
+
+/** nonce 复用缓存（key = slug|kind|内容指纹 → nonce）——同内容复用避免逐步 system 抖动 */
+const cardFenceNonces = new Map<string, string>()
+
+/** 已出声的降级 key（slug|kind|hits 摘要）——防每条每轮刷屏（L42：降级可观测但不刷屏） */
+const cardFenceReported = new Set<string>()
 
 export function buildPersonaSnapshotMessage(text: string): LikeMessage {
   const m: LikeMessage = {
@@ -1878,6 +1896,32 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       return null
     }
   }
+
+  // ---- T-63：四个 ST 标准模块资产（ES module）----
+  // 背景：卡（TH 同源形态）用 `import { promptManager, … } from './scripts/openai'` 这类
+  // **静态** import 取用宿主模块；静态 import 是**原子**的 —— 任一符号取不到，整段模块脚本
+  // 不执行。故这四个路径必须真的提供文件，**不得**塞空壳（空壳 = 假成功，比 404 更难查）。
+  // 资产 = src/dsh-plugin/assets/st-modules/**（构建期同步进包）。
+  const ST_MODULE_ASSETS: Record<string, string> = {
+    ['/script.js']: 'st-modules/script.js',
+    ['/scripts/utils.js']: 'st-modules/scripts/utils.js',
+    ['/scripts/preset-manager.js']: 'st-modules/scripts/preset-manager.js',
+    ['/scripts/openai.js']: 'st-modules/scripts/openai.js',
+  }
+  /**
+   * 取 ST 标准模块资产；未命中返回 `null`（交给后续路由）。
+   * 命中但资产缺失 → **真 404**（资产没进包 = 卡的 bootstrap 整段中断，必须显式暴露）。
+   */
+  const readStModule = (subPath: string): { code: number; body: string; type: string } | null => {
+    if (!Object.prototype.hasOwnProperty.call(ST_MODULE_ASSETS, subPath)) return null
+    const body = readAsset(ST_MODULE_ASSETS[subPath])
+    if (body === null) {
+      return { code: 404, body: subPath + ' not found (build assets)', type: 'text/plain' }
+    }
+    // ES module 必须给 JS MIME（否则浏览器拒绝执行）
+    return { code: 200, body, type: 'text/javascript; charset=utf-8' }
+  }
+  console.log(`[dsht-rp] ST compat modules on webServer: ${Object.keys(ST_MODULE_ASSETS).join(', ')}`)
   /** 最近插件日志尾部（诊断面板用；环形缓存避免无限增长） */
   const pluginLogTail: string[] = []
   const logLine = (line: string): void => {
@@ -2787,6 +2831,44 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
     }
   }
 
+  /**
+   * **唯一的卡正文处置入口**（T-79）。卡正文有两条互斥注入路径 ——
+   * `gatherSlotSections` 的 system 槽位、pre-step 的尾部快照 —— 两者都必须经此函数。
+   * **不得在注入点各写一份处置逻辑**（同语义多副本 = 假修；单测有守卫）。
+   *
+   * 流程：宏引擎展开 → `guardCardContent`（越权标记消毒 + 残留宏转义 + nonce 围栏）→ 命中出声。
+   * 处置必须在宏引擎**之后**：此刻残留的 `{{…}}` 必为未知宏（合法宏已展开成角色名/变量值），
+   * 故整体全角化不会误伤 `{{char}}` / `{{getvar::…}}` 这类 Tier 1 功能。
+   *
+   * @param personaRaw 卡正文原文（**未**展开宏）
+   * @param kind 处置面标识（'character' 槽位 / 'snapshot' 尾部快照；用于 nonce 缓存与出声去重）
+   * @returns 可直接注入的文本（已围栏）
+   */
+  const renderGuardedCardText = async (
+    personaRaw: string, rp: RpWorkspace, slug: string, sid: string, kind: 'character' | 'snapshot',
+  ): Promise<string> => {
+    const expanded = await expandSnapshotMacros(personaRaw, rp, slug, sid)
+    if (!expanded) return expanded
+    // 同内容复用 nonce（内容指纹变则重掷）：避免「每次 assemble 新 nonce」造成逐步 system 抖动
+    const cacheKey = `${slug}|${kind}|${expanded.length}|${expanded.slice(0, 64)}`
+    const nonce = cardFenceNonces.get(cacheKey) ?? newCardNonce()
+    cardFenceNonces.set(cacheKey, nonce)
+    const g: CardGuardResult = guardCardContent(expanded, { nonce })
+    if (totalHits(g.hits) > 0) {
+      // 出声按「slug|kind|命中摘要」去重（同一张卡的同一处越权标记只报一次，不刷屏）
+      const reportKey = `${slug}|${kind}|${g.hits.chatml}|${g.hits.inst}|${g.hits.roleLine}|${g.hits.residualMacros}`
+      if (!cardFenceReported.has(reportKey)) {
+        cardFenceReported.add(reportKey)
+        console.warn(
+          `[dsht-rp] 卡正文防护降级（T-79，不静默）：${slug}/${kind} ` +
+          `越权标记 chatml=${g.hits.chatml} inst=${g.hits.inst} roleLine=${g.hits.roleLine}；` +
+          `未知宏残留=${g.hits.residualMacros} 样本=${JSON.stringify(g.hits.residualSamples)}`,
+        )
+      }
+    }
+    return g.text
+  }
+
   const loadRpJson = async (slug: string, signal: AbortSignal): Promise<RpWorkspace | null> => {
     try {
       signal.throwIfAborted()
@@ -2857,7 +2939,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       const personaRaw = (rp.promptPersona ?? '').trim()
       if (personaRaw) {
         try {
-          const personaText = await expandSnapshotMacros(personaRaw, rp, slug, sid)
+          // T-79：经唯一处置漏斗（宏展开 → 越权标记消毒 + 残留转义 + nonce 围栏）
+          const personaText = await renderGuardedCardText(personaRaw, rp, slug, sid, 'character')
           if (personaText) {
             out.push({ name: 'dsht-rp:slot:character', order: SLOT_ORDERS.characterCard, text: personaText })
           }
@@ -3906,8 +3989,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           // ---- 任务 2：promptPersona 卡设定快照（retained 跳过——影子化豁免最新副本）----
           const personaRaw = (rp.promptPersona ?? '').trim()
           if (personaRaw) {
-            // 任务 1：卡文本里的 {{…}} 宏过宏引擎（真运行期语义；setvar 落 chat 作用域）
-            const personaText = await expandSnapshotMacros(personaRaw, rp, slug, sid)
+            // T-79：经唯一处置漏斗（宏展开 → 越权标记消毒 + 残留转义 + nonce 围栏）。
+            // 卡正文的宏展开只能发生在这里或 system 槽位那处（同一函数），不得就地再写一份。
+            const personaText = await renderGuardedCardText(personaRaw, rp, slug, sid, 'snapshot')
             if (personaText && retainedPersona.get(agent) !== personaText) {
               retainedPersona.set(agent, personaText)
               if (!SLOT_ROUTING) d = withPersonaSnapshot(d, personaText)
@@ -4560,6 +4644,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               if (js === null) return sendText(404, 'app.js not found (build assets)', 'text/plain')
               return sendText(200, js, 'application/javascript; charset=utf-8')
             }
+            // ---- T-63：四个 ST 标准模块路径（ES module；卡的静态 import 依赖真文件）----
+            const stMod = readStModule(subPath)
+            if (stMod !== null) return sendText(stMod.code, stMod.body, stMod.type)
             // R0：批次清单（$DSH_HOME/rp-import/*/meta.json + 报告存在性 + checkpoint 状态）
             if (subPath === '/rp/import-batches') {
               const batches: Array<Record<string, unknown>> = []
@@ -7455,6 +7542,35 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       },
     })
     console.log(`[dsht-rp] ST compat /version on webServer route /version (pkgVersion=${SILLYTAVERN_COMPAT_VERSION})`)
+
+    // ---- T-48 / T-63：`/scripts/extensions/**` 与 `/scripts/templates/**` 文件路由 ----
+    // 背景：卡的宿主注入脚本调 `ctx.renderExtensionTemplateAsync(ext, id, data)`，基准走
+    // XHR 取 `scripts/extensions/<ext>/<id>.html` → Handlebars 编译 → DOMPurify 消毒。
+    // 我方原先只有"未移植"的退化门面（点了毫无反应、零线索）。现补上真链路：
+    // 文件从 `$DSH_HOME/extensions/**`、`$DSH_HOME/templates/**` 只读挂载（见 ext-asset.ts 头注）。
+    // 路径来自**不可信输入** ⇒ 穿越/编码/NUL/非 .html 一律由 `resolveScriptAsset` 判据拒绝。
+    const disposeScriptAssets: Array<() => void> = []
+    for (const prefix of SCRIPT_ASSET_PREFIXES) {
+      disposeScriptAssets.push(ctx.webServer.register({
+        kind: 'prefix',
+        path: prefix,
+        handler: (rawReq: unknown, rawRes: unknown) => {
+          void handleScriptAssetRequest(
+            {
+              method: (rawReq as { method?: string }).method,
+              url: (rawReq as { url?: string }).url,
+              trusted: isTrusted(rawReq as { headers: Record<string, unknown> }),
+            },
+            rawRes as {
+              writeHead: (code: number, headers?: Record<string, string | number>) => void
+              end: (b?: string) => void
+            },
+            dshHome,
+          )
+        },
+      }))
+    }
+    console.log(`[dsht-rp] ST compat script assets on webServer: ${SCRIPT_ASSET_PREFIXES.join(', ')}`)
     // 0.1.2 token 落盘（绕行 stdout 静默，2026-09-04 真机实证）：卓易通/鸿蒙上 node
     // 的 stdout 管道可能整段丢失（端口开放、进程活着、stdout 零行）——NodeService 的
     // stdout 捕获链拿不到 launch token，MainActivity 永等。本插件进程内直接把
@@ -7487,7 +7603,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
     // 插件卸载时撤路由（effect disposer）
     const effectFn = (ctx as unknown as { effect?: (fn: () => () => void) => unknown }).effect
     if (typeof effectFn === 'function') {
-      effectFn.call(ctx, () => () => { dispose(); disposeVersion() })
+      effectFn.call(ctx, () => () => {
+        dispose(); disposeVersion()
+        for (const d of disposeScriptAssets) d()
+      })
     }
   }
 }

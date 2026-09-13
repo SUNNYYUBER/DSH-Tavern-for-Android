@@ -24,6 +24,12 @@ import { createThEventSource, type ThEventSource } from './th-event-source.ts'
 import { ST_EVENT_TYPES } from './st-event-types.gen.ts'
 // 【心跳 65 · T-75】`mainApi` 取值单源（帧面 th-shim.ts 亦引用同一常量 ⇒ 两面不可能漂移）。
 import { DSHT_MAIN_API } from '../../../dsht-plugin-shared/st-compat.ts'
+// 【T-80】设置落盘 → 向在册脚本帧广播 settings_updated（卡跑在 iframe，宿主 event source 到不了）
+import { emitThEventToFrames } from './th-host-events.ts'
+// 【T-48】扩展模板真渲染（宿主门面承载唯一实现）
+import {
+  createDefaultRenderEnv, renderExtensionTemplate, renderExtensionTemplateAsync, type RenderEnv,
+} from './ext-template-render.ts'
 // 宿主面第二批成员（i18n / 弹窗 / 函数工具注册）——批次依据见该文件头（心跳 50 的静态枚举）
 import {
   POPUP_RESULT, POPUP_TYPE, callGenericPopup, createHostI18n, createHostToolManager,
@@ -320,8 +326,11 @@ export function seedHostExtensionSettings(
   if (hasReal && currentEmpty) {
     ext.regex = regexes
     changed = true
+    // 【T-42】下行灌入即同步点：立刻把基准钉在灌入内容上，否则紧随的落盘会被
+    // 当成"卡改了内容"而写回 node ⇒ 「种进去→写回来」自激循环（防回流，最关键的一条）。
+    establishRegexBaseline(ext.regex)
   }
-  if (!Array.isArray(ext.regex)) { ext.regex = []; changed = true }
+  if (!Array.isArray(ext.regex)) { ext.regex = []; changed = true; establishRegexBaseline(ext.regex) }
   if (!Array.isArray(ext.regex_presets)) { ext.regex_presets = []; changed = true }
   return changed
 }
@@ -348,6 +357,9 @@ export function saveHostExtensionSettings(settings: Record<string, unknown>): vo
   // → 变成**新对象**，正在持有旧引用的脚本会看到"改动消失"，`!==` 身份比较也被误判。
   // （本用例首版就踩在这里 → 现已由 readExtSettingsRaw() 回读取得真实值。）
   extSettingsCache = { key: readExtSettingsRaw(), value: settings }
+  // 【T-42】卡的 `extensions.regex` 改动 → 写回 node 侧正则引擎（防回流 + 防抖；失败出声）。
+  // 放在落盘之后：先保证 localStorage 与本进程状态一致，再考虑同步给 node。
+  syncRegexToNode(settings.regex)
 }
 
 /**
@@ -368,16 +380,218 @@ export function saveHostExtensionSettingsDebounced(
     hostExtSaveTimer = null
     const pending = hostExtPending
     hostExtPending = null
-    if (pending !== null) saveHostExtensionSettings(pending)
+    if (pending !== null) {
+      // 【T-80】设置落盘 → 向在册脚本帧广播 settings_updated（**卡发起**的路径之一）。
+      // 必须紧跟落盘调用（不是"先发后写"）：基准 `openai.js` 的契约是"写完才通知"。
+      // ⚠️ 只在**卡发起**的这两条路径发射：`saveHostExtensionSettings` **本体**不得发射，
+      // 否则 seed 分支（启动期）也会发，而基准此时发的是 settings_loaded_after（L36 时机也要对）。
+      saveHostExtensionSettings(pending)
+      emitThEventToFrames('settings_updated', [])
+    }
   }, delayMs)
 }
 
-/** 立即落盘（若有挂起的防抖写入） */
+/** 立即落盘（若有挂起的防抖写入）；连带把挂起的正则写回桥一并发出 */
 export function flushHostExtensionSettings(): void {
   if (hostExtSaveTimer !== null) { clearTimeout(hostExtSaveTimer); hostExtSaveTimer = null }
   const pending = hostExtPending
   hostExtPending = null
-  if (pending !== null) saveHostExtensionSettings(pending)
+  if (pending !== null) {
+    // 【T-80】同防抖回调：flush 也是「卡发起」的落盘路径，同样广播 settings_updated。
+    saveHostExtensionSettings(pending)
+    emitThEventToFrames('settings_updated', [])
+  }
+  // 【T-42】落盘可能刚安排了一次正则写回（syncRegexToNode 的 500ms 防抖）——
+  // 「立即落盘」语义要求整条链都立即，故把写回桥的挂起内容也一并发出。
+  void flushHostRegexSync()
+}
+
+// ---------------------------------------------------------------------------
+// T-42 写回桥：卡的 extension_settings.regex → node 侧正则引擎
+// ---------------------------------------------------------------------------
+
+/**
+ * 已同步给 node 侧的 `ext.regex` 基准（序列化串）。
+ *
+ * `null` = **基准未知**（本进程还没见过任何基准）。此时：
+ *   · 空集落盘 **不写回** —— 空集写回会把 node 盘上现存正则清空（危险动作）；
+ *   · 非空落盘 **写回一次** —— 真实场景：上次进程里卡写了正则、尚未同步就退出，
+ *     重启后首次落盘必须把它们带过去。
+ */
+let lastSyncedRegexJson: string | null = null
+
+/** 写回防抖定时器（卡常在一次交互里连改好几下） */
+let hostRegexSyncTimer: ReturnType<typeof setTimeout> | null = null
+/** 挂起中的写回内容（洪峰后只发最后一次） */
+let hostRegexPending: Array<Record<string, unknown>> | null = null
+
+/** 只测试用：重置写回桥的全部状态（基准 + 挂起 + 定时器 + 失败标记） */
+export function __resetHostRegexBridge(): void {
+  lastSyncedRegexJson = null
+  if (hostRegexSyncTimer !== null) { clearTimeout(hostRegexSyncTimer); hostRegexSyncTimer = null }
+  hostRegexPending = null
+  hostRegexSyncFailed = false
+}
+
+/** `RegexScript` 的必填字段默认值（缺字段补默认，**不是**静默透传 undefined） */
+const REGEX_SCRIPT_DEFAULTS = {
+  replaceString: '',
+  trimStrings: [] as string[],
+  placement: [2],           // ST 默认 AI_OUTPUT
+  disabled: false,
+  markdownOnly: false,
+  promptOnly: false,
+  runOnEdit: false,
+  substituteRegex: 0,
+  minDepth: null,
+  maxDepth: null,
+}
+
+/** 我方已知的全部 `RegexScript` 字段（用于「未知字段」出声） */
+const KNOWN_REGEX_FIELDS = new Set([
+  'id', 'scriptName', 'findRegex', ...Object.keys(REGEX_SCRIPT_DEFAULTS),
+])
+
+/**
+ * ST 内部形状条目 → 我方 `RegexScript`（`src/regex/engine.ts:RegexScript`）。
+ * 返回 `null` = 该条无法转换（缺 `findRegex`）。
+ *
+ * 纪律：缺字段**补我方默认**；未知字段**出声**（转换会丢弃它，不得静默）。
+ */
+function toRegexScript(raw: unknown, index: number): Record<string, unknown> | null {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const e = raw as Record<string, unknown>
+  const findRegex = typeof e.findRegex === 'string' ? e.findRegex : ''
+  if (!findRegex) return null
+  const unknownFields = Object.keys(e).filter(k => !KNOWN_REGEX_FIELDS.has(k))
+  if (unknownFields.length > 0) {
+    console.warn(
+      `[dsht-rp-ui] 卡正则写回：条目 #${index} 含我方未知字段 ${JSON.stringify(unknownFields)}，` +
+      '转换后会被丢弃（如为卡私有数据请在卡侧自行保存）',
+    )
+  }
+  const out: Record<string, unknown> = {}
+  for (const k of ['id', 'scriptName']) {
+    if (typeof e[k] === 'string' && (e[k] as string).length > 0) out[k] = e[k]
+  }
+  out.id = typeof out.id === 'string' ? out.id : `regex-${index}-${Date.now()}`
+  out.scriptName = typeof out.scriptName === 'string' ? out.scriptName : `正则 ${index + 1}`
+  out.findRegex = findRegex
+  for (const [k, def] of Object.entries(REGEX_SCRIPT_DEFAULTS)) {
+    const v = e[k]
+    out[k] = v === undefined ? def : v
+  }
+  // minDepth/maxDepth：ST 用 null 表示"不限"；数字则原样保留
+  for (const k of ['minDepth', 'maxDepth']) {
+    out[k] = typeof e[k] === 'number' ? e[k] : null
+  }
+  return out
+}
+
+/**
+ * 写回失败的**待重试**标记：`true` = 上次失败，需在下次落盘时再试。
+ * 关键：失败**不得**推进 `lastSyncedRegexJson` 基准 —— 否则"卡以为同步了、node 侧却没收到"，
+ * 正是本项目要消灭的静默失败族。
+ */
+let hostRegexSyncFailed = false
+
+/**
+ * 把「已同步基准」钉在当前内容上（**下行灌入后的同步点**）。
+ *
+ * 基准必须用与写回**同一套转换口径**（`toRegexScript`）——否则转换前后的串天生不等，
+ * 会把「刚灌进去的内容」误判成「卡改了内容」而立即写回（自激循环地雷）。
+ * 无法转换的条目在两侧都被跳过，故口径天然一致。
+ */
+function establishRegexBaseline(regexValue: unknown): void {
+  const list = Array.isArray(regexValue) ? regexValue : []
+  const scripts: Array<Record<string, unknown>> = []
+  list.forEach((raw, i) => {
+    const s = toRegexScript(raw, i)
+    if (s !== null) scripts.push(s)
+  })
+  lastSyncedRegexJson = JSON.stringify(scripts)
+}
+
+/** 立即发送挂起的写回（测试与退出前用） */
+export async function flushHostRegexSync(): Promise<void> {
+  if (hostRegexSyncTimer !== null) { clearTimeout(hostRegexSyncTimer); hostRegexSyncTimer = null }
+  const pending = hostRegexPending
+  hostRegexPending = null
+  if (pending === null && !hostRegexSyncFailed) return
+  const scripts = pending ?? []
+  const payloadJson = JSON.stringify(scripts)
+  try {
+    const res = await fetch('/dsht-rp/regex/save-global', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scripts }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: unknown }
+      throw new Error(`HTTP ${res.status}${body?.error !== undefined ? ` ${String(body.error)}` : ''}`)
+    }
+    // 成功才推进基准（失败保持基准不动 ⇒ 下次落盘会重试）
+    lastSyncedRegexJson = payloadJson
+    hostRegexSyncFailed = false
+  } catch (e) {
+    hostRegexSyncFailed = true
+    console.warn(
+      `[dsht-rp-ui] 卡正则写回 node 侧失败（POST /dsht-rp/regex/save-global）：` +
+      `${(e as Error)?.message ?? String(e)}；基准未推进，下次落盘会重试`,
+    )
+  }
+}
+
+/**
+ * 卡改了 `extensions.regex` → 写回 node 侧引擎（**防回流** + 防抖）。
+ *
+ * ## 缺口（真实、非重构）
+ * 卡把正则写进宿主 `extension_settings.regex`（`saveRegexesToPreset()` → `saveSettingsDebounced()`）
+ * 后只停在 localStorage，**从未进入** node 侧引擎 —— 引擎读 `$DSH_HOME/rp/regex/global.json`
+ * （`dsh-plugin/index.ts` 的 `loadGlobalRegex`）⇒「卡以为绑定了、我方引擎不知道」的静默失败。
+ *
+ * ## 防回流（最关键的一条）
+ * `seedHostExtensionSettings` 把 node 的 `global.json` 灌进 `ext.regex` 是**下行**；
+ * 若不设基准，这次灌入会被当成"卡改了内容"而写回 node ⇒ **自激循环**。
+ * 故以 `lastSyncedRegexJson` 为基准：内容与基准一致 → 不写回。
+ *
+ * @returns 是否安排了写回
+ */
+function syncRegexToNode(regexValue: unknown): boolean {
+  const list = Array.isArray(regexValue) ? regexValue : []
+  const scripts: Array<Record<string, unknown>> = []
+  let unconvertible = 0
+  list.forEach((raw, i) => {
+    const s = toRegexScript(raw, i)
+    if (s === null) unconvertible += 1
+    else scripts.push(s)
+  })
+  if (unconvertible > 0) {
+    if (scripts.length === 0) {
+      // 全部无法转换 → 出声且**不**写回空集（写回会清空 node 盘上现存正则）
+      console.warn(
+        `[dsht-rp-ui] 卡正则写回：${unconvertible} 个条目全部无法转换（均缺 findRegex），` +
+        '跳过写回（空集写回会清空 node 侧现存正则）',
+      )
+      return false
+    }
+    console.warn(`[dsht-rp-ui] 卡正则写回：${unconvertible} 个条目无法转换（缺 findRegex）已跳过，其余 ${scripts.length} 条照常写回`)
+  }
+
+  const payloadJson = JSON.stringify(scripts)
+  // ---- 基准判定（防回流的核心）----
+  if (lastSyncedRegexJson !== null) {
+    // 基准已知：内容未变 → 不写回（seed 灌入 + 紧随的落盘都不会触发）
+    if (payloadJson === lastSyncedRegexJson) return false
+  } else {
+    // 基准未知：空集不写回（危险动作）；非空写回一次（把上次进程遗留的卡数据同步给 node）
+    if (scripts.length === 0) return false
+  }
+
+  hostRegexPending = scripts
+  if (hostRegexSyncTimer !== null) clearTimeout(hostRegexSyncTimer)
+  hostRegexSyncTimer = setTimeout(() => { void flushHostRegexSync() }, 500)
+  return true
 }
 
 /**
@@ -624,47 +838,49 @@ export function buildHostStContext(src: HostStContextSource = {}): Record<string
     //（实测用法 `context.groups?.find(g => g.id === context.groupId)` 在 groupId 恒 null 时不可达）。
     groups: [] as unknown[],
 
-    // ---- 【T-48 / 心跳 62】扩展模板渲染：基准有、我方不实现；但**不许是「不是函数」** ----
+    // ---- 【T-48】扩展模板渲染：真实现（宏引擎已就位 + 文件路由已注册）----
     // 基准契约（SillyTavern-reference/public/scripts/extensions.js:137）：
     //   renderExtensionTemplateAsync(ext, id, data, sanitize, localize)
     //     = renderTemplateAsync('scripts/extensions/' + ext + '/' + id + '.html', data, sanitize, localize, true)
-    // 而 renderTemplateAsync（templates.js:60）的链条是：XHR 取文件 → **Handlebars** 编译 →
-    // 渲染 → **DOMPurify** 消毒 → applyLocale；失败时它自己的 catch 是
-    // console.error + toastr.error + **返回 undefined**（注意：**不 reject**）。
-    // 我方缺整条链上的三件（Handlebars / DOMPurify / /scripts/extensions/** 文件路由 + 扩展文件存储，
-    // 后者设备实测 404）⇒ 不做半成品，也不自造迷你模板引擎（见 T-48 与 T-63 同型结论）。
-    // 唯一消费者 = 这张卡的**宿主注入脚本**（`card.js:4555` 的 regex 编辑器，挂在 ST 正则面板 DOM 上
-    // ⇒ 走的就是本门面），其失败模式此前是 `TypeError: ... is not a function`（点了毫无反应、零线索）。
-    // ⚠️ 同步约束：iframe 侧的 `th-shim.ts:buildStContextFacade` 有一份**同语义实现**（主体是
-    // 构建期模板串，无法共享模块 —— T-19 硬约束）。**改任一侧必须同步另一侧**，并有 parity 测试钉住。
-    renderExtensionTemplateAsync: (extensionName?: unknown, templateId?: unknown): Promise<undefined> =>
-      hostRenderExtensionTemplateFailure('renderExtensionTemplateAsync', extensionName, templateId, true) as Promise<undefined>,
-    renderExtensionTemplate: (extensionName?: unknown, templateId?: unknown): undefined =>
-      hostRenderExtensionTemplateFailure('renderExtensionTemplate', extensionName, templateId, false) as undefined,
+    // 链条：取文件 → Handlebars 编译 → 渲染 → DOMPurify 消毒 → applyLocale；
+    // 失败时基准自己的 catch 是 console.error + toastr.error + **返回 undefined**（**不 reject**）。
+    // ⚠️ 同步约束：iframe 侧的 `th-shim.ts:buildStContextFacade` 那份是**转发父页门面**
+    // （真 TH 形态 = 帧面投影），故两侧不存在第二份渲染实现；parity 由单测跑真构建产物钉住。
+    renderExtensionTemplateAsync: (extensionName?: unknown, templateId?: unknown, templateData?: unknown,
+      sanitize?: unknown, localize?: unknown): Promise<string | undefined> =>
+      renderExtensionTemplateAsync(
+        templateRenderEnv(), extensionName, templateId, templateData ?? {},
+        sanitize !== false, localize !== false,
+      ),
+    renderExtensionTemplate: (extensionName?: unknown, templateId?: unknown, templateData?: unknown,
+      sanitize?: unknown, localize?: unknown): string | undefined =>
+      renderExtensionTemplate(
+        templateRenderEnv(), extensionName, templateId, templateData ?? {},
+        sanitize !== false, localize !== false,
+      ),
   }
 }
 
 /**
- * 【T-48 / 心跳 62】宿主侧 `renderExtensionTemplate(Async)` 的**退化实现**（与 th-shim.ts 内那份同语义）。
- * 严格照抄基准在「模板取不到」时的行为：console.error + toastr.error + 返回 undefined（**不 reject**）。
- * 差异点：额外出一条**具名** console.warn（L42：有意降级也必须出声），并让名称进入门面降级去重表。
+ * 【T-48】宿主门面的模板渲染环境（**单一实例**，惰性创建）。
+ * `applyLocale` 走宿主 i18n 单源（`i18n.translate`），故本地化与 `t()` 同表。
+ *
+ * 诚实边界：我方**未分发** ST 的 `locales/*.json` ⇒ 本地化表为空 ⇒ `translate` 原样返回
+ * （不假装做了本地化）。但**不得静默**（L42）：表为空时出一条具名降级告警，否则用户看到
+ * `data-i18n` 属性没被替换却找不到原因。
  */
-function hostRenderExtensionTemplateFailure(
-  api: string, extensionName: unknown, templateId: unknown, isAsync: boolean,
-): unknown {
-  const path = 'scripts/extensions/' + String(extensionName ?? '') + '/' + String(templateId ?? '') + '.html'
-  warnFacadeDegraded(api, '未移植：需要 Handlebars 模板引擎 + DOMPurify + /scripts/extensions/** 文件路由（三者全缺）')
-  try {
-    console.error('Error rendering template', path,
-      '未移植：需要 Handlebars 模板引擎 + DOMPurify + /scripts/extensions/** 文件路由（三者全缺）')
-  } catch { /* 日志能力缺失不改变返回形状 */ }
-  try {
-    const host = globalThis as unknown as { toastr?: { error?: (m: string, t: string) => void } }
-    if (host.toastr !== undefined && typeof host.toastr.error === 'function') {
-      host.toastr.error('Check the DevTools console for more information.', 'Error rendering template')
-    }
-  } catch { /* 同上 */ }
-  return isAsync ? Promise.resolve(undefined) : undefined
+let templateEnvCache: RenderEnv | null = null
+function templateRenderEnv(): RenderEnv {
+  if (templateEnvCache === null) {
+    const i18n = getHostI18n()
+    templateEnvCache = createDefaultRenderEnv(html => {
+      if (Object.keys(i18n.__localeData()).length === 0) {
+        warnFacadeDegraded('applyLocale', '本地化表为空（我方未分发 ST locales/*.json）——未做本地化，模板原样返回')
+      }
+      return i18n.translate(html)
+    })
+  }
+  return templateEnvCache
 }
 
 /**

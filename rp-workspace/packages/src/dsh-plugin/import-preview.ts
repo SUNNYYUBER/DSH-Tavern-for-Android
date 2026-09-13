@@ -19,6 +19,8 @@ import { join, relative, sep } from 'node:path'
 import { dshSlug, chatSessionId, encodeSegment, projectKey } from '../import/dsh-export.ts'
 import { extractCardJsonFromPng } from '../import/character-card.ts'
 import { scanSessionHeaders } from '../dsht-plugin-shared/session-surgery.ts'
+// 【D1 2026-09-13】TH API 预检（清单与扫描器来自 shared 层，与客户端 shim 同源）
+import { scanThApiUsage, type ThApiUsage } from '../dsht-plugin-shared/th-api-support.ts'
 
 // ---------------------------------------------------------------------------
 // ST 数据根定位（自 index.ts 原样移入：标志打分 + 隐藏目录排除）
@@ -236,6 +238,9 @@ export interface PreviewCard {
   sourceFile: string
   /** 卡文本（描述/开场白等）含 EJS 模板 */
   ejs: boolean
+  /** 【D1 2026-09-13】卡内脚本用到的 TH API 及支持状态（用于导入预览的能力预检）。
+   *  空数组 = 卡内没有用到已知 TH API（或本卡不用脚本）。 */
+  thUsage: ThApiUsage[]
 }
 
 export interface PreviewBook {
@@ -385,6 +390,11 @@ async function scanCardFiles(
       : bookEntries && typeof bookEntries === 'object' ? Object.keys(bookEntries).length > 0 : false
     const alternateGreetings = Array.isArray(data.alternate_greetings) ? data.alternate_greetings.length : 0
     const existing = state ? findExistingCardSlug(cardName, state) : null
+    // 【D1 2026-09-13】TH API 预检：把「这张卡能不能跑」提前到导入预览阶段。
+    // 数据来源 = 卡内 `extensions.tavern_helper`（含脚本仓库，见 st-format.md:41）。
+    // 做法：把该子树序列化后做保守正则扫描（只认已知 API 的调用形态），
+    // 对照 TH_UNSUPPORTED_APIS 给出支持状态 —— 用户导入前就知道哪些能力会缺。
+    const thUsage = scanThApiUsage(JSON.stringify((data.extensions as Record<string, unknown> | undefined)?.tavern_helper ?? {}))
     out.push({
       name: cardName,
       avatar,
@@ -395,6 +405,7 @@ async function scanCardFiles(
       slug: existing ?? dshSlug('rp', cardName),
       sourceFile: `${relPrefix}/${f.name}`,
       ejs: isEjsTemplate(JSON.stringify(cardRoot ?? {})),
+      thUsage,
     })
   }
   return out

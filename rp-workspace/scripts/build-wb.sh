@@ -205,6 +205,24 @@ n=d.count(b'promptOnly')
 print('  zip 内 fixTag =', n)
 sys.exit(0 if n>=1 else 1)" || die "A4: zip 内产物无 fixTag——旧产物进包（v185 事故重演）"
 
+  # A13 —— ST 标准模块资产必须进包（T-63，心跳 78 新增）。
+  # 背景：卡用**静态** import 取 `./script`、`./scripts/openai` 等四个路径（静态 import 是原子的：
+  # 任一符号取不到 → 整段模块脚本不执行）。而 assets 树由 build-plugins.sh 复制：
+  # 若 st-modules/ 没被打进 zip，插件侧路由会回 **404** ⇒ 卡的 bootstrap 整段中断，
+  # 而 tsc / 千条单测 / 既有构建断言**全都照绿**（本项目第 ⑦ 类断链：产物在源码里、没进包）。
+  say "[A13] ST 标准模块资产进包断言（T-63）"
+  for f in st-modules/script.js st-modules/scripts/utils.js st-modules/scripts/preset-manager.js st-modules/scripts/openai.js; do
+    [ -f "$DST/node_modules/dsht-rp-plugin/assets/$f" ] \
+      || die "A13: 资产缺失 $DST/node_modules/dsht-rp-plugin/assets/$f（卡的四条静态 import 会 404）"
+  done
+  "$PY" -c "
+import zipfile,sys
+z=zipfile.ZipFile(r'$ANDROID\app\src\main\assets\dsh-runtime.zip')
+names=set(z.namelist())
+need='node_modules/dsht-rp-plugin/assets/st-modules/scripts/openai.js'
+print('  zip 内 ST 模块资产 =', 'st-modules/scripts/openai.js' in '\n'.join(sorted(names)))
+sys.exit(0 if need in names else 1)" || die "A13: zip 内缺 st-modules 资产——插件路由将回 404，卡 bootstrap 中断"
+
   say "[6/6] gradle $GRADLE_TASK"
   (cd "$ANDROID" && "$WS/downloads/gradle/gradle-8.14/bin/gradle" $GRADLE_TASK $ABI_PROP --console=plain -q)
   [ -f "$APK_ARTIFACT" ] || die "A5: gradle 产物缺失"

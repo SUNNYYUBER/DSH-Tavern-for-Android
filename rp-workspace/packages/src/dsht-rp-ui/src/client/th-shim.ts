@@ -432,38 +432,14 @@ export const SHIM_BRIDGE_APIS = [
  * 生成控制只移植一次性补全（generate/generateRaw → /dsht-rp/llm/classify；C9）——生成管线
  * 控制（stop/模型清单/代理）仍记名拒绝；prompt 注入为存储面真实现（C8）；斜杠命令走
  * triggerSlash 最小映射（C18）；音频走 audio.bgm/ambient（C17）。
+ *
+ * 【D1 2026-09-13】清单已抽到 shared 层（`dsht-plugin-shared/th-api-support.ts`）——
+ * 理由：导入预览（node 侧）需要同一份清单做「能力预检」，两处各写一份必然漂移。
+ * 此处改为再导出，保持既有 import 点不变（`th-shim.ts` 仍是客户端消费入口）。
  */
-export const UNSUPPORTED_APIS = [
-  // 生成控制（钩 ST 生成管线；一次性补全除外——见 SHIM_BRIDGE_APIS generate/generateRaw）
-  'stopAllGeneration', 'stopGenerationById', 'getModelList', 'getProxyPresetNames',
-  // 聊天消息写路径（【P3a 2026-09-07】createChatMessages/setChatMessages 已走会话写桥（/rp/chat/append、
-  // /rp/chat/update——官方 append/replace 原语，不与宿主记录漂移）；改/删/轮转仍记名拒绝）
-  'setChatMessage', 'deleteChatMessages', 'rotateChatMessages',
-  'formatAsDisplayedMessage', 'retrieveDisplayedMessage', 'refreshOneMessage',
-  // 世界书写 API（【实机审计修复 2026-09-05】replaceLorebookEntries / rebindGlobalWorldbooks /
-  // rebindCharWorldbooks / getOrCreateChatWorldbook / getWorldbook 已走世界书写面桥（facade
-  // /worldbook/replace-entries 等端点）；其余读路径已支持：getWorldbooks / getLorebookEntries；
-  // getCurrentCharPrimaryLorebook 走 lorebook:primary）
-  'getLorebooks', 'getCharLorebooks', 'getChatLorebook', 'getOrCreateChatLorebook', 'setChatLorebook',
-  'createLorebook', 'deleteLorebook', 'getLorebookSettings', 'setLorebookSettings', 'setCurrentCharLorebooks',
-  'createLorebookEntry', 'createLorebookEntries', 'deleteLorebookEntry',
-  'deleteLorebookEntries', 'setLorebookEntries', 'updateLorebookEntriesWith',
-  // 角色卡 / 人设 CRUD
-  'getCharacterNames', 'getCharacterIds', 'getCharacter', 'getCurrentCharacterId', 'getCurrentCharacterName',
-  'createCharacter', 'createOrReplaceCharacter', 'deleteCharacter', 'replaceCharacter', 'updateCharacterWith',
-  'getPersonaNames', 'getPersona', 'createPersona', 'createOrReplacePersona', 'deletePersona', 'replacePersona',
-  // 宏（类宏注册）
-  'registerMacroLike', 'unregisterMacroLike',
-  // 音频清单/播放器控制面（audio.bgm/ambient 基础播放已实现；这套 ST 播放器 API 不移植）
-  'getAudioList', 'appendAudioList', 'replaceAudioList', 'playAudio', 'pauseAudio', 'getCurrentAudio',
-  'getAudioSettings', 'setAudioSettings',
-  // 扩展管理 / 导入 / 杂项
-  'isAdmin', 'installExtension', 'uninstallExtension', 'updateExtension', 'reinstallExtension',
-  'isInstalledExtension', 'getExtensionType', 'getExtensionInstallationInfo',
-  'importRawCharacter', 'importRawChat', 'importRawPreset', 'importRawTavernRegex', 'importRawWorldbook',
-  'getScriptTrees', 'replaceScriptTrees', 'updateScriptTreesWith',
-  'getAllEnabledScriptButtons', 'writeExtensionField', 'updateTavernHelper',
-] as const
+import { TH_UNSUPPORTED_APIS as UNSUPPORTED_APIS } from '../../../dsht-plugin-shared/th-api-support.ts'
+export { UNSUPPORTED_APIS }
+
 
 /**
  * 记名拒绝的逐 API 理由（shim stub 的错误消息引用；未列出的 API 用通用理由）。
@@ -630,7 +606,44 @@ function dispatch(evt, args) {
 // 【鲁棒轮 2026-09-09】真 TH 语义：eventOn/eventOnce 对已在监听的同一 fn 幂等（重复注册
 // 不新增）；eventMakeFirst/Last 是「移动」不是「新增」。shim 原实现无条件 push → 初始化
 // 函数被 CHAT_CHANGED 再次调用时监听器执行 N 次副作用成倍放大（按钮/变量写双发）。
+/**
+ * T-81 注册期出声（两种，均**一次性**去重，防刷屏）：
+ *  ① **非字符串事件名**：eventOn(undefined, cb) → String(undefined) === 'undefined'，
+ *     注册"成功"但回调永不执行。语义**保持**真 TH（仍注册到 'undefined' 键，L36），只出声提示。
+ *  ② **我方结构性不发射的 mag_ 事件**：注册成功但沙箱侧无投递点（MVU 变量更新在 host 主线程），
+ *     明示降级（L42），否则用户只看到"监听器不触发"却找不到原因。
+ */
+var evtWarned = {};
+function warnEventDegrade(reason, evt) {
+  var k = reason + '|' + String(evt);
+  if (evtWarned[k]) return;
+  evtWarned[k] = true;
+  try {
+    console.warn('[TavernHelper shim] 事件注册降级（' + reason + '）：事件名 ' + JSON.stringify(String(evt)) +
+      (reason === '非字符串事件名'
+        ? ' —— 已按真 TH 语义注册到该键，但它永远不会被投递（调用方多半是 Mvu.events 常量缺失）'
+        : ' —— 该 mag_* 事件在本移植中不发射（MVU 变量更新在宿主侧完成，沙箱无投递点），监听器不会触发'));
+  } catch (e) {}
+}
+/** 注册前检查（eventOn/eventOnce/eventMake* 共用） */
+function checkEventReg(evt) {
+  if (typeof evt !== 'string') warnEventDegrade('非字符串事件名', evt);
+  // MVU_UNEMITTED 是 var 声明（定义在下方 Mvu 段），脚本运行期必已就绪；此处仍加存在性守卫，
+  // 避免任何未预期的调用序把它读成 undefined 后抛错（shim 顶层声明期绝不调用本函数）。
+  if (typeof evt === 'string' && MVU_UNEMITTED && Object.prototype.hasOwnProperty.call(MVU_UNEMITTED, mvuEvtNameOf(evt))) {
+    warnEventDegrade('本移植不发射', evt);
+  }
+}
+/** 事件值 → MVU 常量名（反查；非 mag_* 返回空串） */
+function mvuEvtNameOf(v) {
+  if (!MVU_UNEMITTED) return '';
+  for (var k in MVU_UNEMITTED) {
+    if (Object.prototype.hasOwnProperty.call(MVU_UNEMITTED, k) && MVU_UNEMITTED[k] === v) return k;
+  }
+  return '';
+}
 function eventOn(evt, fn) {
+  checkEventReg(evt)
   evt = String(evt)
   var list = listenerList(evt)
   for (var i = 0; i < list.length; i++) { if (list[i].fn === fn) return { stop: function () { removeListener(evt, fn); } } }
@@ -638,6 +651,7 @@ function eventOn(evt, fn) {
   return { stop: function () { removeListener(evt, fn); } };
 }
 function eventOnce(evt, fn) {
+  checkEventReg(evt)
   evt = String(evt)
   var list = listenerList(evt)
   for (var i = 0; i < list.length; i++) { if (list[i].fn === fn) return { stop: function () { removeListener(evt, fn); } } }
@@ -1560,7 +1574,16 @@ function getOrCreateChatWorldbook() {
 // ---- SillyTavern.getContext 门面（快照驱动、同步；缺的数据字段 undefined 保持形状）----
 
 /**
- * 【T-48 / 心跳 62】renderExtensionTemplate(Async) 的**退化实现**（我们不做模板引擎）。
+ * 【T-48】renderExtensionTemplate(Async) 的**帧面转发**（真 TH 形态 = 帧面是父页门面的投影）。
+ *
+ * 为什么改成转发而不是自持实现：宿主页 host-vendor.ts 已承载**唯一**的真渲染实现
+ * （Handlebars 编译 + DOMPurify 消毒 + /scripts/extensions/** 文件路由）；帧面再写一份
+ * = 同语义第二副本（本仓铁律禁止），且两副本必然漂移。
+ * 真 TH 的 iframe 面本来就是这个形态（iframe/predefine.js 的并入 getContext()）。
+ *
+ * 降级（父页门面不可达，如跨源/宿主页未装载）：**出声 + 返回 undefined** —— 不抛、不静默，
+ * 与宿主侧失败路径同形（基准 catch 也是 console.error + toastr + 返回 undefined）。
+ *
  * 【注意】本函数在 buildShimSource 的**模板串内部** —— 源码里**不能写反引号、也不能写
  * 「美元符号 + 花括号」的插值记号**（两者都会提前终止/污染模板串；本注释在 2026-09-12
  * 就因为用了反引号把整个 shim 变成解析错误）。
@@ -1569,40 +1592,43 @@ function getOrCreateChatWorldbook() {
  *   renderExtensionTemplateAsync(extName, templateId, data, sanitize, localize)
  *     = renderTemplateAsync('scripts/extensions/' + extName + '/' + templateId + '.html',
  *                           data, sanitize, localize, true)
- * 而 renderTemplateAsync（同目录 templates.js:60）的链条是：
- *   XHR 取文件 → **Handlebars** 编译（按路径缓存）→ 渲染 → **DOMPurify** 消毒 → applyLocale；
- * 任何一步失败走它自己的 catch：console.error('Error rendering template', …)
- *   + toastr.error('Check the DevTools console for more information.', 'Error rendering template')
- *   + **返回 undefined**（注意：基准**不 reject** —— 返回形状必须照抄）。
- *
- * 我方缺的是**整条链上的三件**：Handlebars（全仓无）、DOMPurify（全仓无）、
- * /scripts/extensions/** 文件路由 + 扩展文件存储（设备实测 404）。三者缺一都渲染不出来，
- * 故**不做半成品**（与 T-63「单独补 utils 是无效功」同型；也拒绝自己写个迷你模板引擎 ——
- * Handlebars 的 {{#if}} / {{#each}} / helper / 转义语义抄不全 = 制造新的静默分歧）。
- *
- * **为什么仍然要给这两个函数**：缺成员的后果是卡脚本拿到
- * 「TypeError: ctx.renderExtensionTemplateAsync is not a function」—— 这是**未移植**，
- * 而「有 API 但失败」是**已移植但环境不支持**，两者在排查上完全不是一回事
- * （本项目在打的就是静默失败族；L42：有意降级也必须出声）。
- * 所以给出**与基准同一条错误路径**的退化实现：记名 + console.error + toastr + 返回 undefined。
- * 效果：卡里那两个按钮（card.js:3745 新建 / :4268 编辑）从「点了毫无反应、零线索」
- * 变成「弹出 Error rendering template + 日志里有具名记录」。
+ * 默认值：sanitize = true、localize = true；失败路径 console.error + toastr.error + 返回 undefined。
  */
-function dshtRenderExtensionTemplateFailure(api, extensionName, templateId, isAsync) {
+function dshtRenderExtensionTemplateForward(api, extensionName, templateId, templateData, sanitize, localize) {
+  var isAsync = api === 'renderExtensionTemplateAsync'
+  /** 形状守卫：async 版**必须**返回 Promise（基准是 async 函数，调用方会 .then）；同步版返回 undefined */
+  var fail = function (reason) {
+    // 记名用**精确 API 名**（脚本管理面板按名归类；原因只进日志，不污染 API 名）
+    reportMissing(api)
+    try {
+      console.error('Error rendering template', path, reason === 'parent-facade-unreachable'
+        ? '父页门面不可达：parent.SillyTavern.getContext().' + api + ' 不可用（宿主页未装载门面或跨源）'
+        : reason)
+    } catch (e3) { /* 同上 */ }
+    try {
+      var t = (typeof window !== 'undefined' && window.toastr) ? window.toastr : null
+      if (t && typeof t.error === 'function') t.error('Check the DevTools console for more information.', 'Error rendering template')
+    } catch (e4) { /* toastr 不在 iframe 内也不影响返回形状 */ }
+    return isAsync ? Promise.resolve(undefined) : undefined
+  }
+  var args = [
+    extensionName, templateId,
+    templateData === undefined ? {} : templateData,
+    sanitize === undefined ? true : sanitize,
+    localize === undefined ? true : localize,
+  ]
   var path = 'scripts/extensions/' + String(extensionName || '') + '/' + String(templateId || '') + '.html'
-  reportMissing(api)
   try {
-    console.error('Error rendering template', path,
-      '未移植：需要 Handlebars 模板引擎 + DOMPurify + /scripts/extensions/** 文件路由（三者全缺）')
-  } catch (e) { /* 日志能力缺失不改变返回形状 */ }
-  // 基准同款用户可见信号；toastr 可能不在 iframe 内 —— 提示失败不许影响返回值
-  try {
-    var t = (typeof window !== 'undefined' && window.toastr) ? window.toastr : null
-    if (t && typeof t.error === 'function') {
-      t.error('Check the DevTools console for more information.', 'Error rendering template')
-    }
-  } catch (e) { /* 同上 */ }
-  return isAsync ? Promise.resolve(undefined) : undefined
+    var par = (typeof window !== 'undefined' && window.parent) ? window.parent : null
+    var st = par ? par.SillyTavern : null
+    var c = (st && typeof st.getContext === 'function') ? st.getContext() : null
+    var fn = c ? c[api] : null
+    // 转发宿主唯一实现（不在帧面再造一条日志 —— parity 测试要求两侧各出一条）
+    if (typeof fn === 'function') return fn.apply(c, args)
+  } catch (e) {
+    return fail('forward-threw:' + String((e && e.message) || e))
+  }
+  return fail('parent-facade-unreachable')
 }
 
 // ---- 【心跳 65 · T-74】当前聊天 id（单源）----
@@ -1698,17 +1724,17 @@ function buildStContextFacade() {
     presetName: ctx.presetName != null ? ctx.presetName : undefined,
     chat: messages,
     chatLength: messages.length,
-    // 【T-48 / 心跳 62】扩展模板渲染：基准有、我方不实现（缺 Handlebars/DOMPurify/文件路由）
-    // ⇒ 给**与基准同一条错误路径**的退化实现（记名 + console.error + toastr + 返回 undefined），
-    //   而不是让它"不是函数"。同步版基准已标 deprecated，语义同：失败同样返回 undefined。
-    //   详见 dshtRenderExtensionTemplateFailure 头注。
-    renderExtensionTemplateAsync: function (extensionName, templateId) {
-      return dshtRenderExtensionTemplateFailure(
-        'renderExtensionTemplateAsync', extensionName, templateId, true)
+    // 【T-48】扩展模板渲染：帧面**转发**父页唯一实现（真 TH = 帧面投影 getContext）。
+    // 基准有、我方现已实现（Handlebars + DOMPurify + /scripts/extensions/** 文件路由）。
+    //   同步版基准已标 deprecated，语义同：失败同样返回 undefined。
+    //   详见 dshtRenderExtensionTemplateForward 头注。
+    renderExtensionTemplateAsync: function (extensionName, templateId, templateData, sanitize, localize) {
+      return dshtRenderExtensionTemplateForward(
+        'renderExtensionTemplateAsync', extensionName, templateId, templateData, sanitize, localize)
     },
-    renderExtensionTemplate: function (extensionName, templateId) {
-      return dshtRenderExtensionTemplateFailure(
-        'renderExtensionTemplate', extensionName, templateId, false)
+    renderExtensionTemplate: function (extensionName, templateId, templateData, sanitize, localize) {
+      return dshtRenderExtensionTemplateForward(
+        'renderExtensionTemplate', extensionName, templateId, templateData, sanitize, localize)
     },
   };
 }
@@ -2207,6 +2233,33 @@ function dshtParseUpdateVariable(text, state) {
   return out;
 }
 var mvuBusListeners = {};
+/**
+ * MVU 框架自带的**第 4 个事件命名空间**（T-81）。
+ *
+ * 为什么必须有：卡事件面闸门此前只扫 3 张 ST 表（tavern_events / iframe_events /
+ * event_types），而 MVU bundle 自己导出 Mvu.events.*（权威契约 =
+ * JS-Slash-Runner/@types/iframe/exported.mvu.d.ts:70-118），卡在它上面注册事件
+ * （语料实测 eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, cb) 3 个文件）。
+ * shim 原实现此对象**一个常量都没有** ⇒ evt === undefined ⇒ String(undefined) === 'undefined'
+ * ⇒ 静默注册到 'undefined' 键：注册"成功"、零报错、回调永不执行（静默失败族最坏形态）。
+ *
+ * ⚠️ VARIABLE_INITIALIZED 的值 'mag_variable_initiailized' 是**上游拼写错误**，
+ * 必须逐字照抄 —— "修正"它 = 与真 MVU 的事件值不一致 ⇒ 回调同样永不触发，且更难查。
+ */
+var MVU_EVENT_CONSTANTS = {
+  VARIABLE_INITIALIZED: 'mag_variable_initiailized',
+  VARIABLE_UPDATE_STARTED: 'mag_variable_update_started',
+  COMMAND_PARSED: 'mag_command_parsed',
+  VARIABLE_UPDATE_ENDED: 'mag_variable_update_ended',
+  BEFORE_MESSAGE_UPDATE: 'mag_before_message_update',
+};
+/**
+ * 我方**结构性不发射**的 mag_* 事件（T-81）：MVU 变量更新发生在 host 主线程的
+ * state/mvu.ts 管线里，沙箱侧没有 MVU bundle 的投递点。注册成功但回调永不执行 ⇒
+ * 必须**明示降级**（L42：有意降级 ≠ 可以静默），否则排查线索为零。
+ */
+var MVU_UNEMITTED = MVU_EVENT_CONSTANTS;
+var mvuUnemittedWarned = {};
 var Mvu = {
   getMvuData: function (option) {
     var type = (option && option.type === 'message') ? 'message' : 'chat';
@@ -2237,6 +2290,12 @@ var Mvu = {
     },
   },
 };
+// 常量**加法式**挂上 events（on/emit 保留；见 T-81 头注）
+for (var mvuEvtKey in MVU_EVENT_CONSTANTS) {
+  if (Object.prototype.hasOwnProperty.call(MVU_EVENT_CONSTANTS, mvuEvtKey)) {
+    Mvu.events[mvuEvtKey] = MVU_EVENT_CONSTANTS[mvuEvtKey];
+  }
+}
 
 // ---- 不支持 API stub（记名 + reject；err.__thExpected 防误报 failed）----
 function unsupportedStub(name) {
@@ -2446,6 +2505,16 @@ Object.defineProperty(window, 'SillyTavern', {
       mainApi: ctx.mainApi,
       // 【心跳 65 · T-74】改走单源 helper（与 getContext 面的 chatId 共用同一实现）。
       getCurrentChatId: function () { return dshtCurrentChatId(); },
+      // 【T-48】扩展模板渲染：顶层与 getContext 面**同源**（基准 iframe/predefine.js:26-35 的
+      // 顶层 ≡ { ...getContext(), getContext } 投影）⇒ 两面都转发父页唯一实现。
+      renderExtensionTemplateAsync: function (extensionName, templateId, templateData, sanitize, localize) {
+        return dshtRenderExtensionTemplateForward(
+          'renderExtensionTemplateAsync', extensionName, templateId, templateData, sanitize, localize)
+      },
+      renderExtensionTemplate: function (extensionName, templateId, templateData, sanitize, localize) {
+        return dshtRenderExtensionTemplateForward(
+          'renderExtensionTemplate', extensionName, templateId, templateData, sanitize, localize)
+      },
       // —— 弹窗（沙箱无 UI，TEXT/ALERT 自动确认；CONFIRM 保守取消并 console 记名）——
       POPUP_TYPE: { TEXT: 'text', CONFIRM: 'confirm', INPUT: 'input', DISPLAY: 'display' },
       POPUP_RESULT: { NEGATIVE: 0, AFFIRMATIVE: 1, CANCELLED: 2 },

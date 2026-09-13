@@ -729,6 +729,19 @@ export function apply(ctx: Ctx, _config: unknown): void {
       if (!slug) return decision
       const cfg = readEffectiveConfig()
       const sid = String((session as { id?: unknown }).id ?? '')
+      // ---- B12 总开关：**必须连注入一起关** ----
+      // 修复前此处完全没读 cfg.enabled ⇒ 关掉总开关只停「生成新记忆」，旧记忆仍每轮注入，
+      // 且完全静默（用户只觉得"关了怎么还占上下文"）。判据见 tests/b12-memory-master-switch.spec.ts。
+      // 关闭态的正确行为：①丢弃待办展开文件（不消费成注入，防重开后陈旧快照突袭）；
+      //                    ②不注入任何记忆快照；③仍 await next()（已在上方调用，waterfall 契约）。
+      if (!cfg.enabled) {
+        try {
+          await rm(join(dshHome, 'rp', 'memory-expand', `${sid}.json`), { force: true })
+        } catch (e) {
+          console.warn(`[dsht-memory] 总开关关闭：丢弃待办展开文件失败（不影响本 turn）：${(e as Error).message}`)
+        }
+        return decision
+      }
       const book = await loadMemoryBook(slug)
       const maxFloor = book.entries.reduce((m, e) => {
         const r = parseMemoryRange(e.comment)
@@ -1421,6 +1434,12 @@ export function apply(ctx: Ctx, _config: unknown): void {
     // ---- §2.3 ⑤：「展开给 AI」——落单次展开待办（下一轮 pre-step 消费注入）----
     if (sub === '/expand') {
       if (method !== 'POST') return sendJson(res, 405, { error: 'POST only' })
+      // ---- B12 总开关：关闭态**显式拒绝**（409），不静默收下 ----
+      // 理由：关闭态下 pre-step 会清掉待办、tick 立即 return ⇒ 若仍回 ok:true，
+      // 用户看到"已排队"却永远等不到结果 = 本项目头号缺陷族（静默失败）。
+      if (!readEffectiveConfig().enabled) {
+        return sendJson(res, 409, { error: '记忆总开关已关闭（dsht-plugin-memory 设置的「总开关」），展开请求不会被消费；请先开启总开关' })
+      }
       const body = await readJsonBody(req).catch(() => ({})) as { sessionId?: unknown; from?: unknown; to?: unknown }
       const sid = String(body?.sessionId ?? '')
       if (!sid) return sendJson(res, 400, { error: 'sessionId required' })
@@ -1446,6 +1465,10 @@ export function apply(ctx: Ctx, _config: unknown): void {
 
     if (sub === '/summarize') {
       if (method !== 'POST') return sendJson(res, 405, { error: 'POST only' })
+      // ---- B12 总开关：关闭态**显式拒绝**（409），不静默收下（同 /expand 理由）----
+      if (!readEffectiveConfig().enabled) {
+        return sendJson(res, 409, { error: '记忆总开关已关闭（dsht-plugin-memory 设置的「总开关」），总结不会执行；请先开启总开关' })
+      }
       const body = await readJsonBody(req).catch(() => ({})) as { sessionId?: unknown }
       const force = typeof body?.sessionId === 'string' && body.sessionId ? [body.sessionId] : null
       void tick(force) // 异步跑；总结结果经 console + 记忆本文件观察

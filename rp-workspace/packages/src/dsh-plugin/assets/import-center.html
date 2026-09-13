@@ -783,11 +783,25 @@ function badgeForTarget(t) {
   return '<span class="badge">' + esc(String(t)) + '</span>'
 }
 
+/** 【D1 2026-09-13】TH API 预检块：导入前把「这张卡能不能跑」讲清楚。
+ *  数据来自 import-preview.ts 的 scanThApiUsage（卡内 extensions.tavern_helper 静态扫描）。
+ *  不支持的 API 会由 shim 记名拒绝（console.warn + Promise.reject），故必须显式标注后果。 */
+function thPrecheckHtml(c) {
+  const u = c.thUsage || []
+  if (!u.length) return ''
+  const bad = u.filter(x => !x.supported)
+  const ok = u.filter(x => x.supported)
+  const okTxt = ok.length ? `可用 ${ok.length} 项（${esc(ok.map(x => x.api).join('、'))}）` : ''
+  const badTxt = bad.length ? `<span style="color:var(--dsw-static-amber-600)">不支持 ${bad.length} 项</span>` : ''
+  return `<div class="kv"><span class="k">🧩 脚本能力预检</span><span class="v">${[okTxt, badTxt].filter(Boolean).join(' · ')}</span></div>`
+    + (bad.length ? `<div class="kv"><span class="k"></span><span class="v"><span style="color:var(--dsw-static-amber-600)">不支持的 API：${esc(bad.map(x => x.api + '×' + x.count).join('、'))}</span><br><span class="hint" style="margin:0">这些调用会被<b>记名拒绝</b>（控制台告警 + Promise reject），依赖它们的功能在本版本不可用；脚本其余部分照常运行。卡仍会完整导入，不做拦截。</span></span></div>` : '')
+}
+
 function renderPreview(batchId, p) {
   const cats = []
   if (p.cards && p.cards.length) cats.push(`
     <details open><summary>🎴 角色卡 × ${p.cards.length}</summary><div class="inner">
-      ${p.cards.map(c => `<div class="kv"><span class="k">${esc(c.name)} ${badgeForTarget(c.target)}</span><span class="v">${c.avatar ? '有立绘 · ' : ''}内嵌正则 ${c.regexCount} 条 · ${c.hasEmbeddedWorldInfo ? '含内嵌世界书 · ' : ''}备选开场白 ${c.alternateGreetings} 条 · 目标 ${esc(c.slug)}</span></div>`).join('')}
+      ${p.cards.map(c => `<div class="kv"><span class="k">${esc(c.name)} ${badgeForTarget(c.target)}</span><span class="v">${c.avatar ? '有立绘 · ' : ''}内嵌正则 ${c.regexCount} 条 · ${c.hasEmbeddedWorldInfo ? '含内嵌世界书 · ' : ''}备选开场白 ${c.alternateGreetings} 条 · 目标 ${esc(c.slug)}</span></div>${thPrecheckHtml(c)}`).join('')}
     </div></details>`)
   if (p.books && p.books.length) cats.push(`
     <details open><summary>📚 世界书 × ${p.books.length}</summary><div class="inner">
