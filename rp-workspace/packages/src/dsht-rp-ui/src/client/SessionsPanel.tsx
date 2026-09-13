@@ -21,6 +21,7 @@ import { useCallback, useEffect, useState, type JSX } from 'react'
  * （旧版把"服务端找不到该路径"降级成说明、不计违约 ⇒ 整类盲区），升级后**精确报出这 3 处**。
  * 纪律：**只改一侧**（改前端对齐后端），不留后端别名 —— 两套路径 = 新的静默分歧。 */
 import { rpApi } from './rpc.ts'
+import { showDomConfirm } from './toast.ts'
 
 interface AuditSession {
   projectKey: string
@@ -100,7 +101,7 @@ export function SessionsPanel(props: { archiveSession?: (sessionId: string) => P
       const targets = pre.targets ?? []
       if (targets.length === 0) { setNote('没有需要清理的会话'); setBusy(false); return }
       const confirmText = `将归档 ${targets.length} 个会话（${mode === 'branch-parents' ? '分叉残留旧会话' : '空壳会话'}）：\n${targets.slice(0, 8).map(t => `· ${t.workspace ?? t.sessionId.slice(0, 18)}…（${t.events} 事件）`).join('\n')}${targets.length > 8 ? `\n…共 ${targets.length} 个` : ''}\n\n归档 = 侧边栏隐藏，数据保留可恢复。继续？`
-      if (!window.confirm(confirmText)) { setBusy(false); return }
+      if (!await showDomConfirm(confirmText, { okText: '归档' })) { setBusy(false); return }
       const ids = targets.map(t => t.sessionId)
       for (const id of ids) {
         if (props.archiveSession !== undefined) await props.archiveSession(id)

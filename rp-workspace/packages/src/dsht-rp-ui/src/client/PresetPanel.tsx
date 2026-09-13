@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { rpApi, thApi } from './rpc.ts'
+import { showDomConfirm } from './toast.ts'
 
 /** RPPreset 最小面（对照 packages/src/preset/schema.ts） */
 interface PresetSlotUi {
@@ -98,7 +99,7 @@ export function PresetPanel(): JSX.Element {
   /** 删除自定义预设（R5：st- 前缀的同步 agent preset 一并删除） */
   const removePreset = async (): Promise<void> => {
     if (!editing) return
-    if (!window.confirm(`删除预设「${editing.displayName}」？此操作不可恢复。`)) return
+    if (!await showDomConfirm(`删除预设「${editing.displayName}」？此操作不可恢复。`, { okText: '删除' })) return
     // 【2026-09-13 修复·可重复提交（C-4）】同 save：删除也不可重复提交
     if (busy) return
     setBusy(true)

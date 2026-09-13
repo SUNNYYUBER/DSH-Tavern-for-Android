@@ -20,7 +20,7 @@ import { Fragment, type JSX, type ReactNode } from 'react'
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { dshRpc, humanizeError, isServiceUnavailable, rpApi, type RpWorkspaceInfo } from './rpc.ts'
-import { showDomToast } from './toast.ts'
+import { showDomToast, showDomConfirm } from './toast.ts'
 import { clientTimeZoneFields } from './time-zone.ts'
 import {
   isMessageWindowed, messagePlaceholderHeight, registerMessageWindowing,
@@ -1713,7 +1713,7 @@ export const RpRegenerateAction = memo(function RpRegenerateAction({
 
   const onClick = useCallback(async () => {
     if (busy || regenerate === undefined) return
-    if (!window.confirm('重新生成最后一条回复？（当前回复会被移除）')) return
+    if (!await showDomConfirm('重新生成最后一条回复？（当前回复会被移除）', { okText: '重新生成' })) return
     setBusy(true)
     try {
       await regenerate(sessionId)
@@ -1804,7 +1804,7 @@ export const RpUserNodeView = memo(function RpUserNodeView({
 
   const rollback = useCallback(async () => {
     if (busy || running || seq === undefined || !sessionId) return
-    if (!window.confirm('回退到这条消息？该消息与其后的对话将从上下文移除，原文放回输入框（事件仍保留在日志；状态/变量一并回滚）。')) return
+    if (!await showDomConfirm('回退到这条消息？该消息与其后的对话将从上下文移除，原文放回输入框（事件仍保留在日志；状态/变量一并回滚）。', { okText: '回退' })) return
     setBusy(true)
     try {
       // POST /dsht-rp/rp/session-rollback：live → 官方 replace 原语逻辑回退（投影
