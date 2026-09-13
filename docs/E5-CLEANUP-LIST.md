@@ -10,13 +10,12 @@
 | 1 | `DSHTavern-m1-test.apk` | 122.9 MB | ✅ 已删 |
 | 2 | `DSHTavern-m1-test-x64.apk` | 185.5 MB | ✅ 已删 |
 | 3 | `rp-workspace\dsh-runtime-android\node_modules-0.1.2-old\` | 171.5 MB | ✅ 已删 |
-| 4 | `rp-workspace\android\app\build\` | 1206.8 MB | ⏸ **保留**（E-G 重建 APK 需要，且 gradle 会复用中间产物加速） |
+| 4 | `rp-workspace\android\app\build\` | 1206.8 MB | ✅ 已删（E-G 双架构重建完成后清理） |
 | 5 | `rp-workspace\tmp\` | 4.0 MB | ✅ 已删 |
 | 6 | `rp-workspace\pc-verify-home\` | 4.0 MB | ✅ 已删 |
-| | **本次实际释放** | **约 488 MB** | |
+| | **累计释放** | **约 1.69 GB** | 全部执行完毕 |
 
-第 4 项（1.2 GB）留待 E-G 双架构 APK 重建完成后清理——重建会再次写满，先删后建属无效功。
-清理命令：`Remove-Item 'rp-workspace\android\app\build' -Recurse -Force`
+第 4 项在 E-G 双架构 APK 重建完成后清理（重建期间需复用中间产物加速，先删后建属无效功）。
 
 ## 判据与安全保证
 
