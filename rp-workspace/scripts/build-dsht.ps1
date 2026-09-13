@@ -1,4 +1,4 @@
-﻿# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
+# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
 # 用法：
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.8        # 完整流程：装新版本 DSH → 平台适配 → 验证 → 打包 → APK
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.7 -SkipInstall  # runtime 已就绪，只跑后半段（打包/APK/sentinel）
@@ -420,6 +420,38 @@ if (Test-Path $flockJs) {
         1 'F2 Android flock 单进程直通'
 } else {
     Write-Host "  ✗ F2 flock：$flockJs 不存在（node-addon-system 包缺失？）" -ForegroundColor Yellow
+}
+
+# ---------------------------------------------------------------------------
+# P0-5 Iterator Helpers 兼容补丁（2026-09-14 真机截图驱动）
+#   现象：App 起来后整页只有
+#     Failed to load plugins
+#     failed to import loader entry 91803695 (@deepseek-ai/dsh-client-ui-sidebar-documentpreview):
+#     Iterator is not defined
+#   ⇒ loader entry 抛错 = **整个 web UI 加载失败**，App 完全不可用。
+#   根因（已复现证实）：该包 lib/client.js 内嵌 PDF.js 的 Iterator Helpers polyfill，守卫写法为
+#     if (typeof Iterator.prototype.join !== "function") …
+#   `typeof X.y` 只对「X 已声明但值 undefined」安全；对**从未声明的全局标识符**会抛
+#   ReferenceError（ECMA-262 13.5.3：MemberExpression 先对该 IdentifierReference 求值）。
+#   复现实验（node：delete globalThis.Iterator 后逐字 eval 该表达式）→
+#     ReferenceError: Iterator is not defined  ← 与真机报错逐字一致
+#   Iterator Helpers 是 ES2025（Chrome 122+）特性；本项目 Android WebView 低于此 ⇒ 未声明。
+#   全仓 241 个官方包中**仅此一个**使用裸 Iterator 全局（已扫描 typeof (X). 形态确认）。
+#   处置：改为「先判 Iterator 是否存在」——语义等价（不存在时无法给 prototype 挂方法，
+#   跳过 polyfill 是唯一可行分支）。不改业务逻辑、不改 PDF.js 其它代码。
+#   ⚠️ marker 与 python 侧**同串**（DSHT-ANDROID-ITERATOR），保证两路幂等互认。
+$iteratorJs = "$nmDst\dsh-client-ui-sidebar-documentpreview\lib\client.js"
+if (Test-Path $iteratorJs) {
+    Dsht-Patch $iteratorJs 'DSHT-ANDROID-ITERATOR' `
+        'if \(typeof Iterator\.prototype\.join !== "function"\)' `
+        ('/* DSHT-ANDROID-ITERATOR: 旧 WebView 无 ES2025 Iterator Helpers；' +
+         'typeof Iterator.prototype 对未声明全局会抛 ReferenceError（整页 Failed to load plugins）' +
+         '——先判存在性，语义等价（Iterator 不存在时无法挂 prototype）。 */' + "`n" +
+         "`t`tif (typeof Iterator === `"undefined`") { /* 跳过 polyfill */ }`n" +
+         "`t`telse if (typeof Iterator.prototype.join !== `"function`")") `
+        1 'P0-5 Iterator Helpers 守卫（旧 WebView 整页加载失败）'
+} else {
+    Write-Host "  · P0-5 Iterator：$iteratorJs 不在（该 DSH 版本无此包）——跳过" -ForegroundColor DarkGray
 }
 
 # ---------------------------------------------------------------------------

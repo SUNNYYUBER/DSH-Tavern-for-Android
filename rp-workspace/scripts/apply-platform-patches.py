@@ -576,6 +576,51 @@ patch(
     "F2 Android flock 单进程直通",
 )
 
+# ============================================================ Step 3.6
+print("\n--- Step 3.6: Iterator Helpers 兼容补丁（P0：整页 Failed to load plugins）---")
+# 现象（真机截图，2026-09-14）：App 起来后整页只显示
+#   Failed to load plugins
+#   failed to import loader entry 91803695 (@deepseek-ai/dsh-client-ui-sidebar-documentpreview):
+#   Iterator is not defined
+# ⇒ **整个 web UI 加载失败**（loader entry 抛错 = 插件表中断），App 完全不可用。
+#
+# 根因（已复现证实，非推测）：该包 lib/client.js:152042 有 PDF.js 自带的 Iterator Helpers
+# polyfill，其守卫写法**在 Iterator 未声明时会抛**：
+#     if (typeof Iterator.prototype.join !== "function") Iterator.prototype.join = …
+# `typeof X.y` **只对「X 已声明但值是 undefined」安全**；对**从未声明的全局标识符**
+# 会抛 ReferenceError（ECDMA-262 13.5.3：MemberExpression 先求值 IdentifierReference）。
+# 复现实验（node，delete globalThis.Iterator 后逐字 eval 该表达式）：
+#   ① 官方写法 → ReferenceError: Iterator is not defined   ← 与真机报错逐字一致
+#   ② 加 `typeof Iterator === "undefined" ||` 前置守卫 → true（需跳过 polyfill）
+#
+# 为什么只有它中招：全仓 241 个官方包中，**仅 dsh-client-ui-sidebar-documentpreview**
+# 使用裸 Iterator 全局（扫描 `typeof (Iterator|…).` 形态：命中 1 个包）。该文件 6.9MB
+# 内嵌 PDF.js（含独立发行版），polyfill 来自 PDF.js 上游而非 DSH 自研代码。
+#
+# Iterator Helpers（Iterator.prototype.join 等）是 **ES2025（Chrome 122+ / 内核
+# V8 12.2+）** 特性。本项目 Android WebView 版本低于此 ⇒ Iterator 未声明 ⇒ 抛错。
+#
+# 处置：把守卫改成「先判 Iterator 是否存在」——语义等价（Iterator 不存在时本就
+# 无法给 Iterator.prototype 挂方法，跳过 polyfill 是**唯一**可行分支），
+# 且让该包能在旧 WebView 上正常加载。不改任何业务逻辑、不改 PDF.js 其它代码。
+#
+# 合规：仅改 Android 运行时产物（$runtimeDst），不触碰 DSH 官方源与 PC runtime。
+ITERATOR_NEW = (
+    '/* DSHT-ANDROID-ITERATOR: 旧 WebView 无 ES2025 Iterator Helpers；'
+    'typeof Iterator.prototype 对未声明全局会抛 ReferenceError（整页 Failed to load plugins）'
+    '——先判存在性，语义等价（Iterator 不存在时无法挂 prototype）。 */\n'
+    '\t\tif (typeof Iterator === "undefined") { /* 跳过 polyfill */ }\n'
+    '\t\telse if (typeof Iterator.prototype.join !== "function")'
+)
+patch(
+    os.path.join(NM, "dsh-client-ui-sidebar-documentpreview", "lib", "client.js"),
+    "DSHT-ANDROID-ITERATOR",
+    r'if \(typeof Iterator\.prototype\.join !== "function"\)',
+    ITERATOR_NEW,
+    1,
+    "P0-5 Iterator Helpers 守卫（旧 WebView 整页加载失败）",
+)
+
 # ============================================================ 汇总
 print("\n" + "=" * 72)
 if CHECK_ONLY:
