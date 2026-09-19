@@ -1,6 +1,7 @@
-# 插件全量拆包方案（T-88 · 只出方案，未动代码）
+# 插件全量拆包方案（T-88 · 已实施）
 
-> **状态**：📋 **方案待拍板**。本文档只做分析与规划，**未修改任何代码**。
+> **状态**：✅ **构建层已实施（2026-09-19）**。本方案的方案部分保留作决策记录；
+> 实施结果与两处方案修订见 §八。
 > **触发**：外部评审建议「把插件按功能拆分成不同的包来维护（继续用 monorepo）」，用户 2026-09-19 拍板「全量拆包」。
 > **与 T-87 的关系**：T-87（2026-09-13）把 R10 四插件并入总包 `dsht-rp-plugin`，本方案是它的**有条件反转** —— 前提变化记录于 §1，不是推翻当时的判断。
 > **联动**：预设机制将在适配 DSH 新版本（≥ 0.1.5-rc.2）时切换为外部包 [bychv/dsh-preset-enhance](https://github.com/bychv/dsh-preset-enhance)（用户 2026-09-19 拍板「长期肯定引入，先把两边 DSH 版本同步」）。
@@ -92,3 +93,56 @@ monorepo 留在 `rp-workspace/packages/src/`，每个包独立构建产物、可
 - DSHTavern 全量回归：`packages/` 下 `npm run test` 全绿 + 模拟器 M4 旅程通过
 - 产物等价性：各包产物与现场重编译逐字节一致（沿用 A14 新鲜度闸门）
 - 名义拆包防线：任一功能包的产物中不得出现其他功能包的模块标记（T-87 测试反转后的新判据）
+
+---
+
+## 八、实施结果（2026-09-19，构建层完成）
+
+### 8.1 关键发现（实施时才查明，改变了工作量）
+
+**权威构建路径一直都是独立包形态。** `build-dsht.ps1` 的 Step 4.7（`src/dsh-plugin/index.ts` → 主插件）
+与 Step 4.72（R10 四插件各自 esbuild）从未走过总包；`build-plugins.sh` / `build-wb.sh` 同。
+**T-87 总包只存在于 `rebuild-plugins.ps1` 一条路径**（`src/dsht-rp/index.ts` 薄壳聚合）。
+⇒ 上一轮任务中「R10 四插件旧产物 + patch 6 行 = 疑似双重注册」的判断**是误报**：
+APK 里从来没有总包，六个插件各自加载、各 apply 一次，无重复。
+
+⇒ 「全量拆包」的实际工作 = 把 rebuild-plugins.ps1 对齐到与其他三条路径一致的独立包形态，
+而不是「把总包拆开」。`src/dsht-rp/index.ts`（总包入口）已删除。
+
+### 8.2 两处方案修订（与原 §二/§三 的差异）
+
+1. **`dsht-rp-ui` 不拆，保持并入 `dsht-rp-plugin`**（原方案 §二 列为独立包）。
+   理由：UI 的全部面板依赖 RP 数据面路由，与主插件是「host + client 双面一体」
+   （bychv/dsh-preset-enhance 同款形态）；三条构建路径的现共识也是并入；
+   拆出要反转 boot graph 与 NodeService 的 legacy 清理，风险大收益小。
+2. **「不含子模块」判据收窄到「不含 R10 插件入口 `index.ts`」**（原 §三.4 的「模块标记」过粗）。
+   主插件对 R10 各包**共享模块**有正当 import（`prompt-template/ejs.ts`、`sandbox.ts`、
+   `memory/tables.ts`、`tavern-helper/macros.ts`——与 dsht-plugin-shared 同性质的源码级复用），
+   esbuild 内联它们不等于「总包」。首跑误报后收窄口径。
+
+### 8.3 实施清单（全部落地）
+
+- `rebuild-plugins.ps1`：entry 回到 `src/dsh-plugin/index.ts`；R10 四包恢复独立构建；
+  ejs-worker 落 `dsht-plugin-prompt-template/lib/`（与权威路径一致）；
+  R10 各包写入 `dsh.bundle.patch` 声明 + 各自 `cordis.patch.yml`（PC 可 `dsh plugin add`）
+- `build-dsht.ps1`：R10 各包同步 dsh.bundle.patch + patch 文件；Step 4.7 补 cordis.patch.yml 拷贝
+- `src/dsht-rp/index.ts` 删除；`cordis.patch.yml` 迁移至 `src/dsh-plugin/`
+- `verify-rp-consolidation.mjs` 重写为 **T-88 拆包完整性 9 判据**（总包退役 / 主插件独立 /
+  R10 在场且不交叉 / worker 自洽 / 双面形态 / pluginRows 顺序齐全 / 动态行为 /
+  PC 可装性 / 权威路径形态可解析）+ 解析器自证 + 反控（注入子模块入口注释 ⇒ 判据 2 报红 ⇒ 还原）
+- **顺带修了一个两种形态下都存在的漏拷**：`NodeService` 此前不拷 `ejs-worker.js`
+  （worker 缺失时 EJS **静默**退化同步渲染），现已补上
+- `NodeService` 的 R10 package.json 与构建脚本同字段（防两侧漂移）
+
+### 8.4 验证
+
+`verify-rp-consolidation` 9/9 + parser 自证 8/8 + 反控成立；
+typecheck 三档绿；vitest 82 文件 1802 通过。
+
+### 8.5 执行顺序（§六）状态
+
+1. ✅ 方案拍板（2026-09-19）
+2. ✅ 构建层改造 + T-87 测试反转（2026-09-19）
+3. ⏳ cordis.patch.yml 行化 + 模拟器/真机验证（随 beta.3 出包验证）
+4. ⏳ 适配 DSH ≥ rc.2：bychv 包管线切换（§五，已部分前置完成——包已接入构建）
+5. ⏳ 首个 npm 版本发布（含 `dsht-rp-suite` 元包）

@@ -75,9 +75,10 @@ export const PAIRS = [
     builtBy: 'build-wb.sh [2/6] / build-dsht.ps1 Step 5 / rebuild-plugins.ps1 [8/8]',
   },
   {
-    name: 'T-78/T-79 + T-83（node 侧 runtime 产物 lib/index.js = **RP 总包**）',
-    // 【T-87】entry 由 `src/dsh-plugin/index.ts` 改为总包 `src/dsht-rp/index.ts`（含 5 个子模块）。
-    entry: 'src/dsht-rp/index.ts',
+    name: 'T-78/T-79 + T-83（node 侧 runtime 产物 lib/index.js = RP 主插件）',
+    // 【T-88】entry 回到 `src/dsh-plugin/index.ts`（主插件本体）——T-87 总包入口
+    // `src/dsht-rp/index.ts` 已随拆包删除；四条构建路径统一为本 entry。
+    entry: 'src/dsh-plugin/index.ts',
     args: ['--bundle', '--format=esm', '--platform=node'],
     source: ['packages/src/lore/safe-regex.ts', 'packages/src/dsht-plugin-shared/card-fence.ts'],
     artifact: 'dsh-runtime-android/node_modules/dsht-rp-plugin/lib/index.js',
@@ -102,14 +103,15 @@ export const PAIRS = [
     optional: true,
   })),
   {
-    name: 'EJS worker（独立 bundle，**已并入总包 lib/**）',
-    // 【T-87 路径变化】worker 由 `join(dirname(import.meta.url), 'ejs-worker.js')` 定位；
-    // 合并后 import.meta.url 指向总包 ⇒ 产物落 `dsht-rp-plugin/lib/ejs-worker.js`。
+    name: 'EJS worker（独立 bundle，随 dsht-plugin-prompt-template/lib/）',
+    // 【T-88 路径】worker 由 `join(dirname(import.meta.url), 'ejs-worker.js')` 定位；
+    // prompt-template 恢复独立包 ⇒ 产物落 `dsht-plugin-prompt-template/lib/ejs-worker.js`
+    //（T-87 总包形态的 dsht-rp-plugin/lib/ 路径已退役）。
     entry: 'src/dsht-plugin-prompt-template/worker.ts',
     args: ['--bundle', '--format=esm', '--platform=node'],
     source: ['packages/src/dsht-plugin-prompt-template/worker.ts'],
-    artifact: 'dsh-runtime-android/node_modules/dsht-rp-plugin/lib/ejs-worker.js',
-    builtBy: 'build-plugins.sh [2/7] / build-dsht.ps1 Step 4.7',
+    artifact: 'dsh-runtime-android/node_modules/dsht-plugin-prompt-template/lib/ejs-worker.js',
+    builtBy: 'build-plugins.sh [2/7] / build-dsht.ps1 Step 4.72',
     optional: true,
   },
   {

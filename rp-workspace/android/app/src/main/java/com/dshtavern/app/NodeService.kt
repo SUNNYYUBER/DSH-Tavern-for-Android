@@ -36,7 +36,7 @@ class NodeService : Service() {
         private const val RUNTIME_DIR = "dsh-runtime"
         private const val RUNTIME_ZIP = "dsh-runtime.zip"
         /** 解压哨兵：§4.16.2 前端 dsht-rp-ui client 变更随 runtime.zip 重发布 → v97（覆盖安装强制重解压） */
-        private const val RUNTIME_SENTINEL = ".installed-v365"
+        private const val RUNTIME_SENTINEL = ".installed-v366"
         private const val DSH_PORT = 3080
         private const val OUTPUT_CAP = 200
         private const val PROOT_ROOTFS_DIR = "proot-rootfs"
@@ -302,10 +302,17 @@ class NodeService : Service() {
             val legacyUi = File(webProfile, "node_modules/dsht-rp-ui")
             if (legacyUi.exists()) legacyUi.deleteRecursively()
             // R10 三大插件（MVU / 酒馆助手 / 提示词模板）+ 剧情记忆（楼层总结）：单产物 lib/index.js，无 assets
+            // 【T-88】package.json 字段与构建脚本（rebuild-plugins.ps1 / build-dsht.ps1）同源同值
+            // （dsh.bundle.patch 声明在 Android 不被消费——profile patch 由本服务手写；但字段保持
+            //   一致防「同名包两侧两个形状」的漂移，T-88 拆包纪律）
             for (pkg in listOf("dsht-plugin-mvu", "dsht-plugin-tavern-helper", "dsht-plugin-prompt-template", "dsht-plugin-memory")) {
                 copyPackage(webProfile, pkg, "lib/index.js",
-                    "{\"name\":\"$pkg\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\"}")
+                    "{\"name\":\"$pkg\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"dsh\":{\"bundle\":{\"patch\":\"./cordis.patch.yml\"}}}")
             }
+            // 【T-88 补】prompt-template 的 EJS worker 必须随包拷贝（workerPath = 与 lib/index.js 同目录；
+            // 缺失时 Worker 构造失败 ⇒ **静默**退化为同步渲染——此前总包/独立包两种形态下都漏拷）
+            copyPackage(webProfile, "dsht-plugin-prompt-template", "lib/ejs-worker.js",
+                "{\"name\":\"dsht-plugin-prompt-template\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"dsh\":{\"bundle\":{\"patch\":\"./cordis.patch.yml\"}}}")
             // dsht-plugin-mobile（Step 4.77 双面形态）：patch 行在 pluginRows 里，缺拷贝会导致
             // loader 启动即崩（Cannot find package 'dsht-plugin-mobile'）
             val mobilePkgJson = "{\"name\":\"dsht-plugin-mobile\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"exports\":{\".\":\"./lib/index.js\",\"./client\":\"./lib/client.js\",\"./package.json\":\"./package.json\"},\"dsh\":{\"client\":{\"platform\":\"web\",\"external\":[\"@deepseek-ai/dsh-client-ui-layout\"]}}}"

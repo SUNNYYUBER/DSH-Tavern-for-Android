@@ -107,6 +107,26 @@
 
 # 第二部分：给想自己构建或改代码的人
 
+## 安卓化技术路线（与 DSHA 的关系）
+
+在安卓上运行 DSH 运行时，社区目前有两条已公开的技术路线。本项目是其中一条；另一条是 [DSHA](https://github.com/qiannianhuanxiang/DSHA)。两条路线的设计目标不同，结构也因此不同：
+
+| 维度 | 本项目（bionic 原生路线） | DSHA（容器路线） |
+|---|---|---|
+| 运行方式 | Termux 编译的 Node 直接跑在 Android 的 bionic libc 上，少量二进制经 proot 包装 | 完整 Ubuntu 24.04 rootfs（glibc）装进容器，经 proot / proroot 运行 |
+| 运行时形态 | 单个 Node 进程 + 少量子进程 | Ubuntu 完整进程树 |
+| 包体 | 约 122 MB（14 个 `.so`，构建期从 Termux 官方源获取并校验 SHA256） | 约 370 MB（完整 rootfs） |
+| 工具链 | bionic libc 的 API 覆盖小于 glibc：bash / ripgrep / 原生模块等需逐项适配（见「安卓平台限制」表） | 容器内是完整 glibc 环境，上游工具链直接可用 |
+| phantom process killer（Android 12+，全系统后台子进程限 32 个） | 单进程形态天然在限值内 | 完整进程树需用户开启「停用子进程限制」类选项 |
+| 鸿蒙 / 卓易通 | 已实测完整跑通（HarmonyOS 5 + 卓易通，2026-09） | 官方标注「未验证」（截至 2026-09） |
+| 定位 | RP 垂直应用（装 APK 即用的酒馆卡播放器） | 通用 DSH 安卓化平台（含设备控制通道） |
+
+两条路线**不是竞争关系**：
+
+- 本项目的插件是**标准 DSH 插件**（零 DSH 源码改动，见「关于 DSH」），可装入任何标准 DSH 部署——包括 DSHA。拆包（[T-88](docs/T-88-PLUGIN-DECOMPOSITION.md)）完成后，每个插件都可独立安装。
+- DSHA 面向「让 agent 在手机上跑起来并能操作手机」；本项目面向「把 SillyTavern 资产搬进一个 App」。两者的用户场景不重叠。
+- 本项目的 RP 兼容层（世界书 / MVU / 酒馆助手 / 会话手术）在 DSHA 的能力面之外；DSHA 的设备控制通道（ADB 无线 / Shizuku）在本项目的功能面之外。
+
 ## 构建前置：原生库不入库
 
 `jniLibs/*.so`（Node 二进制 + proot + busybox 等 14 个，约 100 MB）全部来自 Termux 官方源，其中 proot / busybox 是 GPL-2.0。本仓库不分发第三方二进制，改为**构建期获取**：
@@ -360,6 +380,26 @@ Yes (MIT). But note the upstream commercial restriction (item 4 in "Legal bounda
 ---
 
 # Part 2: For builders and contributors
+
+## Android-ization approach (and how it relates to DSHA)
+
+Two public approaches exist for running the DSH runtime on Android. This project is one of them; the other is [DSHA](https://github.com/qiannianhuanxiang/DSHA). They have different design goals, and therefore different structures:
+
+| Dimension | This project (bionic-native approach) | DSHA (container approach) |
+|---|---|---|
+| How it runs | Termux-compiled Node runs directly on Android's bionic libc; a few binaries wrapped via proot | A full Ubuntu 24.04 rootfs (glibc) in a container, run via proot / proroot |
+| Runtime shape | A single Node process + a few child processes | A full Ubuntu process tree |
+| Package size | ~122 MB (14 `.so` files, fetched from the official Termux repo at build time with SHA256 verification) | ~370 MB (full rootfs) |
+| Toolchain | bionic libc covers fewer APIs than glibc: bash / ripgrep / native modules need item-by-item adaptation (see "Android platform constraints") | Full glibc environment inside the container; upstream toolchains work directly |
+| phantom process killer (Android 12+, system-wide 32 background child-process limit) | Single-process shape stays within the limit naturally | A full process tree requires the user to enable "disable child process restrictions"-type options |
+| HarmonyOS / EasyConnect (卓易通) | Verified working end-to-end (HarmonyOS 5 + EasyConnect, 2026-09) | Marked "unverified" upstream (as of 2026-09) |
+| Positioning | A vertical RP app (install the APK and play character cards) | A general DSH Android-ization platform (with a device-control channel) |
+
+The two approaches **are not competitors**:
+
+- This project's plugins are **standard DSH plugins** (zero modification to DSH source, see "About DSH") and can be installed into any standard DSH deployment — including DSHA. After the decomposition ([T-88](docs/T-88-PLUGIN-DECOMPOSITION.md)), each plugin is independently installable.
+- DSHA targets "get an agent running on the phone and let it operate the phone"; this project targets "move SillyTavern assets into one app". The user scenarios don't overlap.
+- This project's RP compat layer (world books / MVU / Tavern Helper / session surgery) is outside DSHA's capability surface; DSHA's device-control channel (wireless ADB / Shizuku) is outside this project's feature surface.
 
 ## Build prerequisite: native libs are not in the repo
 

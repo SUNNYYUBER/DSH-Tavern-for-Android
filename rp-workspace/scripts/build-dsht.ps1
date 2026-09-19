@@ -1310,6 +1310,9 @@ Pop-Location
 # app.js 引擎在 Step 5 由 esbuild 直出（browser-entry bundle）
 Remove-Item "$pluginDir\assets" -Recurse -Force -ErrorAction SilentlyContinue
 Copy-Item "$ws\packages\src\dsh-plugin\assets" "$pluginDir\assets" -Recurse -Force
+# 【T-88】bundle 层文件随包分发（`dsh plugin add` 靠它把本包补进 dsh.profile.bundles）——
+# 与 rebuild-plugins.ps1 同一来源（src/dsh-plugin/cordis.patch.yml）
+Copy-Item "$ws\packages\src\dsh-plugin\cordis.patch.yml" "$pluginDir\cordis.patch.yml" -Force
 $pluginKB = [math]::Round((Get-Item "$pluginDir\lib\index.js").Length / 1KB, 1)
 Write-Host "  dsht-rp-plugin：$pluginKB KB 已就位（node_modules/dsht-rp-plugin）"
 
@@ -1319,11 +1322,20 @@ Step 4.72 'R10 三大插件打包进 runtime node_modules（MVU / 酒馆助手 /
 # 共享代码经 dsht-plugin-shared 内联，零 @deepseek-ai 运行时依赖）；
 # profile patch 由 NodeService 启动时幂等写入（insert 行按包名逐个补齐）。
 $r10Plugins = @('dsht-plugin-mvu', 'dsht-plugin-tavern-helper', 'dsht-plugin-prompt-template', 'dsht-plugin-memory')
+# 【T-88】各包 id（cordis patch 行用）——与 rebuild-plugins.ps1 的 $r10Ids 同源同值（两侧漂移 = PC 可装性破裂）
+$r10Ids = @{
+    'dsht-plugin-mvu' = 'dsht-mvu'
+    'dsht-plugin-tavern-helper' = 'dsht-tavern-helper'
+    'dsht-plugin-prompt-template' = 'dsht-prompt-template'
+    'dsht-plugin-memory' = 'dsht-memory'
+}
 Push-Location "$ws\packages"
 foreach ($r10 in $r10Plugins) {
     $r10Dir = "$runtimeDst\node_modules\$r10"
     New-Item -ItemType Directory -Force -Path "$r10Dir\lib" | Out-Null
-    [IO.File]::WriteAllText("$r10Dir\package.json", "{`"name`":`"$r10`",`"version`":`"1.0.0`",`"type`":`"module`",`"main`":`"lib/index.js`"}")
+    # 【T-88】dsh.bundle.patch 声明 + 各自 insert 行（PC 端 `dsh plugin add` 自动进 profile 层栈）
+    [IO.File]::WriteAllText("$r10Dir\package.json", "{`"name`":`"$r10`",`"version`":`"1.0.0`",`"type`":`"module`",`"main`":`"lib/index.js`",`"dsh`":{`"bundle`":{`"patch`":`"./cordis.patch.yml`"}}}")
+    [IO.File]::WriteAllText("$r10Dir\cordis.patch.yml", "- insert:`n    - id: $($r10Ids[$r10])`n      name: '$r10'`n")
     $ErrorActionPreference = 'Continue'
     & npx esbuild "src/$r10/index.ts" --bundle --format=esm --platform=node --outfile="$r10Dir\lib\index.js" 2>&1 | Out-Null
     $ErrorActionPreference = 'Stop'
@@ -1338,9 +1350,8 @@ foreach ($r10 in $r10Plugins) {
 #   `join(dirname(fileURLToPath(import.meta.url)), 'ejs-worker.js')` 决定。
 # 本脚本走的是**独立包**形态（Step 4.72 把 prompt-template 单独编译到
 # `node_modules/dsht-plugin-prompt-template/lib/index.js`）⇒ worker 也落该目录，两者自洽。
-# 对照：`rebuild-plugins.ps1` 走 **T-87 总包**形态（`dsht-rp-plugin/lib/index.js`），
-# 其 worker 落 `dsht-rp-plugin/lib/ejs-worker.js`。**两条路径的 outfile 不可互抄** ——
-# 一旦抄错，该路径下就没有 worker ⇒ Worker 构造失败 ⇒ 静默退化为同步渲染（零报错）。
+# 【T-88】rebuild-plugins.ps1 已对齐到同款独立包形态（worker 同落 prompt-template/lib/）——
+# 两条路径的 outfile 自此**一致**（此前 T-87 总包形态下不可互抄的约束已解除）。
 $ErrorActionPreference = 'Continue'
 & npx esbuild "src/dsht-plugin-prompt-template/worker.ts" --bundle --format=esm --platform=node --outfile="$runtimeDst\node_modules\dsht-plugin-prompt-template\lib\ejs-worker.js" 2>&1 | Out-Null
 $ErrorActionPreference = 'Stop'

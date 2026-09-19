@@ -42,44 +42,50 @@ function Build-NodePlugin($name, $entry) {
 
 Say "=== 重建我方插件 -> $RuntimeDir ==="
 
-# 1. dsht-rp-plugin（**RP 总包** + 资产树）
-Say "[1/7] dsht-rp-plugin（**RP 总包**：主包 + 4 个 R10 子模块 + 导入中心资产）"
+# 1. dsht-rp-plugin（RP 主插件：dsh-plugin 本体 + 资产树；T-88 起**不再内联 R10 子模块**）
+Say "[1/7] dsht-rp-plugin（RP 主插件 + 导入中心资产）"
 $rp = "$nm\dsht-rp-plugin"
 New-Item -ItemType Directory -Force -Path "$rp\lib", "$rp\assets" | Out-Null
 Push-Location $pkg
 $ErrorActionPreference = 'Continue'
-# 【T-87】entry 由 src/dsh-plugin/index.ts 改为总包 src/dsht-rp/index.ts（含 5 个子模块）
-& $node $esb 'src/dsht-rp/index.ts' --bundle --format=esm --platform=node --outfile="$rp\lib\index.js" --log-level=warning 2>&1 | Out-Null
+# 【T-88】entry 回到 src/dsh-plugin/index.ts（主插件本体）——与 build-dsht.ps1 Step 4.7 同形态
+& $node $esb 'src/dsh-plugin/index.ts' --bundle --format=esm --platform=node --outfile="$rp\lib\index.js" --log-level=warning 2>&1 | Out-Null
 $rc = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 Pop-Location
-if ($rc -ne 0) { throw 'dsht-rp 总包 esbuild 失败' }
-# 【T-87 契约断言】总包必须真的含子模块（只看体积会漏）
+if ($rc -ne 0) { throw 'dsht-rp-plugin esbuild 失败' }
+# 【T-88 契约断言】主插件**不得**内联 R10 子模块的**插件入口**（防「名义拆包、实际还是总包」）。
+# 口径：只禁 `src/<pkg>/index.ts`（apply 本体）；主插件对 R10 各包**共享模块**的正当 import
+# （ejs.ts / sandbox.ts / tables.ts / macros.ts —— 与 dsht-plugin-shared 同性质）不在禁止面。
 $rpText = [IO.File]::ReadAllText("$rp\lib\index.js")
-foreach ($sm in @('dsht-plugin-mvu','dsht-plugin-tavern-helper','dsht-plugin-prompt-template','dsht-plugin-memory')) {
-    if ($rpText -notmatch [regex]::Escape($sm)) { throw "T-87: 总包缺子模块 '$sm'" }
+foreach ($sm in @('src/dsht-plugin-mvu/index.ts','src/dsht-plugin-tavern-helper/index.ts','src/dsht-plugin-prompt-template/index.ts','src/dsht-plugin-memory/index.ts')) {
+    if ($rpText.Contains($sm)) { throw "T-88: 主插件仍内联子模块入口 '$sm'（拆包不干净）" }
 }
 $srcAssets = "$pkg\src\dsh-plugin\assets"
 if (Test-Path $srcAssets) {
     Copy-Item "$srcAssets\*" "$rp\assets\" -Recurse -Force
     Say "  资产树已复制（$((Get-ChildItem "$rp\assets" -Recurse -File).Count) 文件）"
 }
-Say ("  OK dsht-rp-plugin  {0} KB（含 5 个子模块）" -f [math]::Round((Get-Item "$rp\lib\index.js").Length / 1KB, 1))
+Say ("  OK dsht-rp-plugin  {0} KB" -f [math]::Round((Get-Item "$rp\lib\index.js").Length / 1KB, 1))
 
-# 2. 【T-87】原「R10 四插件独立构建」已删除 —— 代码现由总包内联（见上一步）。
-Say "[2/7] R10 四插件 —— 已并入总包，跳过（见 docs/T-87-RP-PLUGIN-CONSOLIDATION.md）"
+# 2. 【T-88】R10 四插件恢复独立构建（与 build-dsht.ps1 Step 4.72 同形态）
+Say "[2/7] R10 四插件独立构建（MVU / 酒馆助手 / 提示词模板 / 剧情记忆）"
+foreach ($r10 in @('dsht-plugin-mvu', 'dsht-plugin-tavern-helper', 'dsht-plugin-prompt-template', 'dsht-plugin-memory')) {
+    Build-NodePlugin $r10 "src/$r10/index.ts"
+}
 
-# 3. EJS worker（【T-87】路径改为总包 lib/ 下）
-Say "[3/7] EJS worker bundle（并入总包 lib/ejs-worker.js）"
+# 3. EJS worker（T-88 起随 dsht-plugin-prompt-template 独立包——workerPath 与加载它的 index.js 同目录）
+Say "[3/7] EJS worker bundle（随 dsht-plugin-prompt-template/lib/）"
+$ptLib = "$nm\dsht-plugin-prompt-template\lib"
 Push-Location $pkg
 $ErrorActionPreference = 'Continue'
-& $node $esb 'src/dsht-plugin-prompt-template/worker.ts' --bundle --format=esm --platform=node --outfile="$rp\lib\ejs-worker.js" --log-level=warning 2>&1 | Out-Null
+& $node $esb 'src/dsht-plugin-prompt-template/worker.ts' --bundle --format=esm --platform=node --outfile="$ptLib\ejs-worker.js" --log-level=warning 2>&1 | Out-Null
 $rc = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 Pop-Location
 if ($rc -ne 0) { throw 'ejs-worker esbuild 失败' }
-if (-not (Test-Path "$rp\lib\ejs-worker.js")) { throw 'T-87: ejs-worker.js 未生成（worker 会静默退化为同步渲染）' }
-Say '  OK ejs-worker.js（总包 lib/）'
+if (-not (Test-Path "$ptLib\ejs-worker.js")) { throw 'T-88: ejs-worker.js 未生成（worker 会静默退化为同步渲染）' }
+Say '  OK ejs-worker.js（dsht-plugin-prompt-template/lib/）'
 
 # 4. dsht-plugin-undo
 Say "[4/7] dsht-plugin-undo"
@@ -103,9 +109,25 @@ if ($rc -ne 0) { throw 'build-rp-ui.mjs 失败' }
 Copy-Item "$pkg\src\dsht-rp-ui\lib\client.js" "$rp\lib\client.js" -Force
 [IO.File]::WriteAllText("$rp\package.json", '{"name":"dsht-rp-plugin","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"dsh":{"bundle":{"patch":"./cordis.patch.yml"},"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-sidebar","@deepseek-ai/dsh-client-ui-layout","@deepseek-ai/dsh-client-ui-conversation","@deepseek-ai/dsh-client-ui-settings-plugins"]}}}')
 Say ("  OK client.js {0} KB 已并入" -f [math]::Round((Get-Item "$rp\lib\client.js").Length / 1KB, 1))
-# 【T-87 第 2 步】bundle 层文件随包分发（`dsh plugin add` 靠它把本包补进 dsh.profile.bundles）
-Copy-Item "$pkg\src\dsht-rp\cordis.patch.yml" "$rp\cordis.patch.yml" -Force
-if (-not (Test-Path "$rp\cordis.patch.yml")) { throw 'T-87: cordis.patch.yml 未随包分发（PC 端 dsh plugin add 不会生效）' }
+# 【T-88】bundle 层文件随包分发（`dsh plugin add` 靠它把本包补进 dsh.profile.bundles）
+# patch 源文件随主插件源码（src/dsh-plugin/cordis.patch.yml；T-87 的 src/dsht-rp/ 已退役）
+Copy-Item "$pkg\src\dsh-plugin\cordis.patch.yml" "$rp\cordis.patch.yml" -Force
+if (-not (Test-Path "$rp\cordis.patch.yml")) { throw 'T-88: cordis.patch.yml 未随包分发（PC 端 dsh plugin add 不会生效）' }
+# 【T-88】R10 四包的 PC 可装性：各包补 dsh.bundle.patch 声明 + 各自的 insert 行
+# （NodeService 的 Android 部署不读 dsh.bundle.patch——profile patch 由它手写；
+#   本处与 NodeService 的 package.json 硬编码保持**同字段**（防两侧漂移）。
+$r10Ids = @{
+    'dsht-plugin-mvu' = 'dsht-mvu'
+    'dsht-plugin-tavern-helper' = 'dsht-tavern-helper'
+    'dsht-plugin-prompt-template' = 'dsht-prompt-template'
+    'dsht-plugin-memory' = 'dsht-memory'
+}
+foreach ($r10 in $r10Ids.Keys) {
+    $dir = "$nm\$r10"
+    $id = $r10Ids[$r10]
+    [IO.File]::WriteAllText("$dir\package.json", "{`"name`":`"$r10`",`"version`":`"1.0.0`",`"type`":`"module`",`"main`":`"lib/index.js`",`"dsh`":{`"bundle`":{`"patch`":`"./cordis.patch.yml`"}}}")
+    [IO.File]::WriteAllText("$dir\cordis.patch.yml", "- insert:`n    - id: $id`n      name: '$r10'`n")
+}
 
 # 7. dsht-plugin-mobile（双面）
 Say "[7/7] dsht-plugin-mobile（node 空壳 + client）"
@@ -136,42 +158,42 @@ Say ("  OK app.js {0} KB" -f [math]::Round((Get-Item "$rp\assets\app.js").Length
 
 Say ''
 Say '=== 部署结果 ==='
-# 【T-87】R10 四包已并入总包（不再单独构建）⇒ 列表同步剔除。
-foreach ($p in @('dsht-rp-plugin','dsht-plugin-mobile','dsht-plugin-undo','dsht-preflight')) {
+# 【T-88】R10 四包恢复独立构建 ⇒ 列表同步恢复。
+foreach ($p in @('dsht-rp-plugin','dsht-plugin-mvu','dsht-plugin-tavern-helper','dsht-plugin-prompt-template','dsht-plugin-memory','dsht-plugin-mobile','dsht-plugin-undo','dsht-preflight')) {
     $f = "$nm\$p\lib\index.js"
     if (Test-Path $f) { Say ("  {0,-32} {1,10} B" -f $p, (Get-Item $f).Length) }
     else { Say ("  {0,-32} （未部署）" -f $p) }
 }
-foreach ($f in @('lib\ejs-worker.js','lib\client.js','assets\app.js')) {
+foreach ($f in @('lib\client.js','assets\app.js')) {
     $p2 = "$nm\dsht-rp-plugin\$f"
     if (Test-Path $p2) { Say ("  {0,-32} {1,10} B" -f "dsht-rp-plugin/$f", (Get-Item $p2).Length) }
 }
+$ptw = "$nm\dsht-plugin-prompt-template\lib\ejs-worker.js"
+if (Test-Path $ptw) { Say ("  {0,-32} {1,10} B" -f 'dsht-plugin-prompt-template/lib/ejs-worker.js', (Get-Item $ptw).Length) }
 Say ''
-# 【T-87 等价性闸门（心跳 77 接入）】与 build-dsht.ps1 / build-plugins.sh / build-wb.sh 同款：
-# 「总包加载 ≡ 5 个独立包加载」（15 判据 + 反控）。A15 类文本断言证明不了「行为等价」——
-# 注册顺序（B5）/ 服务声明（B1）/ 命名空间与路由（B3/B4）出问题都不会让构建失败。
-# 【2026-09-16 W28】判据数 13 → 15：新增 8c（**解析器自证**）。判据 8②③ 的结论依赖
-# verify-rp-consolidation.mjs 的 parseSplitEntries() 从 build-dsht.ps1 里解析「权威路径
-# 是否已归一」，解析器漏形态会让结论**反向**（P-41 推论三：判据的覆盖面本身也要有判据）。
+# 【T-88 拆包完整性闸门】与 build-dsht.ps1 / build-plugins.sh / build-wb.sh 同形态后的验收：
+# 「主插件不含 R10 子模块 + 四独立包在场 + patch 顺序不变量 + 动态行为一致」
+# （9 判据 + 解析器自证 + 反控）。A15 类文本断言证明不了「拆干净」——
+# 名义拆包（总包还在）/ 拆丢（某包缺失）/ 顺序漂移（B5）都不会让构建失败。
 # ⚠️ 本文件是 PowerShell：注释里**不要用反引号**（PS 的行内转义符，会吞掉后一个字符、
 #    破坏后续引号配对 ⇒ 报错位置会漂到一个毫不相干的远处行号）。
 $verifyRp = "$ws\scripts\verify-rp-consolidation.mjs"
-if (-not (Test-Path $verifyRp)) { throw "T-87: 等价性验证脚本缺失（$verifyRp）" }
-# 先跑**解析器自证**（合成输入，秒级）：清单解析错了，后面的 8② 结论就不必看了
+if (-not (Test-Path $verifyRp)) { throw "T-88: 拆包验证脚本缺失（$verifyRp）" }
+# 先跑**解析器自证**（合成输入，秒级）：清单解析错了，后面的 8c 结论就不必看了
 $ErrorActionPreference = 'Continue'
 & $node $verifyRp --selftest-parser 2>&1 | Select-String -Pattern 'selftest-parser' | Select-Object -Last 1
 $rcParser = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
-if ($rcParser -ne 0) { throw 'T-87: 构建路径解析器自证未通过（清单可能残缺 ⇒ 判据8② 的结论不可采信）' }
+if ($rcParser -ne 0) { throw 'T-88: 构建路径解析器自证未通过（清单可能残缺 ⇒ 判据8c 的结论不可采信）' }
 $ErrorActionPreference = 'Continue'
 & $node $verifyRp --negative-control 2>&1 | Select-String -Pattern 'negctl' | Select-Object -Last 2
 $rcNeg = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
-if ($rcNeg -ne 0) { throw 'T-87: 等价性验证的反控未通过（判据抓不到不一致 ⇒ 该门不可信）' }
+if ($rcNeg -ne 0) { throw 'T-88: 拆包验证的反控未通过（判据抓不到「拆不干净」 ⇒ 该门不可信）' }
 $ErrorActionPreference = 'Continue'
 & $node $verifyRp 2>&1 | Select-String -Pattern 'PASS|✗' | Select-Object -Last 3
 $rcVerify = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
-if ($rcVerify -ne 0) { throw 'T-87: 总包与 5 个独立包**不等价**（注册顺序/路由/命名空间/服务声明有差异）—— 勿发货' }
-Say '  T-87 等价性（15 判据 + 解析器自证 + 反控）OK'
+if ($rcVerify -ne 0) { throw 'T-88: 拆包不完整（总包未退役 / 主插件内联子模块 / 独立包缺失 / patch 顺序漂移）—— 勿发货' }
+Say '  T-88 拆包完整性（9 判据 + 解析器自证 + 反控）OK'
 Say '插件构建完成。'
