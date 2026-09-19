@@ -251,7 +251,7 @@ ST 预设分两类，适配路径不同（`preset/import-st` 自动识别并标�
     编译文本挂 `agent-instructions`（`@deepseek-ai/dsh-agent-instructions`）与
     `skill-filesystem` 行——agent 模式跑编排，不要改写成 oneshot 形态。
   - **技能/知识块**（操作手册形态条目：内容引用 `<名字>/references/<…>.md`，或含
-    `# …SKILL：…` 能力声明头，如「防文风/要文风」「画图手册」）→ 提取为 DSH skills：
+    `# …SKILL：…` 能力声明头，如「文风切换」「画图手册」）→ 提取为 DSH skills：
     `skills/preset-<id>/<块名>/SKILL.md`（frontmatter description 标注来源预设，
     正文 = 条目文本，`{{setvar}}` 包装已拆、注释宏已剥）。组头注释条目
     （`----…————`）与普通 `{{setvar}}` 块不算技能块，不提取。

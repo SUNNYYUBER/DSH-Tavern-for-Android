@@ -70,6 +70,14 @@ golden/st/
 rp-workspace/packages/.vitest/
 *.tsbuildinfo
 
+# 【T-25b 2026-09-19】发布前清理补漏（盲区收口）：
+# · __pycache__/ —— Python 编译缓存（曾有 2 个 .pyc 误入库）
+# · rp-workspace/artifacts/ —— 设备验证截图（**截图里是真实会话内容**：
+#   文件名 native-conversation-migrated-history 即明示展示迁移后的聊天记录）。
+#   ⚠️ 这一类是二进制，**发布卫生扫描（只扫文本）结构上看不到它** ⇒ 必须靠本条守住。
+__pycache__/
+rp-workspace/artifacts/
+
 # 【E3 2026-09-13】AI 对话归档（2.11MB，含 15 处 wxid + 大量本机路径）
 # 移到 docs-archive/ 保留原件但出库（不销毁；项目唯一完整历史档案）。
 # 说明：docs-archive/ 与 docs/ 是两个不同目录——前者专放「保留但不出库」的档案。

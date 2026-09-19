@@ -104,8 +104,8 @@ describe('T3.3 agent 编排型判定（detectAgentComposition：名字标注/编
     // 满屏内心OS 条目，在 [主预设] 名字下必须维持 direct——引用路径密度只作三档归位素材，
     // 不是 path 判定特征（防误伤 ST oneshot 主预设，tavern-macros.spec 既有断言）
     const agentFlavored = [
-      { name: '防文风', content: '读取 example-style-rules/references/文风控制/防文风.md' },
-      { name: '要文风', content: '读取 example-style-rules/references/文风控制/要文风.md' },
+      { name: '简明风格', content: '读取 example-style-rules/references/tone/concise.md' },
+      { name: '详细风格', content: '读取 example-style-rules/references/tone/detailed.md' },
       { name: '💭👤内心OS(只角色)', content: '内心 OS 规则' },
     ]
     expect(detectAgentComposition('[Agent] V14.7 示例预设', agentFlavored)).toBe(true)
@@ -293,7 +293,7 @@ describe('T3.3 真实样本冒烟（示例预设 V14.7/V17.1，本地可读才�
     expect(preset.slots.filter(s => s.type === 'configSummary')).toHaveLength(1)
     const compiled = compileSlots(preset)
     expect(compiled.find(c => c.type === 'configSummary')!.content).toBe(preset.configSummaryExtra)
-    // 常规条目照常平铺（真实样本 170+ 条常规槽，文风/NSFW 等不被误收）
+    // 常规条目照常平铺（真实样本 170+ 条常规槽，文风/氛围等不被误收）
     expect(preset.slots.length).toBeGreaterThan(150)
     // 档③：V14.7 无编排条目 → 不产 hints（字段缺省）
     expect(preset.subagentHints).toBeUndefined()

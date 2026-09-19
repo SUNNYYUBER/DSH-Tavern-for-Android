@@ -100,7 +100,7 @@ function groupLabel(raw) {
 /** 操作手册形态判定（通用规则，不写死具体预设）：
  * 内容（拆掉 {{//}} 注释与 {{setvar::k::…}} 包装后）命中其一即是：
  * - 引用 skill 式资源路径：<名字>/references/<…>.md（ST agent 预设的"Agent 才读取 xx/references/yy.md"形态）
- * - 含能力声明头：# …SKILL：…（"NSFW_SKILL：NSFW风格=…"这类"标题即能力名"块）
+ * - 含能力声明头：# …SKILL：…（"STYLE_SKILL：文风切换=…"这类"标题即能力名"块）
  */
 const SKILL_REF_PATH_RE = /[\w一-鿿-]+\/references\/[\w一-鿿./-]+\.md/i;
 const SKILL_HEADER_RE = /^#\s*\S*SKILL[：:]/m;

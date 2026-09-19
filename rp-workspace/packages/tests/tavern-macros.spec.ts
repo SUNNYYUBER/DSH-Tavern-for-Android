@@ -348,23 +348,26 @@ describe('状态栏渲染（StatusPlaceHolderImpl 占位符数据源）', () => 
 })
 
 // ---------------------------------------------------------------------------
-// 任务 3：agent 预设 skill 提取（真实「[Agent] V14.7 示例预设 · 示例角色」裁剪夹具）
+// 任务 3：agent 预设 skill 提取（合成「[Agent] V14.7 示例预设 · 示例角色」裁剪夹具）
+//   ★ 夹具为**合成样本**（P-40 家族：不得依赖真实文档的形状）——
+//     结构与真实 [Agent] 预设同形（setvar 槽清单 / 组头注释条目 /
+//     references 路径引用 / SKILL 能力声明头），但内容全部为中性占位。
 // ---------------------------------------------------------------------------
 
 describe('agent 预设适配：模块化内容块 → DSH skills', () => {
-  const fixture = readFileSync(join(__dirname, 'fixtures', 'agent-preset-fox-trimmed.json'), 'utf8')
+  const fixture = readFileSync(join(__dirname, 'fixtures', 'agent-preset-sample-trimmed.json'), 'utf8')
 
-  it('真实预设裁剪件：skill 块提取（references 路径引用 + SKILL 能力声明头）', () => {
+  it('合成预设裁剪件：skill 块提取（references 路径引用 + SKILL 能力声明头）', () => {
     const { preset, skills } = importStPreset(fixture, '[Agent] V14.7 示例预设 · 示例角色')
     expect(preset.path).toBe('agent') // [Agent] 名字标注
-    // 防文风/要文风条目内容引用 example-style-rules/references/….md → 提取为 skill
+    // 风格开关条目内容引用 example-style-rules/references/….md → 提取为 skill
     expect(skills.length).toBeGreaterThanOrEqual(2)
-    const faqing = skills.find(s => s.label.includes('文风'))
-    expect(faqing).toBeDefined()
-    expect(faqing!.dir).toMatch(/^skills\/preset-[a-z0-9-]+\/[a-z0-9-]+$/)
-    expect(faqing!.content).toContain('example-style-rules/references/')
+    const styleSkill = skills.find(s => s.label.includes('风格'))
+    expect(styleSkill).toBeDefined()
+    expect(styleSkill!.dir).toMatch(/^skills\/preset-[a-z0-9-]+\/[a-z0-9-]+$/)
+    expect(styleSkill!.content).toContain('example-style-rules/references/')
     // SKILL.md 形态：frontmatter + 手册正文（setvar 包装已拆，注释已剥）
-    const md = renderPresetSkillMd(preset.displayName, faqing!)
+    const md = renderPresetSkillMd(preset.displayName, styleSkill!)
     expect(md).toMatch(/^---\nname: [a-z0-9-]+\ndescription: .+\nwhenToUse: .+\n---/)
     expect(md).not.toContain('{{setvar')
     expect(md).not.toContain('{{//')
