@@ -11867,7 +11867,7 @@ function enhancePreBlocks(root, opts) {
 
 // packages/src/dsht-rp-ui/src/client/output-protocol.ts
 var PROTO_DEFAULT = {
-  actionTags: ["a", "selection", "selection"],
+  actionTags: ["a", "selection"],
   wrapTags: ["content"],
   statusTags: ["status", "statusbar", "StatusBlock"],
   // draft：草稿/自检内容折叠块（批次修复：真机实测 <draft> 裸文本外露）
