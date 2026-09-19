@@ -1,8 +1,8 @@
 # 第三方组件许可清单（THIRD_PARTY LICENSES）
 
 > 建立日期：2026-09-03（⑦ 许可证核对）
-> 最近更新：2026-09-14（全量版权审计后复核；审计报告见
-> [COPYRIGHT-AUDIT-FULL-2026-09-14.md](COPYRIGHT-AUDIT-FULL-2026-09-14.md)）
+> 最近更新：2026-09-20（§3c 新增 dsh-preset-enhance 条目；此前 2026-09-14 全量版权审计复核，
+> 审计报告见 [COPYRIGHT-AUDIT-FULL-2026-09-14.md](COPYRIGHT-AUDIT-FULL-2026-09-14.md)）
 >
 > 覆盖范围：**DSHTavern APK 实际打包再分发**的全部第三方组件。
 > 扫描方法：遍历运行时 `node_modules` 全量 `package.json` 的 license 字段（含嵌套），
@@ -58,6 +58,17 @@
 |---|---|---|---|
 | jszip | 3.10.1 | (MIT OR GPL-3.0-or-later) —— **选 MIT** | 导入引擎解 zip（卡 / 聊天记录 / 预设包） |
 
+
+## 3c. 第三方 DSH 插件（随包分发）
+
+| 包 | 版本 | 许可 | 用途 |
+|---|---|---|---|
+| **dsh-preset-enhance** | 0.3.2-rc.1 | **MIT**（作者 [bychv](https://github.com/bychv)） | SillyTavern 预设的加载 / 编辑 / 注入（侧栏「预设工作台」、prompt_order 顺序表注入、ST 宏引擎、assistant_prefill 预填充、DSML 工具转换、/preset 命令） |
+
+> 自 v0.2.0-beta.3 起随 APK 分发（`node_modules/dsh-preset-enhance`，构建期由
+> `build-dsht.ps1 -PresetEnhanceVersion` 从 npm 拉取，未经任何修改）。
+> 与 RP 自带的预设快照管线**并存**（它默认只承担被显式启用的会话）；
+> RP 会话的预设注入切换计划见 [T-88 §五](T-88-PLUGIN-DECOMPOSITION.md)。
 
 ## 4. 内嵌第三方（APK 内）
 

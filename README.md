@@ -118,8 +118,8 @@
 | 包体 | 约 122 MB（14 个 `.so`，构建期从 Termux 官方源获取并校验 SHA256） | 约 370 MB（完整 rootfs） |
 | 工具链 | bionic libc 的 API 覆盖小于 glibc：bash / ripgrep / 原生模块等需逐项适配（见「安卓平台限制」表） | 容器内是完整 glibc 环境，上游工具链直接可用 |
 | phantom process killer（Android 12+，全系统后台子进程限 32 个） | 单进程形态天然在限值内 | 完整进程树需用户开启「停用子进程限制」类选项 |
-| 鸿蒙 / 卓易通 | 已实测完整跑通（HarmonyOS 5 + 卓易通，2026-09） | 官方标注「未验证」（截至 2026-09） |
-| 定位 | RP 垂直应用（装 APK 即用的酒馆卡播放器） | 通用 DSH 安卓化平台（含设备控制通道） |
+| 鸿蒙 / 卓易通 | 已实测完整跑通（HarmonyOS 6 + 卓易通，实测日期 2026-09-19） | 官方标注「未验证」（截至 2026-09-19） |
+| 定位 | RP 特化平台（装 APK 即用；底层同样是通用 DSH 安卓化 harness） | 通用 DSH 安卓化平台（含设备控制通道） |
 
 两条路线**不是竞争关系**：
 
@@ -138,6 +138,8 @@ node rp-workspace/scripts/fetch-native-libs.mjs
 脚本带 deb 级 SHA256 校验；首次需联网，之后幂等跳过。构建脚本 Step 0.1 会自动检查缺不缺。
 
 ## 安卓平台限制（改代码前必看）
+
+> **这些限制不是终点。** 我们选择 bionic 原生路线时就清楚它意味着逐项适配的工作；接下来会**尽可能在这条技术路线的基础上想办法逐项解除这些限制**（近期计划：bash / ripgrep / git / zstd 经 Termux 官方源补齐，见 [NEXT-STEPS](docs/NEXT-STEPS-2026-09-19.md) P1）。
 
 | 约束 | 表现 | 处置 |
 |---|---|---|
@@ -227,6 +229,7 @@ DSH RolePlay/
 | 上游许可清单 | [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md) |
 | 真机验证手册 | [B-DEVICE-VERIFY-CHECKLIST.md](docs/B-DEVICE-VERIFY-CHECKLIST.md) |
 | 插件拆包方案 | [T-88-PLUGIN-DECOMPOSITION.md](docs/T-88-PLUGIN-DECOMPOSITION.md) |
+| 社区插件适配指南 | [PLUGIN-COMPAT.md](docs/PLUGIN-COMPAT.md) |
 | 长期目标（单源） | [GOAL.md](docs/GOAL.md) |
 
 ## 反馈与贡献
@@ -254,6 +257,7 @@ DSH RolePlay/
 ## 致谢
 
 - **[DeepSeek](https://deepseek.com)** —— DSH 运行时（`@deepseek-ai/dsh`，MIT）
+- **[dsh-preset-enhance](https://github.com/bychv/dsh-preset-enhance)**（bychv，MIT）—— ST 预设的加载 / 编辑 / 注入插件，自 v0.2.0-beta.3 起随包分发。当前与 RP 自带的预设快照管线**并存**（它默认只承担被显式启用的会话；RP 会话仍走我方管线）——待真机验证后，RP 会话的预设注入将统一切换由它承担（详见 [T-88 §五](docs/T-88-PLUGIN-DECOMPOSITION.md)）
 - **[Node.js](https://nodejs.org)**（MIT）、**[Termux](https://termux.dev)**（proot、busybox 二进制来源）、**[busybox](https://busybox.net)**（GPL-2.0，独立可执行文件聚合分发，源码获取方式见 [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md)）
 - **[SillyTavern](https://github.com/SillyTavern/SillyTavern)** 及其社区 —— 兼容目标（资产格式与交互范式的定义者）
 - **[JS-Slash-Runner（酒馆助手）](https://github.com/N0VI028/JS-Slash-Runner)**（AFPL）—— 脚本运行时 API 的兼容基准（自研复刻，不含其源码）
@@ -392,8 +396,8 @@ Two public approaches exist for running the DSH runtime on Android. This project
 | Package size | ~122 MB (14 `.so` files, fetched from the official Termux repo at build time with SHA256 verification) | ~370 MB (full rootfs) |
 | Toolchain | bionic libc covers fewer APIs than glibc: bash / ripgrep / native modules need item-by-item adaptation (see "Android platform constraints") | Full glibc environment inside the container; upstream toolchains work directly |
 | phantom process killer (Android 12+, system-wide 32 background child-process limit) | Single-process shape stays within the limit naturally | A full process tree requires the user to enable "disable child process restrictions"-type options |
-| HarmonyOS / EasyConnect (卓易通) | Verified working end-to-end (HarmonyOS 5 + EasyConnect, 2026-09) | Marked "unverified" upstream (as of 2026-09) |
-| Positioning | A vertical RP app (install the APK and play character cards) | A general DSH Android-ization platform (with a device-control channel) |
+| HarmonyOS / EasyConnect (卓易通) | Verified working end-to-end (HarmonyOS 6 + EasyConnect, verified on 2026-09-19) | Marked "unverified" upstream (as of 2026-09-19) |
+| Positioning | An RP-specialized platform (ready to use out of the box; the underlying layer is equally a general DSH Android-ization harness) | A general DSH Android-ization platform (with a device-control channel) |
 
 The two approaches **are not competitors**:
 
@@ -412,6 +416,8 @@ node rp-workspace/scripts/fetch-native-libs.mjs
 The script verifies per-deb SHA256; the first run needs network, later runs skip idempotently. The build script's Step 0.1 checks automatically.
 
 ## Android platform constraints (read before modifying)
+
+> **These constraints are not the end state.** We chose the bionic-native approach knowing it means item-by-item adaptation; next we'll **lift these constraints one by one on top of this same approach** (near-term: bash / ripgrep / git / zstd via the official Termux repo — see P1 in [NEXT-STEPS](docs/NEXT-STEPS-2026-09-19.md)).
 
 | Constraint | Symptom | Handling |
 |---|---|---|
@@ -501,6 +507,7 @@ DSH RolePlay/
 | Upstream licenses | [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md) |
 | Device verification | [B-DEVICE-VERIFY-CHECKLIST.md](docs/B-DEVICE-VERIFY-CHECKLIST.md) |
 | Plugin decomposition plan | [T-88-PLUGIN-DECOMPOSITION.md](docs/T-88-PLUGIN-DECOMPOSITION.md) |
+| Community plugin compat guide | [PLUGIN-COMPAT.md](docs/PLUGIN-COMPAT.md) |
 | Long-term goal (single source) | [GOAL.md](docs/GOAL.md) |
 
 ## Feedback & contributing
@@ -527,7 +534,8 @@ Full policy: [CONTRIBUTING.md](CONTRIBUTING.md) (wording is kept consistent betw
 
 ## Acknowledgements
 
-- **[DeepSeek](https://deepseek.com)** — the DSH runtime (`@deepseek-ai/dsh`, MIT)
+- **[DeepSeek](https://deepseek.com)** —— the DSH runtime (`@deepseek-ai/dsh`, MIT)
+- **[dsh-preset-enhance](https://github.com/bychv/dsh-preset-enhance)** (bychv, MIT) —— SillyTavern preset loading / editing / injection plugin, shipped with the app since v0.2.0-beta.3. It currently **coexists** with our own preset snapshot pipeline (it only takes over sessions explicitly enabled; RP sessions still use ours) — after device verification, preset injection for RP sessions will be switched over to it entirely (see [T-88 §5](docs/T-88-PLUGIN-DECOMPOSITION.md))
 - **[Node.js](https://nodejs.org)** (MIT), **[Termux](https://termux.dev)** (source of proot & busybox binaries), **[busybox](https://busybox.net)** (GPL-2.0, distributed as an independent executable; source access in [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md))
 - **[SillyTavern](https://github.com/SillyTavern/SillyTavern)** and its community — the compat target (definer of the asset formats and interaction patterns)
 - **[JS-Slash-Runner (Tavern Helper)](https://github.com/N0VI028/JS-Slash-Runner)** (AFPL) — the script-runtime API compat reference (self-written re-implementation, no source included)
