@@ -1,9 +1,9 @@
 /**
  * DSHTavern 会话内文件快照（回退/重新生成的「文件也能回退」数据面）——纯逻辑 + 薄 IO。
  *
- * 思路出处：dsh-tavern 的 nativeCommits（tavern-plugin/lib/index.js 的 rememberCommit /
- * rollbackTurn——按 turn 记录 before 快照，回退时整批恢复；MIT © flizzywine，
- * 见 REF_PROJECTS_COMPARISON.md 领域七与致谢表）。此处把"内存对象快照"落到文件维度：
+ * 设计动机：会话回退只回退了消息，而卡脚本落盘的状态文件（世界书、正则、变量、
+ * persona 等）留在原地——回退后模型看到的是「旧对话 + 新状态」的错配组合。
+ * 本模块把这些文件也纳入回退范围：按 turn 记 before 快照，回退时整批还原。
  *
  * 契约：
  * - 会话内写操作（dsh-plugin 的 /rp/bind-books、/regex/save-*、/rp/persona；
@@ -168,6 +168,26 @@ export interface TruncationBoundary {
 }
 
 /**
+ * 由「(seq, turn) 对清单」计算快照恢复边界 —— **单源核心**（P-1）。
+ *
+ * ## 为什么要有这个核心
+ * 同一判据原先只有「文本入口」（`snapshotRestoreBoundary` 解析 session.jsonl 字符串）。
+ * 但三个回退路径（rollback / regenerate / edit）各有 **live 分支**与**非 live 分支**：
+ *   · 非 live：手里是**文件内容**（字符串）→ 走文本入口；
+ *   · live：手里是**投影对象**（`live.surface` / `sessionEventsSnapshot(live)`）→ 无字符串可解。
+ * 结果是 live 分支**完全没有文件快照回滚**（B3 缺口：回退后会话内文件仍是被回退 turn
+ * 写过的内容，与 ST 语义不符）。修法不是再写一份「从事件对象算边界」的实现
+ * （那会造出第二份判据，必然漂移），而是把**判据本身**抽成这个核心，
+ * 两个入口都调它。
+ */
+export function boundaryFromTurnPairs(pairs: ReadonlyArray<{ seq: number; turn: number }>, keepThroughSeq: number): TruncationBoundary {
+  const fromTurn = pairs.filter(t => t.seq <= keepThroughSeq).reduce((m, t) => Math.max(m, t.turn), 0)
+  // 被截事件里有属于 fromTurn 的 → 截断点腰斩了该 turn（如 regenerate 截到 user/message）
+  const includeBoundary = fromTurn > 0 && pairs.some(t => t.seq > keepThroughSeq && t.turn === fromTurn)
+  return { fromTurn, includeBoundary }
+}
+
+/**
  * 由原始 session.jsonl 内容与 keepThroughSeq 计算快照恢复边界：
  * - 完整保留的 turn（截断点在其 turn/end 之后）不恢复；
  * - 被腰斩的 turn（如 regenerate 截到该 turn 的 user/message）一并恢复。
@@ -184,10 +204,28 @@ export function snapshotRestoreBoundary(originalContent: string, keepThroughSeq:
       }
     } catch { /* 坏行跳过 */ }
   }
-  const fromTurn = turns.filter(t => t.seq <= keepThroughSeq).reduce((m, t) => Math.max(m, t.turn), 0)
-  // 被截事件里有属于 fromTurn 的 → 截断点腰斩了该 turn（如 regenerate 截到 user/message）
-  const includeBoundary = fromTurn > 0 && turns.some(t => t.seq > keepThroughSeq && t.turn === fromTurn)
-  return { fromTurn, includeBoundary }
+  return boundaryFromTurnPairs(turns, keepThroughSeq)
+}
+
+/**
+ * **live 分支专用入口**：由事件数组（`sessionEventsSnapshot(live)` 的形态）算边界。
+ *
+ * 与文本入口共用 `boundaryFromTurnPairs`（同一判据，零漂移风险）。
+ * live 侧拿不到 session.jsonl 字符串（投影对象在手，文件可能是陈旧/非权威），
+ * 故走这里。两入口的**结论必须一致**——它们喂的是同一批 (seq, turn)。
+ */
+export function snapshotRestoreBoundaryFromEvents(
+  events: ReadonlyArray<{ seq?: unknown; data?: unknown }>,
+  keepThroughSeq: number,
+): TruncationBoundary {
+  const turns: Array<{ seq: number; turn: number }> = []
+  for (const ev of events) {
+    const turn = (ev?.data as { turn?: unknown } | undefined)?.turn
+    if (typeof ev?.seq === 'number' && typeof turn === 'number' && Number.isInteger(turn)) {
+      turns.push({ seq: ev.seq, turn })
+    }
+  }
+  return boundaryFromTurnPairs(turns, keepThroughSeq)
 }
 
 export interface SnapshotRestoreResult {
@@ -201,9 +239,10 @@ export interface SnapshotRestoreResult {
 }
 
 /**
- * 回退恢复（照抄 dsh-tavern rollbackTurn 的整批恢复语义）：把 fromTurn 之后
- * （includeBoundary 时含 fromTurn 本身）的 turn 快照**逆序整批恢复**——
- * 恢复快照 = 写回 before 内容；快照里 existed=false 的文件删除。
+ * 回退恢复：把 fromTurn 之后（includeBoundary 时含 fromTurn 本身）的 turn 快照
+ * **逆序整批恢复**——恢复快照 = 写回 before 内容；快照里 existed=false 的文件删除。
+ * 逆序的理由：同一文件可能被多个 turn 先后写过，从最近的 turn 往回恢复，最后落到
+ * 最早的 before 状态，即「恢复点 = fromTurn 开始前」的语义。
  * 恢复成功的快照记录随即删除（已回放的不再参与后续回退）。
  */
 export async function restoreSnapshotsAfter(

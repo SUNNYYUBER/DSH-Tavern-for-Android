@@ -174,6 +174,77 @@ describe('session-repair: 存量 v0 会话 → 合法形态', () => {
     expect(r.changed).toBe(true)
   })
 
+  it('🔴 W32 正控：prune 端点 ≠ 后继 replace 区间 → 重锚到 replace 区间（影子价格邻接契约）', () => {
+    // 复现设备真实形态（st-clk9pd seq 1456/1457）：prune 的 shadowedSeqs 是**自己的端点**
+    // （这里刻意写成倒序 [4,2]，模拟真实文件的 [837 ... 830]），而紧随其后的 replace 区间是 [2,4]。
+    // 官方两条契约：
+    //   ① dsh-compaction/invariant.js:58 —— shadowedRange == shadowedSeqs 首尾（本形态**已满足**）
+    //   ② dsh-token-meter/.../surface-projection.js:62 —— claim [start,end] 必须 == 后继 replace 的
+    //      [startSeq,endSeq]，否则**抛错** ⇒ UI 报 `Failed to load history ... has no adjacent
+    //      shadow price` ⇒ **会话整份打不开**（M7 连续 6 轮把它记成「无可见楼层」SKIP 而掩盖）。
+    // 修法：以 replace 区间为权威锚，取其在当时 surface 上的切片，同步重写
+    //       shadowedSeqs + shadowedRange ⇒ 两条契约同时成立、内容零丢失。
+    const hdr3 = JSON.stringify({ type: 'session', version: 3, id: 's1', createdAt: 1, cwd: '/data/x', delegationDepth: 0 })
+    const lines = [
+      hdr3,
+      JSON.stringify({ type: 'user/message', seq: 2, time: 3, data: { id: 'u1', role: 'user', content: [{ type: 'text', text: 'a' }], source: { kind: 'user' } }, surfaceOp: 'append' }),
+      JSON.stringify({ type: 'user/message', seq: 4, time: 4, data: { id: 'u2', role: 'user', content: [{ type: 'text', text: 'b' }], source: { kind: 'user' } }, surfaceOp: 'append' }),
+      // 端点与 replace 区间**相反且倒序**（真实形态），但满足契约 ①（range == seqs 首尾）
+      JSON.stringify({ type: 'compaction/prune', seq: 10, time: 11, data: { shadowedRange: { start: 4, end: 2 }, shadowedSeqs: [4, 2], shadowedTokenCount: 5 } }),
+      // 紧邻 replace：区间是 surface 上的 [2,4]（与 claim 的 [4,2] 不一致 ⇒ 投影层抛错）
+      JSON.stringify({ type: 'user/message', seq: 11, time: 12, data: { id: 'm1', role: 'user', content: [{ type: 'text', text: '[已回退]' }], source: { kind: 'plugin', plugin: 'dsht-rp' } }, surfaceOp: { op: 'replace', startSeq: 2, endSeq: 4 }, sourceEventSeqs: [2, 4] }),
+    ]
+    const src = lines.join('\n') + '\n'
+    const r = repairSessionForV3(src)
+    expect(r.changed).toBe(true)
+    const evs = parse(r.content)
+    const prune = evs.find(e => e.type === 'compaction/prune')!
+    // 注：修复器会重编号 seq，故按「带 replace surfaceOp 的那条 user/message」定位，不按旧 seq。
+    const repl = evs.find(e => e.type === 'user/message' && (e.surfaceOp as { op?: string } | undefined)?.op === 'replace')!
+    const d = prune.data as { shadowedSeqs: number[]; shadowedRange: { start: number; end: number } }
+    const op = repl.surfaceOp as { startSeq: number; endSeq: number }
+    // 契约 ②：claim == 后继 replace 区间
+    expect(d.shadowedRange.start).toBe(op.startSeq)
+    expect(d.shadowedRange.end).toBe(op.endSeq)
+    // 契约 ①：range == shadowedSeqs 首尾
+    expect(d.shadowedRange.start).toBe(d.shadowedSeqs[0])
+    expect(d.shadowedRange.end).toBe(d.shadowedSeqs[d.shadowedSeqs.length - 1])
+    // 内容零丢失：被影子化的节点**个数**不变（只改了计量口径，没有删正文）；
+    // 注：绝对 seq 在修复器里会被重编号，故此处不比绝对数值，只比个数与两条契约。
+    expect(d.shadowedSeqs.length).toBe(2)
+    expect(r.notes.join('|')).toContain('影子价格邻接契约重锚 1 条')
+  })
+
+  it('🔴 W32 负控：claim 已等于后继 replace 区间 → 零改动（不得反复重写）', () => {
+    // 与正控同构，只是 claim 已对齐 ⇒ 修法与官方均认为合法，必须零改动且逐字节不动。
+    const hdr3 = JSON.stringify({ type: 'session', version: 3, id: 's1', createdAt: 1, cwd: '/data/x', delegationDepth: 0 })
+    const src = [
+      hdr3,
+      JSON.stringify({ type: 'user/message', seq: 2, time: 3, data: { id: 'u1', role: 'user', content: [{ type: 'text', text: 'a' }], source: { kind: 'user' } }, surfaceOp: 'append' }),
+      JSON.stringify({ type: 'user/message', seq: 4, time: 4, data: { id: 'u2', role: 'user', content: [{ type: 'text', text: 'b' }], source: { kind: 'user' } }, surfaceOp: 'append' }),
+      JSON.stringify({ type: 'compaction/prune', seq: 10, time: 11, data: { shadowedRange: { start: 2, end: 4 }, shadowedSeqs: [2, 4], shadowedTokenCount: 5 } }),
+      JSON.stringify({ type: 'user/message', seq: 11, time: 12, data: { id: 'm1', role: 'user', content: [{ type: 'text', text: '[已回退]' }], source: { kind: 'plugin', plugin: 'dsht-rp' } }, surfaceOp: { op: 'replace', startSeq: 2, endSeq: 4 }, sourceEventSeqs: [2, 4] }),
+    ].join('\n') + '\n'
+    const r = repairSessionForV3(src)
+    expect(r.changed).toBe(false)
+    expect(r.content).toBe(src)
+  })
+
+  it('🔴 W32 杠杆：prune 后**没有**紧邻 replace → 不得按 replace 口径改（退回端点口径）', () => {
+    // 反控上一条：若「锚到后继 replace 区间」被无脑应用，本条会被改坏。
+    // prune 之后是 append（非 replace）⇒ 无权用别人的区间当锚，必须保持自己的端点口径。
+    const hdr3 = JSON.stringify({ type: 'session', version: 3, id: 's1', createdAt: 1, cwd: '/data/x', delegationDepth: 0 })
+    const src = [
+      hdr3,
+      JSON.stringify({ type: 'user/message', seq: 2, time: 3, data: { id: 'u1', role: 'user', content: [{ type: 'text', text: 'a' }], source: { kind: 'user' } }, surfaceOp: 'append' }),
+      JSON.stringify({ type: 'compaction/prune', seq: 10, time: 11, data: { shadowedRange: { start: 2, end: 2 }, shadowedSeqs: [2], shadowedTokenCount: 5 } }),
+      JSON.stringify({ type: 'user/message', seq: 11, time: 12, data: { id: 'u2', role: 'user', content: [{ type: 'text', text: 'c' }], source: { kind: 'user' } }, surfaceOp: 'append' }),
+    ].join('\n') + '\n'
+    const r = repairSessionForV3(src)
+    expect(r.changed).toBe(false)
+    expect(r.content).toBe(src)
+  })
+
   it('🔴 回归：shadowedSeqs 是 surface 序（非数值升序）→ 零改动（不得每次启动重写）', () => {
     // 复现设备缺陷（心跳 53）：会话 `session-fdfc1a28…` 的 session.v3.jsonl 与 .bak md5 完全相同
     // ——即每次冷启动都做了一次「内容零变化的全量重写 + .bak」。

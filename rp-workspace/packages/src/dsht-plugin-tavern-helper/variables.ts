@@ -12,11 +12,9 @@
  */
 
 import { deepMergeIncoming } from '../dsht-plugin-shared/deep-merge.ts'
-
-/** JSONPointer 段解码 */
-function decodeSeg(seg: string): string {
-  return seg.replace(/~1/g, '/').replace(/~0/g, '~')
-}
+// 【F5 2026-09-14 单源化】JSONPointer 段解码下沉共享层（此前 tavern-helper / state/mvu /
+// dsht-plugin-shared/macros 三处各有一份；转义顺序错了会把路径解歪且静默写错位置）
+import { decodePointerSeg as decodeSeg } from '../dsht-plugin-shared/json-pointer.ts'
 
 export function parsePath(path: string): string[] {
   return path.split('/').filter(s => s.length > 0).map(decodeSeg)

@@ -71,6 +71,10 @@ class MainActivity : AppCompatActivity() {
          */
         private const val RELOAD_INTERVAL_MS = 3000L
         private const val RELOAD_MAX = 20
+
+        /** 【L4 2026-09-14】renderer 重建预算（跨 Activity 重建持久化；见 rebuildWebView 注释） */
+        private const val RENDERER_REBUILD_MAX = 5
+        private const val KEY_RENDERER_REBUILDS = "renderer_rebuilds"
     }
 
     private lateinit var webView: WebView
@@ -97,6 +101,21 @@ class MainActivity : AppCompatActivity() {
     private var lastPortState = false
     /** T2.11 首启标记：仅第一次打开 app 自动显示导入/新手教程页（之后直接进 DSH） */
     private val prefs by lazy { getSharedPreferences("dsht", MODE_PRIVATE) }
+    /**
+     * 【L4 2026-09-14】renderer 重建预算的**跨 Activity 重建**计数器。
+     *
+     * 为什么不能复用 `reloadAttempts`：renderer 被杀的恢复手段是 `recreate()`（整 Activity
+     * 重建，见 `rebuildWebView`），而 `reloadAttempts` 是 Activity 内存字段 —— 重建即归零，
+     * 「崩 → 建 → 崩」会变成**无限重建**（每次都是第 1 次）。故必须跨重建持久化。
+     *
+     * 用 `prefs` 而非 `savedInstanceState`：后者在「系统杀 app 后恢复」时才保留，而
+     * renderer 被杀时 Activity 未必被回收 ⇒ 需要更强的持久化。`prefs` 同时覆盖两种情形。
+     *
+     * 归零时机与 `reloadAttempts` 一致：端口 0→1（运行时重启成功）或 token 变化。
+     */
+    private var rendererRebuilds: Int
+        get() = prefs.getInt(KEY_RENDERER_REBUILDS, 0)
+        set(v) = prefs.edit().putInt(KEY_RENDERER_REBUILDS, v).apply()
 
     private val handler = Handler(Looper.getMainLooper())
     private val diagPoller = object : Runnable {
@@ -106,6 +125,10 @@ class MainActivity : AppCompatActivity() {
             val portNow = NodeService.portOpen
             if (portNow && !lastPortState) {
                 reloadAttempts = 0
+                // 【L4 2026-09-14】端口 0→1 = 运行时真的起来了 ⇒ 上一轮 renderer 重建
+                // 是成功的（页面能正常加载），预算归零。否则「偶发一次 OOM + 后续正常」
+                // 的会话会累积计数，最终在无关的时刻误触上限。
+                rendererRebuilds = 0
                 if (!dshLoaded) reloadNeeded = true
             }
             lastPortState = portNow
@@ -131,6 +154,29 @@ class MainActivity : AppCompatActivity() {
                     else -> state
                 })
                 sb.append("\n端口 3080：").append(if (port) "已开放 ✓" else "未监听")
+                // 【L4 2026-09-14 R8 出声】上次进程级被杀归因（此前只赋值不显示，
+                // docs/B-DEVICE-VERIFY-CHECKLIST.md 却声称已显示 —— 文档与代码不一致）
+                if (o.optBoolean("lastAbnormalExit", false)) {
+                    sb.append("\n上次退出：⚠️ 异常（被系统/内存回收强杀，非正常关闭）")
+                }
+                // 【L4 2026-09-14 R8 出声】沙箱降级（无进程隔离，仅 fs 层工作区边界）
+                if (!o.isNull("sandboxFallback")) {
+                    val why = when (o.optString("sandboxFallback")) {
+                        "proot-missing" -> "proot/busybox 缺失"
+                        "rootfs-failed" -> "rootfs 搭建失败"
+                        else -> o.optString("sandboxFallback")
+                    }
+                    sb.append("\n沙箱：⚠️ 已降级（$why）—— 无进程隔离，仅按文件系统边界约束")
+                }
+                // 【F3 2026-09-14 R8 出声】滚动截屏：本 App 已**声明**可捕获（hint=INCLUDE），
+                // 但**系统是否真的提供捕获实现，我们测不出来**（见 scrollCaptureStatus 注释：
+                // 五条探测路径全部失败，且失败原因本身不可解释）。故这里**只陈述事实**，
+                // **不下结论** —— 不下结论比下错结论好（P-3/P-11）。
+                // 为什么仍要出声：这是「能对用户产生实际影响、而我们无法确证」的一格，
+                // 用户遇到「长截图只有一屏」时，这条日志能立刻给出线索。
+                if (scrollCaptureHintValue == View.SCROLL_CAPTURE_HINT_INCLUDE) {
+                    sb.append("\n滚动截屏：已声明可捕获（hint=INCLUDE）；系统是否提供捕获实现本机测不出")
+                }
                 if (port && dshLoaded == false) {
                     val tok = com.dshtavern.app.NodeService.webToken
                     sb.append("\nweb 令牌（0.1.2 鉴权）：").append(if (tok != null) "已捕获 ✓" else "未捕获（等 node 打印 dsh web: 行）")
@@ -289,6 +335,63 @@ class MainActivity : AppCompatActivity() {
     /** §4.16.2 深链：WebView/前端还没就绪时暂存的 sessionId（端口通了再派发） */
     private var pendingLocateSessionId: String? = null
 
+    /**
+     * 【F3 2026-09-14】滚动截屏的真实能力（运行期读回，供探针断言）。
+     *
+     * 为什么必须读回而不能只靠「源码里设了」：设 `scrollCaptureHint` 只是**声明候选**，
+     * 系统取「下一屏」靠的是 `getScrollCaptureCallback()`——而 `View` 基类默认为 null
+     * （WebView 是否自带实现属 Chromium 版本细节）。**只设 hint 就宣称已接通**
+     * 正是 R7「未验证即声称」的形态，故这里把两个事实都读回来、可被设备端断言。
+     *
+     * `scrollCaptureHintValue` 初值 Int.MIN_VALUE = 「未探测」（区别于任何合法 hint 值）。
+     */
+    private var scrollCaptureHintValue: Int = Int.MIN_VALUE
+    /** `getScrollCaptureCallback() != null`（API 31+；低版本恒 false = 该 API 不存在） */
+    private var scrollCaptureHasCallback: Boolean = false
+    /**
+     * 【F3 2026-09-14】**探测手段本身是否可用** —— 与「事实是否为真」严格分开。
+     *
+     * 为什么必须分开（P-11 的核心）：设备实测发现 `getScrollCaptureCallback` 在
+     * sdk=35 的设备上**反射也抛 NoSuchMethodException**。此时有两种可能：
+     *   (a) 系统真的没提供实现 → 结论「不支持」；
+     *   (b) **我们的探测手段失效**（方法名/签名与 OEM 实现不符）→ 结论「未知」。
+     * 二者混为一谈会得出**假结论** —— 而这正是 F3 上一版「✅ 已接通」的翻版
+     * （用不可靠的判据支撑一个确定的结论）。
+     * 故单列本字段：探针先看 `probeAvailable`，为 false 时**只报未知**，不报「不支持」。
+     */
+    private var scrollCaptureProbeAvailable: Boolean = false
+    /** 枚举到的 `ScrollCapture*` 方法名（诊断用；为空 = 该设备 android.view.View 无此族方法） */
+    private var scrollCaptureMethods: String = ""
+    /**
+     * 【F3 2026-09-14】行为探测的结果：`onScrollCaptureSearch` 回调里拿到的滚动内容尺寸。
+     * 取值：`"none"`（回调来了但 Rect 为 null）/ `"w=..,h=.."` / `"no-entry"`（无此方法）/
+     * `"probe-error"`（调用抛异常）。它是「系统认可本 View 可滚动捕获」的直接证据。
+     */
+    private var scrollCaptureSearchResult: String = ""
+
+    /**
+     * 【L2/A1 2026-09-14】软键盘避让的运行期读回（纯观测，供设备探针断言）。
+     *
+     * 为什么必须读回（P-11「产物即事实」）：`setOnApplyWindowInsetsListener` 可能因
+     * ① 未被调用（视图未 attach / 监听被覆盖）② `ime()` 恒 0（系统未派发 IME insets）
+     * ③ 代码在产物里但分支没走到 —— 等原因「写了但没生效」。只有读回**被调用时的实参**，
+     * 才能区分「修了且生效」与「修了但没生效」。`insetLastEvtAt == 0` = 监听一次都没跑过。
+     *
+     * 【为什么必须同时读 margin 与 padding 两个通道】
+     * 上一版用 `setPadding` 时，实测 `webView.paddingBottom == 767`（视图**接受了**）但页面
+     * 视口恒 873（**语义没变**）⇒ 只读自己写的那一路会得出「已生效」的假结论。
+     * 故这里两路都读，并**以页面视口是否真的收缩**作为最终判据（见探针 K1）。
+     */
+    private var insetImeBottomPx: Int = -1
+    /** 同一次回调里 `systemBars().bottom` 的值（对照用：证明取的是较大者） */
+    private var insetBarsBottomPx: Int = -1
+    /** 实际写入视图避让量的 bottom（`max(ime, bars)`） */
+    private var insetAppliedBottomPx: Int = -1
+    /** 最近一次 insets 回调的时间戳（0 = 从未回调过） */
+    private var insetLastEvtAt: Long = 0L
+    /** 实际写进了哪条通道：`"margin"` / `"padding"`（诊断「修法形态」是否正确） */
+    private var insetChannel: String = "none"
+
     /** 文件名清洗：去路径 + 只留安全字符（分享显示名 / 授权目录文件名都过它） */
     private fun sanitizeFileName(name: String, max: Int = 80): String =
         File(name).name.replace(Regex("[^\\w.\\-\\u4e00-\\u9fff]"), "_").take(max).ifEmpty { "export.zip" }
@@ -369,11 +472,138 @@ class MainActivity : AppCompatActivity() {
             return JSONObject().put("ok", true).put("granted", granted).toString()
         }
 
+        /**
+         * 【F3 2026-09-14】滚动截屏能力状态（**运行期读回**，供设备探针断言）。
+         *
+         * 返回：`{ok, sdkInt, hint, hintIncluded, probeAvailable, hasCallback, methods, supported}`
+         *  - `hint`        ：读回的 `scrollCaptureHint` 实际值（`null` = 未探测）
+         *  - `hintIncluded`：hint 是否 == `SCROLL_CAPTURE_HINT_INCLUDE`
+         *  - `probeAvailable`：**探测手段是否可用**（View 上是否真有该 getter）。
+         *    为 false 时 `hasCallback` 无意义 ⇒ 探针必须报「未知」而非「不支持」。
+         *  - `methods`     ：枚举到的 `ScrollCapture*` 方法名（诊断：OEM 差异时看它）
+         *  - `supported`   ：仅当 `probeAvailable` 为 true 才有确定值；
+         *    为 false 时返回 JSON null（**显式表达「未知」**，不用 false 冒充「不支持」）
+         *
+         * 为什么把判据放在原生侧：只有 Native 能读 View 属性。暴露给前端后，
+         * `eg-mobile-actions.mjs` 的「⑥ 滚动截屏」即可从「恒 SKIP（不可读）」升级为
+         * **有真值可判（或明确报未知）** —— P-11「探针必须先能取到事实，再谈判据」。
+         */
+        @JavascriptInterface
+        fun scrollCaptureStatus(): String {
+            // 【关键】每次调用都**重放探测**：探测语义是「询问**当前**滚动内容尺寸」，
+            // 而 onCreate 时 WebView 是空的（必然 no-callback）。探针是在页面加载完成后
+            // 才调的，故这里必须重探才能拿到真实结果（否则会得出「不支持」的假结论）。
+            //
+            // 【为什么用锁同步等待而不是 handler.post 后就返回】
+            // JS 桥方法跑在 **JavaBridge 线程**，而 View 属性访问必须在**主线程**。
+            // 若只 post 不等待，本次返回的会是**上一次**探测的字段值（竞态：探测还没跑，
+            // 数据已序列化）——那又是一种「看起来对、实际是旧数据」的假结论。
+            // 故用 CountDownLatch 把桥线程阻塞到主线程探测完成（探测是微秒级纯查询）。
+            val latch = java.util.concurrent.CountDownLatch(1)
+            handler.post {
+                try {
+                    probeScrollCapture("query")
+                } catch (e: Exception) {
+                    android.util.Log.w("DSHTavern", "query 时重探滚动捕获失败", e)
+                } finally {
+                    latch.countDown()
+                }
+            }
+            try {
+                latch.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (e: InterruptedException) {
+                android.util.Log.w("DSHTavern", "等待滚动捕获探测超时", e)
+            }
+            val o = JSONObject()
+            o.put("ok", true)
+            o.put("sdkInt", Build.VERSION.SDK_INT)
+            o.put(
+                "hint",
+                if (scrollCaptureHintValue == Int.MIN_VALUE) JSONObject.NULL else scrollCaptureHintValue,
+            )
+            o.put("hintIncluded", scrollCaptureHintValue == View.SCROLL_CAPTURE_HINT_INCLUDE)
+            o.put("probeAvailable", scrollCaptureProbeAvailable)
+            o.put("hasCallback", scrollCaptureHasCallback)
+            o.put("methods", scrollCaptureMethods)
+            o.put("searchResult", scrollCaptureSearchResult)
+            // 【关键 · 为什么不给 supported 一个布尔值】
+            // 本机实测（sdk=35）为「读 callback 是否存在」尝试了**五条路径，全部失败**：
+            //   ① Kotlin 合成属性 / ② 显式 getter → 编译期 Unresolved
+            //   ③ 反射 getScrollCaptureCallback   → 运行期 NoSuchMethodException
+            //   ④ 反推 onScrollCaptureSearch 签名 → 签名错（真实是 Rect,Point,Consumer）
+            //   ⑤ 枚举签名 + 动态构造调用          → 执行成功，但得 `no-callback`
+            // 而 ⑤ 的 `no-callback` **不能推出「不支持」**：
+            //   · `View.onScrollCaptureSearch` 在 AOSP 里是「**有 callback 才转发**」的内部
+            //     hook，无 callback 时空实现正是**预期行为** ⇒ 该结果**无区分力**；
+            //   · 且 `getScrollCaptureCallback` 在这台设备的 View 上**枚举不到**
+            //     ⇒ 该设备的 View 实现与标准 AOSP 不一致 ⇒ 连 ⑤ 的语义都不能假定。
+            // ⇒ 结论只能是**未知**。给 false 会是「用不可靠判据支撑确定结论」——
+            //    正是本轮反复出现、且 F3 上一版「✅ 已接通」所犯的同一个错误（P-11/P-17）。
+            // 故 supported 恒为 JSON null；**唯一确定的事实**单独给出（hintIncluded）。
+            // 真机系统截屏操作才是这一格的最终判据（R7：模拟器不提供该 UI）。
+            o.put("supported", JSONObject.NULL)
+            // 明确区分「我们确定知道的」与「我们测不出的」：
+            o.put("declared", scrollCaptureHintValue == View.SCROLL_CAPTURE_HINT_INCLUDE)
+            o.put("verdict", "unknown")
+            return o.toString()
+        }
+
         /** 【2026-09-08】拉起「所有文件访问」系统设置页（用户手动开关后回到 app 即生效；
          *  node 运行时进程随后即可直读直写 /sdcard——沙箱外全盘通道） */
         @JavascriptInterface
         fun requestAllFilesAccess() {
             handler.post { launchAllFilesAccessSettings() }
+        }
+
+        /**
+         * 【L2/A1 2026-09-14】软键盘避让的运行期读回（供设备探针断言，纯观测零副作用）。
+         *
+         * 返回：`{ok, imeBottomPx, barsBottomPx, appliedBottomPx, lastEvtAt, webViewPaddingBottomPx, sdkInt}`
+         *  - `imeBottomPx`   ：最近一次 insets 回调里 `Type.ime().bottom`（**-1 = 监听未跑过**）
+         *  - `appliedBottomPx`：实际写入 WebView padding 的 bottom（`max(ime, bars)`）
+         *  - `webViewPaddingBottomPx`：**直接读视图当前 padding** ⇒ 与 applied 对照可发现
+         *    「我们以为写了但视图没接受」（例如后续有人又 setPadding 覆盖）
+         *
+         * 为什么要有「直接读视图」这一路（P-11）：只信自己记的 applied 值 = 自证；
+         * 读 `webView.paddingBottom` 才是**独立来源**，二者一致才算真的落到了视图上。
+         */
+        @JavascriptInterface
+        fun keyboardInsetStatus(): String {
+            val latch = java.util.concurrent.CountDownLatch(1)
+            var padBottom = -1
+            var marginBottom = -1
+            var viewH = -1
+            handler.post {
+                try {
+                    padBottom = webView.paddingBottom
+                    val lp = webView.layoutParams
+                    marginBottom = if (lp is android.widget.FrameLayout.LayoutParams) lp.bottomMargin else -2
+                    viewH = webView.height
+                } catch (e: Exception) {
+                    android.util.Log.w("DSHTavern", "读 webView 布局失败", e)
+                } finally {
+                    latch.countDown()
+                }
+            }
+            try {
+                latch.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (e: InterruptedException) {
+                android.util.Log.w("DSHTavern", "等待读布局超时", e)
+            }
+            return JSONObject()
+                .put("ok", true)
+                .put("sdkInt", Build.VERSION.SDK_INT)
+                .put("imeBottomPx", insetImeBottomPx)
+                .put("barsBottomPx", insetBarsBottomPx)
+                .put("appliedBottomPx", insetAppliedBottomPx)
+                .put("channel", insetChannel)
+                // 【两条独立来源】实际落到视图上的值（不是我们自己记的 appliedBottomPx）
+                .put("webViewPaddingBottomPx", padBottom)
+                .put("webViewMarginBottomPx", marginBottom)
+                .put("webViewHeightPx", viewH)
+                .put("lastEvtAt", insetLastEvtAt)
+                .put("listenerInstalled", insetLastEvtAt > 0)
+                .toString()
         }
 
         /** 授权目录里的 zip 清单：{ok, granted, files:[{name,size,mtime}]}（DocumentsContract 裸查询，零新依赖） */
@@ -759,6 +989,65 @@ class MainActivity : AppCompatActivity() {
                     showBoot()
                 }
             }
+
+            // ------------------------------------------------------------------
+            // 【L4 2026-09-14 内存压力自愈】渲染进程被 LMK 杀死 → 重建 WebView。
+            //
+            // ## 为什么必须在此层修（而不是继续依赖 T-45 的重载）
+            // renderer 是独立进程（`:sandboxed_process`），内存吃紧时 oom_adj 高、**优先被杀**。
+            // 被杀时：
+            //   · 主框架**不会**走 `onReceivedError` / `onReceivedHttpError` —— 页面是「已经加载
+            //     好了」的状态，只是渲染进程没了 ⇒ T-45 那套「主框架失败 → 带预算重载」分支
+            //     **永不触发**；
+            //   · 网页内容仍在（DOM 在 renderer 里），进程没了 ⇒ 现场表现是**整页白屏**，
+            //     且 `webView.loadUrl` 是空操作（旧实例的 renderer 已不存在）。
+            // 即：这是「静默失败」的又一例（P-3）——用户只看到白屏，零留痕、零自愈。
+            //
+            // ## 为什么是 recreate() 而不是「手动 new 一个 WebView」
+            // 「重建 WebView」有两条路：
+            //   (a) 本函数内 `WebView(this)` + 重跑一遍 settings/client/insets/scrollCapture 配置；
+            //   (b) `recreate()` —— 整 Activity 重建，onCreate 原样跑一遍。
+            // 选 (b)，因为 (a) 要求把 onCreate 里**约 20 处配置**（settings 7 项、WebViewClient
+            // 6 个覆写、WebChromeClient 5 个覆写、JavascriptInterface、downloadListener、
+            // insets 监听、scrollCaptureHint、clearCache 时机）抽成函数并保证**两处调用永不漂移**
+            // ——这正是本项目主力缺陷族「同一语义多份实现」（P-1b）的典型形态。
+            // `recreate()` 天然复用同一份 onCreate，**配置漂移在结构上不可能发生**。
+            // 代价只是 Activity 重建（本 Activity 无重状态：状态都在 NodeService 与 prefs）。
+            //
+            // ## 预算为什么必须落 prefs
+            // `recreate()` 会重建 Activity ⇒ `reloadAttempts` 归零 ⇒「崩→建→崩」无限循环
+            // （每次都是「第 1 次」）。故用 `rendererRebuilds`（落 prefs，跨重建有效，见字段注释）。
+            // 超预算即**出声**停在等待屏（R8：不静默兜底），绝不无限重建烧电。
+            //
+            // 返回 true = 「我处理了，系统不要杀我整个 app」（默认行为是杀进程）。
+            // ------------------------------------------------------------------
+            override fun onRenderProcessGone(
+                view: WebView,
+                detail: android.webkit.RenderProcessGoneDetail,
+            ): Boolean {
+                val n = rendererRebuilds + 1
+                if (n > RENDERER_REBUILD_MAX) {
+                    android.util.Log.e(
+                        "DSHTavern",
+                        "renderer 连续消失 ${n - 1} 次（已达上限 $RENDERER_REBUILD_MAX），" +
+                            "停止自动重建 —— 请重启应用",
+                    )
+                    dshLoaded = false
+                    reloadNeeded = true
+                    showBoot()
+                    return true
+                }
+                rendererRebuilds = n
+                android.util.Log.w(
+                    "DSHTavern",
+                    "renderer gone (crashed=${detail.didCrash()}) → recreate() " +
+                        "(attempt $n/$RENDERER_REBUILD_MAX)",
+                )
+                dshLoaded = false
+                rebuildWebView()
+                showBoot()
+                return true
+            }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
@@ -839,6 +1128,129 @@ class MainActivity : AppCompatActivity() {
             ),
         )
 
+        // 【L2 2026-09-14 安全区修复】系统栏避让。
+        //
+        // 症状（L2 穷举发现）：我方 CSS 有 9 处 `env(safe-area-inset-*)`（汉堡、RP overlay、
+        // 贴底面板、抽屉、脚本球…），但**全部恒为 0** —— 因为 `env(safe-area-inset-*)`
+        // 要求两个前提同时成立：
+        //   ① 页面 viewport 声明 `viewport-fit=cover`；
+        //   ② 系统栏真的覆盖在应用内容之上（edge-to-edge）。
+        // 实测：宿主 boot 页（@deepseek-ai/dsh-web-frontend/dist/index.html:5）是
+        // `width=device-width, initial-scale=1`，**无 viewport-fit**；而 targetSdk=36
+        // （Android 15+ 强制 edge-to-edge）⇒ 状态栏确实压住内容，但 CSS 拿不到 inset。
+        // 净效果：**顶部内容被状态栏遮挡**，且我方那 9 处声明是**静默死代码**（P-3）。
+        //
+        // 责任划分（为什么不只改 CSS）：viewport meta 由**宿主 boot 页**提供（官方产物，
+        // 不可改，B4）；在 WebView 里注入改 meta 会与宿主 SSR 冲突。故**在原生层消费
+        // WindowInsets 收缩 WebView 的**布局尺寸**（margin）—— 这是最直接、不依赖页面配合的修法。
+        //
+        // ⚠️ 修法形态的更正（2026-09-14 设备实测推翻上一版）：上一版用 `setPadding`，
+        //    实测**padding 写进了视图但页面视口不变** ⇒ 无效修法。详见下方「必须用 margin」注释。
+        //
+        // 与 CSS 的关系：本修法让内容避开系统栏（视图真的变矮），CSS 里的 env() 仍为 0（无害）。
+        // 两者不冲突：即便将来宿主补了 viewport-fit=cover，这里的 margin 也在
+        // （视图被收缩后 inset 变 0），不会出现「双重避让」。
+        // 【L2/A1 2026-09-14 软键盘遮挡修复】底部输入区被软键盘盖住 191px（真缺口，设备实测）。
+        //
+        // 症状（L2「视口单位」+ A1「焦点与软键盘」交叉格）：点击 RP 输入框弹出软键盘后，
+        // composer 底边被键盘盖住。设备实测（`scripts/ef-keyboard-inset.mjs`）：
+        //   · 键盘真的弹出：`mInputShown=true`，IME frame `[0,1633][1080,2400]`（高 767px）
+        //   · 页面几何**完全不变**：`window.innerHeight` 873→873、`visualViewport.height`
+        //     873→873、`documentElement.clientHeight` 873→873
+        //   · ⇒ 键盘顶边 593.8 CSS px 而 composerBottom=785 CSS px ⇒ **被盖 191 CSS px**
+        //
+        // 为什么 `adjustResize` 没生效（Manifest 确实声明了它）：
+        //   `dumpsys window windows` 显示本窗口属性含 `EDGE_TO_EDGE_ENFORCED`
+        //   （targetSdk=36 = Android 15+ 强制 edge-to-edge）⇒ 窗口恒为全屏 `[0,0][1080,2400]`，
+        //   系统不再为 IME 收缩窗口 ⇒ `adjustResize` 对**窗口尺寸**失效，只剩 insets 通道。
+        //   而此前这里只消费 `systemBars()`（不含 ime）⇒ 键盘弹出时 WebView 不避让。
+        //
+        // 为什么在**原生层**修而不是 CSS：
+        //   ① 本环境 `visualViewport` **不反映键盘**（实测三项口径全部不变）⇒ 页面侧**测不出来**，
+        //      任何基于 `dvh`/`visualViewport` 的 CSS 修法在此环境都是**无效修法**（P-17/P-20）；
+        //   ② 宿主 boot 页无 `viewport-fit=cover`（官方产物，不可改 B4）⇒ `env(safe-area-inset-*)`
+        //      恒 0，CSS 拿不到 inset；
+        //   ③ 原生侧收缩 WebView 布局尺寸是最直接、不依赖页面配合的通道，与既有 systemBars 避让同源。
+        //      **且必须用 margin 而非 padding**（实测：padding 会被视图接受但页面视口不变）。
+        //
+        // 取「较大者」而非相加：`systemBars().bottom`（导航栏 66px）与 `ime().bottom`（键盘 767px）
+        // 在键盘弹出时是**同一块屏幕区域**的两个视角，相加会双重避让（多留一条导航栏高度）。
+        // 键盘收起时 `ime().bottom == 0` ⇒ 自动回落为导航栏高度，无需额外状态机。
+        //
+        // 运行期读回（`insetImeBottomPx` 等）：纯观测，供 `ef-keyboard-inset.mjs` 断言
+        // 「修复真的在产物里且真的被调用过」，而不是只看源码写了什么（P-11 产物即事实）。
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView) { v, insets: androidx.core.view.WindowInsetsCompat ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            // 【L2/A1 2026-09-14 软键盘遮挡修复】见下方注释块。
+            val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+            val bottom = if (ime.bottom > bars.bottom) ime.bottom else bars.bottom
+            // 【关键 · 必须用 margin 而不是 padding】
+            // 设备实测（scripts/ef-keyboard-inset.mjs）：`setPadding(..., 767)` **确实写进了视图**
+            // （读回 `webView.paddingBottom == 767`），但页面视口**完全不动**
+            // （`window.innerHeight` 恒 873、`documentElement.clientHeight` 恒 873）。
+            // ⇒ WebView 的 padding 只裁剪绘制区，**不改变 Chromium 的视口尺寸**，
+            //   页面侧因此拿不到「可用高度变小了」的信息 ⇒ 修了等于没修（P-11 的典型：
+            //   「写了就算修了」与「视图接受了但语义未变」是两回事）。
+            // margin 走的是**布局尺寸**通道 ⇒ 视图真的变矮 ⇒ 网页视口随之收缩 ⇒ 页面
+            // （含 `position:fixed; inset:0` 的 RP overlay）整体上移，输入区不再被盖。
+            val lp = v.layoutParams
+            if (lp is android.widget.FrameLayout.LayoutParams) {
+                lp.leftMargin = bars.left
+                lp.topMargin = bars.top
+                lp.rightMargin = bars.right
+                lp.bottomMargin = bottom
+                v.layoutParams = lp
+                insetChannel = "margin"
+            } else {
+                // 布局参数类型意外（理论上 setContentView(View) 必为 FrameLayout.LayoutParams）
+                // ⇒ 退回 padding（至少不崩），并**出声**（R8：不静默兜底）
+                v.setPadding(bars.left, bars.top, bars.right, bottom)
+                insetChannel = "padding"
+                android.util.Log.w(
+                    "DSHTavern",
+                    "WebView layoutParams 非 FrameLayout.LayoutParams（${lp?.javaClass?.simpleName}）" +
+                        "→ 退回 padding 避让（可能不生效，请上报）",
+                )
+            }
+            // 运行期读回（供设备探针断言 P-9/P-11）
+            insetImeBottomPx = ime.bottom
+            insetBarsBottomPx = bars.bottom
+            insetAppliedBottomPx = bottom
+            insetLastEvtAt = System.currentTimeMillis()
+            insets
+        }
+
+        // 【F3 2026-09-14】滚动截屏（长截图）接通。
+        //
+        // 症状（用户实测）：Android 系统「滚动截屏」对本 App 无效——只能截当前一屏。
+        // 排查结论：**从未接通**（非回归）——全仓无任何 scrollCaptureHint /
+        // ScrollCaptureCallback 代码。
+        //
+        // ## 机制（2026-09-14 复核：hint 单独设**不构成**「已接通」）
+        // Android 的滚动截屏由**两件事**共同决定，缺一不可：
+        //   ① `scrollCaptureHint = SCROLL_CAPTURE_HINT_INCLUDE`
+        //      —— 声明「本 View 里有可滚动内容，请把我也列为候选」；
+        //   ② `View.getScrollCaptureCallback()` **非 null**
+        //      —— 系统真正来取「下一屏」时调用的实现；`View` 基类默认返回 **null**。
+        // 官方文档（`View.setScrollCaptureCallback`）明示：
+        //   「If no callback is set, the system may provide an implementation.」
+        // ⇒ 对 **WebView** 而言，「系统是否提供实现」属实现细节（Chromium 有内置
+        // 支持，但不保证版本/形态），**沉默即未知**。
+        // 所以：**只设 hint 时无法断言已接通**——此前版本据此写「✅ 已接通」属
+        // 未验证即声称（R7 违规），本轮改为**运行期可自证**（P-3/P-9/P-11）。
+        //
+        // ## 为什么这里**不**手写 ScrollCaptureCallback
+        // 官方文档明确警告：`setScrollCaptureCallback` 传入的值
+        // 「**takes precedence over a system version**」（覆盖系统实现）。
+        // 自研实现要接管「请求矩形 → 渲染到 Surface → 回传 Rect」的完整协议，
+        // 出错会把**本来能用**的系统长截图弄坏（净负收益，且属 B5「需大架构改造」）。
+        // 正解：**设 hint（让 WebView 有机会被选中）+ 探测真实能力并如实报告**。
+        // 若探测结果为「无 callback」，UI 如实标注「系统未提供」，而不是假装接通。
+        //
+        // API 版本：`ScrollCaptureCallback` / `set/getScrollCaptureCallback` 均为
+        // **API 31**（`SCROLL_CAPTURE_HINT_INCLUDE` 常量本身是 API 30）⇒ 探测按 31 判。
+        applyScrollCaptureSetup()
+
         // 首页直接进 DSH（无导入中心独立页——导入机制全在 DSH 内 RP 启动器）
         showBoot()
         handler.removeCallbacks(diagPoller)
@@ -912,8 +1324,156 @@ class MainActivity : AppCompatActivity() {
         bootingView.visibility = View.VISIBLE
     }
 
+    /**
+     * 【L4 2026-09-14】renderer 被 LMK 杀死后的重建入口。
+     *
+     * 实现 = `recreate()`（整 Activity 重建，onCreate 原样跑一遍）。理由见
+     * `onRenderProcessGone` 处的长注释：手写「再 new 一个 WebView」需要把 onCreate 里
+     * 约 20 处配置抽成函数并保证两处调用永不漂移 —— 那正是 P-1b「同一语义多份实现」
+     * 的温床；`recreate()` 天然只有一份配置来源。
+     *
+     * 前置：旧 WebView 已随 renderer 一起失效，**先 destroy 再重建**（否则旧的
+     * JavascriptInterface / WebViewClient 仍挂在失效实例上，占内存且可能持有泄漏引用）。
+     */
+    private fun rebuildWebView() {
+        try {
+            webView.destroy()
+        } catch (e: Exception) {
+            // destroy 失败不阻塞重建（失效实例上的 destroy 偶发抛）；出声便于排障
+            android.util.Log.w("DSHTavern", "旧 WebView destroy 失败（继续重建）", e)
+        }
+        recreate()
+    }
+
     private fun hideBoot() {
         bootingView.visibility = View.GONE
+    }
+
+    /**
+     * 【F3 2026-09-14】滚动截屏接通 + **运行期能力探测**（P-3/P-9/P-11）。
+     *
+     * ## 为什么「设 hint」与「探测」必须放在一起
+     * 设 hint 只是**声明候选**（把本 View 纳入系统的滚动截屏备选）；
+     * 系统真正取「下一屏」时调的是 `getScrollCaptureCallback()`。
+     * 二者都成立才叫「已接通」——只做前者就宣称接通，是**未验证即声称**（R7）。
+     * 故本函数把两件事一次做完：
+     *   ① `scrollCaptureHint = SCROLL_CAPTURE_HINT_INCLUDE`（API 30+）
+     *   ② 读回 `getScrollCaptureCallback()` 与 hint，存入 `scrollCapture*` 字段，
+     *      经 `DSHTShare.scrollCaptureStatus()` 暴露给前端 → 可被设备探针断言。
+     *
+     * 读回值本身**不改变**行为（纯观测），故对既有能力零风险。
+     */
+    private fun applyScrollCaptureSetup() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            webView.scrollCaptureHint = View.SCROLL_CAPTURE_HINT_INCLUDE
+        }
+        // hint 读回（永远可读；用于确认「我们的声明真的写进去了」而不是静默被忽略）
+        scrollCaptureHintValue = try {
+            webView.scrollCaptureHint
+        } catch (e: Exception) {
+            android.util.Log.w("DSHTavern", "读 scrollCaptureHint 失败", e)
+            Int.MIN_VALUE
+        }
+        // 方法族枚举只做一次（类结构不会变）；**行为探测**则每次按需重放（见 probeScrollCapture）
+        try {
+            val ms = View::class.java.methods.filter { it.name.contains("ScrollCapture") }
+            scrollCaptureMethods = ms
+                .sortedBy { it.name + it.parameterTypes.joinToString(",") { p -> p.name } }
+                .joinToString(" | ") { m ->
+                    m.name + "(" + m.parameterTypes.joinToString(",") { p -> p.simpleName } + ")"
+                }
+        } catch (e: Exception) {
+            android.util.Log.w("DSHTavern", "枚举 View ScrollCapture* 方法失败", e)
+            scrollCaptureMethods = ""
+        }
+        probeScrollCapture("onCreate")
+    }
+
+    /**
+     * 【F3 2026-09-14】**行为探测**：问系统「本 View 有没有可捕获的滚动内容」。
+     *
+     * ## 为什么必须「按需可重放」而不是「只在 onCreate 探一次」
+     * 这是本判据**最后一个、也是最隐蔽的坑**（前五次都栽在「假设 API 形态」，这次栽在
+     * 「时机」）：`onScrollCaptureSearch` 的语义是「系统在寻找可滚动容器时询问**当前**
+     * 滚动内容的尺寸」。而 `onCreate` 时 WebView **还是空的**（页面尚未加载）⇒
+     * 平台自然不回填任何内容 ⇒ 得到 `no-callback`。
+     * 若把这一次结果当作结论，就会得出**「本 App 不支持滚动截屏」的假结论**——
+     * 而真因只是「探的时机太早」。**假结论的形态又变了一次**（不是符号错，是时机错）。
+     * ⇒ 故探测抽成本函数，`scrollCaptureStatus()` 每次被调用时**重放一次**，
+     *    让探针能在「页面加载完成、内容已渲染」之后取到真实结果。
+     *
+     * ## 实现要点（不猜任何 API 形态 —— P-17）
+     * 1. 从**枚举出来的真实方法**里挑「名字含 Search + 参数含 Consumer」的那个；
+     * 2. 按 `parameterTypes` **逐个构造真实实参**（`Rect`/`Point` 是输出容器，必须给
+     *    真实空对象；给 null 会让平台内部解引用失败 —— 实测 `InvocationTargetException`）；
+     * 3. `Consumer` 用**动态代理**捕获回填的 Rect（不依赖具体泛型）；
+     * 4. 探测失败 ⇒ 记 `probe-error:xxx` 并把 `probeAvailable` 置 false ⇒ 上游报**未知**
+     *    （绝不用 `false` 冒充「不支持」，见 P-17）。
+     *
+     * @param phase 触发时机标签（落日志用；排障时能看出「是哪个时机探的」）
+     */
+    private fun probeScrollCapture(phase: String) {
+        val searchMethod = try {
+            View::class.java.methods.firstOrNull { m ->
+                m.name.contains("ScrollCapture") && m.name.contains("Search") &&
+                    !java.lang.reflect.Modifier.isAbstract(m.modifiers) &&
+                    m.parameterTypes.any { it.name.contains("Consumer") }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("DSHTavern", "查找滚动捕获探测方法失败", e)
+            null
+        }
+        scrollCaptureProbeAvailable = searchMethod != null
+        if (searchMethod == null) {
+            scrollCaptureHasCallback = false
+            scrollCaptureSearchResult = "no-entry"
+            android.util.Log.i("DSHTavern", "scrollCapture[$phase]: 无探测入口（probe=unavailable）")
+            return
+        }
+        try {
+            var got: android.graphics.Rect? = null
+            val args: Array<Any?> = searchMethod.parameterTypes.map { pt ->
+                when {
+                    // 输出容器：必须给真实空对象，平台才有地方回填
+                    pt.name == "android.graphics.Rect" -> android.graphics.Rect()
+                    pt.name == "android.graphics.Point" -> android.graphics.Point()
+                    pt.name == "android.os.CancellationSignal" -> android.os.CancellationSignal()
+                    java.util.function.Consumer::class.java.isAssignableFrom(pt) ->
+                        java.lang.reflect.Proxy.newProxyInstance(pt.classLoader, arrayOf(pt)) { _, method, a ->
+                            if (method.name == "accept" && a != null && a.isNotEmpty()) {
+                                val v = a[0]
+                                if (v is android.graphics.Rect) got = v
+                            }
+                            null
+                        }
+                    pt.isPrimitive -> when (pt.name) {
+                        "int" -> 0; "long" -> 0L; "boolean" -> false; "float" -> 0f; "double" -> 0.0
+                        else -> 0
+                    }
+                    else -> null
+                }
+            }.toTypedArray()
+            searchMethod.isAccessible = true
+            searchMethod.invoke(webView, *args)
+            // 双重取值：优先 Consumer 回填；其次读 Rect 实参（平台可能就地填它）
+            val rectArg = args.firstOrNull { it is android.graphics.Rect } as? android.graphics.Rect
+            val rect = got ?: rectArg?.takeIf { it.width() > 0 || it.height() > 0 }
+            scrollCaptureHasCallback = rect != null && rect.width() > 0 && rect.height() > 0
+            scrollCaptureSearchResult =
+                if (rect == null) "no-callback" else "w=${rect.width()},h=${rect.height()}"
+        } catch (e: Exception) {
+            // 【R8 出声 + 不冒充否定】失败只说明探测手段不够 ⇒ 结论是「未知」
+            android.util.Log.w("DSHTavern", "滚动捕获行为探测调用失败（按未知处理）", e)
+            scrollCaptureHasCallback = false
+            scrollCaptureSearchResult = "probe-error:" + (e.javaClass.simpleName)
+        }
+        android.util.Log.i(
+            "DSHTavern",
+            "scrollCapture[$phase]: sdk=${Build.VERSION.SDK_INT} hint=$scrollCaptureHintValue " +
+                "probe=${if (scrollCaptureProbeAvailable) "available" else "unavailable"} " +
+                "callback=${if (scrollCaptureHasCallback) "present" else "absent"} " +
+                "search=$scrollCaptureSearchResult methods=[$scrollCaptureMethods]",
+        )
     }
 
     /** singleTask 下运行中收到分享（ACTION_SEND）→ onNewIntent 而非重建 activity */

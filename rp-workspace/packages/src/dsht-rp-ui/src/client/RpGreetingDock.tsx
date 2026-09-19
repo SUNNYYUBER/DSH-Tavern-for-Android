@@ -11,21 +11,13 @@
 import { useState, type JSX } from 'react'
 import { rpApi, humanizeError } from './rpc.ts'
 import { showDomToast } from './toast.ts'
-import { useRpSlug } from './RpStateFloat.tsx'
+import { useRpSlug, readSessionCwd } from './RpStateFloat.tsx'
+import { readSessionBlank, readSessionId } from './host-projection.ts'
 
 /** dock 席位 owner props（InputZone 快照；session 形态按运行时实际字段防御性读取） */
 interface DockProps {
   session?: unknown
   input?: unknown
-}
-
-interface SessionLike {
-  sessionId?: string
-  id?: string
-  header?: { cwd?: string }
-  cwd?: string
-  /** 宿主 SessionSnapshot.blank（fiber 实证 2026-09-06）：true=空会话，false=已有消息 */
-  blank?: boolean
 }
 
 /** 已选择「留空」的会话（模块级记忆，页面生命周期内不再提示） */
@@ -34,15 +26,16 @@ const dismissed = new Set<string>()
 export function RpGreetingDock(props: DockProps): JSX.Element | null {
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(false)
-  const s = (props.session ?? {}) as SessionLike
-  const sessionId = s.sessionId ?? s.id ?? ''
-  const cwd = s.header?.cwd ?? s.cwd
+  // 【E2/P-1 W4 收口】id / cwd / blank 三个官方投影字段一律走单源
+  // （此前三处 `blank` 口径不一致，见 host-projection.ts 的 readSessionBlank 头注）。
+  const sessionId = readSessionId(props.session)
+  const cwd = readSessionCwd(props.session)
   // dock 席位 props 不带 cwd（在宿主 useSessions().byId）——缺失时向 host 补取
   const { slug } = useRpSlug(cwd, sessionId)
   // 【2026-09-06 实证修复】宿主 SessionSnapshot 没有 chat/surface 字段（fiber 实测 keys 全集），
   // 旧 msgCount 恒 0 → 长聊天会话里也弹「空白会话」横幅（真机实拍抓到）。改用快照自带的
   // blank 字段：true=空会话（弹窗），false=已有消息（隐藏）。
-  if (!slug || !sessionId || s.blank !== true || dismissed.has(sessionId) || done) return null
+  if (!slug || !sessionId || !readSessionBlank(props.session) || dismissed.has(sessionId) || done) return null
 
   const withGreeting = async (): Promise<void> => {
     if (busy) return

@@ -28,6 +28,9 @@
 // @adapt contract:session.v0-legacy-repair
 
 import { thFloorKeyOf } from './th-floors.ts'
+// 【W8 单源收口】`replaceRange` 是 replace surfaceOp 区间读取的**唯一实现**
+//（本文件原有一份逐字相同的私有副本，已删）
+import { replaceRange } from './session-write.ts'
 
 /** 信封允许的键（官方白名单，信封**没有** `source`） */
 const ENVELOPE_KEYS = new Set(['type', 'seq', 'time', 'data', 'surfaceOp', 'sourceEventSeqs', 'ignorable'])
@@ -649,34 +652,72 @@ function fixPrune(data: Record<string, unknown>, notes: string[]): { data: Recor
 }
 
 /**
- * 影子化序列校验：`compaction/prune` 的 shadowedSeqs 必须**恰好等于**当前 surface
- * 从 start 到 end 的连续切片（官方 validateShadowedSeqs：surface 序而非数值升序）。
- * 历史会话因多次 replace 交错，shadowedSeqs 常与 surface 切片不符 → 迁移拒绝
- * （实测 1 个真实会话）。
+ * 影子化序列校验 + **影子价格邻接契约**修复。
  *
- * 做法：重放 surfaceOp 折叠出 surface，逐个 prune 事件校验；不符时按实际 surface
- * 切片**重写** shadowedSeqs/shadowedRange（保内容、去不一致）。无匹配切片则整条删除该 prune。
+ * ## 官方两条契约（必须同时满足）
+ *   ① `dsh-compaction/lib/invariant.js:58`（validateShadowedSeqs）
+ *        `shadowedRange` 必须 == `shadowedSeqs` 的**首尾**（且 seqs 是当前 surface 的连续切片）
+ *   ② `dsh-token-meter/lib/types/surface-projection.js:62`（foldSurfaceProjection）
+ *        紧邻 surface replace 的计量事件，其 claim `[start,end]` 必须**恰好等于**
+ *        该 replace 的 `[startSeq,endSeq]`；否则**抛错**（不是降级）⇒
+ *        宿主 UI 报 `Failed to load history: failed to project session ... token surface:
+ *        replace at seq N over range A-B has no adjacent shadow price (armed claim covers X-Y)`
+ *        ⇒ **该会话整份打不开**（用户可见的硬缺陷）。
+ *
+ * ## 为什么必须修（W32 实机取证）
+ *   设备 23 个会话里 **2 个**（`st-clk9pd` 17 对 / `st-vr2jg2` 1 对）满足 ① 但违反 ②：
+ *   其 prune 的 `shadowedSeqs` 是**自己的端点**（如 `[837 ... 830]`，倒序），
+ *   而紧随其后的 replace 区间是 `[38,851]` —— 两者毫无关系。
+ *   决定性实验（`tmp/w32-projection-exp.mjs`）：用**官方 foldSurfaceProjection** 逐事件跑，
+ *   原文件在 seq 1457 抛错（逐字复现 UI 红字）；把 claim 重锚到 replace 区间后通过；
+ *   负控（故意改错一条 range）正确抛错 ⇒ 实验承重。
+ *   而 M7 连续 **6 轮**把这种卡记成「无可见楼层（可能已被回退到空）」的 SKIP，
+ *   缺陷被静默掩盖 —— 是本仓「同一读数两种相反解释」的最严重一例。
+ *
+ * ## 修法（锚到**后继 replace 的区间**，而不是 prune 自己的端点）
+ *   契约 ② 的权威量是 **replace 的区间**（它是 surface 的真实变更声明），
+ *   prune 只是给它定价 ⇒ 以 replace 区间为锚、取其在**当时 surface** 上的连续切片，
+ *   同步重写 `shadowedSeqs` 与 `shadowedRange`，两条契约同时成立且**内容零丢失**
+ *  （prune 不携带正文，只携带计量；改它不影响任何用户可见文本）。
+ *   锚不在 surface 上（或紧邻下一步不是 replace）⇒ 退回原端点口径；仍不在 surface 上
+ *   ⇒ 该 prune 已失效，整条删除（后续 replace 仍会正常）。
+ *
+ * 【历史注记】本函数**只修 ①**（对齐 shadowedSeqs 端点），因此对上述 2 个会话
+ * `changed=false` —— 修复器「看起来跑过了」却完全没修，缺陷长期留存。
  */
 function fixPruneSurfaceSpans(events: RawEvent[], notes: string[]): boolean {
   let changed = false
+  let reanchored = 0
+  let dropped = 0
   const surface: number[] = []
   const kept: RawEvent[] = []
-  for (const ev of events) {
+  for (let idx = 0; idx < events.length; idx += 1) {
+    const ev = events[idx]
     // 先按 surfaceOp 更新 surface（用它自己的语义，与官方 foldSurface 同构）
     if (ev.type === 'compaction/prune') {
       const d = ev.data as { shadowedRange?: { start?: number; end?: number }; shadowedSeqs?: number[] }
       const seqs = Array.isArray(d.shadowedSeqs) ? d.shadowedSeqs : []
       if (seqs.length === 0) { kept.push(ev); continue }
-      const si = surface.indexOf(seqs[0])
-      const ei = surface.indexOf(seqs[seqs.length - 1])
+      // 锚点：优先取**紧邻后继 replace** 的区间（契约 ② 的权威量），否则退回自己的端点
+      const next = events[idx + 1]
+      const nr = next !== undefined ? replaceRangeOf(next.surfaceOp) : null
+      const anchorStart = nr !== null ? nr.start : seqs[0]
+      const anchorEnd = nr !== null ? nr.end : seqs[seqs.length - 1]
+      const si = surface.indexOf(anchorStart)
+      const ei = surface.indexOf(anchorEnd)
       if (si < 0 || ei < si) {
-        // 不在当前 surface 上 → 该 prune 已失效，整条删除（后续 replace 仍会正常）
+        // 锚不在当前 surface 上（无论锚来自 replace 区间还是自己的端点）⇒ 该 prune 已失效，
+        // 整条删除（后续 replace 仍会正常）。
         changed = true
+        dropped += 1
         continue
       }
       const span = surface.slice(si, ei + 1)
       const same = span.length === seqs.length && span.every((q, i) => q === seqs[i])
+        && d.shadowedRange !== undefined && d.shadowedRange.start === span[0] && d.shadowedRange.end === span[span.length - 1]
       if (!same) {
+        // 记录「本次是否属于影子价格邻接契约修复」（锚点来自 replace 区间且与原点不同）
+        if (nr !== null && (seqs[0] !== span[0] || seqs[seqs.length - 1] !== span[span.length - 1])) reanchored += 1
         d.shadowedSeqs = span
         d.shadowedRange = { start: span[0], end: span[span.length - 1] }
         changed = true
@@ -698,7 +739,7 @@ function fixPruneSurfaceSpans(events: RawEvent[], notes: string[]): boolean {
     }
   }
   if (changed) {
-    notes.push('compaction/prune 的 shadowedSeqs 对齐实际 surface 切片（失效 prune 已移除）')
+    notes.push(`compaction/prune 的 shadowedSeqs/shadowedRange 对齐实际 surface 切片（影子价格邻接契约重锚 ${reanchored} 条 · 失效 prune 移除 ${dropped} 条）`)
     events.length = 0
     events.push(...kept)
   }
@@ -778,18 +819,16 @@ function flattenSeqRefs(raw: unknown[]): number[] {
   return out
 }
 
+// 【W8 2026-09-15 单源收口（P-1）】此处原有一个与 `session-write.ts:replaceRange`
+// **逐字相同**的私有实现（`replaceRangeOf`，含「兼容两代字段名」的同一段逻辑：
+// startSeq/start + endSeq/end，以及同一条 `op.op !== 'replace'` 判据）。
+// 同包同语义两份实现 = 典型的「改一处漏一处」：一旦官方再改字段名，
+// 只改一边就会出现「repair 认得、write 不认得」（或反之）的静默不一致。
+// ⇒ 收口为**委托**（保留本地名，破坏面最小；与既有 `isTree → isMergeableObject` 同款手法）。
+const replaceRangeOf = replaceRange
+
 function isReplaceSurfaceOp(op: unknown): boolean {
   return replaceRangeOf(op) !== null
-}
-
-function replaceRangeOf(op: unknown): { start: number; end: number } | null {
-  if (op === null || typeof op !== 'object' || Array.isArray(op)) return null
-  const o = op as Record<string, unknown>
-  if (o.op !== 'replace') return null
-  const start = typeof o.startSeq === 'number' ? o.startSeq : (typeof o.start === 'number' ? o.start : null)
-  const end = typeof o.endSeq === 'number' ? o.endSeq : (typeof o.end === 'number' ? o.end : null)
-  if (start === null || end === null) return null
-  return { start, end }
 }
 
 /**

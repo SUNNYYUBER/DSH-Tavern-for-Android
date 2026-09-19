@@ -11,7 +11,16 @@
  * - foreshadowingTags（默认 foreshadowings）→ 伏笔登记册面板
  * - statusbar/status 代码块 → 状态栏卡片（不显示原始代码）
  * 纯函数零依赖（UI 挂载见 RpNativeChat.tsx；单测见 tests/output-protocol.spec.ts）。
+ *
+ * 【第二十三轮 W6】唯一的依赖：`display-compiler.ts` 的**暂存哨兵**（fenceMark /
+ * segMark / restoreFenceMarks / matchSegMarks）。为什么必须共用而不是各自硬编码：
+ * 原实现用**裸控制字符**（`\x01F<n>\x01` / `\x00<n>\x00`）作哨兵，而控制字符**可以
+ * 出现在用户/模型文本里** —— 实测真实会话里含字面量 `\x01F0\x01` ⇒ 被围栏还原逻辑
+ * 消费 ⇒ **用户内容凭空消失**。改用私用区（U+E000/U+E001）+ 唯一前缀后，正文里天然
+ * 不会出现（P-1：同一语义只许一处读法）。
+ * 依赖方向：本模块 → display-compiler（单向；后者**不** import 本模块，无循环）。
  */
+import { fenceMark, matchSegMarks, restoreFenceMarks, restoreSegMarks, segMark } from './display-compiler.ts'
 
 export interface OutputProtocol {
   actionTags: string[]
@@ -158,8 +167,7 @@ export function splitActionOptions(text: string): ActionOption[] {
 
 /**
  * display 正则产出 / 消息内联允许按 HTML 渲染的标签白名单。
- * SVG 系列照抄 agent-loop-rp card-display-compiler.ts HTML_DISPLAY_TAGS L35-49（MIT），
- * 另补 text/tspan（SVG 文本）。
+ * SVG 系列含基础图形/渐变/符号/文本（卡前端用内联 SVG 画图标与进度环很常见）。
  * 注意：含 position 等布局属性的产出在 sanitizeDisplayHtml 返回 null，
  * 渲染层（RpNativeChat）把整块转进沙箱 iframe（P0-2 三段编译），不再回退纯文本。
  */
@@ -318,11 +326,11 @@ export function sanitizeDisplayHtml(html: string): string | null {
 export function applyOutputProtocolSegments(text: string, proto: OutputProtocol, streaming = false): ProtocolSegment[] {
   let work = text
   const segments: ProtocolSegment[] = []
-  /** 带占位标记的提取：块替换为 \x00N\x00，扫描完成后按占位符回填段落 */
+  /** 带占位标记的提取：块替换为私用区哨兵（segMark），扫描完成后按占位符回填段落 */
   const placeholders: ProtocolSegment[] = []
   const stash = (seg: ProtocolSegment): string => {
     placeholders.push(seg)
-    return `\x00${placeholders.length - 1}\x00`
+    return segMark(placeholders.length - 1)
   }
   // 防御：旧调用方/旧配置可能缺新字段（Partial 协议对象直接传入）
   const tags = (xs: string[] | undefined): string[] => xs ?? []
@@ -330,11 +338,12 @@ export function applyOutputProtocolSegments(text: string, proto: OutputProtocol,
   // 【2026-09-06 视觉验收】代码围栏保护区：```html 卡文档（示例游戏开场/状态栏）的 JS
   // 字符串里含 <status>、<options> 等协议标签字样——ST 语义下围栏内容是惰性代码，
   // 协议扫描必须跳过，否则卡片文档被撕裂（实测：开场白 <status> 被剥离 → 三段编译
-  // 拿不到完整 html → 全裸露成代码块）。围栏暂存为 \x01Fn\x01，全部扫描后在回填前还原。
+  // 拿不到完整 html → 全裸露成代码块）。围栏暂存为私用区哨兵（fenceMark，见
+  // display-compiler.ts 的单源说明），全部扫描后在回填前还原。
   const fenceStash: string[] = []
   work = work.replace(/(`{3,}|~{3,})[\s\S]*?\1/g, (m) => {
     fenceStash.push(m)
-    return `\x01F${fenceStash.length - 1}\x01`
+    return fenceMark(fenceStash.length - 1)
   })
 
   // MVU 状态栏占位符（<StatusPlaceHolderImpl/> 或成对形态）→ 专用段落，
@@ -419,8 +428,6 @@ export function applyOutputProtocolSegments(text: string, proto: OutputProtocol,
       case 'statusbar-placeholder': return ''
     }
   }
-  const restorePh = (s: string): string =>
-    s.replace(/\x00(\d+)\x00/g, (_m, i: string) => segAsText(placeholders[Number(i)]))
   // 多趟扫描：内层未知块先折叠成占位符，外层再折时把占位符还原为纯文本
   // 【2026-09-06 视觉验收】标签名允许 `~`（示例预设 <think_fox~> 11 对——旧正则 [\w-]
   // 不含 ~ → 开闭标签双双漏网，楼层顶部裸显 <think_fox~> 原文，真机实拍抓到）
@@ -429,7 +436,7 @@ export function applyOutputProtocolSegments(text: string, proto: OutputProtocol,
     work = work.replace(/<([A-Za-z][\w~-]*)(?:\s[^<>]*)?>([\s\S]*?)<\/\1>/g, (m, tag: string, inner: string) => {
       if (!isUnknownTag(tag)) return m
       changed = true
-      return stash({ kind: 'collapsible', title: `<${tag}>`, content: restorePh(String(inner)).trim() })
+      return stash({ kind: 'collapsible', title: `<${tag}>`, content: restoreSegMarks(String(inner), i => placeholders[i] === undefined ? null : segAsText(placeholders[i])).trim() })
     })
     if (!changed) break
   }
@@ -470,22 +477,29 @@ export function applyOutputProtocolSegments(text: string, proto: OutputProtocol,
   }
 
   // 围栏还原：全部协议扫描完成后，把受保护的 ```html 卡文档原样放回正文
-  // （必须先于占位符回填——围栏内容可能含 stash 占位符序列字样，回填按位置交织）
-  work = work.replace(/\x01F(\d+)\x01/g, (_m, i: string) => fenceStash[Number(i)] ?? '')
+  // （必须先于占位符回填——围栏内容可能含 stash 哨兵序列字样，回填按位置交织）
+  work = restoreFenceMarks(work, fenceStash)
 
   // 占位符回填：正文段落与提取块按原位置交织；action 段落统一移到末尾
+  //
+  // 【第二十三轮 W6 · 越界处理】下标不在 `placeholders` 内（= 正文里恰好长得像哨兵的串）
+  // ⇒ 必须**当作普通正文保留**，不得按「未定义段落」丢弃（首版是 `continue`，
+  // 会把那一段静默吃掉）。与 restoreFenceMarks / restoreSegMarks 同一条纪律。
   const actions: ProtocolSegment[] = []
   const parts: ProtocolSegment[] = []
-  const re = /\x00(\d+)\x00/g
   let last = 0
-  let m: RegExpExecArray | null
-  while ((m = re.exec(work)) !== null) {
+  for (const m of matchSegMarks(work)) {
     if (m.index > last) parts.push({ kind: 'text', content: work.slice(last, m.index) })
     const seg = placeholders[Number(m[1])]
-    if (seg === undefined) { last = re.lastIndex; continue }
+    if (seg === undefined) {
+      // 越界 ⇒ 该哨兵原样留在正文里
+      parts.push({ kind: 'text', content: m[0] })
+      last = m.index + m[0].length
+      continue
+    }
     if (seg.kind === 'action') actions.push(seg)
     else parts.push(seg)
-    last = re.lastIndex
+    last = m.index + m[0].length
   }
   if (last < work.length) parts.push({ kind: 'text', content: work.slice(last) })
   // 相邻文本段合并

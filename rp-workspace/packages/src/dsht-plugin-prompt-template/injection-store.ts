@@ -1,106 +1,114 @@
 /**
- * 独立 prompt 注入 store（per-generation）——ST-Prompt-Template 的
- * injectPrompt / getPromptsInjected / hasPromptsInjected 三件套语义移植。
+ * 生成期 prompt 注入暂存区（per-generation prompt injection store）。
  *
- * 出处：agent-loop-rp（2428139739pregnant-web/agent-loop-rp）src/ejs-template.ts
- * L70-175 `createEjsTemplatePromptInjectionStore`，MIT 许可，特此致谢。
+ * ## 它解决什么问题
+ * 扩展模板（EJS）需要往当前这次生成里塞入额外提示词，并在同一趟里再读回来。
+ * 模板跑在隔离沙箱内，不能直接持有宿主对象，只能通过 `__host*` 桥调用本模块。
+ * 于是「暂存区」必须活**沙箱之外**的宿主侧，且生命周期严格等于一次生成 pass。
  *
- * 设计要点（与参考一致）：
- * - store 驻留在沙箱之外的宿主侧：模板在隔离域内只能通过 __host* 桥读写，
- *   嵌套模板/批量消息渲染共享同一份 store，但宿主对象本身不暴露给沙箱；
- * - 生命周期 = 一次 prompt 生成/渲染 pass（本插件中 = 一次 /render 请求），
- *   不持久化、不跨请求泄漏；
- * - 有界：key ≤ 256 字符、单条 ≤ 256KB、总数 ≤ 512（参考实现同款上限）。
+ * ## 语义契约（对外三个动作）
+ * - `inject(key, prompt, order?, sticky?, uid?)` 写入一条。同 `(key, uid)` 视为同一条，
+ *   后写覆盖前写（uid 省略时每次调用都是独立条目）。
+ * - `get(key, postprocess?)` 把该 key 下的条目**按 order 升序**（同 order 按写入先后）
+ *   用换行拼成一段文本；可选 postprocess 是 `{search, replace}` 列表，按序做整串替换。
+ * - `has(key)` 该 key 是否已有条目。
+ *
+ * ## 三条硬约束
+ * ① **不持久化**：本 store 只活一次 pass，不落盘、不跨请求残留。
+ * ② **有界**：key 长度、单条正文长度、条目总数都有上限，防止模板把内存写爆
+ *    （模板内容来自角色卡/世界书，属不可信输入）。
+ * ③ **越界静默丢弃**：超限不抛错——模板渲染不该因为塞了太多东西而整趟失败，
+ *    丢掉超限部分并让渲染继续。
  */
 
+/** 对外暴露的注入暂存区接口（沙箱桥与宿主侧共用同一形状） */
 export interface PromptInjectionStore {
   inject(key: string, prompt: string, order?: number, sticky?: number, uid?: string): void
   get(key: string, postprocess?: unknown): string
   has(key: string): boolean
 }
 
-interface StoredPromptInjection {
+interface StoredInjection {
   readonly key: string
   readonly prompt: string
   readonly order: number
   readonly sticky: number
   readonly uid: string
-  readonly sequence: number
+  /** 写入序号：order 相同时用它保持「先写的在前」的稳定顺序 */
+  readonly seq: number
 }
 
-const MAX_PROMPT_INJECTION_KEY_CHARS = 256
-const MAX_PROMPT_INJECTION_CHARS = 256 * 1024
-const MAX_PROMPT_INJECTIONS = 512
+// ---- 上限（越限静默丢弃，见文件头约束 ③）----
+/** key 最长字符数（超出视为调用方出错/恶意，直接不记） */
+const MAX_KEY_CHARS = 256
+/** 单条注入正文最长字符数 */
+const MAX_PROMPT_CHARS = 256 * 1024
+/** 单次 pass 内最多条目数（超出后新条目不再接收；同 uid 的覆盖不受此限） */
+const MAX_ENTRIES = 512
 
-function injectionText(value: unknown): string {
-  return typeof value === 'string' ? value : String(value ?? '')
+/** 宽松转字符串：非字符串输入按 ST 侧惯例 stringify，null/undefined → 空串 */
+function toText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value === null || value === undefined) return ''
+  return String(value)
 }
 
-function applyPromptInjectionPostprocess(value: string, postprocess: unknown): string {
+/** 应用 postprocess：`[{search, replace}, …]` 按序整串替换；形状不对的条目跳过 */
+function applyPostprocess(value: string, postprocess: unknown): string {
   if (!Array.isArray(postprocess)) return value
-  let result = value
+  let out = value
   for (const item of postprocess) {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) continue
-    const record = item as Record<string, unknown>
-    const search = record.search
-    const replace = record.replace
-    if (typeof search !== 'string' || typeof replace !== 'string' || search === '') continue
-    result = result.replaceAll(search, replace)
+    const rec = item as { search?: unknown; replace?: unknown }
+    if (typeof rec.search !== 'string' || typeof rec.replace !== 'string') continue
+    if (rec.search === '') continue // 空搜索串会让 replaceAll 无限插入，必须挡掉
+    out = out.replaceAll(rec.search, rec.replace)
   }
-  return result
+  return out
 }
 
-/** 创建一次生成 pass 共享的有界 store。 */
+/** 创建一个只活一次生成 pass 的注入暂存区 */
 export function createPromptInjectionStore(): PromptInjectionStore {
-  const entries: StoredPromptInjection[] = []
-  let sequence = 0
+  const items: StoredInjection[] = []
+  let nextSeq = 0
+
+  const normKey = (key: unknown): string => toText(key).trim()
+
   return {
     inject(key, prompt, order = 100, sticky = 0, uid = '') {
-      const normalizedKey = injectionText(key).trim()
-      if (normalizedKey === '' || normalizedKey.length > MAX_PROMPT_INJECTION_KEY_CHARS) return
-      const normalizedPrompt = injectionText(prompt)
-      if (normalizedPrompt.length > MAX_PROMPT_INJECTION_CHARS) return
-      const normalizedOrder = Number.isFinite(order) ? Math.trunc(order) : 100
-      const normalizedSticky = Number.isFinite(sticky) ? Math.max(0, Math.trunc(sticky)) : 0
-      const normalizedUid = injectionText(uid)
-      // 官方 uid 形态：同 key+uid 更新已有注入；无 uid 的调用保持独立条目，
-      // get 时按 order 排序拼接（扩展的分组注入行为）。
-      if (normalizedUid !== '') {
-        const existing = entries.findIndex(item => item.key === normalizedKey && item.uid === normalizedUid)
-        if (existing >= 0) {
-          entries[existing] = {
-            key: normalizedKey,
-            prompt: normalizedPrompt,
-            order: normalizedOrder,
-            sticky: normalizedSticky,
-            uid: normalizedUid,
-            sequence: entries[existing]!.sequence,
-          }
+      const k = normKey(key)
+      if (k === '' || k.length > MAX_KEY_CHARS) return
+      const text = toText(prompt)
+      if (text.length > MAX_PROMPT_CHARS) return
+      const ord = Number.isFinite(order) ? Math.trunc(order) : 100
+      const stk = Number.isFinite(sticky) ? Math.max(0, Math.trunc(sticky)) : 0
+      const id = toText(uid)
+
+      // 有 uid ⇒ 视为「同一条的更新」：保留原写入序号（不因更新而改变同 order 下的相对位次）
+      if (id !== '') {
+        const at = items.findIndex(it => it.key === k && it.uid === id)
+        if (at >= 0) {
+          items[at] = { key: k, prompt: text, order: ord, sticky: stk, uid: id, seq: items[at]!.seq }
           return
         }
       }
-      if (entries.length >= MAX_PROMPT_INJECTIONS) return
-      entries.push({
-        key: normalizedKey,
-        prompt: normalizedPrompt,
-        order: normalizedOrder,
-        sticky: normalizedSticky,
-        uid: normalizedUid,
-        sequence: sequence++,
-      })
+      if (items.length >= MAX_ENTRIES) return
+      items.push({ key: k, prompt: text, order: ord, sticky: stk, uid: id, seq: nextSeq++ })
     },
+
     get(key, postprocess) {
-      const normalizedKey = injectionText(key).trim()
-      const combined = entries
-        .filter(item => item.key === normalizedKey)
-        .sort((left, right) => left.order - right.order || left.sequence - right.sequence)
-        .map(item => item.prompt)
+      const k = normKey(key)
+      const joined = items
+        .filter(it => it.key === k)
+        .sort((a, b) => (a.order - b.order) || (a.seq - b.seq))
+        .map(it => it.prompt)
         .join('\n')
-      return applyPromptInjectionPostprocess(combined, postprocess)
+      return applyPostprocess(joined, postprocess)
     },
+
     has(key) {
-      const normalizedKey = injectionText(key).trim()
-      return entries.some(item => item.key === normalizedKey)
+      const k = normKey(key)
+      return items.some(it => it.key === k)
     },
   }
 }

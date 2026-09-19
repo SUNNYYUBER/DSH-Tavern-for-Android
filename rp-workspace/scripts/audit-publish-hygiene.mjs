@@ -34,6 +34,8 @@
  *   node scripts/audit-publish-hygiene.mjs --selftest      # 检测器正控
  * 退出码：0 = 六类全清；1 = 有命中（需清理或加入豁免）；2 = 环境失败
  */
+// ★ W72：自证分数契约的**唯一产出点**（P-1；**不自己拼分数行**）
+import { reportSelftest } from './selftest-summary.mjs'
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -66,6 +68,11 @@ const DOMAIN_ALLOW = new RegExp(
     // 属第三方公开信息（同 jquery/lodash 一处性质），非本机配置、非隐私。真实命中位置：
     // rp-workspace/packages/src/dsht-rp-ui/lib/client.js:636（打包产物里的库注释）。
     String.raw`^handlebarsjs\.com`,
+    // 【2026-09-14】内嵌二进制的上游官网：busybox（GPL-2.0，随 APK 独立分发）与 Termux
+    // （提供 busybox/proot 的 deb 来源）。二者是 README 致谢与 THIRD_PARTY_LICENSES 的
+    // 合规说明必须写出的公开地址（GPL-2.0 要求提供源码获取方式），
+    // 性质同 jquery.com/lodash.com —— 第三方公开信息，非本机配置。
+    String.raw`^busybox\.net`, String.raw`^termux\.dev`,
     String.raw`^api\.deepseek\.com`, String.raw`^deepseek\.com`, // 上游官方 API/官网（产品文档必写）
     String.raw`^(x|next|dl|host|src|assets)$`, // 正则截断产生的无 TLD 片段（噪声，非域名）
   ].join('|'),
@@ -193,7 +200,18 @@ function isTextFile(rel) {
 }
 
 function trackedFiles() {
-  const out = execFileSync('git', ['ls-files', '-z'], { cwd: REPO, maxBuffer: 1 << 28 })
+  // ★★ W76 修：头注声明了「2 = 环境失败」，而实现里**从不返回 2**
+  //   ⇒ git 不可用 / 不在 git 仓库时，`execFileSync` 抛异常 ⇒ Node 未捕获 ⇒ 退出码 **1**，
+  //     与「检出命中」**同一个码**（**P-75 / P-46 的反面**：两种不同事实必须有两个读数）。
+  //   ⇒ 按 P-75 的第一种修法**让实现兑现头注承诺**：显式 fail-closed 返回 2。
+  let out
+  try {
+    out = execFileSync('git', ['ls-files', '-z'], { cwd: REPO, maxBuffer: 1 << 28 })
+  } catch (e) {
+    console.error(`[publish-hygiene] 环境失败：无法执行 git ls-files（${String((e && e.message) || e).slice(0, 140)}）`)
+    console.error('  ⇒ fail-closed：**扫描器没跑起来** ≠ 「六类全清」，不许静默给结论（exit 2）')
+    process.exit(2)
+  }
   return out.toString('utf8').split('\0').filter(Boolean)
 }
 
@@ -290,17 +308,23 @@ function selftest() {
   console.log(`[selftest] ${pass}/${cases.length + 1} 通过`)
   if (fails.length) {
     console.error('失败用例：\n  ' + fails.join('\n  '))
-    process.exit(1)
+    return { pass, total: cases.length + 1, ok: false }
   }
   console.log('[selftest] PASS —— 六类检测器均能报出目标命中，且不误报白名单/掩码样本')
+  return { pass, total: cases.length + 1, ok: pass === cases.length + 1 }
 }
 
 // ---------------------------------------------------------------- main
 
 const argv = process.argv.slice(2)
 if (argv.includes('--selftest')) {
-  selftest()
-  process.exit(0)
+  // ★★ W72：接入单源自证分数契约（P-50）——
+  //   此前收尾是自造行 `[selftest] PASS —— 六类检测器均能报出…` ⇒ **机器读不出分数**
+  //   ⇒ 文档里关于它的任何分数声明**无法被证伪**（P-11 元级）。
+  //   ⇒ 按 P-1 复用唯一产出点 reportSelftest。
+  const r = selftest()
+  reportSelftest('publish-hygiene', r.pass, r.total)
+  process.exit(r.ok ? 0 : 1)
 }
 
 const { findings, fileCount, wordCount } = scan()

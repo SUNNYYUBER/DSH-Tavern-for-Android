@@ -24,6 +24,8 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+// 【F5 2026-09-14 单源化】sessionId 安全校验（路径穿越防护）下沉共享层
+import { isSafeSessionId } from '../dsht-plugin-shared/session-surgery.ts'
 
 export type MemorySource = 'agent' | 'user'
 
@@ -63,16 +65,12 @@ export function memoryRelPath(sessionId: string): string {
  * sessionId 安全校验（路由 payload 直落文件名，防路径越界）：
  * 非空、无路径分隔符、无 ..、无首尾空白、长度 ≤ 120。
  */
-export function isValidMemorySessionId(sessionId: string): boolean {
-  return typeof sessionId === 'string'
-    && sessionId.length > 0
-    && sessionId.length <= 120
-    && !sessionId.includes('/')
-    && !sessionId.includes('\\')
-    && !sessionId.includes('..')
-    && sessionId !== '.'
-    && sessionId.trim() === sessionId
-}
+/** sessionId 安全校验（路径穿越防护）。
+ *  【F5 2026-09-14 单源化·补漏】原为本地函数体，与 `dsht-plugin-memory/tables.ts`
+ *  的 `isValidTablesSessionId` **逐字相同**——安全判据复制即必然漂移（只在一侧收紧
+ *  另一侧就留洞）。现委托共享层 `isSafeSessionId`（P-1b）。
+ *  导出名保留（本模块对外/测试引用的名字）。 */
+export const isValidMemorySessionId = isSafeSessionId
 
 /** source 归一：仅 'user' 保留，其余（含缺省）一律按 'agent' */
 export function normalizeMemorySource(v: unknown): MemorySource {

@@ -33,9 +33,10 @@ import {
 } from './output-protocol.ts'
 import {
   FRAME_HEIGHT_MESSAGE_TYPE, FRAME_MAX_HEIGHT, buildDisplayFrameDocument, clampFrameHeight,
-  compileDisplaySegments, enhancePreBlocks, expandDisplayMacros, invalidateDisplayDataCache, loadDisplayRenderCtx,
+  compileDisplaySegments, enhancePreBlocks, expandDisplayMacros, frameFallbackText, invalidateDisplayDataCache,
+  loadDisplayRenderCtx,
   loadEjsDisplaySettings, loadRenderEntries, loadThRenderSettings, reportPermanentRender,
-  runDisplayScripts, unwrapForeignTags, type DisplayMacroCtx, type EjsDisplaySettings,
+  runDisplayScripts, shouldRenderFrame, unwrapForeignTags, type DisplayMacroCtx, type EjsDisplaySettings,
   type RenderEntries, type ThRenderSettings,
 } from './display-compiler.ts'
 import type { RegexScript } from '../../../regex/engine.ts'
@@ -43,24 +44,29 @@ import { attachMessageFrame, fetchFrameVars, getRpContextSnapshot, releaseMessag
 import { buildMessageFrameDocument, buildShimSource, getVendorBlobUrl } from './th-shim.ts'
 import { groupOf, normalizeVariantGroups, type RawVariantGroup, type VariantGroupInfo } from './variant-groups.ts'
 import { wrapStQuotes } from './st-quotes.ts'
+// 【E2/P-1 W4 收口】官方投影（session/chat/node 三层）读取一律走单源。
+// 此前本文件是**裸读最密集**处：`data.blocks`（渲染热路径，官方改形状即抛 ⇒ 被
+// SlotErrorBoundary 吞成整片楼层消失）、`data.finalNode.seq`（11 处，回退/变体/耗时
+// 全部判据的锚点）、`chat.nodes.values()`（5 处双形态断言）。见 host-projection.ts 头注。
+import {
+  readBlocks, readChat, readFinalMessageId, readFinalSeq, readFinalTiming, readNodeData,
+  readNodeKey, readNodeKind, readNodeSeq, readNodeStatus, readNodeTime, readNodeTurn,
+  readSessionChat, readSessionRunning, readSourceKind, forEachChatNode,
+} from './host-projection.ts'
 
 // ---------------------------------------------------------------------------
 // 类型（最小面：runtime 类型仅 type-only import，构建期擦除）
 // ---------------------------------------------------------------------------
 
-interface LikeAssistantBlock {
-  kind: 'text' | 'reasoning' | 'image' | 'tool-call' | 'other'
-  text?: string
-  attachment?: unknown
-  block?: unknown
-}
-
-interface LikeAssistantChatData {
-  status: 'running' | 'settled' | 'interrupted'
-  blocks: readonly LikeAssistantBlock[]
-  finalNode?: { seq?: number; messageId?: string } | undefined
-}
-
+/**
+ * keyed Chat 节点（**诚实形状**：只声明官方承诺过、且我们已实测的稳定字段）。
+ *
+ * 【W4 关键改动】此前这里写的是 `data: LikeAssistantChatData`，其中
+ * `status`/`blocks`/`finalNode` 都是**非可选**字段 —— 那是把 beta 期官方投影
+ * 当成定型契约（P-2）。后果不是编译错，而是**诱导**：类型说 `data.blocks` 一定存在，
+ * 后来者就会直接写 `for (const b of node.data.blocks)`（本文件原有 2 处正是这么来的）。
+ * 现在 `data` 声明为 `unknown`，**逼**每次读取都走 `host-projection.ts` 的读取器。
+ */
 interface LikeChatNode {
   key: string
   kind: string
@@ -69,7 +75,7 @@ interface LikeChatNode {
 
 /** conversation.chat.node 席位组件收到的 props（owner + keyed node + 标准件） */
 interface NodeViewProps {
-  node: { data: LikeAssistantChatData } & LikeChatNode
+  node: LikeChatNode
   /** 会话工作区根（匹配 rp 工作区 → 输出协议配置） */
   cwd?: string | undefined
   /** 历史图片组渲染（官方 attachment 席位，owner props 直供） */
@@ -305,12 +311,10 @@ function useMessageWindowing(sessionKey: string, nodeKey: string, forced: boolea
 // 设置→插件「聊天偏好」楼层号显示可关（/rp/chat-prefs，模块级缓存一次）。
 // ---------------------------------------------------------------------------
 
-interface LikeChatSnapshot {
-  chat?: {
-    order?: readonly string[]
-    nodes?: { values: () => Iterable<{ key?: string; kind?: string; data?: { source?: { kind?: unknown }; turn?: unknown; time?: unknown; status?: unknown; seq?: unknown } }> }
-  }
-}
+// 【W4 删除】原 `LikeChatSnapshot`（会话快照里 chat 的形状断言）与
+// `hideAfterOf`（恒 0 的死代码）已移除。理由：官方投影形状**不该由本文件钉死**，
+// 读法一律走 `host-projection.ts` 的存在性 + 类型判定；把形状写成 interface
+// 再用 `as` 断言读，正是「断言掩盖形状漂移」的形态（P-2）。
 
 interface FloorIndex {
   /** assistant-step / user 楼层消息节点 key → 楼层号（1 起始）；非楼层节点不在表内 */
@@ -325,25 +329,14 @@ interface FloorIndex {
   hideAfter: number
 }
 
-/** 从快照找最新的逻辑回退标记（取最大锚：多次回退取最后一次）。
- *  标记是 dsht-rp 插件 append 的 user/message（source.kind='plugin' + rolledBackTo /
- *  editedFrom / regeneratedFrom）——**投影 kind 是 'context'**（插件注入不投影为
- *  user 行），因此不能按 kind==='user' 过滤，须全节点扫 source 字段。
- *  edit 语义 = 锚消息本身也隐藏 → hideAfter = editedFrom − 1；rollback/regenerate
- *  = 锚消息保留 → hideAfter = 锚 seq。统一规则：真实消息 seq > hideAfter 即隐藏。 */
-/** 【已废弃 · 恒 0，勿依赖】曾经从会话投影的 `source.rolledBackTo/editedFrom/regeneratedFrom`
- *  读回退掩码。两个原因让它必然失效：
- *  ① 客户端投影**不透传** marker 的 `source` 字段（真机实证）→ 恒 undefined；
- *  ② 即便透传，0.1.5 起写侧已把标记载荷搬进官方白名单形态
- *     `form:'snapshot' + sections[{name:'dsht:surgical', text: JSON.stringify(payload)}]`
- *     （见 dsh-plugin/index.ts 的 markerSource），顶层扩展键不再存在。
- *  **权威来源 = host 路由 `/rp/rollback-mask`**（`useRollbackMask` 拉取后由调用方显式
- *  传给 `floorIndexOf` / `floorIndexFromChat`，见 line 603 / 1193 / 1847）。
- *  这里保留函数只为兜底签名，永远返回 0（不隐藏）。
- */
-function hideAfterOf(_snapshot: LikeChatSnapshot): number {
-  return 0
-}
+// 【已废弃 · 勿复活】曾有两个从会话投影读回退掩码的实现（`hideAfterOf` 与
+// `LikeChatSnapshot` 形状断言），W4 一并删除。它们必然失效的两个原因：
+//   ① 客户端投影**不透传** marker 的 `source` 字段（真机实证）→ 恒 undefined；
+//   ② 0.1.5 起写侧已把标记载荷搬进官方白名单形态
+//      `form:'snapshot' + sections[{name:'dsht:surgical', text: JSON.stringify(payload)}]`
+//      （见 dsh-plugin/index.ts 的 markerSource），顶层扩展键不再存在。
+// **权威来源 = host 路由 `/rp/rollback-mask`**（`useRollbackMaskState` 拉取后由调用方
+// 显式传给 `floorIndexOf` / `floorIndexFromChat`）。
 
 /** 会话快照 → 楼层索引（楼层号 + step/turn 耗时）。
  *  楼层判定：
@@ -357,49 +350,55 @@ function hideAfterOf(_snapshot: LikeChatSnapshot): number {
  *  completedTime − 首 step 开始；running 的 step 无定稿时间不显示。
  *  WeakMap 按快照代际缓存——useSession 选择器要求引用稳定（每代一份）。 */
 const floorIndexCache = new WeakMap<object, FloorIndex>()
-/** 掩码按 (snapshot, hideAfter) 组合缓存——同一快照在掩码变化（回退操作后）时重算 */
-const floorIndexCacheKey = new WeakMap<object, number>()
+/** 掩码按 (snapshot, mask) 组合缓存——同一快照在掩码变化（回退操作后）时重算 */
+const floorIndexCacheKey = new WeakMap<object, MaskState>()
 /** 【2026-09-06 实证修复】核心按 Chat 本体计算（nodes/order 顶层）——SessionSnapshot
  *  不带 chat 投影（fiber 实证），旧实现把 useSession 快照当有 chat 用 → 楼层号恒缺席
  * （真机 hashFloors=[] 实证）。chat.node 席位组件同时拿得到 useChat（Chat 本体快照）。 */
-function floorIndexOfChat(chat: LikeChatSnapshot['chat'], hideAfter: number): Omit<FloorIndex, 'hideAfter'> {
+function floorIndexOfChat(chatSnapshot: unknown, mask: MaskState): Omit<FloorIndex, 'hideAfter'> {
   const floors = new Map<string, number>()
   const stepMs = new Map<string, number>()
   const turnMs = new Map<string, number>()
-  if (chat?.order && chat.nodes) {
-    const byKey = new Map<string, { kind?: string; data?: { source?: { kind?: unknown }; turn?: unknown; time?: unknown; status?: unknown; seq?: unknown; finalNode?: { seq?: unknown; timing?: { stepStartTime?: number | null; completedTime?: number }; time?: unknown } } }>()
-    for (const n of chat.nodes.values()) {
-      if (typeof n.key === 'string') byKey.set(n.key, { kind: n.kind, data: n.data })
-    }
+  const { order, nodes } = readChat(chatSnapshot)
+  if (nodes !== null && order.length > 0) {
+    // 【W4】节点一律按**原始节点**存入（读字段走单源读取器），不再逐点复制 `n.data`。
+    const byKey = new Map<string, unknown>()
+    forEachChatNode(chatSnapshot, (n) => {
+      const key = readNodeKey(n)
+      if (key !== '') byKey.set(key, n)
+    })
     // 顺序扫一遍：分楼 + 收集 turn 的 step 起止（供耗时计算）。
-    // 逻辑回退掩码：seq > hideAfter 的真实消息已从上下文移除（回退/编辑/重新生成
-    // marker），UI 楼层号与耗时表同步跳过（视觉 = 真回退，数据零丢失）。
+    // 逻辑回退掩码（【2026-09-14】集合语义）：被 replace 移出上下文的 seq 逐条精确隐藏，
+    // UI 楼层号与耗时表同步跳过（视觉 = 真回退，数据零丢失）。
+    // 集合之外的消息（含回退之后新发的）一律正常显示——这正是旧阈值语义做不到的。
     let floor = 1
     let lastTurn: number | null = null
     const turnSteps = new Map<number, Array<{ key: string; start: number; end: number | null }>>()
-    for (const key of chat.order) {
+    for (const key of order) {
       const n = byKey.get(key)
       if (n === undefined) continue
-      if (n.kind === 'assistant-step') {
-        const mySeq = typeof n.data?.finalNode?.seq === 'number' ? n.data.finalNode.seq : undefined
-        if (hideAfter > 0 && typeof mySeq === 'number' && mySeq > hideAfter) continue
-        const turn = typeof n.data?.turn === 'number' ? n.data.turn : null
+      const data = readNodeData(n)
+      if (readNodeKind(n) === 'assistant-step') {
+        const mySeq = readFinalSeq(data)
+        if (isSeqHidden(mask, mySeq)) continue
+        const turn = readNodeTurn(data) ?? null
         if (turn === null || turn !== lastTurn) {
           floor += 1
           lastTurn = turn
         }
         floors.set(key, floor)
-        if (turn !== null && typeof n.data?.time === 'number') {
-          const timing = n.data?.finalNode?.timing
-          const end = typeof timing?.completedTime === 'number' ? timing.completedTime : null
-          const start = typeof timing?.stepStartTime === 'number' ? timing.stepStartTime : (n.data.time as number)
+        const at = readNodeTime(data)
+        if (turn !== null && at !== undefined) {
+          const timing = readFinalTiming(data)
+          const end = timing !== null && timing.completedTime !== null ? timing.completedTime : null
+          const start = timing !== null && timing.stepStartTime !== null ? timing.stepStartTime : at
           const list = turnSteps.get(turn)
           if (list !== undefined) list.push({ key, start, end })
           else turnSteps.set(turn, [{ key, start, end }])
         }
-      } else if (n.kind === 'user') {
-        if (n.data?.source?.kind !== 'user') continue
-        if (hideAfter > 0 && typeof n.data?.seq === 'number' && n.data.seq > hideAfter) continue
+      } else if (readNodeKind(n) === 'user') {
+        if (readSourceKind(data) !== 'user') continue
+        if (isSeqHidden(mask, readNodeSeq(data))) continue
         floor += 1
         lastTurn = null
         floors.set(key, floor)
@@ -421,30 +420,30 @@ function floorIndexOfChat(chat: LikeChatSnapshot['chat'], hideAfter: number): Om
 }
 
 /** SessionSnapshot 包装（旧调用点；快照带 chat 投影时才有效） */
-function floorIndexOf(snapshot: unknown, hideAfter = hideAfterOf(snapshot as LikeChatSnapshot)): FloorIndex {
+function floorIndexOf(snapshot: unknown, mask: MaskState = EMPTY_MASK): FloorIndex {
   const snap = snapshot as object
   const cached = floorIndexCache.get(snap)
-  const cachedMask = floorIndexCacheKey.get(snap) ?? 0
-  if (cached !== undefined && cachedMask === hideAfter) return cached
-  const core = floorIndexOfChat((snapshot as LikeChatSnapshot).chat, hideAfter)
-  const index: FloorIndex = { ...core, hideAfter: hideAfterOf(snapshot as LikeChatSnapshot) }
+  const cachedMask = floorIndexCacheKey.get(snap)
+  if (cached !== undefined && cachedMask === mask) return cached
+  const core = floorIndexOfChat(readSessionChat(snapshot), mask)
+  const index: FloorIndex = { ...core, hideAfter: mask.hideAfter }
   floorIndexCache.set(snap, index)
   // 【鲁棒轮 2026-09-09】漏写 cacheKey → rollbackMask 异步到达后的重算恒 miss
   // （O(N²) 每帧重算 + mask 回退时陈旧命中），与 floorIndexFromChat 对齐。
-  floorIndexCacheKey.set(snap, hideAfter)
+  floorIndexCacheKey.set(snap, mask)
   return index
 }
 
 /** Chat 本体快照 → 楼层索引（useChat 选择器；WeakMap 按代际缓存） */
-function floorIndexFromChat(chat: unknown, hideAfter: number): Omit<FloorIndex, 'hideAfter'> {
+function floorIndexFromChat(chat: unknown, mask: MaskState): Omit<FloorIndex, 'hideAfter'> {
   const snap = (chat ?? {}) as object
   const cached = floorIndexCache.get(snap)
-  const cachedMask = floorIndexCacheKey.get(snap) ?? 0
-  if (cached !== undefined && cachedMask === hideAfter) return cached
-  const core = floorIndexOfChat(chat as LikeChatSnapshot['chat'], hideAfter)
-  const index: FloorIndex = { ...core, hideAfter }
+  const cachedMask = floorIndexCacheKey.get(snap)
+  if (cached !== undefined && cachedMask === mask) return cached
+  const core = floorIndexOfChat(chat, mask)
+  const index: FloorIndex = { ...core, hideAfter: mask.hideAfter }
   floorIndexCache.set(snap, index)
-  floorIndexCacheKey.set(snap, hideAfter)
+  floorIndexCacheKey.set(snap, mask)
   return index
 }
 
@@ -454,21 +453,47 @@ function floorMapOf(snapshot: unknown): Map<string, number> {
 }
 
 // ---------------------------------------------------------------------------
-// 逻辑回退掩码 store（sessionId → hideAfter）：host 从 session.jsonl 解析回退/
+// 逻辑回退掩码 store（sessionId → 被移出 seq 集合）：host 从 session.jsonl 解析回退/
 // 编辑/重新生成 marker（/rp/rollback-mask）——客户端投影不透传 marker 的 source
 // 字段（真机实证），故由前端拉取。useSyncExternalStore 订阅；回退/编辑/重新
 // 生成成功后调 refreshRollbackMask 立即刷新（UI 即时隐藏 + 楼层号重排）。
+//
+// 【2026-09-14 F2 架构修复：阈值 → 集合】
+// 旧实现用单一阈值 `hideAfter`（「seq > 它就隐藏」）。这与事实不符——回退之后用户
+// 正常发的新消息 seq 也大于锚点，会被连坐隐藏；于是后端加了「marker 之后出现新
+// 用户消息 → 掩码整体归零」的补丁，代价正是**回退后重发会把被回退的旧楼层全部复活**
+// （用户实测截图的直接原因）。
+// 根因是**用阈值表达集合**：集合会随新事件增长，阈值不会。
+// 现改为权威判据 = `hiddenSeqs` 集合（写侧逐条记录的被 replace 移出 seq），
+// 精确且**持久有效**，与后续新增消息无关。`hideAfter` 仅作降级（存量会话无集合）。
 // ---------------------------------------------------------------------------
-const maskCache = new Map<string, number>()
+
+/** 掩码状态：集合优先，阈值为降级 */
+export interface MaskState {
+  /** 精确的被移出 seq 集合（权威判据） */
+  hidden: ReadonlySet<number>
+  /** 阈值降级（仅当集合为空且宿主给了非零 hideAfter 时使用；存量会话路径） */
+  hideAfter: number
+}
+const EMPTY_MASK: MaskState = { hidden: new Set<number>(), hideAfter: 0 }
+
+const maskCache = new Map<string, MaskState>()
 const maskListeners = new Map<string, Set<() => void>>()
 const maskInflight = new Set<string>()
 async function refreshRollbackMask(sessionId: string): Promise<void> {
   if (maskInflight.has(sessionId)) return
   maskInflight.add(sessionId)
   try {
-    const r = await rpApi<{ hideAfter?: number }>('rp/rollback-mask', { sessionId })
-    const next = typeof r.hideAfter === 'number' && r.hideAfter > 0 ? r.hideAfter : 0
-    if (maskCache.get(sessionId) !== next) {
+    const r = await rpApi<{ hideAfter?: number; hiddenSeqs?: number[] }>('rp/rollback-mask', { sessionId })
+    const seqs = Array.isArray(r.hiddenSeqs) ? r.hiddenSeqs.filter(n => typeof n === 'number') : []
+    const hide = typeof r.hideAfter === 'number' && r.hideAfter > 0 ? r.hideAfter : 0
+    // 集合非空 ⇒ 只用集合（阈值完全不用，避免「阈值连坐新消息」的老毛病复发）
+    const next: MaskState = seqs.length > 0
+      ? { hidden: new Set(seqs), hideAfter: 0 }
+      : { hidden: new Set<number>(), hideAfter: hide }
+    const prev = maskCache.get(sessionId)
+    const same = prev !== undefined && prev.hideAfter === next.hideAfter && prev.hidden.size === next.hidden.size
+    if (!same) {
       maskCache.set(sessionId, next)
       maskListeners.get(sessionId)?.forEach(cb => cb())
     }
@@ -481,8 +506,7 @@ async function refreshRollbackMask(sessionId: string): Promise<void> {
     maskInflight.delete(sessionId)
   }
 }
-function useRollbackMask(sessionId: string | undefined): number {
-  const value = sessionId !== undefined ? (maskCache.get(sessionId) ?? 0) : 0
+export function useRollbackMaskState(sessionId: string | undefined): MaskState {
   const subscribe = useCallback((cb: () => void) => {
     if (sessionId === undefined) return () => undefined
     let set = maskListeners.get(sessionId)
@@ -491,11 +515,43 @@ function useRollbackMask(sessionId: string | undefined): number {
     void refreshRollbackMask(sessionId)
     return () => { set!.delete(cb) }
   }, [sessionId])
-  const getSnapshot = useCallback(() => (sessionId !== undefined ? maskCache.get(sessionId) ?? 0 : 0), [sessionId])
-  return useSyncExternalStore(subscribe, getSnapshot, () => 0)
+  const getSnapshot = useCallback(
+    () => (sessionId !== undefined ? maskCache.get(sessionId) ?? EMPTY_MASK : EMPTY_MASK),
+    [sessionId],
+  )
+  return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY_MASK)
+}
+
+/** 某 seq 是否已被回退/编辑/重新生成移出上下文（集合优先，阈值为降级） */
+function isSeqHidden(mask: MaskState, seq: number | undefined): boolean {
+  if (seq === undefined) return false
+  if (mask.hidden.size > 0) return mask.hidden.has(seq)
+  return mask.hideAfter > 0 && seq > mask.hideAfter
+}
+
+/** 兼容旧签名的取值器（返回等价的阈值语义值，仅供仍按阈值判定的调用点使用）。
+ *  新代码请用 `useRollbackMaskState` + `isSeqHidden`。 */
+function useRollbackMask(sessionId: string | undefined): number {
+  return useRollbackMaskState(sessionId).hideAfter
 }
 // globalThis 桥：index.tsx 的 regenerate inject（跨模块）成功后刷新掩码
 ;(globalThis as { __dshtRpRefreshRollbackMask?: (sid: string) => Promise<void> }).__dshtRpRefreshRollbackMask = refreshRollbackMask
+// 【2026-09-14 F2-B3】会话快照刷新桥：回退/编辑/重新生成后，前端需要 sessions.refresh
+// 让后续 prompt 基于最新会话基线（组件拿不到 ctx.sessions，故由 index.tsx 注册）。
+// 缺省（未注册）时为 no-op 并留痕——不许静默假装刷新过。
+;(globalThis as { __dshtRpSessionsRefresh?: () => Promise<void> }).__dshtRpSessionsRefresh =
+  (globalThis as { __dshtRpSessionsRefresh?: () => Promise<void> }).__dshtRpSessionsRefresh ??
+  (async (): Promise<void> => {
+    console.warn('[dsht-rp-ui] sessions.refresh 桥未注册（回退后未刷新会话快照）——应由 index.tsx 注入')
+  })
+// 【2026-09-14 B3 三路径对齐】显示面缓存失效桥。
+// 三条路径（rollback / regenerate / edit）的后端操作都会改变「影响 display 的上下文」
+// （display 正则三源、预设 prompt_order）⇒ 已挂载楼层的 processed 结果必须重算。
+// rollback 在组件内直接调 notifyDisplayMutation()；regenerate/edit 的实现分散在
+// index.tsx（inject 面）与组件内，故经 globalThis 暴露同一函数，
+// 保证三条路径**调用的是同一个**失效入口（P-1：不许各写一份）。
+;(globalThis as { __dshtRpNotifyDisplayMutation?: () => void }).__dshtRpNotifyDisplayMutation =
+  notifyDisplayMutation
 
 /** 聊天偏好（楼层号显示开关；GET /rp/chat-prefs，模块级缓存一次——设置页改后刷新生效） */
 let chatPrefsCache: Promise<boolean> | null = null
@@ -557,8 +613,10 @@ function formatFloorDurationSt(ms: number): string {
 
 /** 节点时间（epoch ms；消息节点 data.time，迁移/实发都在） */
 function nodeTimeMs(node: { data?: unknown }): number | undefined {
-  const t = (node.data as { time?: unknown } | undefined)?.time
-  return typeof t === 'number' && Number.isFinite(t) && t > 0 ? t : undefined
+  // 【W4】原为 `(node.data as { time?: unknown })?.time` —— `as` 断言 + 裸读；
+  // 改走 readNodeTime（已含 number 判定），本函数只保留「正数」这一业务约束。
+  const t = readNodeTime(node?.data)
+  return t !== undefined && Number.isFinite(t) && t > 0 ? t : undefined
 }
 
 /** RP 会话活跃标记（body[data-dsht-rp-active]）：楼层头挂载计数 >0 即 RP 楼层在场，
@@ -621,8 +679,8 @@ const RpFloorHeader = memo(function RpFloorHeader({ useChat, nodeKey, side, sess
   timeMs?: number
 }) {
   const showFloor = useFloorBadgePref()
-  const hideAfter = useRollbackMask(sessionId)
-  const index = useChat === undefined ? undefined : useChat((snapshot) => floorIndexFromChat(snapshot, hideAfter))
+  const maskState = useRollbackMaskState(sessionId)
+  const index = useChat === undefined ? undefined : useChat((snapshot) => floorIndexFromChat(snapshot, maskState))
   const floor = index?.floors.get(nodeKey)
   const turnMs = index?.turnMs.get(nodeKey)
   useRpActiveMarker()
@@ -726,12 +784,59 @@ const MvuStatusbar = memo(function MvuStatusbar({ sessionId }: { sessionId: stri
 })
 
 /**
- * 完整 HTML 文档段的 iframe 渲染器（P0-2；骨架照抄 dsh-tavern client.js L903-941
- * TavernMessageFrame，MIT）：
- * - sandbox="allow-scripts"（不给 allow-same-origin）+ referrerPolicy="no-referrer"；
+ * 【F1 2026-09-14】turn-error 节点 shadowing 渲染器。
+ *
+ * ## 为什么必须 shadowing 而不是只改自己的 toast
+ * 用户实测看到的 `pi-ai detected context overflow for model "deepseek/…"` 由
+ * **官方会话流**渲染：`dsh-client-ui-chat` 的 `TurnErrorNodeView`
+ * （lib/client.js:1186-1211）直接 `failureMessage(node.message, node.code, t)`
+ * 透传原文，而 `failureMessage` 除 AUTH 外**原样返回 message**
+ * （同文件 :1126-1128）——即官方把上游 SDK 的原始措辞直接摆到用户面前。
+ *
+ * 我们**不能改官方源码**（合规红线），但 `turn-error` 是 keyed Chat node，
+ * 与 `assistant-step` / `user` 一样可经 `conversation.chat.node` 席位 shadowing
+ * （官方注册点见同文件 TURN_PROCESS_INDEPENDENT_KINDS 含 "turn-error"）。
+ * 于是在我方层做隔离：**人话为主 + 原文折叠为详情**（信息不丢，排障可用）。
+ *
+ * 可卸载性（P7）：拔掉本插件 = 本 shadowing 消失，官方 TurnErrorNodeView 复位。
+ */
+const TurnErrorNodeView = memo(function TurnErrorNodeView({ node }: { node: { data?: { message?: unknown; code?: unknown } } }) {
+  const data = node?.data ?? {}
+  const raw = typeof data.message === 'string' ? data.message : String(data.message ?? '')
+  const code = typeof data.code === 'string' ? data.code : ''
+  const friendly = humanizeError(Object.assign(new Error(raw), { code }))
+  // 隔离前后一致 = 这条消息没有内部细节泄漏，无需折叠区（避免给所有错误都加噪音）
+  const leaked = friendly !== raw
+  return (
+    <div className="dsht-rp-turn-error" role="status">
+      <span className="te-dot" aria-hidden="true">●</span>
+      <div className="te-copy">
+        <span className="te-title">本轮运行失败</span>
+        <span className="te-message">{friendly}</span>
+        {leaked && (
+          <details className="te-detail">
+            <summary>技术详情</summary>
+            <pre className="te-raw">{raw}</pre>
+          </details>
+        )}
+      </div>
+      {code !== '' && <code className="te-code">{code}</code>}
+    </div>
+  )
+})
+
+export const RpTurnErrorView = TurnErrorNodeView
+
+/**
+ * 完整 HTML 文档段的 iframe 渲染器（P0-2）：
+ * - sandbox = `allow-scripts allow-same-origin allow-modals allow-forms allow-popups`
+ *   （**含 same-origin**：卡自带 `<script>` 依赖 parent.$/jQuery/Mvu/eventOn，真 TH/ST 的
+ *   message iframe 就是同源形态，用户拍板复刻）+ referrerPolicy="no-referrer"；
+ *   【2026-09-14 L5 穷举】原注释写「不给 allow-same-origin」，与实际 `setAttribute`
+ *   矛盾（同一事实两处不一致，P-1）——此处按实现订正。
  * - srcdoc 由 buildDisplayFrameDocument 组装（CSP + 高度上报脚本）；C3 use_blob_url
- *   开启时改走 blob: URL（TH 同款形态；卸载/文档变更时 revoke）；
- * - 高度由 iframe 内 postMessage 上报（token + event.source 双校验），clamp [48,12000]。
+ *   开启时改走 blob: URL（卸载/文档变更时 revoke）；
+ * - 高度由 iframe 内 postMessage 上报（token + event.source 双校验），clamp [48,3000]。
  * 悬浮球这类 position:fixed 部件在 iframe 内能跑（iframe 即它的舞台）。
  */
 // ---------------------------------------------------------------------------
@@ -1148,28 +1253,36 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
   // I4/B6/B8/C3：显示期管线数据（identity/variables/render-entries/EJS+TH 设置；
   // display-compiler.ts 模块级 5s TTL 缓存，仅首楼层真正发请求）
   const pipeline = useDisplayPipeline(proto !== null ? slug : null, sessionId ?? '')
-  const data = node.data
-  const streaming = data.status === 'running'
-  const interrupted = data.status === 'interrupted'
+  // 【E2/P-1 W4 收口】本组件的官方投影读取**全部**走单源读取器。
+  // 此前这里是全仓裸读最密集处（`data.blocks` 裸迭代在渲染热路径、`data.finalNode.seq`
+  // 写 8 遍、`data.status` 裸比 4 遍），官方改投影形状即抛 ⇒ 被 SlotErrorBoundary
+  // 吞成「整片楼层消失」，零报错。见 host-projection.ts 头注。
+  const data = readNodeData(node)
+  const nodeKey = readNodeKey(node)
+  const status = readNodeStatus(data)
+  const streaming = status === 'running'
+  const interrupted = status === 'interrupted'
+  const blocks = readBlocks(data)
+  const mySeq = readFinalSeq(data)
   // 【hook 移植 L1a】TH 事件桥：message_received + stream_token_received
   // （streaming 期文本 diff 直投；ST STREAM_TOKEN_RECEIVED 载荷 = 累计文本）
   // message_received 语义 = "回复定稿"：mount 时已定稿的新鲜消息（重连/补页场景）投一次 +
   // running → 非 running 转换瞬间投一次（流式完成）。
-  const receivedSeq = typeof data.finalNode?.seq === 'number' ? data.finalNode.seq : undefined
+  const receivedSeq = mySeq
   useEffect(() => {
-    if (sessionId === undefined || !isFreshMessage(data) || data.status === 'running') return
-    dispatchThEvent(sessionId, 'message_received', { nodeKey: node.key, seq: receivedSeq })
+    if (sessionId === undefined || !isFreshMessage(data) || streaming) return
+    dispatchThEvent(sessionId, 'message_received', { nodeKey: nodeKey, seq: receivedSeq })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const prevStreaming = useRef(streaming)
   useEffect(() => {
     if (prevStreaming.current && !streaming && sessionId !== undefined) {
-      dispatchThEvent(sessionId, 'message_received', { nodeKey: node.key, seq: receivedSeq })
+      dispatchThEvent(sessionId, 'message_received', { nodeKey: nodeKey, seq: receivedSeq })
     }
     prevStreaming.current = streaming
-  }, [streaming, sessionId, node.key, receivedSeq])
+  }, [streaming, sessionId, nodeKey, receivedSeq])
   const streamText = streaming
-    ? (data.blocks ?? []).filter(b => b.kind === 'text').map(b => String((b as { text?: unknown }).text ?? '')).join('')
+    ? blocks.filter(b => b.kind === 'text').map(b => String(b.text ?? '')).join('')
     : ''
   const lastStreamLen = useRef(0)
   useEffect(() => {
@@ -1187,50 +1300,44 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
   //（replace 是 model-only——compaction 语义），变体切换只改模型面。这里在
   // display 层把 append-origin 文本替换为组内 active 变体文本（§4.15 swipe
   // 的用户可见语义），不写任何事件、不污染 session log。----
-  const nodeCount = useSession === undefined ? 0 : useSession((snapshot) => (snapshot as { chat?: { order?: readonly string[] } }).chat?.order?.length ?? 0)
+  const nodeCount = useSession === undefined ? 0 : useSession((snapshot) => readSessionChat(snapshot).order.length)
   const groups = useVariantGroups(sessionId ?? '', nodeCount)
   // P0-3 depth 透传：消息深度 = 其后 assistant 消息数（0 = 最新），条目自身
   // minDepth/maxDepth 在 runDisplayScripts 中真实生效（此前写死 null 不过滤）
   const messageDepth = useSession === undefined ? null : useSession((snapshot) => {
-    const mySeq = data.finalNode?.seq
-    if (typeof mySeq !== 'number') return 0
-    const chat = (snapshot as {
-      chat?: { nodes?: { values: () => Iterable<LikeChatNode & { data?: { finalNode?: { seq?: number } } }> } }
-    }).chat
+    if (mySeq === undefined) return 0
+    // 【W4】原实现写 `(snapshot as {chat?: {nodes?: {values: ...}}}).chat` 双形态断言 +
+    // 裸 `.values()`；改走单源（readSessionChat 已含「nodes 必须有 values 函数」判定）。
     let newer = 0
-    for (const n of chat?.nodes?.values() ?? []) {
-      if (n.kind !== 'assistant-step') continue
-      const s = n.data?.finalNode?.seq
-      if (typeof s === 'number' && s > mySeq) newer += 1
-    }
+    forEachChatNode(readSessionChat(snapshot), (n) => {
+      if (readNodeKind(n) !== 'assistant-step') return
+      const s = readFinalSeq(readNodeData(n))
+      if (s !== undefined && s > mySeq) newer += 1
+    })
     return newer
   })
   const variantOverride = useMemo(() => {
-    const seq = data.finalNode?.seq
+    const seq = mySeq
     if (seq === undefined || streaming || groups.length === 0) return undefined
     const g = groupOf(groups, seq)
     if (g === undefined || g.members.length < 2) return undefined
     const active = g.members.find(m => m.seq === g.activeSeq)
     if (active === undefined || active.seq === seq) return undefined
     return active.text
-  }, [data.finalNode?.seq, groups, streaming])
+  }, [mySeq, groups, streaming])
   // 思考折叠行耗时（2026-09-04）：本 step 耗时 + 本轮总耗时（任务结束后显示）
-  const hideAfter = useRollbackMask(sessionId)
-  const stepDurationMs = useSession === undefined ? undefined : useSession((snapshot) => floorIndexOf(snapshot, hideAfter).stepMs.get(node.key))
-  const turnTotalMs = useSession === undefined ? undefined : useSession((snapshot) => floorIndexOf(snapshot, hideAfter).turnMs.get(node.key))
-  // C3 depth_ignore_hidden：深度计算剔除被回退掩码隐藏的更新楼层（seq > hideAfter）
+  const mask = useRollbackMaskState(sessionId)
+  const stepDurationMs = useSession === undefined ? undefined : useSession((snapshot) => floorIndexOf(snapshot, mask).stepMs.get(nodeKey))
+  const turnTotalMs = useSession === undefined ? undefined : useSession((snapshot) => floorIndexOf(snapshot, mask).turnMs.get(nodeKey))
+  // C3 depth_ignore_hidden：深度计算剔除被回退掩码隐藏的更新楼层（集合语义：逐条精确判定）
   const hiddenNewerCount = useSession === undefined ? 0 : useSession((snapshot) => {
-    const mySeq = data.finalNode?.seq
-    if (typeof mySeq !== 'number' || hideAfter <= 0) return 0
-    const chat = (snapshot as {
-      chat?: { nodes?: { values: () => Iterable<LikeChatNode & { data?: { finalNode?: { seq?: number } } }> } }
-    }).chat
+    if (mySeq === undefined) return 0
     let hidden = 0
-    for (const n of chat?.nodes?.values() ?? []) {
-      if (n.kind !== 'assistant-step') continue
-      const s = n.data?.finalNode?.seq
-      if (typeof s === 'number' && s > mySeq && s > hideAfter) hidden += 1
-    }
+    forEachChatNode(readSessionChat(snapshot), (n) => {
+      if (readNodeKind(n) !== 'assistant-step') return
+      const s = readFinalSeq(readNodeData(n))
+      if (s !== undefined && s > mySeq && isSeqHidden(mask, s)) hidden += 1
+    })
     return hidden
   })
 
@@ -1269,22 +1376,39 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
     // 全楼层渲染的，TH 的 render.depth 只该管它自己的强化面。旧实现把三段编译整个
     // 挂在 depth 门下（TH 设置默认 depth=0 仅最新楼层）→ 用户翻历史楼层时 HTML/代码
     // 全部裸露（真机截图实证）。深度门只保留在 <pre> 增强（enhancePreBlocks）。
-    // allow_streaming：关 = 流式期间不出 iframe 段（定稿后一次性渲染，TH 同语义）
-    const streamingRenderOk = !streaming || (pipeline.th?.allowStreaming === true)
-    const enhanced = thRenderOn && streamingRenderOk
+    //
+    // 【2026-09-14 P1 修复】原 `streamingRenderOk` 把**整段**退纯文本（enhanced=false
+    // → 走 MarkdownText 裸渲 HTML 源码），这是用户实测的「流式期间 HTML 裸露」根因
+    // （真机截图：生成过程中卡片/悬浮球的 HTML 源码满屏）。
+    // 现拆成两个门，流式期间**照常走三段编译**：
+    //   · thRenderOn      —— 渲染总开关（关 = 全退纯文本，用户显式选择）
+    //   · frameRenderOn   —— 仅管**完整 HTML 文档段**是否落 iframe。
+    //     流式中该门关时，改把文档段渲染成 ```html 围栏代码块（MarkdownText 出代码块，
+    //     **不裸露源码**），定稿后自动换成 iframe。
+    //     为什么不干脆流式期间就建 iframe：内容每增长一次 frameKey 就变一次
+    //     （见 RpMessageFrame 的帧停车场），会疯狂驱逐/重执行卡脚本 —— TH 默认
+    //     allowStreaming=false 正是规避这个；用户显式打开则照建。
+    //   · markdown / inline-html 两段在流式期间**始终渲染**（这正是原先裸露的部分）。
+    // 【L5 2026-09-14】决策下沉为纯函数 `shouldRenderFrame`（`display-compiler.ts`）：
+    // 这条判断是上述修复的核心，内联在组件里无法单测。现调用点只剩一行，判据单源可测。
+    const frameRenderOn = shouldRenderFrame(thRenderOn, streaming, pipeline.th?.allowStreaming)
     // ---- B8 素材：展开前后全文对比（确有变化才写回）----
     const rawTexts: string[] = []
     const expandedTexts: string[] = []
     let pureTextMessage = true // 含 reasoning/tool 等块的楼层不写回（replace 会丢思考历史）
-    for (const block of data.blocks) {
-      if (block.kind === 'reasoning') {
-        const parsed = parseReasoningDuration(block.text ?? '')
+    // 【W4】原为 `for (const block of data.blocks)` —— **渲染热路径裸迭代**：
+    // 官方一旦把 `blocks` 改成缺失/null/非数组即抛，异常被 SlotErrorBoundary 吞掉
+    // ⇒ 整片楼层消失且零报错。`blocks` 已在组件顶部经 `readBlocks` 取（缺失 ⇒ 空数组）。
+    for (const block of blocks) {
+      const kind = typeof block.kind === 'string' ? block.kind : ''
+      if (kind === 'reasoning') {
+        const parsed = parseReasoningDuration(typeof block.text === 'string' ? block.text : '')
         units.push({ kind: 'reasoning', text: parsed.text, ...(parsed.durationMs !== undefined ? { durationMs: parsed.durationMs } : {}) })
         pureTextMessage = false
-      } else if (block.kind === 'image') {
+      } else if (kind === 'image') {
         units.push({ kind: 'image', images: [block.attachment] })
         pureTextMessage = false
-      } else if (block.kind === 'text' && typeof block.text === 'string') {
+      } else if (kind === 'text' && typeof block.text === 'string') {
         // 变体覆盖：整条变体文本替换 append-origin 文本（swipe 是整条回复的替代）
         let source = variantOverride !== undefined ? variantOverride : block.text
         if (proto === null) {
@@ -1306,8 +1430,8 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
             if (seg.kind === 'text') {
               for (const part of splitStatusbarBlocks(seg.content)) {
                 if (part.type === 'text' && part.content.trim()) {
-                  // C3：渲染关 / 深度超限 / 流式禁渲染 → 退纯文本（不切三段，整段 MarkdownText）
-                  if (!enhanced) {
+                  // C3：渲染总开关关 → 退纯文本（不切三段，整段 MarkdownText）
+                  if (!thRenderOn) {
                     units.push({ kind: 'text', text: part.content })
                     continue
                   }
@@ -1315,15 +1439,21 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
                   // 完整 HTML 文档 → iframe（悬浮球 position:fixed 部件在 iframe 舞台运行）；
                   // 行首平衡 HTML 块 → sanitize 内联（sanitize 失败整块转 iframe，
                   // 替代旧的「sanitize 失败就纯文本」兜底）；其余 prose → MarkdownText。
+                  // 【2026-09-14 P1】流式期间同样走本编译；仅「完整文档段」的落点由
+                  // frameRenderOn 决定（iframe vs 代码块），见上方 frameRenderOn 注释。
                   for (const dseg of compileDisplaySegments(part.content)) {
                     if (dseg.kind === 'markdown') {
                       if (dseg.text.trim()) units.push({ kind: 'text', text: dseg.text })
                     } else if (dseg.kind === 'html') {
-                      units.push({ kind: 'frame', html: dseg.source })
+                      units.push(frameRenderOn
+                        ? { kind: 'frame', html: dseg.source }
+                        : { kind: 'text', text: frameFallbackText(dseg.source) })
                     } else {
                       const clean = sanitizeDisplayHtml(dseg.source)
                       if (clean !== null) units.push({ kind: 'html', html: clean })
-                      else units.push({ kind: 'frame', html: dseg.source })
+                      else units.push(frameRenderOn
+                        ? { kind: 'frame', html: dseg.source }
+                        : { kind: 'text', text: frameFallbackText(dseg.source) })
                     }
                   }
                 } else if (part.type === 'statusbar' && part.content.trim()) {
@@ -1360,15 +1490,16 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
     // 素材是变体文本，写回会把原楼层正文替换成另一 variant（数据损坏），必须跳过。
     const rawJoined = rawTexts.join('\n\n')
     const expandedJoined = expandedTexts.join('\n\n')
-    const mySeq = data.finalNode?.seq
+    // 【W4】原为 `const mySeq = data.finalNode?.seq` 后判 `typeof mySeq === 'number'`，
+    // 现直接用顶部经 readFinalSeq 取到的值（类型已是 number | undefined）。
     const permanent = proto !== null && !streaming && pureTextMessage && sessionId !== undefined
       && variantOverride === undefined
       && pipeline.ejs !== null && pipeline.ejs.enabled && pipeline.ejs.permanentEvaluation
-      && pipeline.ctx !== null && typeof mySeq === 'number' && expandedJoined !== rawJoined
+      && pipeline.ctx !== null && mySeq !== undefined && expandedJoined !== rawJoined
       ? { sessionId, seq: mySeq, text: expandedJoined }
       : undefined
     return { actions, units, permanent }
-  }, [data.blocks, proto, streaming, variantOverride, displayScripts, messageDepth, hiddenNewerCount, pipeline])
+  }, [blocks, proto, streaming, variantOverride, displayScripts, messageDepth, hiddenNewerCount, pipeline, mySeq, sessionId])
 
   // ---- B8 永久写回（渲染成功 = processed 无异常落地；reportPermanentRender 幂等去重）----
   useEffect(() => {
@@ -1430,10 +1561,10 @@ export const RpAssistantNodeView = memo(function RpAssistantNodeView({
     inputActions?.submit()
   }, [inputActions])
 
-  const hasVisible = streaming || interrupted === true || processed.units.length > 0 || data.blocks.some(b => b.kind !== 'tool-call')
+  // 【W4】原为 `data.blocks.some(...)` —— 同一个裸读的第二处（见顶部 readBlocks 注释）。
+  const hasVisible = streaming || interrupted || processed.units.length > 0 || blocks.some(b => b.kind !== 'tool-call')
   // 逻辑回退掩码：本 step 的定稿消息 seq 已被回退/编辑/重新生成移出上下文 → 不渲染
-  const mySeq = typeof data.finalNode?.seq === 'number' ? data.finalNode.seq : undefined
-  const hiddenByRollback = hideAfter > 0 && mySeq !== undefined && mySeq > hideAfter
+  const hiddenByRollback = isSeqHidden(mask, mySeq)
   if (!hasVisible || hiddenByRollback) return null
   // MarkdownText 的真实契约（host bundle ic 组件）：labels={{code:{copyLabel,copiedLabel}, footnotes}}
   // ——旧 codeLabels prop 宿主根本不读，labels=undefined 遇代码块必崩（slot entry crashed）
@@ -1576,19 +1707,22 @@ const EMPTY_GROUPS: VariantGroupInfo[] = []
 // ---------------------------------------------------------------------------
 
 /** Chat 快照里 assistant 节点的轻量投影：messageId → seq（入参 = useChat 的 Chat 本体快照） */
-function seqOfMessage(chat: { nodes?: { values: () => Iterable<{ data?: { finalNode?: { messageId?: string; seq?: number } } }> } } | undefined, messageId: string): number | undefined {
-  if (!chat?.nodes) return undefined
-  for (const n of chat.nodes.values()) {
-    const f = n.data?.finalNode
-    if (f?.messageId === messageId && typeof f.seq === 'number') return f.seq
-  }
-  return undefined
+function seqOfMessage(chatSnapshot: unknown, messageId: string): number | undefined {
+  // 【W4】原签名把 chat 形状写成 `{ nodes?: { values: ... } }` 并在调用点 `as` 断言；
+  // 现收口到 forEachChatNode（`nodes` 缺 `values` 函数即当缺失，不抛不空转）。
+  let found: number | undefined
+  forEachChatNode(chatSnapshot, (n) => {
+    if (found !== undefined) return
+    const d = readNodeData(n)
+    if (readFinalMessageId(d) === messageId) found = readFinalSeq(d)
+  })
+  return found
 }
 
 /** 变体条 ‹ n/m ›（渲染进原生 IconActions 行，位于 copy 与 branch 之间） */
 export function RpVariantActions({ messageId, useChat, sessionId }: VariantActionProps): JSX.Element | null {
-  const seq = useChat((snapshot) => seqOfMessage(snapshot as { nodes?: { values: () => Iterable<{ data?: { finalNode?: { messageId?: string; seq?: number } } }> } }, messageId))
-  const nodeCount = useChat((snapshot) => (snapshot as { order?: readonly string[] }).order?.length ?? 0)
+  const seq = useChat((snapshot) => seqOfMessage(snapshot, messageId))
+  const nodeCount = useChat((snapshot) => readChat(snapshot).order.length)
   const groups = useVariantGroups(sessionId, nodeCount)
   const [switching, setSwitching] = useState(false)
 
@@ -1636,8 +1770,10 @@ const dispatchThEvent = (sessionId: string, eventType: string, opts: { nodeKey?:
 
 /** 新鲜度门（15s）：开聊重放的历史楼层不投递 message_sent/received（ST 同语义） */
 const isFreshMessage = (data: unknown): boolean => {
-  const t = (data as { time?: unknown })?.time
-  return typeof t !== 'number' || Date.now() - t < 15000
+  // 【W4】原为 `(data as { time?: unknown })?.time` 断言裸读。缺失 time ⇒ 视为新鲜
+  // （旧口径：`typeof t !== 'number'` 即通过）——语义随之显式化。
+  const t = readNodeTime(data)
+  return t === undefined || Date.now() - t < 15000
 }
 
 // ---------------------------------------------------------------------------
@@ -1697,19 +1833,18 @@ export const RpRegenerateAction = memo(function RpRegenerateAction({
   // 仅最后一条 assistant 消息显示（重新生成语义 = 只重来最后一轮）
   // useChat：本席位 useSession 快照不带 chat 投影（实机实证），Chat 本体快照 nodes/order 顶层
   const isLastAssistant = useChat((snapshot) => {
-    const chat = snapshot as {
-      nodes?: { values: () => Iterable<LikeChatNode & { data?: { finalNode?: { messageId?: string; seq?: number } } }> }
-    }
+    // 【W4】原实现把 chat 形状写成 interface 再 `as` 断言 + 裸 `.values()`；改走单源。
     let lastSeq = -1
     let lastId: string | undefined
-    for (const n of chat?.nodes?.values() ?? []) {
-      if (n.kind !== 'assistant-step') continue
-      const f = n.data?.finalNode
-      if (typeof f?.seq === 'number' && f.seq > lastSeq) { lastSeq = f.seq; lastId = f.messageId }
-    }
+    forEachChatNode(snapshot, (n) => {
+      if (readNodeKind(n) !== 'assistant-step') return
+      const d = readNodeData(n)
+      const s = readFinalSeq(d)
+      if (s !== undefined && s > lastSeq) { lastSeq = s; lastId = readFinalMessageId(d) }
+    })
     return lastId !== undefined && lastId === messageId
   })
-  const running = useSession((snapshot) => (snapshot as { running?: boolean }).running === true)
+  const running = useSession((snapshot) => readSessionRunning(snapshot))
 
   const onClick = useCallback(async () => {
     if (busy || regenerate === undefined) return
@@ -1744,14 +1879,11 @@ export const RpRegenerateAction = memo(function RpRegenerateAction({
 // 官方 UserMessageNodeView。非 RP 会话退化为等价的最小纯文本气泡。
 // ---------------------------------------------------------------------------
 
-interface LikeUserChatData {
-  /** 消息事件的 seq（回退锚点：keepThroughSeq） */
-  seq?: number
-  content?: readonly unknown[]
-}
-
+/** conversation.chat.node 席位（user 变体）收到的 props —— `node.data` 同 RpAssistant 侧
+ *  声明为 `unknown`（理由见 LikeChatNode 注释；官方 user 数据的 `seq`/`content` 都是
+ *  beta 期字段，不得在类型层当作必然存在）。 */
 interface UserNodeViewProps {
-  node: { data: LikeUserChatData } & LikeChatNode
+  node: LikeChatNode
   cwd?: string | undefined
   renderMessageImages: (owner: { images: ReadonlyArray<{ attachment: unknown }>; align: 'start' | 'end' }) => ReactNode
   sessionId?: string | undefined
@@ -1772,35 +1904,43 @@ interface UserNodeViewProps {
 export const RpUserNodeView = memo(function RpUserNodeView({
   node, cwd, renderMessageImages, inputActions, sessionId, useSession, useChat,
 }: UserNodeViewProps) {
-  const data = node.data
+  // 【E2/P-1 W4 收口】本组件同 RpAssistantNodeView：官方投影读取全部走单源。
+  const data = readNodeData(node)
+  const nodeKey = readNodeKey(node)
   const [busy, setBusy] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
-  const seq = typeof data.seq === 'number' ? data.seq : undefined
+  const seq = readNodeSeq(data)
+  // 块列表（user 节点的官方字段名是 `content`；readBlocks 已兼容两名字）。
+  const blocks = readBlocks(data)
   // 【2026-09-08 鲁棒性】running 守卫（重新生成按钮同款）：turn 运行中回退/编辑会与
   // 生成期 append 互踩（live replace 的 claim/mark 窗口被生成 append 插入——数据面已把
   // undo 回放挪出该窗口，这里再禁掉入口），按钮置灰防误触。
-  const running = useSession === undefined ? false : useSession((snapshot) => (snapshot as { running?: boolean }).running === true)
+  const running = useSession === undefined ? false : useSession((snapshot) => readSessionRunning(snapshot))
+  // 【2026-09-14 F2】掩码状态（集合语义）——本气泡是否已被回退/编辑移出上下文
+  const mask = useRollbackMaskState(sessionId)
   // 【hook 移植 L1a】TH 事件桥：message_sent（mount 新鲜度门——开聊重放历史不投递）
   useEffect(() => {
     if (sessionId === undefined || sessionId === null || !isFreshMessage(data)) return
-    dispatchThEvent(sessionId, 'message_sent', { nodeKey: node.key, seq: typeof data.seq === 'number' ? data.seq : undefined })
+    dispatchThEvent(sessionId, 'message_sent', { nodeKey: nodeKey, seq: seq })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   // T1.14 窗口化：user 消息外壳同样自注册（静态内容，无 forced 场景）
   const sessionKey = sessionId ?? cwd ?? 'rp-chat'
-  const { shellRef, windowed, placeholderHeight } = useMessageWindowing(sessionKey, node.key, false)
+  const { shellRef, windowed, placeholderHeight } = useMessageWindowing(sessionKey, nodeKey, false)
 
   const parts = useMemo(() => {
     const texts: string[] = []
     const images: Array<{ attachment: unknown }> = []
-    for (const b of data.content ?? []) {
-      const block = b as { type?: string; text?: string; attachment?: unknown }
-      if (block.type === 'text' && typeof block.text === 'string') texts.push(block.text)
-      else if (block.type === 'image' && block.attachment !== undefined) images.push({ attachment: block.attachment })
+    // 【W4】原为 `for (const b of data.content ?? [])` + `b as {...}` 逐块断言；
+    // 改走 readBlocks（已保证元素是对象）后按字段类型判定，不再需要断言。
+    for (const b of blocks) {
+      const type = typeof b.type === 'string' ? b.type : ''
+      if (type === 'text' && typeof b.text === 'string') texts.push(b.text)
+      else if (type === 'image' && b.attachment !== undefined) images.push({ attachment: b.attachment })
     }
     return { text: texts.join(''), images }
-  }, [data.content])
+  }, [blocks])
 
   const rollback = useCallback(async () => {
     if (busy || running || seq === undefined || !sessionId) return
@@ -1816,19 +1956,23 @@ export const RpUserNodeView = memo(function RpUserNodeView({
       // 【2026-09-08 用户语义】原文放回 composer 输入框（ST 回退同款；inputActions 缺席
       // 的挂载形态静默跳过——回退本身已完成）
       inputActions?.setDraft(parts.text)
-      if (r.logical === true) {
-        // 【⑨修复 2026-09-05】live 回退后不整页重载——原生 composer 草稿不持久化，
-        // reload 即清空。改为 live 同款逻辑回退（掩码更新 + 会话重开）
-        void refreshRollbackMask(sessionId) // 掩码更新 → 隐藏被回退消息 + 楼层号重排
-        setBusy(false)
-      } else {
-        // 非 live：文件截断 + .bak。【①轮核查 2026-09-06】此分支在聊天视图里实际不可达
-        // （会话正被查看 = 在宿主 sessions 登记表里 = 必走 live 逻辑回退）；仅防御脚本化
-        // API 调用场景。rc.7 web wire 无 session.close/open 方法（只有 ACP 有）——
-        // 之前这里的 close/open 调用是被 catch 吞掉的恒失败 no-op，移除，避免误读。
-        void refreshRollbackMask(sessionId)
-        setBusy(false)
+      // 【2026-09-14 F2-B3】刷新动作与 regenerate 分支对齐。原实现只刷新掩码，
+      // 不刷会话快照/显示面缓存——live 回退后 composer 里再发消息时，
+      // sessions 侧的 summaries 与显示面缓存仍可能是旧代，配合后端掩码归零
+      // 造成「旧楼层复活」。三条一起做才算完整：
+      //   ① 掩码（隐藏集合）
+      //   ② sessions.refresh（让后续 prompt 基于最新会话基线）
+      //   ③ 显示面缓存失效（display 正则三源 / 预设 prompt_order 直接影响楼层 display）
+      await refreshRollbackMask(sessionId)
+      try {
+        await (globalThis as {
+          __dshtRpSessionsRefresh?: () => Promise<void>
+        }).__dshtRpSessionsRefresh?.()
+      } catch (e) {
+        console.warn('[dsht-rp-ui] 回退后会话刷新失败（继续）:', (e as Error)?.message)
       }
+      notifyDisplayMutation()
+      setBusy(false)
     } catch (e) {
       // 【D5 2026-09-13】window.alert → 非阻塞 toast + 人话翻译
       showDomToast('error', `回退失败：${humanizeError(e)}`)
@@ -1849,7 +1993,7 @@ export const RpUserNodeView = memo(function RpUserNodeView({
         // 【实机审计修复 2026-09-05】message_edited：会话编辑成功（live replace 生效）→ TH
         // 事件桥（RpScriptHost 按 nodeKey 解析楼层投递；非 live 分支整页重载后无需投递）
         window.dispatchEvent(new CustomEvent('dsht-rp-ui:th-host-event', {
-          detail: { sessionId, eventType: 'message_edited', nodeKey: node.key },
+          detail: { sessionId, eventType: 'message_edited', nodeKey: nodeKey },
         }))
         await dshRpc('session.prompt', {
           request: {
@@ -1883,19 +2027,29 @@ export const RpUserNodeView = memo(function RpUserNodeView({
         setBusy(false)
         setEditing(false)
       }
+      // 【2026-09-14 B3 三路径对齐】edit 的**两分支共用**收尾：会话快照刷新 + 显示面缓存失效。
+      // 判据（goal B3）：rollback / regenerate / edit 的刷新动作必须一致。
+      // 此前 edit 只刷新掩码 ⇒ 「编辑后再回退」时 sessions 基线仍是旧代、
+      // 显示面缓存仍用旧上下文（实机表现为「编辑后楼层显示不更新，再回退更乱」）。
+      // 抽到分支外=一次写、两分支都覆盖（避免「补一个漏一个」——本项目反复出现的形态）。
+      try {
+        await (globalThis as { __dshtRpSessionsRefresh?: () => Promise<void> }).__dshtRpSessionsRefresh?.()
+      } catch (e) {
+        console.warn('[dsht-rp-ui] 编辑后会话刷新失败（继续）:', (e as Error)?.message)
+      }
+      ;(globalThis as { __dshtRpNotifyDisplayMutation?: () => void }).__dshtRpNotifyDisplayMutation?.()
     } catch (e) {
       // 【D5 2026-09-13】window.alert → 非阻塞 toast + 人话翻译
       showDomToast('error', `编辑失败：${humanizeError(e)}`)
       setBusy(false)
     }
-  }, [busy, running, draft, seq, sessionId, node.key])
+  }, [busy, running, draft, seq, sessionId, nodeKey])
 
   // 逻辑回退掩码：本消息 seq 已被编辑/回退移出上下文 → 不渲染（编辑重发的新消息
-  // seq 更大，正常显示）
-  const maskHide = useRollbackMask(sessionId)
-  const hiddenByRollback = maskHide > 0 && typeof data.seq === 'number' && data.seq > maskHide
+  // seq 更大且不在集合内，正常显示）
+  // 【W4】原写 `typeof data.seq === 'number' ? data.seq : undefined`，改用顶部 readNodeSeq 结果。
+  const hiddenByRollback = isSeqHidden(mask, seq)
   if (hiddenByRollback) return null
-
   return (
     <div
       ref={shellRef}

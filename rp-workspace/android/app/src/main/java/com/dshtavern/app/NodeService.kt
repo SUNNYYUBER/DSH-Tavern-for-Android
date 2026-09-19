@@ -36,7 +36,7 @@ class NodeService : Service() {
         private const val RUNTIME_DIR = "dsh-runtime"
         private const val RUNTIME_ZIP = "dsh-runtime.zip"
         /** 解压哨兵：§4.16.2 前端 dsht-rp-ui client 变更随 runtime.zip 重发布 → v97（覆盖安装强制重解压） */
-        private const val RUNTIME_SENTINEL = ".installed-v304"
+        private const val RUNTIME_SENTINEL = ".installed-v363"
         private const val DSH_PORT = 3080
         private const val OUTPUT_CAP = 200
         private const val PROOT_ROOTFS_DIR = "proot-rootfs"
@@ -68,6 +68,18 @@ class NodeService : Service() {
          * node 层自动重启已由 node-watchdog 线程承担，本标记只做事后归因可见性。
          */
         @Volatile var lastAbnormalExit: Boolean = false
+        /**
+         * 【L4 2026-09-14】沙箱降级原因（null = 未降级 / 未探测）。
+         *
+         * 为什么需要它：proot 不可用时 JS 层会降级为「不拒绝、无隔离执行（仅 fs 层做工作区
+         * 边界）」。这是**能力降级**，用户有权知道——此前只 `console.warn`（logcat 可见、
+         * UI 不可见），属「静默降级」的 UI 面缺口（P-3）。本字段把它带到等待屏。
+         *
+         * 取值（nil 语义用 null 表示）：
+         *   · `"proot-missing"`  —— nativeLibraryDir 里没有 libproot.so / libbusybox.so
+         *   · `"rootfs-failed"`  —— rootfs 搭建抛错（失败不致命，回落 fs 边界）
+         */
+        @Volatile var sandboxFallback: String? = null
         /**
          * web UI 认证令牌（0.1.2 新增 token 鉴权）：node stdout 打印
          * "dsh web: http://127.0.0.1:3080/?token=..."——首次 index 请求必须带
@@ -110,6 +122,14 @@ class NodeService : Service() {
             o.put("lastError", lastError ?: org.json.JSONObject.NULL)
             o.put("extractedFiles", extractedFiles)
             o.put("restartCount", restartCount)
+            // 【L4 2026-09-14 R8 出声】上次进程级被杀（LMK/ANR）的归因。
+            // 此前 `lastAbnormalExit` **只赋值、从不暴露**（`docs/B-DEVICE-VERIFY-CHECKLIST.md`
+            // 却声称等待屏已显示它 —— 文档与代码不一致，属 R7 违规）。现补上输出。
+            o.put("lastAbnormalExit", lastAbnormalExit)
+            // 【L4 2026-09-14 R8 出声】沙箱降级状态：proot/busybox 缺失或 rootfs 搭建失败时
+            // 降级为「无进程隔离，仅 fs 层工作区边界」。此前**只在 logcat 出声**，UI 不可见
+            // ⇒ 用户在「隔离已失效」的状态下使用而不自知（P-3 静默降级的 UI 面）。
+            o.put("sandboxFallback", sandboxFallback ?: org.json.JSONObject.NULL)
             val arr = org.json.JSONArray()
             synchronized(outputLines) {
                 outputLines.toList().takeLast(40).forEach { arr.put(it) }
@@ -497,6 +517,8 @@ class NodeService : Service() {
             val prootBin = File(nativeLib, "libproot.so")
             val busyboxBin = File(nativeLib, "libbusybox.so")
             if (!prootBin.exists() || !busyboxBin.exists()) {
+                // 【L4 2026-09-14】不只 logcat：把降级原因带到等待屏（见 sandboxFallback 注释）
+                sandboxFallback = "proot-missing"
                 recordLine("proot/busybox missing in ${nativeLib.path}; sandbox keeps fs-boundary fallback")
                 return
             }
@@ -527,6 +549,8 @@ class NodeService : Service() {
             }
         } catch (t: Throwable) {
             // 失败不致命：JS 层探测不到可用 proot 会自动回退 warn+fs 边界
+            // 【L4 2026-09-14】同样带到等待屏（见 sandboxFallback 注释）
+            sandboxFallback = "rootfs-failed"
             recordLine("proot rootfs setup failed: ${t.message} (fallback stays)")
         }
     }

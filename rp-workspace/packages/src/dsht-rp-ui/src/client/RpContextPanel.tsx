@@ -12,6 +12,7 @@
  */
 import { useCallback, useEffect, useState, type JSX } from 'react'
 import { memApi, memGet } from './rpc.ts'
+import { useEscapeClose } from './a11y-props.ts'
 
 /** GET /dsht-memory/status 返回（dsht-plugin-memory 状态面） */
 interface MemStatus {
@@ -57,13 +58,10 @@ export function RpContextPanel({ sessionId, onClose }: { sessionId: string; onCl
 
   useEffect(() => { void load() }, [load])
 
-  // 【2026-09-13 修复·键盘不可达（F-2）】补 Esc 关闭（与 RpSearchPanel 同款）——
+  // 【2026-09-13 修复·键盘不可达（F-2）】补 Esc 关闭——
   // 面板只有 ✕ / 点背景两种关法，键盘用户无法退出。
-  useEffect(() => {
-    const onKey = (ev: globalThis.KeyboardEvent): void => { if (ev.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => { window.removeEventListener('keydown', onKey) }
-  }, [onClose])
+  // 【W8 2026-09-15】原为就地实现（4 个面板各一份逐字相同）；现收口到单源 hook。
+  useEscapeClose(onClose)
 
   /** 设置写入（部分 patch；中文键与设置界面 Schema 一致） */
   const commit = useCallback(async (patch: Record<string, unknown>): Promise<void> => {

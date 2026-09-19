@@ -319,8 +319,11 @@ describe('门面：worldbook ST 形状往返', () => {
     // uid=99（越界）→ 新条目追加；disabled=true 反转换 enabled=false
     const r2 = await worldbookEntryPut(home, { name: '测试书', entry: { uid: 99, comment: '人物', content: '祥子', key: ['祥子'], disabled: true } })
     expect(r2.body).toMatchObject({ ok: true, uid: 1, count: 2 })
-    // 【2026-09-08 对齐】entry-put 走 250ms 写合并队列——等定时器 flush 后再断言落盘
-    await new Promise(resolve => setTimeout(resolve, 350))
+    // 【2026-09-08 对齐】entry-put 走 250ms 写合并队列——断言落盘前必须 flush。
+    // 【2026-09-14 护栏去抖动】原用 `setTimeout(resolve, 350)` 等定时器：全量并发下事件循环
+    // 被 collect/transform 挤占，350ms 墙钟不足以让 250ms 定时器回调跑完 → 单跑过、全量挂的
+    // flaky（本轮复现）。改为直接调导出的 `flushEntryPuts` 显式落盘——不依赖墙钟，确定性。
+    await flushEntryPuts(home, 'skills/wb-test/references/lore.json')
     const saved = (await readJson('skills/wb-test/references/lore.json')) as unknown as LoreBook
     expect(saved.entries).toHaveLength(2)
     expect(saved.entries[0]).toMatchObject({ comment: '地点', content: '深夜咖啡厅', insertionOrder: 200 })

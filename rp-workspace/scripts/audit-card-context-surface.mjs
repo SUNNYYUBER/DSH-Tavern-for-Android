@@ -22,15 +22,34 @@
  */
 import fs from 'node:fs'
 import process from 'node:process'
-import { pathToFileURL } from 'node:url'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const ST_REF = 'D:/SillyTavern-1.16.0/TauriTavern-Canary/SillyTavern-reference/public/scripts/st-context.js'
+const HERE = dirname(fileURLToPath(import.meta.url))
+
+/**
+ * 基准源码根目录（ST 参考副本所在），从环境变量取。
+ * 缺省值只给「相对本仓库」的占位，**不含任何开发者本机绝对路径**——
+ * 本机放置位置因人而异，硬编码路径既是隐私泄漏也是可移植性缺陷。
+ * 需要跑本工具时显式传入：
+ *   $env:ST_ROOT = 'D:\path\to\TauriTavern-Canary'
+ */
+const ST_ROOT = process.env.ST_ROOT ?? ''
+
+/** 基准的 vendored 原始副本（成员集合的唯一事实来源） */
+const ST_REF = ST_ROOT === ''
+  ? ''
+  : resolve(ST_ROOT, 'SillyTavern-reference/public/scripts/st-context.js')
+
 /**
  * 【心跳 63D】**基准真正在跑的那份**（TT 自己的源码）—— 语义取证以它为准（本项目第一取证源）。
  * 与 `ST_REF` 是两份不同的文件；成员集合实测等价，但值绑定有差异（见 `crossCheckStAuthority`）。
  */
-const ST_RUNNING = 'D:/SillyTavern-1.16.0/TauriTavern-Canary/src/scripts/st-context.js'
-const OUR_CTX = 'D:/DSH RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/host-vendor.ts'
+const ST_RUNNING = ST_ROOT === '' ? '' : resolve(ST_ROOT, 'src/scripts/st-context.js')
+
+/** 我方门面源码根（相对本脚本定位，天然可移植） */
+const OUR_SRC = resolve(HERE, '../packages/src/dsht-rp-ui/src/client')
+const OUR_CTX = resolve(OUR_SRC, 'host-vendor.ts')
 
 /**
  * 我方**全部** `getContext()` 门面（心跳 51 扩域）。
@@ -44,7 +63,7 @@ const OUR_CTX = 'D:/DSH RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client
 const OUR_SURFACES = [
   { file: OUR_CTX, marker: 'export function buildHostStContext', label: '宿主页门面 host-vendor.ts' },
   {
-    file: 'D:/DSH RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/th-shim.ts',
+    file: resolve(OUR_SRC, 'th-shim.ts'),
     marker: 'function buildStContextFacade',
     label: 'iframe 门面 th-shim.ts',
   },

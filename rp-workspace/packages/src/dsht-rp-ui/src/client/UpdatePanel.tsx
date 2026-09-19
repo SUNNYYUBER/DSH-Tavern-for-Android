@@ -17,6 +17,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { rpApi } from './rpc.ts'
+import { foldRowA11yProps } from './a11y-props.ts'
 
 interface BuildInfo {
   sentinel: string | null
@@ -122,10 +123,7 @@ export function UpdatePanel(): JSX.Element {
     <div className="dsht-rp-section dsht-rp-fold">
       <div
         className="dsht-rp-fold-summary-row"
-        role="button"
-        tabIndex={0}
-        onClick={() => { setExpanded(v => !v) }}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setExpanded(v => !v) }}
+        {...foldRowA11yProps(() => { setExpanded(v => !v) })}
       >
         <span className={'dsht-rp-fold-arrow' + (expanded ? ' open' : '')}>▸</span>
         <span className="dsht-rp-fold-title">版本与更新</span>

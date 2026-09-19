@@ -18,6 +18,8 @@
  * 来模拟前后台（不依赖真实浏览器行为）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 /** 最小 document 桩：只需 visibilityState + 事件派发 */
 function installFakeDocument(initial: 'visible' | 'hidden') {
@@ -139,5 +141,51 @@ describe('visibility.pollWhileVisible', () => {
     delete (globalThis as { document?: unknown }).document
     const { isPageVisible } = await load()
     expect(isPageVisible()).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 【L3 2026-09-14】静态护栏：前端不得有裸 setInterval 轮询（必须走门控）
+// ---------------------------------------------------------------------------
+
+/**
+ * 判据来源：goal 轨道 A / A3「切后台/回前台」—— `visibility.ts` 的存在意义就是
+ * 「不可见时停表」，但**漏用等于没做**。本轮穷举实测发现两处漏用
+ * （RpTokenMeter 的 token 轮询、RpStateFloat 的 4s 状态轮询）⇒ 切后台仍持续
+ * 每秒级唤醒（实测 13.10 次/秒，与前台同量级）。
+ *
+ * 判据：**客户端 bundle 源码里不得出现裸 `setInterval(`**（定时器一律走
+ * `pollWhileVisible` 或其它受可见性控制的路径）。node 侧服务端 / iframe 注入脚本
+ * 不受页面可见性影响，不在本判据范围（见下方白名单与说明）。
+ */
+describe('L3 静态护栏：客户端轮询必须走可见性门控', () => {
+  it('front-end（dsht-rp-ui/src/client）零裸 setInterval', () => {
+    const dir = join(import.meta.dirname, '..', 'src', 'dsht-rp-ui', 'src', 'client')
+    const files = readdirSync(dir).filter(f => f.endsWith('.ts') || f.endsWith('.tsx'))
+    const offenders: string[] = []
+    for (const f of files) {
+      const s = readFileSync(join(dir, f), 'utf8')
+      // visibility.ts 自身是门控实现（内部当然要用 setInterval）——排除
+      if (f === 'visibility.ts') continue
+      // 逐行找裸调用；注释行（含 // 或 * 前缀）不算
+      const lines = s.split('\n')
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? ''
+        if (!line.includes('setInterval(')) continue
+        const trimmed = line.trim()
+        if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue
+        offenders.push(`${f}:${i + 1}`)
+      }
+    }
+    expect(offenders, `以下位置用了裸 setInterval（切后台不停表，耗电）——应改用 pollWhileVisible：\n${offenders.join('\n')}`).toEqual([])
+  })
+
+  it('两个曾经的漏用点确实已改走门控（回归锁）', () => {
+    const dir = join(import.meta.dirname, '..', 'src', 'dsht-rp-ui', 'src', 'client')
+    for (const f of ['RpTokenMeter.tsx', 'RpStateFloat.tsx']) {
+      const s = readFileSync(join(dir, f), 'utf8')
+      expect(s, `${f} 应 import pollWhileVisible`).toContain("from './visibility.ts'")
+      expect(s, `${f} 应调用 pollWhileVisible`).toContain('pollWhileVisible(')
+    }
   })
 })

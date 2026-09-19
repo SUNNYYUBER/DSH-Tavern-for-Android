@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isEjsProcessed, parseExpr, evalExpr, renderEjsSubset, renderMessages,
+  protectPreBlocks, restorePreBlocks,
 } from '../src/dsht-plugin-prompt-template/ejs.ts'
 
 describe('EJS 子集：插值', () => {
@@ -124,5 +125,34 @@ describe('is_ejs_processed 标记', () => {
     expect(r.messages[0].mes).toBe('旧消息')
     expect(r.messages[1].mes).toBe('新消息!')
     expect(r.messages[1].is_ejs_processed).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 【第二十三轮 W6 续 · P-34】<pre> 保护占位哨兵不得被正文撞车
+// ---------------------------------------------------------------------------
+describe('B7 <pre> 代码块保护：占位哨兵形态（P-34）', () => {
+  it('✅ 正文里的旧 NUL 形态字面量必须原样保留（不得被消费）', () => {
+    // 正控：模板里确有 <pre>（blocks 非空，越界分支可达）+ 正文含旧哨兵形态字面量
+    const text = '<pre>AAA</pre>用户写的：\u0000EJS_PRE_0\u0000结束'
+    const p = protectPreBlocks(text)
+    const out = restorePreBlocks(p.text, p.blocks)
+    expect(out, '旧 NUL 形态哨兵被当占位符消费 ⇒ 用户内容被替换成别的 <pre> 内容（篡改）').toBe(text)
+  })
+
+  it('✅ 越界下标必须原样保留（不得静默删内容）', () => {
+    // 负控：blocks 非空（不走短路），下标越界 ⇒ 首版 `?? ''` 会把这段删掉
+    const text = '<pre>BBB</pre>前\u0000EJS_PRE_99\u0000后'
+    const p = protectPreBlocks(text)
+    const out = restorePreBlocks(p.text, p.blocks)
+    expect(out, '越界下标被替换成空串 ⇒ 用户内容静默消失').toContain('\u0000EJS_PRE_99\u0000')
+    expect(out).toContain('前')
+    expect(out).toContain('后')
+  })
+
+  it('✅ 负控·真实形态仍工作：真占位符必须被还原为原 <pre> 内容', () => {
+    const text = '<pre>CCC</pre>中间<pre>DDD</pre>尾巴'
+    const p = protectPreBlocks(text)
+    expect(restorePreBlocks(p.text, p.blocks), '修法把功能改坏了（真占位符未还原）').toBe(text)
   })
 })

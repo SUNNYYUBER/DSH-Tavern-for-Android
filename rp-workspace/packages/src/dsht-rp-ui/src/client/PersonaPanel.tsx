@@ -143,7 +143,12 @@ export function PersonaPanel(): JSX.Element {
                 <span style={{ color: 'var(--dsw-alias-label-primary)', fontSize: 13 }}>{p.name || '（未命名）'}</span>
               </label>
               {file.active === p.name && <span className="rx-badge rx-timing">默认</span>}
-              <button type="button" className="dsht-rp-back" style={{ width: 28, height: 28, fontSize: 14 }}
+              {/* 【2026-09-14 L1 穷举修复】原用 `dsht-rp-back`（返回钮）类 + 内联 28×28。
+                  两个问题：① 语义误用——这不是返回钮；② 内联 width/height 会压制
+                  `@media (max-width:700px)` 里 `.dsht-rp-back { width:44px; height:44px }`
+                  （inline 优先于类选择器）⇒ 手机上仍是 28px，远低于 38 拇指下限（P1）。
+                  改用本组件自己的类（`pr-expand`）统一由 CSS 管尺寸，桌面 32 / 窄屏 44。 */}
+              <button type="button" className="pr-expand"
                 aria-label={expanded === i ? '收起' : '编辑'}
                 onClick={() => { setExpanded(expanded === i ? null : i) }}>{expanded === i ? '▴' : '✎'}</button>
             </div>

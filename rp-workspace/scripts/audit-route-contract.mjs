@@ -29,10 +29,15 @@
  *
  * 用法：node scripts/audit-route-contract.mjs      （退出码 0 = 无违约）
  *       node scripts/audit-route-contract.mjs -v   （同时列出全部已核对路由）
+ * 退出码：0 = 无违约；1 = 有违约（fail-closed）；2 = selftest 环境问题（样本目录缺失）
+ *   ★ W76 修：原只写「0 = 无违约」而实现是 `process.exit(1)`（违约）+ `process.exit(2)`（selftest
+ *     找不样本目录）⇒ 补齐 1/2（**P-75** 双向：实现的每个码都必须被声明）
  */
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// ★ W72：自证分数契约的**唯一产出点**（P-1；**不自己拼分数行**）
+import { reportSelftest } from './selftest-summary.mjs'
 
 // ---------------------------------------------------------------------------
 // 【心跳 63C】自检（L44：防线自身必须先过正控）
@@ -57,7 +62,11 @@ if (process.argv.includes('--selftest')) {
   ]
   for (const [name, ok] of cases) console.log(`[selftest] ${ok ? 'PASS' : 'FAIL'}  ${name}`)
   const allOk = cases.every(c => c[1])
-  console.log(`[selftest] ${allOk ? 'PASS' : 'FAIL'}`)
+  // ★★ **W72：接入单源自证分数契约**（**P-50**）——
+  //   此前收尾是自造行 `[selftest] PASS`（**根本不含分数**）⇒ **机器读不出分数**
+  //   ⇒ **§3.2/§六 B10 里关于它的任何分数声明无法被证伪**（**P-11 元级**）。
+  //   ⇒ 按 **P-1** 复用唯一产出点 `reportSelftest`。
+  reportSelftest('route-contract', cases.filter(c => c[1]).length, cases.length)
   if (!allOk) { console.log('--- 子进程输出 ---\n' + out) }
   process.exit(allOk ? 0 : 1)
 }
@@ -166,6 +175,13 @@ for (const { helper, server, label } of PAIRS) {
 // ---------------------------------------------------------------------------
 console.log('=== 前后端路由契约审计（客户端 POST × 服务端路由挂载区）===')
 console.log(`前端调用点：${clientCalls.size} 个唯一路由`)
+// ★ W57：契约**读数行**（可被文档/机器读出 —— 守 P-50 的单源输出契约）。
+//   为什么加它：`GOAL.md` §3.2 与 §六 B10 长期写死「路由 **67 条**」，而实测是 **68** ——
+//   该数**从未被任何机器核过**（构建期只报 `[gate] OK`、不打印条数），属 **P-27 过期声明**。
+//   按 **P-41**：结论要锚在「**决定结果的事实**」上 —— 对外契约真正的不变式是「**0 违约**」，
+//   条数只是**参考读数**（会随新增能力正常增长，不该写死成常量）。
+//   ⇒ 现在这一行让条数**每次构建都出现在日志里**，写死的数字一旦不符就会被看见（P-27 的机器化）。
+console.log(`[契约读数] routes=${clientCalls.size} violations=${violations.length}`)
 if (VERBOSE) {
   for (const c of checked) console.log(`  · ${c.helper} ${c.path}  [${c.label}]  ${c.verdict}`)
 }

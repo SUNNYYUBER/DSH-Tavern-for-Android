@@ -1,16 +1,15 @@
 /**
  * dsht-plugin-mobile 浏览器侧入口：宿主无关的移动端竖屏适配。
  *
- * 参考 dsh-tavern android/dsh-client-ui-mobile-adapt/client.js（MIT）：
  * 独立客户端插件，只做两件事——注入 CSS 五件套 + shell.overlay 席位注册
  * 汉堡按钮/遮罩（点击走宿主 layout 服务 toggleSidebar）。
  *
- * 与参考实现的差异（我方 anchor 约定）：
+ * 我方 anchor 约定（与直接硬编码哈希类名的做法相反）：
  * - CSS 不硬编码宿主编译后的哈希类名——anchors.ts 运行时把宿主元素打成
  *   [data-dsht-mobile="<anchor>"]，样式只消费锚点与宿主自带状态钩子
  *   （[data-sidebar-collapsed]/[data-shell-overlay]）。
- * - CSS 注入与锚点安装在模块顶层即执行（对照参考实现的同款形态）：即便宿主
- *   缺 layout/slots 服务导致 apply 不激活，五件套样式仍然生效——宿主无关底线。
+ * - CSS 注入与锚点安装在模块顶层即执行：即便宿主缺 layout/slots 服务导致 apply
+ *   不激活，五件套样式仍然生效——宿主无关底线。
  *
  * 不依赖 dsht-rp：RP 组件竖屏规则用组件自有稳定类名（.dsht-rp-*），
  * 无匹配元素即空转；RP UI 桌面样式仍由 dsht-rp-ui/style.ts 自带。
@@ -23,6 +22,7 @@ import type { JSX } from 'react'
 import { installAnchors } from './anchors.ts'
 import { ensureMobileStyle } from './style.ts'
 import { installFilePreview } from './file-preview.ts'
+import { ensureWebviewApiGuard } from '../../dsht-plugin-shared/webview-api-guard.ts'
 
 /** 模块顶层引导：CSS + 锚点 + details 点击代理 + 文件引用预览（幂等；无 document 环境直接跳过） */
 let booted = false
@@ -122,6 +122,18 @@ export function apply(ctx: {
   slots: { register: (options: Record<string, unknown>, component: unknown) => () => void; inject: (key: string, factory: () => () => void) => () => void }
   layout?: { toggleSidebar?: () => void } | undefined
 }): void {
+  // 【2026-09-14 轨道 A / L4】旧 WebView 能力补齐。
+  // 为什么这里也要装：本插件是**独立的 client bundle**（dsht-plugin-mobile/lib/client.js），
+  // 与 dsht-rp-ui 各自加载、加载顺序不定 ⇒ 不能假设对方先跑过。同名函数**幂等**
+  // （已存在的能力不动），两处都装不会重复包装。
+  // 注意：本插件的 client bundle 目前未使用那些新 API，但**宿主/其它插件**可能在
+  // 同一 window 上跑（同一页面共享 globalThis）——在最早入口补一次是全局收益。
+  {
+    const report = ensureWebviewApiGuard()
+    if (report.polyfilled.length > 0) {
+      console.warn(`[dsht-plugin-mobile] 旧 WebView 能力补齐：${report.polyfilled.join(', ')}`)
+    }
+  }
   boot()
   // 📎 上传按钮（conversation.input.left 席位——原生加号旁；不依赖 layout 服务，
   // 宿主有 slots 即可装。非会话视图不渲染该槽 → 无副作用）

@@ -11,6 +11,7 @@
  */
 import { useCallback, useEffect, useState, type JSX } from 'react'
 import { rpApi } from './rpc.ts'
+import { useEscapeClose } from './a11y-props.ts'
 import { flattenStateTree, formatStateJson, toggleCollapsed, type StateRow } from './state-view.ts'
 
 export function RpStateView(props: { sessionId: string; onClose: () => void }): JSX.Element {
@@ -33,13 +34,10 @@ export function RpStateView(props: { sessionId: string; onClose: () => void }): 
   }, [sessionId])
   useEffect(() => { void fetchState() }, [fetchState])
 
-  // 【2026-09-13 修复·键盘不可达（F-2）】补 Esc 关闭（与 RpSearchPanel 同款）——
+  // 【2026-09-13 修复·键盘不可达（F-2）】补 Esc 关闭——
   // 弹层只有 ✕ / 点遮罩两种关法，键盘用户无法退出。
-  useEffect(() => {
-    const onKey = (ev: globalThis.KeyboardEvent): void => { if (ev.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => { window.removeEventListener('keydown', onKey) }
-  }, [onClose])
+  // 【W8 2026-09-15】原为就地实现（4 个面板各一份逐字相同）；现收口到单源 hook。
+  useEscapeClose(onClose)
 
   const rows: StateRow[] = state === null ? [] : flattenStateTree(state, collapsed)
   const hasState = state !== null && Object.keys(state).length > 0

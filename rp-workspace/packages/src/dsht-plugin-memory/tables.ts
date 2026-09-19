@@ -41,6 +41,8 @@
 import { mkdir, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
+import { isSafeSessionId } from '../dsht-plugin-shared/session-surgery.ts'
+import { stripMatchingQuotes } from '../dsht-plugin-shared/text-normalize.ts'
 
 // ---------------------------------------------------------------------------
 // E1：数据模型
@@ -68,17 +70,11 @@ export interface SheetHistoryEntry {
 /** 历史栈深（E1：超出丢最旧） */
 export const SHEET_HISTORY_MAX = 20
 
-/** sessionId 安全校验（路由 payload 直落文件名，防路径越界；memory.ts 同款规则） */
-export function isValidTablesSessionId(sessionId: string): boolean {
-  return typeof sessionId === 'string'
-    && sessionId.length > 0
-    && sessionId.length <= 120
-    && !sessionId.includes('/')
-    && !sessionId.includes('\\')
-    && !sessionId.includes('..')
-    && sessionId !== '.'
-    && sessionId.trim() === sessionId
-}
+/** sessionId 安全校验（路径穿越防护）。
+ *  【F5 2026-09-14 单源化·补漏】原为本地函数体，与 `dsh-plugin/memory.ts` 的
+ *  `isValidMemorySessionId` **逐字相同**——安全判据复制即必然漂移，现委托共享层。
+ *  导出名保留（本模块对外/测试引用的名字）。 */
+export const isValidTablesSessionId = isSafeSessionId
 
 /** 宽容归一单张表（坏形状返回 null；headers/rows 全部字符串化对齐） */
 export function normalizeSheet(raw: unknown, index = 0): Sheet | null {
@@ -397,15 +393,11 @@ function extractFnCalls(block: string): FnCall[] {
   return out
 }
 
-/** 去包裹引号（半角单双引号/全角弯引号） */
-function stripArgQuotes(s: string): string {
-  const t = s.trim()
-  if (t.length >= 2
-    && ((t.startsWith('"') && t.endsWith('"'))
-      || (t.startsWith("'") && t.endsWith("'"))
-      || (t.startsWith('“') && t.endsWith('”')))) return t.slice(1, -1)
-  return t
-}
+/** 去包裹引号（半角单双引号/全角弯引号）
+ *  【F5 2026-09-14 单源化·补漏】原为本地函数体，与 `state/mvu.ts` 的 `stripQuotes`
+ *  **逐字相同**（审计脚本判据 4「不同名但函数体逐字相同」抓到）——引号口径属文本解析
+ *  判据，一处补全角另一处没补即行为不一致。现委托共享层；本地名保留（4 处调用点）。 */
+const stripArgQuotes = stripMatchingQuotes
 
 /** 引号 + 花括号感知的顶层逗号切分（半角/全角逗号；引号内/字典内逗号不切） */
 function splitFnArgs(s: string): string[] {

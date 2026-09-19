@@ -35,7 +35,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const PKG_SRC = resolve(HERE, '../packages/src')
 const CLIENT_DIR = join(PKG_SRC, 'dsht-rp-ui/src/client')
 const DEFAULT_CORPUS = resolve(HERE, '../../stage3-device/hb63/corpus/js')
-const DEFAULT_ST = 'D:/SillyTavern-1.16.0/TauriTavern-Canary/SillyTavern-reference'
+const DEFAULT_ST = process.env.ST_ROOT ?? ''
 
 const argv = process.argv.slice(2)
 const verbose = argv.includes('-v') || argv.includes('--verbose')

@@ -12,17 +12,23 @@
 //
 // 用法：
 //   node scripts/gen-st-event-types.mjs [SillyTavern-reference 根目录]
-//   缺省源：$ST_REF 或 D:/SillyTavern-1.16.0/TauriTavern-Canary/SillyTavern-reference
+//   缺省源：$env:ST_ROOT / $ST_ROOT（环境的 ST 参考副本根目录）。
+//   **不内置本机绝对路径**——那是隐私泄漏，且换台机器就跑不了。
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const ST_REF = process.argv[2] || process.env.ST_REF
-  || 'D:/SillyTavern-1.16.0/TauriTavern-Canary/SillyTavern-reference'
-const SRC_REL = 'public/scripts/events.js'
-const SRC = resolve(ST_REF, SRC_REL)
+const ST_ROOT = process.argv[2] || process.env.ST_ROOT
+if (!ST_ROOT) {
+  console.error('[gen-st-event-types] 未指定 ST 参考副本根目录。')
+  console.error('  用法：node scripts/gen-st-event-types.mjs <SillyTavern-reference 的父目录>')
+  console.error('  或先设环境变量：$env:ST_ROOT = "<TauriTavern-Canary 根目录>"')
+  process.exit(2)
+}
+const SRC_REL = 'SillyTavern-reference/public/scripts/events.js'
+const SRC = resolve(ST_ROOT, SRC_REL)
 const OUT = resolve(HERE, '../packages/src/dsht-rp-ui/src/client/st-event-types.gen.ts')
 
 const text = readFileSync(SRC, 'utf8')

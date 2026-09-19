@@ -25,7 +25,9 @@ import { readJsonBody, registerPrefix, resolveDshHome, sendJson, type LikePlugin
 import { registerSettingsNamespace } from '../dsht-plugin-shared/settings-ns.ts'
 // 【阶段3 2026-09-10】B8 永久写回改用官方合法形态（surfaceOp 字段名自适应 +
 // user 标记 replace + assistant append；0.1.5 禁止 assistant 做 replace 节点）
-import { appendReplace, markerSource, planAssistantRewrite, assistantSettlement, type AppendableSession } from '../dsht-plugin-shared/session-write.ts'
+import { appendReplace, boundAppend, markerSource, planAssistantRewrite, assistantSettlement, type AppendableSession } from '../dsht-plugin-shared/session-write.ts'
+// 【W4 2026-09-14】官方投影读取单源（此前 `(session as {...}).surface?.nodes ?? []` 裸读）
+import { readSurfaceNodes } from '../dsht-plugin-shared/host-projection.ts'
 import { randomUUID } from 'node:crypto'
 
 export const name = 'dsht-plugin-prompt-template'
@@ -312,25 +314,27 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
       // ——官方设计死锁）。改走官方 compaction 同款形态：
       //   ① user/message 标记把原楼层移出模型上下文（合法 replace）
       //   ② 渲染结果作为新 assistant/message 追加（落进打开的 step）
-      const live = session as unknown as {
-        surface?: { nodes?: number[] }
-        append: (t: string, d: unknown, o?: unknown) => unknown
-      }
-      const view = live.surface?.nodes ?? []
+      // 【W4】原写 `(session as {...}).surface?.nodes ?? []` 手写形状守卫；改走单源。
+      const view = readSurfaceNodes(session)
       if (!view.includes(seq)) return sendJson(res, 400, { error: `seq=${seq} 不在当前模型视图（可能已被回退/折叠）` })
       const snap = typeof (session as { snapshotEvents?: () => readonly unknown[] }).snapshotEvents === 'function'
         ? (session as { snapshotEvents: () => readonly unknown[] }).snapshotEvents()
         : []
       const plan = planAssistantRewrite(snap as Array<{ type?: unknown; data?: { turn?: unknown } }>, true)
+      // 【W4】原实现把 session `as unknown as { surface?; append }` 后直接用 `live.append(...)`。
+      // 删除该断言后 append 走 boundAppend（**顺带修掉一个潜在缺陷**：官方 Session.append
+      // 读 `this.log`，裸取方法引用再调用会 detach ⇒ 「Cannot read properties of undefined
+      // (reading 'log')」；dsh-plugin/index.ts 的心跳 55 已踩过同一个坑）。
+      const liveAppend = boundAppend(session as unknown as AppendableSession)
       appendReplace(session as unknown as AppendableSession, 'user/message', {
         id: `dsht-ejs-mark-${randomUUID()}`,
         role: 'user',
         content: [{ type: 'text', text: '[EJS 渲染写回] 该楼层原文已从上下文移除，渲染结果随后追加。' }],
         source: markerSource('dsht-ejs', 'surgical', { renderedFrom: seq, shadowedSeqs: [seq] }),
       }, { start: seq, end: seq }, [seq])
-      live.append('turn/start', { turn: plan.turn })
-      live.append('step/start', { turn: plan.turn, step: plan.step })
-      live.append('assistant/message', {
+      liveAppend('turn/start', { turn: plan.turn })
+      liveAppend('step/start', { turn: plan.turn, step: plan.step })
+      liveAppend('assistant/message', {
         // settlement 三件套先铺底（stream 缺省为空数组）：原事件若真带 stream（有 chunk），
         // 紧随其后的 `...ev.data` 会把它覆盖回来；原事件若缺 stream（历史脏数据），
         // 这里补上的空数组即为正确形状 —— 否则写出的事件会让整个会话冷启动加载失败。
@@ -348,8 +352,8 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
           source: { ...(msg.source as object ?? {}) },
         },
       }, { surfaceOp: 'append' })
-      live.append('step/end', { turn: plan.turn, step: plan.step })
-      live.append('turn/end', { turn: plan.turn, reason: { kind: 'completed' } })
+      liveAppend('step/end', { turn: plan.turn, step: plan.step })
+      liveAppend('turn/end', { turn: plan.turn, reason: { kind: 'completed' } })
       try {
         if (typeof sessions?.flush === 'function') await sessions.flush.call(sessions, session)
       } catch (e) {

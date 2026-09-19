@@ -116,7 +116,156 @@ function makeCtx (log) {
   return ctx
 }
 
+/**
+ * 解析 `build-dsht.ps1`（权威构建路径）里「把某个包**独立编译为包入口**」的全部形态。
+ *
+ * 为什么不能只做字面量匹配（W28 实测教训）：Step 4.72 用**循环 + 变量插值**
+ *   `foreach ($r10 in $r10Plugins) { … esbuild "src/$r10/index.ts" … }`
+ * ⇒ 那 4 个 entry **从不以字面量出现**。只匹配字面量会漏 4 项，
+ *   使「路径是否已归一」的判定**假阳性**（漏归一也会被判成已归一）。
+ *
+ * 返回：
+ *   · entries  —— 去重后的 `src/<pkg>/index.ts` 列表（两种形态合并）
+ *   · r10Loop  —— 检出的插值循环（含 `names`：展开后的包名；`names=[]` 表示**展开失败**）
+ *   · arrays   —— 解析到的数组定义变量名（诊断用）
+ */
+export function parseSplitEntries (src) {
+  const lines = src.split(/\r?\n/)
+
+  // ① 单行数组定义：$name = @('a', 'b', ...)
+  const arrays = new Map()
+  for (const l of lines) {
+    const m = l.match(/^\s*\$(\w+)\s*=\s*@\((.*)\)\s*$/)
+    if (m) arrays.set(m[1], [...m[2].matchAll(/'([^']+)'/g)].map(x => x[1]))
+  }
+
+  const entries = new Set()
+  let r10Loop = null
+
+  // ② 插值循环形态：foreach ($loopVar in $arrVar) { … esbuild "src/$loopVar/index.ts" … }
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/foreach\s*\(\s*\$(\w+)\s+in\s+\$(\w+)\s*\)/)
+    if (!m) continue
+    const loopVar = m[1]; const arrVar = m[2]
+    // 块体范围：花括号深度归零的那一行为止（行内花括号也要计数）
+    let depth = 0; let end = -1
+    for (let j = i; j < lines.length; j++) {
+      depth += (lines[j].match(/\{/g) ?? []).length
+      depth -= (lines[j].match(/\}/g) ?? []).length
+      if (j > i && depth <= 0) { end = j; break }
+    }
+    if (end < 0) continue
+    const body = lines.slice(i, end + 1).join('\n')
+    // 关键：必须是**把该变量插值成包入口**的 esbuild 调用
+    if (!new RegExp(`esbuild\\s+"src/\\$${loopVar}/index\\.ts"`).test(body)) continue
+    const names = arrays.get(arrVar) ?? []
+    r10Loop = { arrVar, loopVar, names, line: i + 1 }
+    for (const n of names) entries.add(`src/${n}/index.ts`)
+  }
+
+  // ③ 字面量形态：esbuild 行里直接写出的 src/<pkg>/index.ts
+  for (const l of lines) {
+    if (l.trim().startsWith('#')) continue          // PowerShell 注释行不参与
+    if (!/\besbuild\b/.test(l)) continue
+    for (const mm of l.matchAll(/src\/([A-Za-z0-9_-]+)\/index\.ts/g)) entries.add(`src/${mm[1]}/index.ts`)
+  }
+
+  // ④ **闭合自检**（P-41 推论三：判据的覆盖面本身也要有判据）
+  //   逐一取出每条 esbuild 的 **entry 参数**（第一个非选项实参）；若它含变量插值
+  //   却没被 ② 展开覆盖 ⇒ 登记为 `unresolved`。这样「漏形态」不会静默：
+  //   将来谁把入口改成 `foreach ($p in $someList) { esbuild "src/$p/…" }` 的新写法，
+  //   8c 会直接报红，而不是悄悄给出一个残缺清单。
+  const unresolved = []
+  const covered = r10Loop ? new RegExp(`^src/\\$${r10Loop.loopVar}/index\\.ts$`) : null
+  for (const l of lines) {
+    if (l.trim().startsWith('#')) continue
+    const m = l.match(/\besbuild\s+("[^"]*"|\S+)/)
+    if (!m) continue
+    const entry = m[1].replace(/^["']|["']$/g, '')
+    if (!entry.startsWith('src/') || !entry.includes('$')) continue
+    if (covered && covered.test(entry)) continue
+    unresolved.push(entry)
+  }
+
+  return { entries: [...entries].sort(), r10Loop, arrays: [...arrays.keys()], unresolved }
+}
+
+// ---------------------------------------------------------------------------
+// 解析器自证（--selftest-parser）—— 不打包、不加载插件，只验「清单解析」这一步
+// ---------------------------------------------------------------------------
+// ## 为什么需要（P-41 推论三：判据的覆盖面本身也要有判据）
+// 判据 8②③ 的结论**完全依赖** parseSplitEntries 给出的「是否已归一」。
+// 解析器若漏形态（正是首版只匹配字面量的缺陷），结论会**反向**：
+//   漏归一 ⇒ 误判已归一 ⇒ 对 4 个仍需 export 的子模块报红。
+// ⇒ 用合成输入覆盖「字面量 / 插值循环 / 展开失败 / 注释干扰 / 变量名不符」五种形态。
+//
+// ⚠️ 用例只含**合成**脚本片段（不读真实文件）—— 保证自证在任何工作区状态下都可跑。
+const PARSER_CASES = [
+  ['正控：字面量 + 插值循环 ⇒ 5 个 entry',
+    `& npx esbuild src/dsh-plugin/index.ts --bundle --outfile=a.js
+$r10Plugins = @('dsht-plugin-mvu', 'dsht-plugin-tavern-helper', 'dsht-plugin-prompt-template', 'dsht-plugin-memory')
+foreach ($r10 in $r10Plugins) {
+    & npx esbuild "src/$r10/index.ts" --bundle --outfile=b.js
+}`,
+    { count: 5, hasLoop: true, loopNames: 4, unresolved: 0 }],
+  ['★ 负控：只有字面量、无循环 ⇒ 必须只认 1 个（首版缺陷的复现形态）',
+    `& npx esbuild src/dsh-plugin/index.ts --bundle --outfile=a.js`,
+    { count: 1, hasLoop: false, loopNames: 0, unresolved: 0 }],
+  ['★ 负控：循环在但数组定义缺失 ⇒ 展开失败（names=[]），须可被 8c 判红',
+    `foreach ($r10 in $r10Plugins) {
+    & npx esbuild "src/$r10/index.ts" --bundle --outfile=b.js
+}`,
+    { count: 0, hasLoop: true, loopNames: 0, unresolved: 0 }],
+  ['负控：注释行里的 esbuild 不算（不得因文档示例虚增 entry）',
+    `# 例：& npx esbuild src/dsht-plugin-fake/index.ts --bundle
+& npx esbuild src/dsh-plugin/index.ts --bundle`,
+    { count: 1, hasLoop: false, loopNames: 0, unresolved: 0 }],
+  ['★ 负控：循环体 esbuild 用了别的变量 ⇒ 不得识别为包入口，且必须登记为「未覆盖入口」',
+    `$r10Plugins = @('dsht-plugin-mvu', 'dsht-plugin-tavern-helper')
+foreach ($r10 in $r10Plugins) {
+    & npx esbuild "src/$other/index.ts" --bundle --outfile=b.js
+}`,
+    { count: 0, hasLoop: false, loopNames: 0, unresolved: 1 }],
+  ['★ 负控：全新形态（插值入口不在任何已识别循环里）⇒ 必须登记为「未覆盖」而不是静默漏掉',
+    `& npx esbuild "src/$pkg/index.ts" --bundle --outfile=c.js`,
+    { count: 0, hasLoop: false, loopNames: 0, unresolved: 1 }],
+  ['正控：循环体多行、含花括号嵌套（块体范围须正确闭合）',
+    `$r10Plugins = @('dsht-plugin-mvu')
+foreach ($r10 in $r10Plugins) {
+    if ($true) { Write-Host "x" }
+    & npx esbuild "src/$r10/index.ts" --bundle --outfile=b.js
+}`,
+    { count: 1, hasLoop: true, loopNames: 1, unresolved: 0 }],
+]
+
 async function main () {
+  if (process.argv.includes('--selftest-parser')) {
+    console.log('=== verify-rp-consolidation --selftest-parser（解析器自证；不打包、不依赖工作区）===')
+    let n = 0
+    for (const [label, script, want] of PARSER_CASES) {
+      const r = parseSplitEntries(script)
+      const loopNames = r.r10Loop ? r.r10Loop.names.length : 0
+      const ok = r.entries.length === want.count &&
+                 (r.r10Loop !== null) === want.hasLoop &&
+                 loopNames === want.loopNames &&
+                 r.unresolved.length === want.unresolved
+      if (ok) n++
+      console.log(`  ${ok ? '[ok] ' : '[FAIL] '}${label}`)
+      console.log(`         entries=${r.entries.length}（期望 ${want.count}）· loop=${r.r10Loop ? 'yes' : 'no'}（期望 ${want.hasLoop ? 'yes' : 'no'}）· loopNames=${loopNames}（期望 ${want.loopNames}）· unresolved=${r.unresolved.length}（期望 ${want.unresolved}）`)
+    }
+    // 附加：真实脚本上必须解析出 5 个，且**不得有未覆盖的插值入口**
+    const realBd = path.join(HERE, 'build-dsht.ps1')
+    if (fs.existsSync(realBd)) {
+      const rr = parseSplitEntries(fs.readFileSync(realBd, 'utf8'))
+      const ok = rr.entries.length >= 5 && rr.r10Loop && rr.r10Loop.names.length === 4 && rr.unresolved.length === 0
+      if (ok) n++
+      console.log(`  ${ok ? '[ok] ' : '[FAIL] '}真实 build-dsht.ps1：entries=${rr.entries.length}（≥5）· 循环成员=${rr.r10Loop ? rr.r10Loop.names.length : 0}（期望 4）· 未覆盖入口=${rr.unresolved.length}（期望 0）`)
+    }
+    const total = PARSER_CASES.length + (fs.existsSync(path.join(HERE, 'build-dsht.ps1')) ? 1 : 0)
+    console.log(`\n[verify-rp-consolidation selftest-parser] ${n}/${total} PASS`)
+    process.exit(n === total ? 0 : 3)
+  }
+
   const entryRp = path.join(PKG, 'src', 'dsht-rp', 'index.ts')
   if (!fs.existsSync(entryRp)) { console.error(`找不到总包入口：${entryRp}`); process.exit(2) }
 
@@ -130,10 +279,26 @@ async function main () {
   if (NEGCTL) {
     const orig = fs.readFileSync(entryRp, 'utf8')
     fs.writeFileSync(BAK, orig)
-    // 精确交换两行的 label 与 apply（保持语法合法）
-    const swapped = orig
-      .replace("  { label: 'dsht-plugin-prompt-template', apply: applyPromptTemplate as (ctx: never, config: unknown) => void },\n  { label: 'dsht-plugin-memory', apply: applyMemory as (ctx: never, config: unknown) => void },",
-        "  { label: 'dsht-plugin-memory', apply: applyMemory as (ctx: never, config: unknown) => void },\n  { label: 'dsht-plugin-prompt-template', apply: applyPromptTemplate as (ctx: never, config: unknown) => void },")
+    // 精确交换两行的 label 与 apply（保持语法合法）。
+    //
+    // 【2026-09-14 W4 修复】原实现用**硬编码 LF 的多行字符串**做锚点，而在
+    // `git config core.autocrlf=true` 的 Windows 工作区里该文件落盘是 **CRLF**
+    // ⇒ `replace` 匹配不到 ⇒ 走到下面的「锚点不匹配」分支、以 exit 2 退出。
+    // 后果不是「反控失败」而是**反控从未生效**：`rebuild-plugins.ps1:159` 见到
+    // 非 0 就抛「该门不可信」，于是整条构建链断在最后一步（本地一直如此）。
+    // 修法：锚点用**行尾无关**的正则（`\r?\n`），既认 LF 也认 CRLF。
+    // 【教训 · P-29 同族】判据的实现假设（此处 = 行尾风格）会静默废掉判据本身；
+    // 证据串（文件里明明有那两行）与结论（「锚点不匹配」）矛盾即是识别特征。
+    const pair = (aLabel, aApply, bLabel, bApply) =>
+      new RegExp(
+        // ① `\\{` / `\\}` = 转义后的字面花括号（模板串里 `\\{` → `\{`）；
+        // ② 两行之间的换行**必须捕获**（还原时按同一行尾拼回，不统一成 LF 以免整文件行尾漂移）；
+        // ③ 第二行的**行首缩进**必须容忍（实际是两空格）——首版漏了这条，于是
+        //    `(\r?\n)\{` 匹配不上 `\r\n  {`，反控再次退化为「锚点不匹配」。
+        `\\{ label: '${aLabel}', apply: ${aApply}[^}]*\\},(\\r?\\n)[ \\t]*\\{ label: '${bLabel}', apply: ${bApply}[^}]*\\},`,
+      )
+    const before = pair('dsht-plugin-prompt-template', 'applyPromptTemplate', 'dsht-plugin-memory', 'applyMemory')
+    const swapped = orig.replace(before, (m, nl) => m.split(nl).reverse().join(nl))
     if (swapped === orig) { console.error('[negctl] 无法交换顺序（锚点不匹配）——反控未生效，不能据此下结论'); fs.unlinkSync(BAK); process.exit(2) }
     fs.writeFileSync(entryRp, swapped)
     console.log('[negctl] 已对调最后两个子模块的顺序（制造不一致），期望判据2 报红…\n')
@@ -288,10 +453,93 @@ async function runChecks (entryRp) {
       `${tb.length} 项`)
 
     // ---- 判据 8：子模块 name 常量未被改动（会话数据兼容）----
-    // 【2026-09-13 心跳 77 修正】T-87 要求「子模块 export const name/inject 降为内部使用」，
-    //   故**不能再 import mod.name**（已不再导出）。改为**源码级**断言：
-    //   在子模块源文件里必须仍存在该字面量（`plugin: name` / `src.plugin === name` 依赖它），
-    //   且**不得**再出现 `export const name`（那说明降级没做到位）。
+    // 【2026-09-13 心跳 77】T-87 要求「子模块 export const name/inject 降为内部使用」，
+    //   故改为**源码级**断言：字面量必须仍在，且**不得**再出现 `export const name`。
+    //
+    // ========================================================================
+    // 【2026-09-16 W28 · P-41 第五例】②③ 从「无条件报红」改锚到**架构事实**
+    //
+    // ## 症状（决定性实验 `tmp/w28-t87-conflict.mjs` 实测）
+    // ②③ 长期报红（5 个包 × 2 条 = 10 条），且**改不动** —— 我一动手降级就发现：
+    // 降级后 `build-dsht.ps1`（**权威路径**）产出的包**不再导出 name/inject**。
+    //
+    // ## 真因：**两条构建路径对同一份源码的要求相反**
+    //   · 权威路径 `build-dsht.ps1` Step 4.7 / 4.72 —— 把 5 个包**各自独立**编译为
+    //     **包入口**；cordis loader 从**包的 exports** 取 `name` 作插件名
+    //     ⇒ 实测（E2）`import()` 得 `name="dsht-plugin-mvu" inject=[...]`
+    //     ⇒ **必须 export**（E3 反证：降级后产物 `导出 name=false` ⇒ 权威路径直接坏）
+    //   · T-87 总包路径 `rebuild-plugins.ps1` —— 只取子模块的 `apply`
+    //     ⇒ 设计要求「降为内部常量」
+    // ⇒ **同一份源码不可同时满足**（E1 证实两条路径 entry 不同）。
+    //
+    // ## 修法（P-41：追问「真正决定结果的那个事实是什么」，把判据改锚到它）
+    // 真正的事实**不是**「有没有 export」，而是「**两条路径是否已归一**」：
+    //   · 未归一 ⇒ export 是**权威路径的硬需求** ⇒ ②③ **条件未成立**，
+    //     出声说明原因与**解除条件**，**不计违约**（不许静默放过，也不许假装已达标）；
+    //   · 已归一（`build-dsht.ps1` 不再独立编译子模块）⇒ ②③ **自动开始生效**。
+    // ⇒ 判据**自己会失效**（P-37）：T-87 第 4 步一落地，本判据即刻收紧。
+    // 判定依据**读脚本**而不硬编码（P-27：别把「当前状态」写死成常量）。
+    // ========================================================================
+    // ------------------------------------------------------------------
+    // 【2026-09-16 W28 第二次修正 · P-41 第六例】检出口径必须覆盖两种形态
+    //
+    // 症状（我把②③改锚后**立刻自证**发现的自身缺陷）：报表打印
+    //   「权威路径仍独立编译 **1** 个子模块为包入口」，而我预期是 **5**。
+    // 真因：首版只做**字面量**匹配（`bdSrc.includes('src/<pkg>/index.ts')`），
+    //   而 `build-dsht.ps1` 的 Step 4.72 用的是**循环 + 变量插值**：
+    //     $r10Plugins = @('dsht-plugin-mvu', 'dsht-plugin-tavern-helper',
+    //                     'dsht-plugin-prompt-template', 'dsht-plugin-memory')
+    //     foreach ($r10 in $r10Plugins) { … esbuild "src/$r10/index.ts" … }
+    //   ⇒ 那 4 个 entry 在脚本里**从不以字面量出现** ⇒ 只命中 Step 4.7 的 1 项。
+    //
+    // 后果（比报错更坏）：若将来 T-87 第 4 步只归一了 Step 4.7（主包）而漏了
+    //   Step 4.72（R10 循环），本判据会**误判为已归一** ⇒ 开始对 4 个仍需 export
+    //   的子模块报红（在该沉默时误报），且在真正归一前**提前解除豁免**。
+    //
+    // 修法（P-41「追问真正决定结果的那个事实」+ P-42「两端设防」）：
+    //   ① 解析**两种形态**（字面量 + foreach/插值展开）；
+    //   ② 另取一条**独立事实**（`r10Loop`：循环体本身是否存在）做交叉验证 ——
+    //      循环在、entries 却为空 ⇒ 解析器失准，**报红**（该出的判据不许静默）。
+    // ==================================================================
+    const bdPath = path.join(HERE, 'build-dsht.ps1')
+    const bdSrc = fs.existsSync(bdPath) ? fs.readFileSync(bdPath, 'utf8') : ''
+    const split = parseSplitEntries(bdSrc)
+    const STILL_SPLIT = split.entries
+    const pathsMerged = STILL_SPLIT.length === 0
+    // 交叉验证（判据 8c）：循环成员必须全部被解析出来，否则解析器漏形态
+    const parseMissing = split.r10Loop
+      ? split.r10Loop.names.map(n => `src/${n}/index.ts`).filter(e => !STILL_SPLIT.includes(e))
+      : []
+
+    // ------------------------------------------------------------------
+    // 判据 8c：**对解析器自身设防**（两端设防 —— 不许"该判的判不出来"）
+    // 独立事实取自「脚本里出现了 R10 四个包名的字面量数组」，不依赖我上面
+    // 写的 esbuild 正则：若这些包名成组出现、而解析器却没识别出循环
+    // ⇒ 解析器失准 ⇒ 此时「是否已归一」的结论**不可采信** ⇒ 必须报红，
+    //   而不是静默地按（可能残缺的）entries 去判 ②③。
+    // ------------------------------------------------------------------
+    const R10_MEMBERS = ['dsht-plugin-mvu', 'dsht-plugin-tavern-helper', 'dsht-plugin-prompt-template', 'dsht-plugin-memory']
+    const parseBad = []
+    if (!fs.existsSync(bdPath)) {
+      parseBad.push(`找不到权威构建脚本 ${bdPath} ⇒ 无法判定「两条路径是否已归一」`)
+    } else {
+      const grouped = R10_MEMBERS.filter(n => bdSrc.includes(`'${n}'`))
+      if (grouped.length >= 2 && !split.r10Loop) {
+        parseBad.push(`脚本里成组出现 ${grouped.length} 个 R10 包名字面量，但未解析出插值循环 ⇒ 解析器漏形态`)
+      }
+      if (split.r10Loop && split.r10Loop.names.length === 0) {
+        parseBad.push(`Step ${split.r10Loop.line} 的循环（$${split.r10Loop.loopVar} in $${split.r10Loop.arrVar}）无法展开成员 ⇒ entries 会漏，判据将假阳性`)
+      }
+      if (parseMissing.length) parseBad.push(`循环成员未被计入 entries：${parseMissing.join(', ')}`)
+      if (split.unresolved.length) {
+        parseBad.push(`有含变量插值的 esbuild 入口未被解析覆盖：${split.unresolved.join(', ')} ⇒ 清单可能残缺`)
+      }
+      if (STILL_SPLIT.length === 0 && grouped.length >= 2) {
+        parseBad.push(`结论「已归一」与「仍有 ${grouped.length} 个 R10 包名字面量」矛盾 ⇒ 结论不可采信`)
+      }
+    }
+    const parseSane = parseBad.length === 0
+
     const expectNames = {
       'dsh-plugin': 'dsht-rp-plugin',
       'dsht-plugin-mvu': 'dsht-plugin-mvu',
@@ -299,20 +547,64 @@ async function runChecks (entryRp) {
       'dsht-plugin-prompt-template': 'dsht-plugin-prompt-template',
       'dsht-plugin-memory': 'dsht-plugin-memory',
     }
-    let nameBad = []
+    let nameBad = []       // ① 字面量丢失 ⇒ 无论如何都是真违约
+    let exportStill = []   // ②③ 仅在「路径已归一」时才是违约
+    let exportNeed = []    // 路径未归一时：登记「为什么必须 export」（出声，非违约）
     for (const [label, entry] of subEntries) {
       const src = fs.readFileSync(entry, 'utf8')
       const want = expectNames[label]
-      // ① 字面量必须仍在（会话数据兼容的前提）
+      // ① 字面量必须仍在（会话数据兼容的前提）—— 这条与架构无关，永远成立
       if (!src.includes(`'${want}'`)) nameBad.push(`${label}: 源码里找不到字面量 '${want}'`)
       // ② 不得再有 `export const name`（要求1：降为内部使用）
-      if (/^export const name\b/m.test(src)) nameBad.push(`${label}: 仍为 \`export const name\`（应降为内部常量）`)
+      if (/^export const name\b/m.test(src)) {
+        if (pathsMerged) exportStill.push(`${label}: 仍为 \`export const name\``)
+        else exportNeed.push(`${label}: export const name`)
+      }
       // ③ 不得再有 `export const inject`（同上）
-      if (/^export const inject\b/m.test(src)) nameBad.push(`${label}: 仍为 \`export const inject\`（应降为内部常量）`)
+      if (/^export const inject\b/m.test(src)) {
+        if (pathsMerged) exportStill.push(`${label}: 仍为 \`export const inject\``)
+        else exportNeed.push(`${label}: export const inject`)
+      }
     }
+    // ① 独立成一条（架构无关）；②③ 按路径归一的实际状态判定
     check(nameBad.length === 0,
-      '判据8 子模块 name 字面量保持原值、且 name/inject 已降为内部使用（不再 export）',
+      '判据8① 5 个子模块的 name 字面量保持原值（会话数据兼容；与构建路径形态无关）',
       nameBad.length ? nameBad.join('; ') : Object.values(expectNames).join(', '))
+
+    check(parseSane,
+      '判据8c 权威路径「独立编译的包入口」清单可信（覆盖字面量 + 插值循环两种形态）',
+      parseBad.length
+        ? `❌ ${parseBad.join('；')}`
+        : `解析到 ${STILL_SPLIT.length} 个 entry` +
+          (split.r10Loop ? `（含 Step ${split.r10Loop.line} 插值循环展开的 ${split.r10Loop.names.length} 个：${split.r10Loop.names.join(', ')}）` : '（无插值循环）') +
+          `；明细：${STILL_SPLIT.join(', ')}`)
+
+    if (pathsMerged && parseSane) {
+      check(exportStill.length === 0,
+        '判据8② 构建路径已归一 ⇒ name/inject 必须已降为内部常量（不再 export）',
+        exportStill.length ? exportStill.join('; ') : '5 个包均已降级')
+    } else if (!parseSane) {
+      // 解析器不可信 ⇒ **不给出②③的结论**（避免用残缺清单下结论）
+      check(true,
+        '判据8② name/inject 降级【本轮未判定 · 前置不可信】',
+        `解析器自证不通过（见判据8c）⇒ 无法可靠判断「路径是否已归一」，故不对 ②③ 下结论。` +
+        `现存 export 共 ${exportNeed.length} 处（仅登记，不计违约）`)
+      if (exportNeed.length) {
+        console.log(`  ⓘ 判据8② 明细（本轮未判定）：${exportNeed.join(' · ')}`)
+      }
+    } else {
+      // 未归一：如实报「条件未成立」+ 解除条件（**出声**，但不算违约 ——
+      // 因为此时 export 是权威路径的硬需求，改了会直接坏包）
+      check(true,
+        `判据8② name/inject 降级【条件未成立 · 非违约】—— 权威路径仍独立编译 ${STILL_SPLIT.length} 个子模块为包入口`,
+        `这些包的 loader 从**包 exports** 取 name（实测 E2）⇒ 必须 export。` +
+        `现存 export 共 ${exportNeed.length} 处；` +
+        `解除条件：T-87 落地步骤第 4 步（build-dsht.ps1 的 Step 4.7/4.72/4.75 合并为一个 Step）` +
+        `完成后本判据**自动收紧**`)
+      if (exportNeed.length) {
+        console.log(`  ⓘ 判据8② 明细（因路径未归一而被豁免）：${exportNeed.join(' · ')}`)
+      }
+    }
 
     // ---- 判据 9（附加）：总包 name（沿用旧包名，最小改动） ----
     check(rpMod.name === 'dsht-rp-plugin', '判据9 总包 name = dsht-rp-plugin（沿用旧包名，patch id 仍为 dsht-rp）', `实得 ${rpMod.name}`)

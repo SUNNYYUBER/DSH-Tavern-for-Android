@@ -10,9 +10,9 @@
  *
  * 世界书条目内容来自**用户导入的卡 / 世界书**，属不可信输入 —— 这是本防护的存在理由。
  *
- * ## 为什么是「同步防护组合」而不是参考实现的 worker_threads 硬超时
- * 参考实现（开源 dsh-NextTavern 的 bounded-regex.js）在 `worker_threads` 里编译+匹配，
- * 父线程 250ms 硬超时后 `terminate()`。本仓库**不能**照搬，理由是调用链契约：
+ * ## 为什么是「同步防护组合」而不是 worker_threads 硬超时
+ * 另一种常见实现形态是在 `worker_threads` 里编译+匹配，父线程 250ms 硬超时后
+ * `terminate()`。本仓库**不能**采用，理由是调用链契约：
  *   · `packages/src/import/browser-entry.ts:7` 把 `triggerWorldInfo` 导出为
  *     `window.DSHT.triggerWorldInfo`（esbuild --format=iife --global-name=DSHT），
  *     消费点是**同步**的：`packages/verify-bundle.cjs:18` 直接取返回值（非 await）。
@@ -36,7 +36,7 @@
  * ## 已知局限（诚实标注，不粉饰）
  * 静态启发式是**保守子集**，无法穷尽所有 ReDoS 形态（例如 `\d+\d+\d+` 类的多项式回溯、
  * 反向引用构造的爆炸）。真正的兜底是「执行期硬超时」，而同步路径做不到（同步阻塞无法中断），
- * 这正是参考实现用 worker 的原因。若将来调用链允许 async / node 侧优先，应把
+ * 这正是 worker 方案存在的原因。若将来调用链允许 async / node 侧优先，应把
  * `compile` + `.test` 整体挪进 worker 并加 250ms terminate 兜底。
  *
  * ## 出声（项目铁律 L42：有意降级 ≠ 可以静默）
@@ -46,7 +46,7 @@
  *     避免每条每轮刷屏；跨轮（同一条目同一原因）只报一次。
  */
 
-/** 防护限额（可整体替换；默认值对齐参考实现 dsh-NextTavern bounded-regex.js） */
+/** 防护限额（可整体替换；默认值是下面这些经验值，按需上调即可） */
 export interface SafeRegexLimits {
   /** 单条 pattern 字符数上限 */
   maxPatternLength: number

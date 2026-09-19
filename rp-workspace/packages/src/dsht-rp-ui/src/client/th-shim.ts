@@ -393,6 +393,8 @@ export const SHIM_LOCAL_APIS = [
   'updateVariablesWith', 'replaceVariables', 'deleteVariable',
   'getScriptButtons', 'replaceScriptButtons', 'updateScriptButtonsWith', 'appendInexistentScriptButtons',
   'getTavernHelperVersion', 'getTavernVersion', 'getScriptId', 'getScriptName',
+  // 【W3 2026-09-15】真 TH 裸全局面补齐（此前完全缺席 ⇒ 脚本 typeof 守卫静默走 else）
+  'getTavernHelperExtensionId', 'errorCatched',
   'getCurrentCharPrimaryLorebook', 'getCharWorldbookNames',
   // C18 杂项 / C17 音频
   'getLastMessageId', 'triggerSlash', 'audio',
@@ -426,6 +428,41 @@ export const SHIM_BRIDGE_APIS = [
 ] as const
 
 /**
+ * 【L5 · 方案 C · 2026-09-14 第十八轮】宿主 / JS 内建全局白名单 —— 供裸全局
+ * ReferenceError **归因**时排除，防把 `ReferenceError: JSON is not defined` 这类
+ * 与 TH API 无关的报错误标成「缺 TH API」（噪音会掩盖真信号，P-14 的同族纪律）。
+ *
+ * 覆盖三类：
+ *   ① JS 语言内建 / 宿主注入的全局（console / JSON / Promise / fetch / postMessage…）
+ *   ② 本 shim 与宿主**故意**挂在 window 上的非 TH 语义面（SillyTavern / Mvu / audio /
+ *      tavern_events / builtin / parent / $ 等 —— 它们已在 window 上，正常不会 ReferenceError，
+ *      但脚本可能在更小子作用域里引用同名局部，保守排除）
+ *   ③ 浏览器常用宿主对象（document / location / navigator / localStorage…）
+ *
+ * **不是** TH API 名单的补集：这里没有的名字仍可能不是 TH API（卡作者自造函数名），
+ * 所以归因文案一律用「疑似」（见 attributeReferenceError 的诚实边界说明）。
+ */
+export const BUILTIN_GLOBAL_ALLOW: readonly string[] = [
+  // ① JS 内建
+  'console', 'JSON', 'Math', 'Date', 'Promise', 'Object', 'Array', 'String', 'Number',
+  'Boolean', 'Symbol', 'Map', 'Set', 'WeakMap', 'WeakSet', 'RegExp', 'Error', 'TypeError',
+  'RangeError', 'SyntaxError', 'EvalError', 'URIError', 'Function', 'Proxy', 'Reflect',
+  'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'encodeURIComponent', 'decodeURIComponent',
+  'encodeURI', 'decodeURI', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+  'queueMicrotask', 'structuredClone', 'fetch', 'Request', 'Response', 'Headers', 'AbortController',
+  'AbortSignal', 'TextEncoder', 'TextDecoder', 'URL', 'URLSearchParams', 'Blob', 'FormData',
+  'atob', 'btoa', 'crypto', 'performance', 'Intl', 'BigInt', 'globalThis', 'undefined', 'NaN', 'Infinity',
+  // ② shim 已挂的非 TH 语义面
+  'SillyTavern', 'Mvu', 'audio', 'tavern_events', 'iframe_events', 'builtin', 'toastr',
+  'parent', 'top', 'self', 'frames', 'window', 'document', 'location', 'navigator', 'history',
+  'localStorage', 'sessionStorage', 'indexedDB', 'postMessage', 'addEventListener', 'removeEventListener',
+  'dispatchEvent', 'CustomEvent', 'Event', 'MessageEvent', 'MutationObserver', 'ResizeObserver',
+  'IntersectionObserver', 'requestAnimationFrame', 'cancelAnimationFrame', 'getComputedStyle',
+  'matchMedia', 'alert', 'confirm', 'prompt', 'scrollTo', 'scrollBy', 'innerWidth', 'innerHeight',
+  'jQuery', 'jq', 'reloadIframe', 'waitGlobalInitialized', 'getTavernHelperVersion', 'getTavernVersion',
+]
+
+/**
  * 已知但不支持的 API（挂 stub：console.warn 记名 + Promise.reject）。
  * 都是深度钩 ST 内部组件或与宿主数据模型冲突的面（chat 写路径 / 扩展管理 / 世界书写路径）。
  * 预设 CRUD / 聊天消息读 / 正则 / 世界书名单与条目读 / getContext 已移植为真实现（见 SHIM_BRIDGE_APIS）。
@@ -439,6 +476,9 @@ export const SHIM_BRIDGE_APIS = [
  */
 import { TH_UNSUPPORTED_APIS as UNSUPPORTED_APIS } from '../../../dsht-plugin-shared/th-api-support.ts'
 export { UNSUPPORTED_APIS }
+// 【W3 2026-09-15】值型缺失名（不能挂函数 stub 的那几个）——见 th-api-support.ts 的说明。
+import { TH_FACE_VALUE_NAMES } from '../../../dsht-plugin-shared/th-api-support.ts'
+export { TH_FACE_VALUE_NAMES }
 
 
 /**
@@ -475,6 +515,8 @@ export function buildShimSource(opts: ShimOptions): string {
   const unsupportedJs = JSON.stringify(UNSUPPORTED_APIS)
   const unsupportedReasonsJs = JSON.stringify(UNSUPPORTED_REASONS)
   const bareGlobalsJs = JSON.stringify([...SHIM_LOCAL_APIS, ...SHIM_BRIDGE_APIS])
+  const faceValueNamesJs = JSON.stringify(TH_FACE_VALUE_NAMES)
+  const builtinAllowJs = JSON.stringify(BUILTIN_GLOBAL_ALLOW)
   return `(function () {
 'use strict';
 // ---- localStorage/sessionStorage 沙箱垫 ----
@@ -1370,6 +1412,12 @@ function getWorldbooks() {
     return names;
   });
 }
+// 【W3 2026-09-15 撤回说明】此处曾尝试实现 getGlobalWorldbookNames，按「读上下文快照的
+// globalWorldbooks 字段」写 —— 取证后发现：① 快照契约里**没有**该字段（我凭空假设了形状）；
+// ② 真 TH 的实现（产物里 'function Tj(){return OE(Le().world_info.globalSelect)}'）读的是
+// ST settings 的 world_info.globalSelect，我方**没有对应数据面**（rp/global-books.json 是
+// 另一套语义，且无读端点）。⇒ 按 P-17「拿不到证据就不假装有」，**撤回该实现**，
+// 改为在 TH_UNSUPPORTED_APIS 里记名拒绝（缺了会被看见，而不是静默走 else）。
 // wb:get 回包归一化：host /worldbook/get 实际返回扁平 {name,lorePath,entries,...}，
 // 旧桥契约假设 {book:{...}}——两种形状都接受（宁可兼容，不做假 404）。
 function wbBookOf(r) {
@@ -1747,6 +1795,12 @@ function getTavernVersion() { return TAVERN_VERSION; }
 function getScriptId() { return SCRIPT_ID; }
 function getScriptName() { return SCRIPT_NAME; }
 function getCurrentCharPrimaryLorebook() { return call('lorebook:primary', []); }
+// 【W3 2026-09-15】getTavernHelperExtensionId：真 TH 返回「酒馆助手」扩展自身的 id
+//（@types/function/extension.d.ts:12）。DSH 侧没有 ST 的扩展目录，故返回**移植标识**——
+// 诚实值而非空串：脚本对它的典型用法是版本/环境判定与日志标注，给空串会让
+// 'if (id)' 类判定落空，给标识则语义等价于「这是 DSH 的 TH 兼容层」。
+var DSHT_TH_EXTENSION_ID = 'dsht-tavern-helper';
+function getTavernHelperExtensionId() { return DSHT_TH_EXTENSION_ID; }
 
 // ---- C18 杂项：getLastMessageId（上下文快照同步读；空会话 -1）----
 function getLastMessageId() {
@@ -1985,6 +2039,42 @@ var toastr = {};
     post({ th: 'toast', level: level, message: String(message), title: String(title || '') });
   };
 });
+
+// 【W3 2026-09-15】errorCatched：真 TH 的「把报错经酒馆通知显示」包装器
+//（@types/function/util.d.ts:33；基准实现见其 dist 产物 'function VA(e){…}'）。
+//
+// 基准语义（从**产物**逐字取证，不按声明面猜）：
+//   'errorCatched(fn)' 返回一个同功能函数；调用时
+//     · 若 fn 返回 **thenable** ⇒ 挂 '.then(void 0, e => 报错)'（**异步错误也接住**）
+//     · 若同步抛出 ⇒ catch 后**继续 throw**（**重抛**，不吞）
+//     · 报错方式 = 'toastr.error(...)' + 基准内部的 _log 调用
+//   ⇒ 关键事实：**它重抛**。所以「包装器 = 静默失败」是错的，我不能按那个直觉实现。
+//
+// 我方对应（逐条对齐，零新增机制）：
+//   · 同步 throw ⇒ 报错后**重抛**（保留原错误对象，调用方 catch 仍能拿到）
+//   · thenable  ⇒ 挂 '.then(void 0, …)' 分流（不改变成功路径的链式语义）
+//   · 「酒馆通知」= 我方 toastr.error（已桥到脚本面板日志，与基准同一通道语义）
+function errorCatched(fn) {
+  if (typeof fn !== 'function') return fn;
+  function reportError(e) {
+    var msg = (e && e.message) ? String(e.message) : String(e);
+    try { console.warn('[TavernHelper shim] errorCatched: ' + msg); } catch (e2) {}
+    try { toastr.error(msg, (e && e.name) ? String(e.name) : 'errorCatched'); } catch (e3) {}
+  }
+  return function () {
+    var r;
+    try {
+      r = fn.apply(this, arguments);
+    } catch (syncErr) {
+      reportError(syncErr);
+      throw syncErr; // 基准重抛（已取证）；吞掉会改变调用方的控制流 = 契约漂移
+    }
+    if (r && typeof r.then === 'function') {
+      return r.then(undefined, function (asyncErr) { reportError(asyncErr); });
+    }
+    return r;
+  };
+}
 
 // ---- C15 日志抽屉：console 转发（包装 console.*，本地照常输出 + post 给 host 汇入日志面板）----
 function dshtFormatArg(a) {
@@ -2321,6 +2411,9 @@ var TH = {
   getScriptButtons: getScriptButtons, replaceScriptButtons: replaceScriptButtons,
   updateScriptButtonsWith: updateScriptButtonsWith, appendInexistentScriptButtons: appendInexistentScriptButtons,
   getTavernHelperVersion: getTavernHelperVersion, getTavernVersion: getTavernVersion,
+  // 【W3 2026-09-15】真 TH 裸全局面补齐的两项（此前缺席 ⇒ 脚本 typeof 守卫静默走 else）
+  getTavernHelperExtensionId: getTavernHelperExtensionId,
+  errorCatched: errorCatched,
   getScriptId: getScriptId, getScriptName: getScriptName,
   getCurrentCharPrimaryLorebook: getCurrentCharPrimaryLorebook,
   getCharWorldbookNames: getCharWorldbookNames,
@@ -2374,6 +2467,18 @@ window.TavernHelper = new Proxy(TH, {
 // 环境自带）——轮询 window[name] 出现即 resolve；超时 reject。缺它 → 剧情逻辑脚本
 // await waitGlobalInitialized('Mvu') 抛 ReferenceError → 误报「MVU Framework not found」
 // 后整段初始化 return（按钮/监听全不装）。
+//
+// 【W3 2026-09-15 补齐配对的一侧】真 TH 里 initializeGlobal / waitGlobalInitialized 是
+// **一对**（@types/function/global.d.ts:4/9）：'initializeGlobal(name, value)' 把接口共享到
+// 全局，别的脚本 'await waitGlobalInitialized(name)' 等它。此前我方只实现了等待侧
+// ⇒ 提供方脚本调 initializeGlobal 时它**不存在**（走 typeof 守卫静默走 else），
+// 于是**所有消费方**的 waitGlobalInitialized 必然超时——一个缺失让整套共享机制瘫痪。
+// 实现：写入**脚本帧自己的** window（真 TH 的 predefine 也是帧内可见；跨 iframe 共享
+// 由 MVU 等框架自己的 parent 通道承担，不是本 API 的职责）。
+window.initializeGlobal = function (name, value) {
+  var key = String(name);
+  try { window[key] = value; } catch (e) { /* 只读名（如 window.name 的某些形态）忽略 */ }
+};
 window.waitGlobalInitialized = function (name, timeoutMs) {
   var limit = typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : 15000;
   return new Promise(function (resolve, reject) {
@@ -2416,6 +2521,27 @@ window.toastr = toastr;
 window.Mvu = Mvu; // D6：MVU 框架顶层面
 for (var gi = 0; gi < unsupported.length; gi++) { window[unsupported[gi]] = TH[unsupported[gi]]; }
 window.audio = audio; // C17：对象型 API 不在函数型裸全局循环里，单独挂
+
+// ---- 【W3 2026-09-15】**值型**缺失名的「读出声道具」----
+// 真 TH 的裸全局面里有几个是**值**（对象/数组）而非函数，我方没有对应数据面。
+// 为什么不能像函数型那样挂 stub：unsupportedStub 返回**函数**，而脚本对这两个名字写的是
+//     if (typeof default_preset !== 'undefined') { ... default_preset.prompts ... }
+// —— 挂函数会让 typeof 从 'undefined' 变 'function' ⇒ 守卫**通过** ⇒ 脚本进入一个
+// 它以为可用的分支再读到 undefined ⇒ **把「静默缺席」换成「静默错误」，比原状更坏**。
+// ⇒ 挂 getter：**返回值仍是 undefined**（脚本行为与「不存在」逐字相同、零回归），
+//   但**首次读取即出声**（reportMissing 三重：console.warn + th:'missing' 信标 + 面板清单）。
+// 这正是本工作面要的：把「我方零感知」变成「我方知道，用户也能在 🧩 面板看到」。
+var faceValueNames = ${faceValueNamesJs};
+for (var vi = 0; vi < faceValueNames.length; vi++) {
+  (function (vn) {
+    try {
+      Object.defineProperty(window, vn, {
+        configurable: true,
+        get: function () { reportMissing(vn); return undefined; },
+      });
+    } catch (e) { /* 极简假 DOM / 老 WebView 不支持则跳过（不静默：下面的 warn 仍会出） */ }
+  })(faceValueNames[vi]);
+}
 
 // SillyTavern 门面（快照驱动、同步；缺的数据字段 undefined 保持形状——不再抛错记名）。
 // extensionSettings：SoliUmbra 等脚本写 SillyTavern.extensionSettings.xxx（ST 全局
@@ -2644,13 +2770,70 @@ window.addEventListener('message', function (e) {
 // unhandledrejection 也发 failed，卡脚本启动期的异步 rejection（早于 ready 信标）
 // 会把 phase 钉死在 failed → 按钮事件永久排队 → 「按钮点击无任何反应」（真机实证
 // 全部 6 脚本 failed）。真 TH 语义：脚本抛错不摘除事件面，交互保持可用，错误仅记录）----
+//
+// 【L5 · 方案 C · 2026-09-14 第十八轮】裸全局 ReferenceError **归因增强**。
+//
+// ## 为什么需要（见 docs/L5-BARE-GLOBAL-TH-API-GAP.md）
+// 卡脚本以**裸全局**形式调 TH API 时，我方 window 上只挂了「已实现面 + 清单内不支持面」
+// 两类（见上方 bareGlobals / unsupported 两行）。若脚本调的是**第三类名字**（清单外），
+// 两种后果：
+//   · 无守卫  ⇒ 'ReferenceError: X is not defined' ⇒ 走下面的 error 通道 ⇒ 面板显示
+//               **「脚本错误」**。用户/作者会以为**是卡的 bug**，而去查一个并不存在的
+//               脚本缺陷（排障路径完全错）。
+//   · 有 'typeof X !== 'undefined'' 守卫 ⇒ **静默走 else 分支**，我方零感知（本方案不覆盖，
+//               需 Proxy/作用域包装，属 B5「需大架构改造」——见评估文档 §五 方案 B）。
+// 对照：'TavernHelper.<未知名>' **早有** Proxy 兜底 ⇒ 面板「缺 API：…」。**两条路径不对称**。
+//
+// ## 本方案（C）做什么 / 不做什么
+// **只做归因，不动执行语义**（零回归面）：从 'ReferenceError: X is not defined' 里取出
+// 名字 X，若它**形态像 TH API**（驼峰标识符、且不在宿主/JS 内建白名单里），就把它
+// **同时**记进「缺 API」通道（复用 reportMissing 的三重出声：console.warn + post 信标 +
+// 面板清单）—— 让用户看到的是「**明确的能力边界**」而不是「疑似卡的 bug」。
+// 原错误信息**照旧上报**（不吞、不改写；归因是**追加**信息，不是替换）。
+//
+// ## 为什么是启发式（诚实边界）
+// 无法从 ReferenceError 区分「未支持的 TH API」与「卡作者自己的拼写错误」——两者都表现为
+// 未定义标识符。故归因文案用「**疑似**」，且**绝不**据此改变脚本行为。这条判据是
+// **排障体验**改善，不是行为修复（B3 字面要求的「有守卫的静默形态」仍未覆盖，已在
+// 评估文档里如实登记）。
+//
+// ## 白名单为什么必须存在（防误报，P-14 的同族纪律）
+// 宿主/JS 内建全局被误报成「缺 TH API」会让面板充斥噪音（'console'/'JSON'/'Promise'…），
+// 反而**掩盖**真信号。故：命中白名单 ⇒ 只报原始错误、不归因。
+var BUILTIN_GLOBAL_ALLOW = ${builtinAllowJs};
+var bareGlobalSet = new Set();
+for (var bi = 0; bi < bareGlobals.length; bi++) bareGlobalSet.add(bareGlobals[bi]);
+var unsupportedSet = new Set();
+for (var si = 0; si < unsupported.length; si++) unsupportedSet.add(unsupported[si]);
+var reportedAttr = new Set();
+function attributeReferenceError(msgText) {
+  try {
+    var m = /^\\s*(?:Uncaught\\s+)?ReferenceError:\\s*([A-Za-z_$][A-Za-z0-9_$]*)\\s+is not defined/.exec(String(msgText || ''));
+    if (!m) return null;
+    var name = m[1];
+    if (bareGlobalSet.has(name)) return null;      // 已挂载（不该报未定义；保守不归因）
+    if (unsupportedSet.has(name)) return null;     // 清单内不支持 ⇒ 已有 stub，不是本缺口
+    if (BUILTIN_GLOBAL_ALLOW.indexOf(name) >= 0) return null;  // JS/宿主内建 ⇒ 不归因
+    // 形态像 TH API：驼峰（含小写→大写过渡）或全小写下划线式；单字母/全大写常量不算
+    var looksLikeApi = /[a-z][A-Z]/.test(name) || /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(name);
+    if (!looksLikeApi) return null;
+    if (reportedAttr.has(name)) return name;       // 已归因过：仍返回名字（调用方可去重）
+    reportedAttr.add(name);
+    reportMissing(name);
+    return name;
+  } catch (e) { return null; }
+}
 window.addEventListener('error', function (e) {
-  post({ th: 'script-error', error: String((e && e.message) || 'script error') });
+  var msg = String((e && e.message) || 'script error');
+  attributeReferenceError(msg);
+  post({ th: 'script-error', error: msg });
 });
 window.addEventListener('unhandledrejection', function (e) {
   var reason = e && e.reason;
   if (reason && reason.__thExpected) return; // shim 自己的不支持 API reject 不算失败
-  post({ th: 'script-error', error: String((reason && reason.message) || reason || 'unhandled rejection') });
+  var msg = String((reason && reason.message) || reason || 'unhandled rejection');
+  attributeReferenceError(msg);
+  post({ th: 'script-error', error: msg });
 });
 
 // pagehide 清事件（真 TH predefine.js 同款）
@@ -2722,16 +2905,92 @@ window.__dshtThReady = function () {
  *   pre/code 深色块（通讯终端类脚本的输出不发灰）。
  */
 
-/** F2：宿主明暗判定（宿主 body 实际背景亮度；取不到按 DSH 深色壳 = dark） */
+/**
+ * F2：宿主明暗判定（**宿主实际观感**，而非 OS 偏好）。
+ *
+ * 【L2 穷举 2026-09-14 · P-7/P-3 修复】设备实测（`tmp/probe-theme-toggle.mjs`）：
+ * 把 `body[data-ds-dark-theme]` 去掉（宿主转浅色，body 背景 rgb(21,21,23) → rgb(255,255,255)）后，
+ * **我方 token 色跟随了**（rgb(249,250,251) → rgb(15,17,21)），而**帧内 `color-scheme` 仍是 dark**。
+ *
+ * 两个独立成因：
+ *   ① **宿主主题是「应用内设置」**（`body[data-ds-dark-theme]` 属性），
+ *      与 **OS 偏好** `prefers-color-scheme` **可分离**（用户可在深色 OS 里选浅色主题，反之亦然）；
+ *   ② 帧内 `color-scheme` 是**建帧时一次性求值**的字符串 ⇒ 宿主后续切主题，既有帧**不跟随**。
+ *
+ * ⇒ 因此本函数只负责「**建帧那一刻**取宿主观感」；**跟随**由注入的
+ * `__dshtApplyHostScheme()` + 宿主侧派发的 `dsht-rp-ui:theme-changed` 事件承担（见 frameSchemeBoot）。
+ */
 function detectHostColorScheme(): 'dark' | 'light' {
   try {
     if (typeof document === 'undefined') return 'dark'
+    // 【单源性】优先读宿主**权威主题信号**（属性），它是应用内设置的唯一事实来源；
+    // 只有属性缺失（非 DSH 壳 / 早期版本）才回落到背景亮度启发式。
+    const attr = document.body?.hasAttribute?.('data-ds-dark-theme') ?? document.documentElement?.hasAttribute?.('data-ds-dark-theme')
+    if (attr === true) return 'dark'
+    if (attr === false) return 'light'
     const bg = getComputedStyle(document.body).backgroundColor
     const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(bg)
     if (!m) return 'dark'
     const lum = 0.299 * Number(m[1]) + 0.587 * Number(m[2]) + 0.114 * Number(m[3])
     return lum >= 128 ? 'light' : 'dark'
   } catch { return 'dark' }
+}
+
+/**
+ * 【L2/P-7】帧内「跟随宿主主题」的引导脚本（**内联在每一帧**，含三个文档构造器共用的形态）。
+ *
+ * 为什么必须内联而不是靠宿主推送：帧可能是 `srcdoc` / 卡自有文档（跨源限制另说），
+ * 由**帧自己**读宿主主题最直接；宿主侧只需在切主题时 `postMessage` 广播一次。
+ *
+ * 三重信号（任一到达即生效，避免单点失效）：
+ *   ① **初始**：建帧时内联 `color-scheme`（构建期值，保证首帧不闪错色）；
+ *   ② **广播**：宿主切主题 → `window.postMessage({__dshtHostScheme})` → 本脚本应用；
+ *   ③ **兜底**：`matchMedia('(prefers-color-scheme)')` 变化时重算（OS 层切换）。
+ * 注意 ③ 只是兜底：它与宿主**应用内设置**可能不同（这正是本缺陷的成因之一），
+ * 故**优先级低于** ①②（不覆盖已由宿主明确告知的值）。
+ */
+function frameSchemeBoot(initial: 'dark' | 'light'): string {
+  return `<script>(function(){
+var s=${JSON.stringify(initial)},locked=false;
+function apply(v){ if(v!=='dark'&&v!=='light') return; s=v; try{ document.documentElement.style.colorScheme=v }catch(e){} }
+window.__dshtApplyHostScheme=function(v){ locked=true; apply(v) };
+window.addEventListener('message',function(e){
+  var d=e&&e.data; if(!d||typeof d!=='object') return;
+  if(d.__dshtHostScheme==='dark'||d.__dshtHostScheme==='light') window.__dshtApplyHostScheme(d.__dshtHostScheme);
+});
+// 【内联初始值也要显式落到元素上】不能只依赖 <style> 里的声明：
+// 卡页面自带的 CSS 可能覆盖或后加载 ⇒ 只有元素内联样式才是「我方最后说话」。
+apply(s);
+try{
+  var mq=window.matchMedia('(prefers-color-scheme: dark)');
+  var on=function(){ if(!locked) apply(mq.matches?'dark':'light') };
+  if(mq.addEventListener) mq.addEventListener('change',on); else if(mq.addListener) mq.addListener(on);
+}catch(e){}
+})();</script>`
+}
+
+/**
+ * 【L2/P-7】宿主侧：把主题变化广播给**全部已存在的 RP 帧**（含 TH 脚本帧 / 消息帧）。
+ *
+ * 与 `detectHostColorScheme` 同源（都读 `body[data-ds-dark-theme]`）⇒ 只有一个事实来源（P-1）。
+ * 返回真正广播到的帧数（用于调用方断言 / 出声）。
+ */
+export function broadcastHostScheme(root: Document | ShadowRoot | HTMLElement = document): number {
+  const scheme = detectHostColorScheme()
+  let n = 0
+  for (const f of root.querySelectorAll('iframe')) {
+    try {
+      const w = f.contentWindow
+      if (!w) continue
+      // 优先走帧内已安装的钩子（同源直接调，最快且不依赖 message 监听是否装上）；
+      // 跨源 / 钩子未装（脚本尚未执行）⇒ 退到 postMessage（帧内脚本会接住）。
+      const hook = (w as unknown as { __dshtApplyHostScheme?: (v: string) => void }).__dshtApplyHostScheme
+      if (typeof hook === 'function') { hook(scheme); n += 1; continue }
+      w.postMessage({ __dshtHostScheme: scheme }, '*')
+      n += 1
+    } catch { /* 跨源且钩子不可达：postMessage 兜底已在上面；失败不计数 */ }
+  }
+  return n
 }
 
 export function buildIframeDocument(opts: ShimOptions & { content: string; initialVars?: unknown }): string {
@@ -2746,6 +3005,7 @@ export function buildIframeDocument(opts: ShimOptions & { content: string; initi
   const varsJson = JSON.stringify(opts.initialVars ?? {}).replace(/</gu, '\\u003c')
   const varsBoot = `<script>window.__dshtFrameVars = ${varsJson};</script>`
   // F2：深色主题 CSS（构建期求宿主明暗，注入 color-scheme 与 pre/code 深色块）
+  // 【L2/P-7】另注入 frameSchemeBoot：宿主切主题时**既有帧跟随**（此前只在建帧时求值一次）。
   const scheme = detectHostColorScheme()
   const themeCss = `<style>`
     + `html{color-scheme:${scheme};--TH-viewport-height:100%;--TH-viewport-width:100%}`
@@ -2753,6 +3013,7 @@ export function buildIframeDocument(opts: ShimOptions & { content: string; initi
     + `pre,code{background:rgb(128 128 128 / .18);color:inherit;border-radius:6px}`
     + `pre{padding:8px 10px;overflow:auto}code{padding:1px 4px}`
     + `</style>`
+    + frameSchemeBoot(scheme)
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -2886,6 +3147,7 @@ export function buildMessageFrameDocument(source: string, opts: ShimOptions & { 
   const themeCss = `<style>`
     + `html{color-scheme:${scheme};--TH-viewport-height:100%;--TH-viewport-width:100%}`
     + `</style>`
+    + frameSchemeBoot(scheme) // 【L2/P-7】既有帧跟随宿主切主题
   // 同步变量面：嵌入当前合并变量树（getAllVariables().stat_data 同步访问的数据源）
   const varsJson = JSON.stringify(opts.initialVars ?? {}).replace(/</gu, '\\u003c')
   const varsBoot = `<script>window.__dshtFrameVars = ${varsJson};</script>`

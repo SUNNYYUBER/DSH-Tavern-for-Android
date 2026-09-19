@@ -28,7 +28,23 @@ import { emptyPreset, type PresetSlot, type RPPreset } from '../preset/schema.ts
 import { demoDirectPreset, demoLightAgentPreset } from '../preset/demo.ts'
 import { WI_POSITION, type LoreBook, type LoreEntry } from '../lore/entry.ts'
 import { scanSessionHeaders } from '../dsht-plugin-shared/session-surgery.ts'
+// 【F5 2026-09-14 单源化·补漏】`isTree` 原为本地函数体，与
+// `dsht-plugin-shared/deep-merge.ts` 的 `isMergeableObject` **逐字相同**（审计脚本
+// 判据 4「不同名但函数体逐字相同」抓到；同包内 `for-session.ts`/`session-store.ts`
+// 还有同名副本）。「可合并对象」判据必须单源——一处收紧（如排除 Date/Map）
+// 另一处不收，就是两处对同一数据判得不一样。
+import { isMergeableObject as isTree } from '../dsht-plugin-shared/deep-merge.ts'
+// 【F5 2026-09-14 单源化】路径工具来自共享层（**不**从 dsh-plugin import——那会造成
+// 本插件反向依赖 RP 宿主，架构倒置）。见下方端点 8 注释。
+import { rpSlugFromCwd } from '../dsht-plugin-shared/rp-workspace.ts'
 import { readThFloors, lookupThFloor } from '../dsht-plugin-shared/th-floors.ts'
+// 【F4-C3 / P-1 2026-09-14 单源化】手术标记（回退/编辑/重新生成）的**唯一读法**。
+// 此前本文件的聊天导出自己实现了一套「只扫 compaction/prune 事件」的遮蔽集解析，
+// 与 dsh-plugin（走 readSurgical：新形态 sections[dsht:surgical] + 存量 legacy + 顶层键
+// 三路兜底）**语义漂移**——0.1.5 迁移后写侧不再产出顶层键/独立 prune 事件，
+// 于是本处的遮蔽集**恒为空** ⇒ 被回退的消息照样计入 token 占用（
+// 「回退后占用不降」的设备实测根因，P-1 违例的典型后果）。现统一走共享层。
+import { readSurgical } from '../dsht-plugin-shared/session-write.ts'
 import { snapshotBeforeWrite } from '../dsht-plugin-shared/file-snapshots.ts'
 import { validateSchemaSubset } from '../dsht-plugin-shared/schema.ts'
 import { appendUndoEntries, diffUndoEntries } from '../dsht-plugin-shared/undo.ts'
@@ -86,9 +102,7 @@ export interface FacadeResult {
   body: Record<string, unknown>
 }
 
-function isTree(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v)
-}
+/* 【F5 2026-09-14 单源化·补漏】本地 `isTree` 已删——见顶部 import 的别名说明。 */
 
 // ---------------------------------------------------------------------------
 // StPrompt 视图构建（/context 与 /preset/get 两处共用）
@@ -280,8 +294,16 @@ async function characterNameOf(dshHome: string, slug: string): Promise<string> {
   } catch { return slug }
 }
 
-/** 写前快照（归属会话尽量解析：有 sessionId 才记；解析不到/失败不阻塞写） */
-async function snapshotFor(dshHome: string, sessionId: string, relPaths: string[]): Promise<void> {
+/**
+ * 写前快照（归属会话尽量解析：有 sessionId 才记；解析不到/失败不阻塞写）。
+ *
+ * 【W8 2026-09-15 单源收口（P-1）】此前 `index.ts` 里有一个**逐字相同**的私有副本
+ * （`snapshotFiles`，见 `index.ts` 的 `saveScripts` 附近）——同包跨文件的两份同语义实现。
+ * 漂移后果：一处改了「失败策略」（如从「静默跳过」改成「出声」或改成 throw），
+ * 另一处不变 ⇒ **同一功能在两条写入路径上表现不一致**，且零报错。
+ * ⇒ 导出本函数，`index.ts` 委托它（依赖方向 index → facade，与本文件既有关系一致）。
+ */
+export async function snapshotFor(dshHome: string, sessionId: string, relPaths: string[]): Promise<void> {
   if (!sessionId) return
   try {
     await snapshotBeforeWrite(dshHome, sessionId, relPaths)
@@ -650,14 +672,11 @@ export async function presetLoad(dshHome: string, body: Record<string, unknown>)
 // 端点 8：POST /chat/messages {sessionId} → 只读聊天记录导出（StMessage[]）
 // ---------------------------------------------------------------------------
 
-/** header.cwd → rp 工作区 slug（cwd 在 <dshHome>/rp/ 下时取首段；否则 null） */
-function rpSlugFromCwd(dshHome: string, cwd: string | undefined): string | null {
-  if (!cwd) return null
-  const rel = relative(join(dshHome, 'rp'), resolve(cwd))
-  if (!rel || rel.startsWith('..')) return null // 不在 rp/ 下（或就是 rp/ 本身）
-  const slug = rel.split(/[\\/]/)[0]
-  return slug || null
-}
+// 【F5 / P-1b 2026-09-14 单源化】此处原有一份 `rpSlugFromCwd(dshHome, cwd)` 的本地复制
+// （与 dsh-plugin 的同名函数语义相同、参数顺序不同）。审计脚本
+// `scripts/audit-impl-duplication.mjs` 把它识别为「同一语义两份实现」——复制即必然漂移
+// （一处按 normAndroidPath 规范化、一处用 path.relative，Android 路径分隔符下结果可能不同）。
+// 现实现已下沉到 dsht-plugin-shared/rp-workspace.ts，两侧共同 import（见文件顶部）。
 
 // 【2026-09-07 轮询风暴根修】卡脚本（ExampleGame Logic masterLoop / MVU 心跳）持续轮询
 // chat/messages + worldbook/get——旧实现每次调用都全量双遍重扫数 MB 的 session.jsonl
@@ -724,8 +743,10 @@ export async function chatMessages(dshHome: string, body: Record<string, unknown
     }
   } catch { /* stat 失败按无缓存走 */ }
   // 角色名：header.cwd 指向 rp 工作区时读 rp.json.characterName；取不到回落 'Assistant'
+  // 【F5 2026-09-14】此处刻意用 'first-segment'：cwd 可能比工作区根更深（门面是「取角色名」，
+  // 宽容取首段即可），与 dsh-plugin 的「会话归属」判定（'exact'）宽严不同——语义差显式化。
   let charName = 'Assistant'
-  const slug = rpSlugFromCwd(dshHome, hit.cwd)
+  const slug = rpSlugFromCwd(hit.cwd, dshHome, 'first-segment')
   if (slug) {
     try {
       const rp = JSON.parse(await readFile(homePath(dshHome, `rp/${slug}/rp.json`), 'utf8')) as { characterName?: unknown }
@@ -737,18 +758,38 @@ export async function chatMessages(dshHome: string, body: Record<string, unknown
   // 事件 source 上（model source 是闭集），新写入已改存 $DSH_HOME/rp/th-floors/<sid>.json。
   // 读侧先查 sidecar，再退回旧 source 键 → 老会话未修复与新会话都能读回来。
   const thFloors = readThFloors(dshHome, sessionId)
-  // 第一遍：收集 compaction/prune 遮蔽集（replace 原语——旧事件留日志但不进视图/导出；
-  // prune 先于 replacement 落盘但被遮事件更早，单遍会漏遮 → 先全量扫描再导出）
+  // 第一遍：收集手术遮蔽集（回退/编辑/重新生成把消息 replace 移出上下文）。
+  //
+  // 【F4-C3 / P-1 2026-09-14 单源化修复】原实现**只扫 `compaction/prune` 事件**并读其
+  // `data.shadowedSeqs`。设备实测证伪：真机上 `session.jsonl` 的 prune 事件数为 **0**，
+  // 而 25 行消息事件里带着 `dsht:surgical` 标记（0.1.5 写侧的新形态 = `form:'snapshot'`
+  // + `sections[{name:'dsht:surgical', text: JSON.stringify(payload)}]`）。
+  // ⇒ 本处遮蔽集**恒为空** ⇒ 被回退的消息照样计入 token 占用
+  //    （「回退后进度条不降」的真实根因），同时**导出里也照样含被回退的楼层**。
+  // 与 dsh-plugin（掩码路由）走 `readSurgical` 三路兜底形成**同一语义两份实现**——
+  // 典型的 P-1 违例：复制即必然漂移，而漂移的表现是**静默**（只是数字不动）。
+  // 现统一走共享层 `readSurgical`（新形态 + 存量 legacy + 顶层键），两条路径同一判据。
   const shadowed = new Set<number>()
   const rl0 = createInterface({ input: createReadStream(logPath, 'utf8'), crlfDelay: Infinity })
   for await (const line of rl0) {
     const t = line.trim()
     if (!t) continue
-    let ev: { type?: unknown; data?: unknown }
+    // 快路径：只是「这行是否可能含手术标记」的粗筛，命中判定交给 readSurgical（权威）
+    if (!t.includes('dsht:surgical') && !t.includes('dsht:legacy')
+      && !t.includes('shadowedSeqs') && !t.includes('compaction/prune')) continue
+    let ev: { type?: unknown; data?: unknown; seq?: unknown }
     try { ev = JSON.parse(t) } catch { continue }
-    if (ev.type !== 'compaction/prune') continue
-    const d = ev.data as { shadowedSeqs?: unknown } | undefined
-    if (Array.isArray(d?.shadowedSeqs)) for (const q of d.shadowedSeqs) if (typeof q === 'number') shadowed.add(q)
+    // ① 独立 prune 事件（更早期写入形态；存量会话仍可能有）
+    if (ev.type === 'compaction/prune') {
+      const d = ev.data as { shadowedSeqs?: unknown } | undefined
+      if (Array.isArray(d?.shadowedSeqs)) for (const q of d.shadowedSeqs) if (typeof q === 'number') shadowed.add(q)
+      continue
+    }
+    // ② 手术标记（当前写侧形态）：与 dsh-plugin 的 /rp/rollback-mask 同读法
+    const { payload } = readSurgical(ev)
+    for (const q of payload.shadowedSeqs ?? []) shadowed.add(q)
+    // edit 语义 = 锚消息本身也移出 → 并入集合（与掩码路由同一约定）
+    if (typeof payload.editedFrom === 'number') shadowed.add(payload.editedFrom)
   }
   // 第二遍：导出（跳过被遮蔽事件）
   const rl = createInterface({ input: createReadStream(logPath, 'utf8'), crlfDelay: Infinity })

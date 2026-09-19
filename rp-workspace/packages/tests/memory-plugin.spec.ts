@@ -117,6 +117,59 @@ describe('extractFloorsFromEvents（楼层口径 = turn：一轮用户输入 / �
     expect(cursor).toBe(3)
     expect(floors).toHaveLength(3)
   })
+
+  // 【P-18 2026-09-14 同一语义单源化】写侧的两种表达不等价：
+  //   · `shadowedSeqs` = 逐条记录（**权威**）
+  //   · `rolledBackTo / regeneratedFrom / editedFrom` = 锚点（阈值式，**可能缺失**）
+  // 此前记忆侧**只**算锚点区间 ⇒ 当某次回退只带集合、锚点为 0/缺失时**漏跳**
+  // ⇒ 被回退的楼层仍进摘要（用户明确撤回的内容「复活」进上下文）。
+  // 这与 F4-C3 在聊天导出侧踩到的是同一族问题（同一语义多处读法各自漂移）。
+  describe('P-18 集合语义必须与区间同源（只带 shadowedSeqs 且锚点缺失时不得漏跳）', () => {
+    const markerWithSetOnly = (seq: number, seqs: number[]) => ({
+      type: 'user/message', seq,
+      data: {
+        role: 'user',
+        content: [{ type: 'text', text: 'marker' }],
+        // 0.1.5 写侧形态：官方白名单 sections，payload 里**只有 shadowedSeqs**
+        source: { kind: 'plugin', plugin: 'dsht-rp', form: 'snapshot', sections: [{ name: 'dsht:surgical', text: JSON.stringify({ shadowedSeqs: seqs }) }] },
+      },
+    })
+
+    it('正控：锚点缺失、只有 shadowedSeqs 时，被移出的楼层仍必须跳过', () => {
+      const events = [
+        { type: 'user/message', seq: 1, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '保留的楼' }] } },
+        { type: 'user/message', seq: 2, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '被移出的楼' }] } },
+        { type: 'assistant/message', seq: 3, data: { turn: 2, role: 'assistant', content: [{ type: 'text', text: '被移出的回复' }] } },
+        markerWithSetOnly(4, [2, 3]), // 只带集合，**无** rolledBackTo
+        { type: 'user/message', seq: 5, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '重发的楼' }] } },
+      ]
+      const { floors } = extractFloorsFromEvents(events)
+      // seq2/seq3 已被 replace 移出 ⇒ 不得进摘要
+      expect(floors.map(f => f.text)).toEqual(['保留的楼', '重发的楼'])
+    })
+
+    it('负控：集合里的 seq 不在日志中（陈旧/越界）→ 不得误伤其它楼层', () => {
+      const events = [
+        { type: 'user/message', seq: 1, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '正常一' }] } },
+        markerWithSetOnly(2, [999, 1000]), // 指向不存在的 seq
+        { type: 'user/message', seq: 3, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '正常二' }] } },
+      ]
+      const { floors, cursor } = extractFloorsFromEvents(events)
+      expect(cursor).toBe(2)
+      expect(floors.map(f => f.text)).toEqual(['正常一', '正常二'])
+    })
+
+    it('边界：edit 语义（editedFrom）的锚消息自身也须并入集合（两条路一致）', () => {
+      const events = [
+        { type: 'user/message', seq: 1, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '保留' }] } },
+        { type: 'user/message', seq: 2, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '被编辑的原句' }] } },
+        { type: 'user/message', seq: 3, data: { role: 'user', content: [{ type: 'text', text: 'marker' }], source: { kind: 'plugin', plugin: 'dsht-rp', editedFrom: 2 } } },
+        { type: 'user/message', seq: 4, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '编辑后的新句' }] } },
+      ]
+      const { floors } = extractFloorsFromEvents(events)
+      expect(floors.map(f => f.text)).toEqual(['保留', '编辑后的新句'])
+    })
+  })
 })
 
 describe('nextChunk（每 N 楼一块，长跨度分轮消化）', () => {

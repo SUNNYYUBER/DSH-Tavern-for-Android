@@ -144,6 +144,37 @@ export function findLastUserMessage(events: Array<{ type: string; seq: number; d
 /** 三个动作的文案用词（保持既有逐字文案，避免用户可见文案漂移） */
 export type SurgeryAction = 'rollback' | 'edit' | 'regenerate'
 
+/**
+ * sessionId 是否**安全**用作文件名/路径段（路径穿越防护；**安全判据**）。
+ *
+ * ## 为什么下沉到共享层（P-1b）
+ * 这条判据此前被**逐字复制**在两处：
+ *   · `dsh-plugin/memory.ts` 的 `isValidMemorySessionId`（工具记忆落 `rp/memory/<sid>.json`）
+ *   · `dsht-plugin-memory/tables.ts` 的 `isValidTablesSessionId`（表格落同族路径）
+ * 两者条件集完全一致，但**没有任何机制保证它们继续一致**——安全判据只在一侧收紧，
+ * 另一侧就留洞（路径穿越：`../` 或绝对路径写出去）。属「复制即必然漂移」的典型，
+ * 且漂移后果是**安全**而非体验，故必须单源。
+ *
+ * ## 判据口径（保持既有行为，逐条沿用）
+ * - 非空、长度 ≤120（防超长文件名）；
+ * - 不含 `/`、`\`（路径分隔符）；
+ * - 不含 `..`（相对上跳）；
+ * - 不等于 `.`（当前目录）；
+ * - 首尾无空白（`trim()` 不变，防「看起来同名实则不同」）。
+ *
+ * @returns 安全 → true
+ */
+export function isSafeSessionId(sessionId: unknown): boolean {
+  return typeof sessionId === 'string'
+    && sessionId.length > 0
+    && sessionId.length <= 120
+    && !sessionId.includes('/')
+    && !sessionId.includes('\\')
+    && !sessionId.includes('..')
+    && sessionId !== '.'
+    && sessionId.trim() === sessionId
+}
+
 const ACTION_LABEL: Record<SurgeryAction, string> = {
   rollback: '回退',
   edit: '编辑',

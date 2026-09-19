@@ -56,6 +56,11 @@ import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
 // 【阶段3 2026-09-10】会话写入合法形态：surfaceOp 字段名自适应 + 合法标记载体
 // （0.1.5 起 start/end → startSeq/endSeq；source 顶层自定义键会被迁移器拒）
 import { markerSource, replaceRange, readMarker, appendReplace, readSurgicalPayload, type AppendableSession } from '../dsht-plugin-shared/session-write.ts'
+// 【F5 2026-09-14 单源化·补漏】残留宏中性化下沉共享层（见下方 neutralizeMacros 的说明）
+import { escapeResidualMacros } from '../dsht-plugin-shared/card-fence.ts'
+// 【W4 2026-09-14】官方投影读取单源（cwd / session.id / surface.nodes）——
+// 此前本插件 5 处裸读（含 `(session as ...).surface?.nodes ?? []` 的手写形状守卫）。
+import { readHostSessionId, readSessionCwd, readSurfaceNodes } from '../dsht-plugin-shared/host-projection.ts'
 // E1-E8/E11：表格系统（st-memory-enhancement 机制级移植）——纯逻辑层在本目录 tables.ts，
 // 这里只做数据面接线（/tables 读取 + step-summary/rebuild 两个 llm 路由）
 import {
@@ -208,6 +213,15 @@ export function extractFloorsFromEvents(events: SessionEventLike[]): { floors: F
   let lastAssistantTurn: number | null = null
   // 回退掩码预扫：marker → 跳过区间 (hideAfter, markerSeq)
   const skipRanges: Array<{ from: number; to: number }> = []
+  // 【P-18 2026-09-14 同一语义单源化】除区间外**必须同时**收集精确集合 `shadowedSeqs`。
+  // 原因：写侧的两种表达不是等价的——`shadowedSeqs` 是**逐条记录**（权威），而
+  // `rolledBackTo/regeneratedFrom/editedFrom` 是**锚点**（阈值式）。当某次回退只写了集合
+  // 而锚点缺失/为 0（例如 `rolledBackTo: 0` 表达「无回退」、或新形态只带集合）时，
+  // **只算区间会漏跳** ⇒ 被回退的楼层仍进摘要（用户明确撤回的内容「复活」进上下文）。
+  // 这与 F4-C3 在聊天导出侧踩到的是**同一族**问题（同一语义多处读法各自漂移）。
+  // 注意：本函数与 UI 掩码**仍有意不同**（记忆侧永久跳过，UI 侧回看全量）——
+  // 差异在「范围」，不在「读法」；读法必须与 `readSurgicalPayload` 单源共用。
+  const shadowedSeqs = new Set<number>()
   for (const e of events) {
     if (!e || typeof e.type !== 'string' || e.type !== 'user/message' || typeof e.seq !== 'number') continue
     const s = (e.data as { source?: { plugin?: unknown } | null } | undefined)?.source
@@ -218,14 +232,18 @@ export function extractFloorsFromEvents(events: SessionEventLike[]): { floors: F
     // 顶层键恒 undefined → 掩码恒空 → 被回退的楼层继续进摘要（撤回的内容「复活」）。
     // 统一走 readSurgicalPayload（新形态 + 存量形态 + 顶层键三路兜底）。
     const payload = readSurgicalPayload(s)
+    // ① 精确集合（权威）：写侧逐条记录的被 replace 移出 seq
+    for (const q of payload.shadowedSeqs ?? []) shadowedSeqs.add(q)
+    // ② 锚点区间（补充）：edit 语义 = 锚消息本身也移出
     let hide = -1
     if (typeof payload.rolledBackTo === 'number') hide = payload.rolledBackTo
     if (typeof payload.regeneratedFrom === 'number') hide = Math.max(hide, payload.regeneratedFrom)
     if (typeof payload.editedFrom === 'number') hide = Math.max(hide, payload.editedFrom - 1)
     if (hide >= 0 && hide < e.seq) skipRanges.push({ from: hide + 1, to: e.seq - 1 })
+    if (typeof payload.editedFrom === 'number') shadowedSeqs.add(payload.editedFrom)
   }
   const inSkipRange = (seq: number): boolean =>
-    skipRanges.some(r => seq >= r.from && seq <= r.to)
+    shadowedSeqs.has(seq) || skipRanges.some(r => seq >= r.from && seq <= r.to)
   for (const e of events) {
     if (!e || typeof e.type !== 'string') continue
     const eSeq = typeof e.seq === 'number' ? e.seq : null
@@ -633,12 +651,14 @@ export function buildSummarizePrompt(from: number, to: number, floors: FloorText
 // 展开回显（§2.3 ⑤/④）——纯函数
 // ---------------------------------------------------------------------------
 
-/** 残留 ASCII 宏中性化（dsh-plugin neutralizeResidualMacros 同款）：插值器连
- *  source.sections[].text 一起扫，楼层原文可能含 {{...}}（ST 脚本输出）——不中性化
- *  会炸 turn（"malformed prompt variable reference"）。 */
-export function neutralizeMacros(text: string): string {
-  return text.includes('{{') ? text.split('{{').join('｛｛').split('}}').join('｝｝') : text
-}
+/** 残留 ASCII 宏中性化。插值器连 source.sections[].text 一起扫，楼层原文可能含
+ *  {{...}}（ST 脚本输出）——不中性化会炸 turn（"malformed prompt variable reference"）。
+ *  【F5 2026-09-14 单源化·补漏】原为本地函数体（与 shared/card-fence.ts 的
+ *  `escapeResidualMacros` **逐字相同**），而 dsh-plugin 侧早已改为**委托**共享层
+ *  ⇒ 本处是收口漏网的残留副本（P-1b：复制即必然漂移；转义口径不一致会让
+ *  两侧对「同一段文本」给出不同结果）。现改为直接调共享层。
+ *  ⚠️ 导出名保留（`neutralizeMacros` 是本插件对外/测试引用的名字，改名会破坏调用面）。 */
+export const neutralizeMacros = escapeResidualMacros
 
 /** 期望注回窗口：AI 可见楼层数 M 下，折叠边界 foldedUpTo 之内露出的区间
  *  [max(1, cursor-M+1), foldedUpTo]；无需注回（无折叠 / 窗口未触及折叠边界）→ null */
@@ -725,10 +745,10 @@ export function apply(ctx: Ctx, _config: unknown): void {
       const agent = (raw as { agent?: { session?: SessionRef } }).agent
       const session = agent?.session
       if (!session) return decision
-      const slug = await slugFromCwd(session.header?.cwd)
+      const slug = await slugFromCwd(readSessionCwd(session))
       if (!slug) return decision
       const cfg = readEffectiveConfig()
-      const sid = String((session as { id?: unknown }).id ?? '')
+      const sid = readHostSessionId(session)
       // ---- B12 总开关：**必须连注入一起关** ----
       // 修复前此处完全没读 cfg.enabled ⇒ 关掉总开关只停「生成新记忆」，旧记忆仍每轮注入，
       // 且完全静默（用户只觉得"关了怎么还占上下文"）。判据见 tests/b12-memory-master-switch.spec.ts。
@@ -937,11 +957,11 @@ export function apply(ctx: Ctx, _config: unknown): void {
   }
 
   const shadowSurface = async (session: SessionRef, sid: string, cfg: MemoryConfig, maxFloor: number, freshSigs: ReadonlySet<string>, windowKeepSeq?: number | null): Promise<string> => {
-    const surface = (session as { surface?: { nodes?: number[] } }).surface
     // 0.1.2 坑 #22：`session.events` 已移除——用 snapshotEvents() 快照 + eventAt(seq) 单读。
     // 旧代码直读 `.events` 得 undefined → nodes 恒空 → estTokens=0 → 影子化静默失效
     // （实测 120k tokens > 80k 阈值仍 0 个 replace / 0 个 compaction/prune）。
-    const viewSeqs = surface?.nodes ?? []
+    // 【W4】`session.surface.nodes` 改走单源（缺失/非数组 ⇒ 空数组，与本分支原语义一致）。
+    const viewSeqs = readSurfaceNodes(session)
     if (viewSeqs.length === 0) {
       await writeProbe(sid, { stage: 'no-surface' })
       return ''
@@ -1086,9 +1106,8 @@ export function apply(ctx: Ctx, _config: unknown): void {
     const persisted = await loadFoldState(sid)
     if (persisted > 0) return persisted
     if (session !== undefined) {
-      const surface = (session as { surface?: { nodes?: number[] } }).surface
       let max = 0
-      for (const seq of surface?.nodes ?? []) {
+      for (const seq of readSurfaceNodes(session)) {
         const ev = sessionEventAt(session, seq)
         if (ev?.type !== 'user/message') continue
         const d = ev.data as { source?: { plugin?: unknown; kind?: unknown } | null; content?: Array<{ type?: unknown; text?: unknown }> } | undefined
@@ -1110,8 +1129,7 @@ export function apply(ctx: Ctx, _config: unknown): void {
   /** 活会话 surface 上的窗口注回副本（[{seq, range}]，seq 升序） */
   const scanWindowCopies = (session: SessionRef): Array<{ seq: number; range: { from: number; to: number; capped?: boolean; budget?: number } }> => {
     const out: Array<{ seq: number; range: { from: number; to: number; capped?: boolean; budget?: number } }> = []
-    const surface = (session as { surface?: { nodes?: number[] } }).surface
-    for (const seq of surface?.nodes ?? []) {
+    for (const seq of readSurfaceNodes(session)) {
       const ev = sessionEventAt(session, seq)
       if (ev?.type !== 'user/message') continue
       const src = (ev.data as { source?: { plugin?: unknown; form?: unknown; windowRange?: { from?: unknown; to?: unknown; capped?: unknown; budget?: unknown } } | null } | undefined)?.source

@@ -63,9 +63,14 @@ export function neutralizePromptVariables(text: string): string {
   // 真机实测 V17.1 的 {{setvar::mvu::<正文含 {{getvar::x}}>}} 原样进 yml，
   // DSH 插值器炸 turn "malformed prompt variable reference"）。
   // 已知变量（{{model}}/{{cwd}}）用占位符保护后，逐字替换所有剩余花括号对。
+  //
+  // 【P-34 · 2026-09-15 第二十三轮 W6 续】占位符原为**裸 NUL**（`\u0000DSHT_M\u0000`）。
+  // NUL 可以出现在正文里（粘贴二进制 / 模型泄出控制字符 / 卡作者手写该字面量），
+  // 而本函数的输入是**卡作者可控的预设文本** ⇒ 正文含同形串时会被替换成 `{{model}}`
+  //（篡改，实测见常驻探针 `scripts/ef-sentinel-family.mjs` 的动态验证段）。改用**私用区**定界。
   const PROTECT: Array<[string, string]> = [
-    ['{{model}}', '\u0000DSHT_M\u0000'],
-    ['{{cwd}}', '\u0000DSHT_C\u0000'],
+    ['{{model}}', '\uE000DSHT_M\uE001'],
+    ['{{cwd}}', '\uE000DSHT_C\uE001'],
   ]
   let out = text
   for (const [find, ph] of PROTECT) out = out.split(find).join(ph)

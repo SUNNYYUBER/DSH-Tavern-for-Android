@@ -16,27 +16,31 @@ import { slugFromCwd } from './output-protocol.ts'
 import { RpStateView } from './RpStateView.tsx'
 import { RpSearchPanel } from './RpSearchPanel.tsx'
 import { RpTablesView } from './RpTablesView.tsx'
-import { requestFloatCollisionResolve, registerOwnFloatResolver } from './script-ui-guard.ts'
+import { pollWhileVisible } from './visibility.ts'
+// 【E2/P-1 W4 收口】官方投影读取一律走单源（见 host-projection.ts 头注）
+import { readSessionBlank, readSessionCwd, readSessionId } from './host-projection.ts'
 
 interface DockProps {
   session?: unknown
   input?: unknown
 }
 
-interface SessionLike {
-  sessionId?: string
-  id?: string
-  header?: { cwd?: string }
-  cwd?: string
-  /** 宿主 SessionSnapshot.blank（fiber 实证 2026-09-06）：true=空会话。旧 chat/surface 字段不存在。 */
-  blank?: boolean
-}
+/**
+ * 【E2 / P-1 2026-09-14】读宿主 SessionSnapshot 的 cwd —— **已迁到单源模块**
+ * `host-projection.ts`（W4 系统性收口：官方投影读取全部集中到那一个文件）。
+ *
+ * 本处保留同名 re-export，**只为不破坏既有 import**（5 个组件与单测都从这里取）。
+ * 新增代码请直接从 `'./host-projection.ts'` 引入。
+ */
+export { readSessionCwd } from './host-projection.ts'
 
 const POS_KEY = 'dsht.rp.statefloat.pos.v1' // 旧版全局键（迁移兜底读一次）
-const POS_KEY_GLOBAL = 'dsht-float-global' // F3：无会话上下文时的落点
+// 【L3 2026-09-14】导出供单测驱动（存储配额清理的判据必须可测——见 tests/visibility 同族用法）
+export const POS_KEY_GLOBAL = 'dsht-float-global' // F3：无会话上下文时的落点
 
-/** F3：位置键 = dsht-float-<sessionId|global>（按会话记忆位置；无会话回退 global） */
-function posKeyOf(sessionId: string): string {
+/** F3：位置键 = dsht-float-<sessionId|global>（按会话记忆位置；无会话回退 global）
+ *  导出供单测：清理判据依赖「哪些键是会话键」这一定义。 */
+export function posKeyOf(sessionId: string): string {
   return sessionId !== '' ? `dsht-float-${sessionId}` : POS_KEY_GLOBAL
 }
 
@@ -96,11 +100,55 @@ function loadPos(key: string): BallPos {
   return { x: 0.92, y: 0.3 } // 示例卡乙默认 bubbleTop 30vh 右侧
 }
 
-/** F3：保存位置（会话键 + global 兜底键同写——新会话/无会话上下文都能继承最近位置） */
-function savePos(key: string, pos: BallPos): void {
+/** 会话位置键前缀（`dsht-float-<sessionId>` 与 global 键共用前缀 `dsht-float-`） */
+const POS_KEY_PREFIX = 'dsht-float-'
+/** 会话位置键保留上限（孤儿清理阈值）。
+ *  依据：这是「每个会话一条」的小记录（~40 字节），保留最近 N 个足够用户「回到老会话时
+ *  浮球还在原位」；超出后按**插入序**删最早的。取 50：覆盖真实使用（几十个会话）而不
+ *  让 localStorage 无界增长（配额通常 5MB，但无界增长最终会写失败，且写失败是静默的）。 */
+const POS_KEY_KEEP = 50
+
+/**
+ * 【L3 2026-09-14 存储配额修复】清理孤儿会话位置键。
+ *
+ * 背景（L3 穷举发现）：`dsht-float-<sessionId>` 是**按会话累加且从不清理**的键
+ * —— 全仓此前**零 localStorage 清理机制**（无 `localStorage.key()` / 无 TTL /
+ * 无条数上限）。长期使用会留下大量孤儿键（已删会话、一次性会话各留一条），
+ * 最终写失败；而 `savePos` 的 catch 是空的 ⇒ **静默失效**（浮球位置不再被记住，
+ * 用户毫无线索），属 P-3 族。
+ *
+ * 判据（goal 轨道 A / A3「存储配额」）：长期使用下 localStorage 不得无界增长。
+ *
+ * 实现要点：只删「本前缀 + 非当前 sessionId」的键，且**保留最近 POS_KEY_KEEP 条**。
+ * localStorage 无插入时间戳，故用「遍历顺序」近似（浏览器实现一般按插入序返回；
+ * 即便顺序不保证，也只影响「删哪一条」而不影响「有上限」这一判据）。
+ */
+function prunePosKeys(currentKey: string): void {
+  try {
+    const keys: string[] = []
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const k = localStorage.key(i)
+      // 只认本届的会话键（global 键不带 sessionId，前缀相同但**必须保留**）
+      if (k !== null && k.startsWith(POS_KEY_PREFIX) && k !== POS_KEY_GLOBAL) keys.push(k)
+    }
+    if (keys.length <= POS_KEY_KEEP) return
+    // 保护当前会话的键（正在用的不能被删）
+    const removable = keys.filter(k => k !== currentKey)
+    const excess = keys.length - POS_KEY_KEEP
+    for (let i = 0; i < excess && i < removable.length; i += 1) {
+      const victim = removable[i]
+      if (victim !== undefined) localStorage.removeItem(victim)
+    }
+  } catch { /* 遍历不可达则不清理（不影响正常保存） */ }
+}
+
+/** F3：保存位置（会话键 + global 兜底键同写——新会话/无会话上下文都能继承最近位置）
+ *  导出供单测（存储配额清理判据）。 */
+export function savePos(key: string, pos: BallPos): void {
   try {
     localStorage.setItem(key, JSON.stringify(pos))
     localStorage.setItem(POS_KEY_GLOBAL, JSON.stringify(pos))
+    prunePosKeys(key)
   } catch { /* 存储不可达 */ }
 }
 
@@ -128,13 +176,16 @@ function StateTree({ value, depth }: { value: unknown; depth: number }): JSX.Ele
 }
 
 export function RpStateFloat(props: DockProps): JSX.Element | null {
-  const s = (props.session ?? {}) as SessionLike
-  const sessionId = s.sessionId ?? s.id ?? ''
-  const cwd = s.header?.cwd ?? s.cwd
+  // 【E2/P-1 W4 收口】id / cwd / blank 三个官方投影字段一律走单源。
+  // 此前这里写 `s.sessionId ?? s.id ?? ''` 与 `s.blank === true` —— 而
+  // `RpTokenMeter` 写 `!== false`、`RpGreetingDock` 写 `!== true`，
+  // 三种口径对「字段缺失」的结论不一致（见 host-projection.ts 的 readSessionBlank 头注）。
+  const sessionId = readSessionId(props.session)
+  const cwd = readSessionCwd(props.session)
   const { slug } = useRpSlug(cwd, sessionId)
   // 【2026-09-06 实证修复】同 RpGreetingDock：chat 字段不存在，msgCount 恒 0 → 浮球从不显示。
-  // blank===false 即已有消息 → 显示；true=空会话不显示。
-  const blank = s.blank === true
+  // blank=true 即空会话 → 不显示浮球。
+  const blank = readSessionBlank(props.session)
 
   const [pos, setPos] = useState<BallPos>(() => loadPos(posKeyOf(sessionId)))
   const [open, setOpen] = useState(false)
@@ -164,8 +215,11 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
       }
     }
     void fetchState()
-    const timer = setInterval(() => { void fetchState() }, 4000)
-    return () => { alive = false; clearInterval(timer) }
+    // 【L3 2026-09-14 切后台修复】4s 轮询改走 pollWhileVisible（不可见时停表）。
+    // 同 RpTokenMeter：裸 setInterval 会在切后台后继续每秒级唤醒 JS + 发请求
+    // （实测切后台 13.10 次/秒，与前台同量级）⇒ 耗电/发烫。
+    const stop = pollWhileVisible(() => { void fetchState() }, 4000)
+    return () => { alive = false; stop() }
   }, [open, sessionId])
 
   // F3：视口变化（转屏/窗口缩放）→ 浮球 clamp 回界内（比例坐标重新校准）
@@ -175,20 +229,8 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
     return () => { window.removeEventListener('resize', onResize) }
   }, [])
 
-  // 【2026-09-10 心跳 35】跨浮窗避让回写通道：浮球位置由 React 状态（vw/vh）拥有，
-  // guard 直接写内联 left/top 会被下一次渲染冲掉。这里把「换算后的比例坐标」注册给
-  // guard——它算出目标 px 后回调本函数转成比例写回 state，位置变更才真正持久。
-  useEffect(() => {
-    const unregister = registerOwnFloatResolver('.dsht-rp-statefloat-ball', (el, pxLeft, pxTop) => {
-      const w = window.innerWidth
-      const h = window.innerHeight
-      if (w <= 0 || h <= 0) return
-      const next = clampPos({ x: (pxLeft + el.offsetWidth / 2) / w, y: (pxTop + el.offsetHeight / 2) / h })
-      setPos(next)
-      savePos(posKeyOf(sessionId), next)
-    })
-    return unregister
-  }, [sessionId])
+  // 【2026-09-14 用户拍板】原「跨浮窗避让回写通道」已随 script-ui-guard.ts 一并移除：
+  // 浮球位置完全由用户拖拽决定，宿主不再主动改位置（避免与卡脚本自复位来回打架）。
 
   if (!slug || !sessionId || blank) return null // 非 RP / 空白会话不显示
 
@@ -208,22 +250,54 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
   }
   const onPointerUp = (e: ReactPointerEvent<HTMLButtonElement>): void => {
     const d = dragRef.current
-    dragRef.current = null
     if (d === null) return
+    endDrag()
     if (d.moved) {
       // 松手贴边（左/右吸附，与 ST 浮球行为一致）；F3：写 dsht-float-<sessionId|global>
       const snapped = clampPos({ x: pos.x < 0.5 ? 0.06 : 0.92, y: pos.y })
       setPos(snapped)
       savePos(posKeyOf(sessionId), snapped)
-      // 【2026-09-10 心跳 35】拖到脚本浮窗上时立即让位（不等 3s 轮询）——
-      // 用户诉求「悬浮窗互不遮挡」：贴边吸附后与 fx-floating-ball 等重叠即错开。
-      // 延后一帧等内联 left/top 落地，否则读到的是吸附前 rect。
-      requestAnimationFrame(() => { requestFloatCollisionResolve() })
     } else {
       clickHandledRef.current = true // 真触摸/鼠标：pointerup 已处理，随后的 click 抑制（防双翻）
       setOpen(o => !o)
     }
-    e.currentTarget.releasePointerCapture(e.pointerId)
+    // releasePointerCapture 只在**确实持有**时调用：若捕获已被隐式释放
+    // （lostpointercapture 先到），此处再释放会抛 NotFoundError（DOMException），
+    // 而 React 事件处理器里抛错会打断后续同批事件处理 ⇒ 必须 guard。
+    try {
+      if (e.currentTarget.hasPointerCapture?.(e.pointerId) === true) {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      }
+    } catch { /* 捕获已不在（隐式释放竞态）——无声但无害；状态已在 endDrag 收敛 */ }
+  }
+  /**
+   * 【2026-09-14 L1 穷举修复 / P-8 幂等 + P-1 单源】结束一次拖拽的**唯一入口**。
+   *
+   * ## 为什么收成一个函数（而不是三个 handler 各写一份）
+   * 「结束一次拖拽」有三种互斥触发路径，此前只有两条、且各写各的：
+   *   - `pointerup`       —— 正常松手（唯一会**保留**结果的路径）
+   *   - `pointercancel`   —— 手势被系统抢占（下拉通知栏 / 返回手势 / 多指介入）
+   *   - `lostpointercapture` —— 捕获被**隐式**释放（元素被移除 / 同 pointerId 被他人抢占）
+   * 后两条**都只该清状态**，且**都不置 `clickHandledRef`**（按规范捕获丢失后不会再合成
+   * click，置位会吞掉下一次真实点击 ⇒「点一次没反应」比「面板意外展开」更糟）。
+   * 三条路径共享同一份清理逻辑 ⇒ 将来再加路径（如 `pointerleave` 兜底）时不会漏改其中一处
+   * （这正是 P-1「同一语义多处实现」的运行时形态；见 §5.4）。
+   */
+  const endDrag = (): void => {
+    dragRef.current = null
+  }
+  // pointercancel：Android WebView 在手势被系统抢占时发它而非 pointerup。缺它 ⇒
+  // `dragRef` 残留为「拖拽进行中」，位置停在半途且不贴边，直到下一次按下才自愈（状态不收敛）。
+  const onPointerCancel = (): void => {
+    endDrag()
+  }
+  // 【A1 穷尽第 8 格「pointer capture 在元素移除时的释放」· 2026-09-14】
+  // `lostpointercapture` 是**隐式释放**时的唯一通知：元素在捕获期间被卸载（切卡 / React
+  // 重挂载 / 面板关闭），或同一 pointerId 被他人 `setPointerCapture` 抢占。这两种情况
+  // **既不发 pointerup 也不发 pointercancel** ⇒ 此前 `dragRef` 会永久残留（同一失效族）。
+  // **不置 `clickHandledRef`**（同上：捕获丢失后不再合成 click）。
+  const onLostPointerCapture = (): void => {
+    endDrag()
   }
   // 【审计 D 类修复 2026-09-08】合成点击/无障碍服务只发 click 不发 pointer 序列——
   // 此前 click 无绑定，浮球被误判「点了没反应」。真触摸的 click 被 pointerup 标记抑制。
@@ -246,6 +320,8 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        onLostPointerCapture={onLostPointerCapture}
         onClick={onClick}
       >🌌</button>
       {open && (

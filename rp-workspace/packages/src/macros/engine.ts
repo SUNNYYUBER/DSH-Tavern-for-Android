@@ -5,8 +5,7 @@
  * processActivatedEntries）。行为分叉（缺 addvar/incvar/decvar/datetime/weekday/isotime/
  * isodate/noop、getvar 无 setvar 顺序求值）自此消灭——这些宏由 expandTavernMacros 统一提供。
  *
- * 统一方向参考 dsh-agent-rp 的 roleplay-macro.ts（ReplayableRoleplayMacros 单引擎设计；
- * MIT © hewzhew，见 REF_PROJECTS_COMPARISON.md 领域四与致谢表）。
+ * 统一方向：单引擎设计（一个引擎同时服务组装期与显示期，杜绝两处语义分叉）。
  *
  * 语义要点（全部由 expandTavernMacros 继承）：
  * - random：每次求值真随机重掷；pick：稳定选择（种子 = stableSeed + 原文哈希 + 位置偏移）

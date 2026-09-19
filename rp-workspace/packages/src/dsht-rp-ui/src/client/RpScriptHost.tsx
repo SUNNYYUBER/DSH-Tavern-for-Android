@@ -4,10 +4,15 @@
  * 验收意图：ST 酒馆助手核心功能之一是加载执行脚本库；本组件把已落盘的
  * tavern-helper-scripts.json（预设 + 卡两作用域 enabled 脚本）真正跑起来。
  *
- * - 执行形态：每脚本一个 sandbox="allow-scripts" srcdoc iframe（不给 same-origin，
- *   脚本为不可信代码），iframe 铺满会话视口（position:fixed inset:0、pointer-events:none）
+ * - 执行形态：每脚本一个 sandbox iframe（`allow-scripts allow-same-origin allow-modals
+ *   allow-forms allow-popups`，实际值见下方 `setAttribute('sandbox', …)`）srcdoc，
+ *   iframe 铺满会话视口（position:fixed inset:0、pointer-events:none）
  *   ——脚本自渲染的 fixed 部件视觉等效 ST 顶层注入；交互走脚本按钮面板。
  *   会话级单例（sessionId → SessionRuntime，iframe 挂 document.body，跨组件重挂载存活）。
+ *   ⚠️ 关于 same-origin：【L5 2026-09-14】原头注写「不给 same-origin」，与实现矛盾——
+ *   卡自带 `<script>` 依赖 parent.$/jQuery/Mvu/eventOn，必须同源（真 TH 的 message iframe
+ *   就是同源形态，用户拍板复刻）。同源 ⇒ 沙箱实质解除（脚本可摘掉自己的 sandbox），
+ *   这是**有意的权衡**并已在 ST-COMPAT-PACT B1 条款登记。详见实现处注释。
  * - TavernHelper shim：iframe 内注入 window.TavernHelper + 裸全局，postMessage 桥到本宿主，
  *   再调 /dsht-tavern-helper/* 数据面（变量六作用域 / 预设 CRUD / 聊天消息只读 / 正则 /
  *   世界书名单与条目读）/ 本地事件总线。
@@ -27,8 +32,8 @@
  */
 import { useEffect, useRef, useState, type JSX } from 'react'
 import { rpApi } from './rpc.ts'
-import { useRpSlug } from './RpStateFloat.tsx'
-import { registerOwnFloatResolver } from './script-ui-guard.ts'
+import { useRpSlug, readSessionCwd } from './RpStateFloat.tsx'
+import { readSessionId, readSessionChat, readSessionRunning, forEachChatNode, readNodeKey, readNodeKind, readNodeData, readNodeStatus, readBlocks } from './host-projection.ts'
 import { registerFrameEmitter, unregisterFrameEmitter } from './th-host-events.ts'
 import { notifyDisplayMutation } from './RpNativeChat.tsx'
 import { getHostMacroEnv, refreshHostMacroEnv } from './host-macro-bridge.ts'
@@ -250,18 +255,16 @@ export function reloadActiveRpContext(): boolean {
   return hit
 }
 
-/** chat.nodes 迭代形状（key/kind 顶层 + data.finalNode.messageId 楼层解析 + data.blocks 流式文本源）
- *  【实机验证修复 2026-09-06】kind 在节点顶层（dsh-client-ui-chat chatNode() :3977-3988），
- *  且 surface.nodes 是 seq 数字数组（client-connection createFoldState :669-674）——
- *  旧代码从 surface.nodes 读 .kind 恒 undefined，message_sent/received 从未真正投递过。 */
-interface SessionSnapshotLike {
-  chat?: {
-    order?: readonly unknown[]
-    nodes?: { values: () => Iterable<{ key?: unknown; kind?: unknown; data?: { status?: string; finalNode?: { messageId?: string }; blocks?: ReadonlyArray<{ kind?: string; text?: string }> } }> }
-  }
-  surface?: { nodes?: readonly unknown[] }
-  running?: boolean
-}
+/**
+ * 会话快照的输入类型 —— **诚实形状**：只有 `unknown`。
+ *
+ * 【W4 关键改动】此前这里把 `chat.order` / `chat.nodes` / `data.status` / `data.blocks`
+ * 全写成非可选，于是 `advance()` 里直接写 `chat?.nodes.values()`、`n.data.blocks`
+ * 这类**断言式读取**。官方投影仍是 beta 形状未定型（见 host-projection.ts 头注），
+ * 用 interface 钉死只会诱导后来者继续裸读。改为 `unknown` 后，所有读取都必须经
+ * 单源读取器（类型系统会强制）。
+ */
+type SessionSnapshotLike = unknown
 
 interface ToastEntry { ts: number; level: string; message: string; scriptId: string }
 
@@ -1049,32 +1052,36 @@ class SessionRuntime {
    *  - generation_started/ended 双命名空间同投（tavern_events + iframe js_* 变体）。 */
   advance(snapshot: SessionSnapshotLike): void {
     this.lastSnapshot = snapshot
-    const chat = snapshot.chat
-    const order = chat?.order?.length ?? 0
-    const running = snapshot.running === true
+    // 【W4】本函数此前是全仓**宿主/客户端投影混读**的典型：`chat?.order?.length` 裸读、
+    // `n.data?.status` 裸比、`n.data.blocks ?? []` 裸迭代（`blocks` 缺失时静默投空文本，
+    // 属 P-3 静默族）—— 官方改形状即抛或静默失效。现全部走单源读取器。
+    const { order: orderKeys, nodes } = readSessionChat(snapshot)
+    const order = orderKeys.length
+    const running = readSessionRunning(snapshot)
     // 【T-80 · 2026-09-12】节点终态跃迁侦查（`generation_stopped` 判据，消费处在下方
     // 「running → !running」块）。**只认跃迁**：`prev === 'running' && now === 'interrupted'`。
     // 冷加载 / 重连 / 切会话时快照里既存的历史 interrupted 节点**不进** stoppedKeys
     // ⇒ 不误报（负控）。逐节点记 status 供下一轮比较。
     const stoppedKeys: string[] = []
-    if (chat?.nodes) {
-      for (const n of chat.nodes.values()) {
-        const key = typeof n.key === 'string' ? n.key : ''
-        if (!key) continue
-        const status = typeof n.data?.status === 'string' ? n.data.status : ''
+    if (nodes !== null) {
+      forEachChatNode(snapshot, (n) => {
+        const key = readNodeKey(n)
+        if (key === '') return
+        const status = readNodeStatus(readNodeData(n))
         if (this.prevNodeStatus.get(key) === 'running' && status === 'interrupted') stoppedKeys.push(key)
         this.prevNodeStatus.set(key, status)
-      }
+      })
     }
-    if (this.prevOrder >= 0 && chat?.order && chat.nodes) {
+    if (this.prevOrder >= 0 && nodes !== null) {
       if (order > this.prevOrder) {
         // 逐楼层投递：kind 在节点顶层（'user' / 'assistant-step' / 'steering' 等）
         const kindByKey = new Map<string, string>()
-        for (const n of chat.nodes.values()) {
-          if (typeof n.key === 'string') kindByKey.set(n.key, String(n.kind ?? ''))
-        }
+        forEachChatNode(snapshot, (n) => {
+          const key = readNodeKey(n)
+          if (key !== '') kindByKey.set(key, readNodeKind(n))
+        })
         for (let idx = this.prevOrder; idx < order; idx++) {
-          const kind = kindByKey.get(String(chat.order[idx])) ?? ''
+          const kind = kindByKey.get(orderKeys[idx]) ?? ''
           if (kind === 'user') this.emitSessionEvent('message_sent', [idx])
           else if (kind === 'assistant-step' || kind === 'assistant') this.emitSessionEvent('message_received', [idx])
         }
@@ -1083,13 +1090,14 @@ class SessionRuntime {
       }
     }
     // 流式 token（running 期）：chat.order 末条 assistant 节点的 text 块拼接 diff
-    if (running && chat?.order && chat.nodes && chat.order.length > 0) {
-      const lastKey = String(chat.order[chat.order.length - 1])
-      for (const n of chat.nodes.values()) {
-        if (typeof n.key !== 'string' || n.key !== lastKey) continue
-        if (n.data?.status !== 'running') continue
+    if (running && nodes !== null && order > 0) {
+      const lastKey = orderKeys[order - 1]
+      forEachChatNode(snapshot, (n) => {
+        if (readNodeKey(n) !== lastKey) return
+        const data = readNodeData(n)
+        if (readNodeStatus(data) !== 'running') return
         let text = ''
-        for (const b of n.data.blocks ?? []) {
+        for (const b of readBlocks(data)) {
           if (b.kind === 'text' && typeof b.text === 'string') text += b.text
         }
         if (text.length > this.prevStreamLen) {
@@ -1097,7 +1105,7 @@ class SessionRuntime {
           this.emitSessionEvent('stream_token_received', [text])
           this.emitSessionEvent('js_stream_token_received_incrementally', [text])
         }
-      }
+      })
     }
     if (!this.prevRunning && running) {
       this.prevStreamLen = 0
@@ -1319,14 +1327,11 @@ interface DockProps { session?: unknown }
 const PANEL_POS = { right: '10px', top: 'calc(env(safe-area-inset-top, 0px) + 106px)', bottom: 'auto' }
 
 export function RpScriptHost(props: DockProps): JSX.Element | null {
-  const s = (props.session ?? {}) as {
-    sessionId?: string; id?: string; header?: { cwd?: string }; cwd?: string
-    chat?: { order?: readonly unknown[] }
-    surface?: { nodes?: ReadonlyArray<{ kind?: string }> }
-    running?: boolean
-  }
-  const sessionId = s.sessionId ?? s.id ?? ''
-  const { slug, resolved } = useRpSlug(s.header?.cwd ?? s.cwd, sessionId)
+  // 【E2/P-1 W4 收口】session 快照的 id/cwd 走单源（见 host-projection.ts 头注）。
+  // 此处原有的 `as { sessionId?; id?; header?; cwd?; chat?; surface?; running? }` 断言
+  // 把形状钉死（`chat`/`surface`/`running` 声明了却没用），已删除——防断言掩盖形状漂移。
+  const sessionId = readSessionId(props.session)
+  const { slug, resolved } = useRpSlug(readSessionCwd(props.session), sessionId)
   const [, forceTick] = useState(0)
   const [open, setOpen] = useState(false)
   // C15 Toolbox：日志抽屉 / 变量查看器（互斥 tab；none = 都收起）
@@ -1350,8 +1355,10 @@ export function RpScriptHost(props: DockProps): JSX.Element | null {
   }, [sessionId, slug, resolved])
 
   // 会话快照推进 → 事件投递
+  // 【W4】入参是**原始快照**（此前写 `advance(s)`，`s` 在被删除的断言块里；断言删掉后
+  // 这里必须显式传 `props.session`）。`advance` 内部读字段一律走单源读取器。
   useEffect(() => {
-    rtRef.current?.advance(s)
+    rtRef.current?.advance(props.session)
   })
 
   // C15 变量查看器：切到「变量」tab 时拉一次 MVU 变量树（GET /dsht-mvu/variables，只读）
@@ -1371,15 +1378,8 @@ export function RpScriptHost(props: DockProps): JSX.Element | null {
     return () => { alive = false }
   }, [tab, sessionId])
 
-  // 【2026-09-10 心跳 35】跨浮窗避让回写通道：🧩 球是 CSS 定位（right/top），
-  // 避让需要覆盖成 left/top。注册 resolver 后由 guard 计算目标并回调。
-  useEffect(() => {
-    return registerOwnFloatResolver('.dsht-rp-scriptball', (el, pxLeft, pxTop) => {
-      el.style.right = 'auto'
-      el.style.left = `${Math.round(pxLeft)}px`
-      el.style.top = `${Math.round(pxTop)}px`
-    })
-  }, [])
+  // 【2026-09-14 用户拍板】原「跨浮窗避让回写通道」已随 script-ui-guard.ts 一并移除：
+  // 🧩 球保持纯 CSS 定位（right/top），宿主不再改写其 left/top。
 
   if (!slug || !sessionId) return null
   const rt = rtRef.current
@@ -1511,11 +1511,9 @@ export function RpScriptHost(props: DockProps): JSX.Element | null {
  *  以胶囊按钮浮在输入框上方（Kemini / 重试额外模型解析 / 剧情控制台 / ExampleGame 世界书控制…），
  *  不藏进管理面板。dock 席位挂载，读会话运行时的按钮清单，点击回投按钮事件。 */
 export function RpScriptButtonsBar(props: DockProps): JSX.Element | null {
-  const s = (props.session ?? {}) as {
-    sessionId?: string; id?: string; header?: { cwd?: string }; cwd?: string
-  }
-  const sessionId = s.sessionId ?? s.id ?? ''
-  const { slug, resolved } = useRpSlug(s.header?.cwd ?? s.cwd, sessionId)
+  // 【E2/P-1 W4 收口】同 RpScriptHost：session id/cwd 走单源
+  const sessionId = readSessionId(props.session)
+  const { slug, resolved } = useRpSlug(readSessionCwd(props.session), sessionId)
   const [, forceTick] = useState(0)
   const rtRef = useRef<SessionRuntime | null>(null)
   useEffect(() => {

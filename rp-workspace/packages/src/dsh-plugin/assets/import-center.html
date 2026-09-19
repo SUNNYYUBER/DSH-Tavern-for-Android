@@ -194,8 +194,11 @@
   :root[data-ds-dark-theme] .step.current { background: rgba(103, 158, 254, .1); }
   .step.done { color: var(--dsw-alias-label-primary); }
   .step-panel { margin-top: 6px; }
-  /* ---- R11 竖屏适配：文件选择区/按钮/诊断区全宽，字号与触控目标触控友好 ---- */
-  @media (max-width: 700px) {
+  /* ---- R11 竖屏适配：文件选择区/按钮/诊断区全宽，字号与触控目标触控友好 ----
+     【L2 竖屏/横屏 · 2026-09-14 第十七轮】原为 @media (max-width: 700px)，
+     手机横屏（CSS 宽可达 ~873px）失配 ⇒ 本页整套移动适配失效。
+     与 dsht-plugin-mobile/client/style.ts 的媒体查询**同源改为并集**（P-1 单源）。 */
+  @media (max-width: 700px), (pointer: coarse) {
     body { max-width: none; padding: 10px 12px calc(20px + env(safe-area-inset-bottom)); font-size: 14px; }
     header { padding: 4px 0 10px; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
     header h1 { font-size: 16px; }
@@ -392,10 +395,29 @@ function toggleTheme() {
   applyTheme(dark)
 }
 (function initTheme() {
+  // 【L2 穷举 2026-09-14 · P-1/P-13 修复】继承宿主主题时**必须查对元素**。
+  // 设备实测（`tmp/probe-theme-scheme.mjs`）：DSH 宿主把主题属性挂在 **`body`** 上
+  // （`bodyAttr: true`），而 `documentElement` 上**没有**（`rootAttr: false`）
+  // ⇒ 原实现只查 `documentElement`，「跟随宿主主题」这一支**永不生效**，
+  // 总是回落到 localStorage / OS 偏好（深色 OS + 浅色宿主主题时会给出相反配色）。
+  // 修法：与 `th-shim.ts` 的 `detectHostColorScheme` **同一判据**（先 body 再 documentElement）——
+  // 这是「同一语义只许一处读法」在跨文件上的落实（P-1）。
   try {
-    if (window.parent && parent !== window && parent.document.documentElement.hasAttribute('data-ds-dark-theme')) {
-      applyTheme(true)
-      return
+    if (window.parent && parent !== window) {
+      const pd = parent.document
+      const darkAttr = (pd.body && pd.body.hasAttribute('data-ds-dark-theme'))
+        || (pd.documentElement && pd.documentElement.hasAttribute('data-ds-dark-theme'))
+      if (darkAttr) { applyTheme(true); return }
+      // 宿主明确是浅色（属性存在但为假 / body 背景亮）时也应跟随，别再回落到 OS 偏好
+      if (pd.body && pd.body.hasAttribute('data-ds-dark-theme') === false) {
+        const bg = pd.defaultView ? pd.defaultView.getComputedStyle(pd.body).backgroundColor : ''
+        const m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(bg)
+        if (m) {
+          const lum = 0.299 * Number(m[1]) + 0.587 * Number(m[2]) + 0.114 * Number(m[3])
+          applyTheme(lum < 128)
+          return
+        }
+      }
     }
   } catch (e) { /* 跨源/独立页忽略 */ }
   const pref = localStorage.getItem('dsht-theme')

@@ -1,5 +1,32 @@
 # 正则 TH API 源码级对质报告（2026-09-08）
 
+> ## ★ 状态：**已全部收口**（2026-09-16 第三十轮 W29 复核）
+> 本报告 §1（11 字段偏差）与 §3（N1~N5）**全部已修复并有机器护栏**，修复轮次为 **T-20（2026-09-10）**。
+> 本节由 W29 补写：此前文档**只有问题清单、没有状态标记** ⇒ 后人读它会以为这些仍是未修缺陷，
+> **重复排查**（这正是 P-1「文档与实现不一致」的形态）。
+>
+> ### 收口证据（逐条对质「问题 → 实现位置 → 机器判据」）
+>
+> | 报告项 | 现状 | 实现位置 | 机器判据 |
+> |---|---|---|---|
+> | §1 11 字段形状偏差（`script_name`/`find_regex`/`replace_string`/`trim_strings`/`run_on_edit`/`min_depth`/`max_depth`…） | ✅ 双向映射 | `th-shim.ts:dshtRegexToTh()`（出口 camelCase→snake_case）+ 入口反算 | `th-regex-contract.spec.ts` 第 1 例（**逐项**断言 d.ts 字段名）+ 第 6 例（入口反算） |
+> | §1-3 **`enabled` 极性反转** | ✅ 已换算 | `enabled: s.disabled !== true`（内部 disabled ⇄ 契约 enabled） | 同上第 2 例 + 第 13 例（**防二次翻转**负控） |
+> | §1-7 `source` 结构（`placement[]` vs 四布尔） | ✅ 已转换 | `dshtRegexToTh` 的 `source: {user_input, ai_output, slash_command, world_info}` | 同上第 3 例 |
+> | §1-8 `destination` 结构（`markdownOnly/promptOnly` vs `display/prompt`） | ✅ 已转换 | 同上 | 同上第 4、5 例（含反例） |
+> | **N1** `enabled/disabled` 双向静默失败 | ✅ 同上 | 同上 | 同上第 2、13 例 |
+> | **N2** `replaceTavernRegexes` 作用域静默落错（`{type:'character'}` 被当 global） | ✅ 已认三形态；**未知形态显式抛错**（不再静默降级） | `th-shim.ts` 的 option 解析（`type === 'character'` / `'preset'` / 快照 slug） | 同上第 7 例（**未知 option 必须抛错**）+ 第 8 例（character 携带 slug） |
+> | **N3** `updateTavernRegexesWith` 忽略 option ⇒ 三作用域全写回 | ✅ 只写回指定作用域 | 同上 | 同上第 9 例（**断言不牵连其他组**） |
+> | **N4** `formatAsTavernRegexedString` 返回 Promise（脚本拼出 `[object Promise]`） | ✅ **已改同步返回 string**（靠预热的正则缓存） | `th-shim.ts:formatAsTavernRegexedString` + `dshtRefreshRegexCache()` | 同上第 10 例（同步返回 string）+ 第 11 例（**缓存空时原样返回**，不返回 Promise 字面量） |
+> | **N5** `isCharacterTavernRegexesEnabled()` 恒 true | ⚠️ **仍恒 true，但已「诚实标注」** | `th-shim.ts` 注释：我方 `regexes:get` 三源合并即含 character 组 ⇒ 语义上恒 true；**无 `_dshtScope` 白名单机制**（不假装已实现） | 同上第 12 例（断言返回**布尔**，与 d.ts 签名一致） |
+> | §5.4 建议「每个修复配一条契约断言测试」 | ✅ 已落地 | `packages/tests/th-regex-contract.spec.ts` | **13 例全过**（`npx vitest run tests/th-regex-contract.spec.ts`） |
+>
+> **诚实边界（R7）**：N5 的语义**与真 TH 不完全等价**（真 TH 查角色白名单，我方恒 true）
+> —— 这是**有意选择**（我方三源合并模型里 character 组本就并入），已在代码注释与上表标注为
+> 「诚实：无白名单机制」，**不是**「已实现而没标」。若要逐字对齐真 TH，需引入 `character_allowed_regex`
+> 白名单语义 —— 属 B5 类改动（会改变现有正则生效面），未实施。
+>
+> ---
+>
 > **方法与证据基线**（此为前提，先说清楚）：
 > ST 侧真源码 = `D:\SillyTavern-1.16.0\旧sillytavern\Luker-现在在用的版本\data\default-user\extensions\JS-Slash-Runner\@types\function\tavern_regex.d.ts`（扩展自带权威类型声明，即脚本实际看到的契约）。
 > 我方实现 = `rp-workspace\packages\src\regex\engine.ts`（数据模型）+ `rp-workspace\packages\src\dsht-rp-ui\src\client\th-shim.ts:1011-1084`（TH 门面）。

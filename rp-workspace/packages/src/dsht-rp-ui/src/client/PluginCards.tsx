@@ -274,7 +274,7 @@ function TavernHelperForm(draft: Json, set: (next: Json) => void): JSX.Element {
         value={String(render.collapseCodeBlock ?? 'frontend_only')}
         options={[['all', '全部'], ['frontend_only', '仅前端'], ['none', '禁用']]}
         onChange={v => setR('collapseCodeBlock', v)} />
-      <ToggleRow label="允许流式渲染" hint="关闭 = 生成中的楼层不出前端 HTML，定稿后一次渲染（立即生效）"
+      <ToggleRow label="允许流式渲染" hint="开 = 生成中即时建 iframe 舞台（卡脚本会随内容增长反复重启）；关 = 生成中先用代码块占位、定稿后一次建帧（推荐）"
         value={b(render.allowStreaming)} onChange={v => setR('allowStreaming', v)} />
       <ToggleRow label="Blob URL 渲染" hint="前端文档 iframe 改用 blob: URL 装载（TH 同款形态，立即生效）"
         value={b(render.useBlobUrl)} onChange={v => setR('useBlobUrl', v)} />

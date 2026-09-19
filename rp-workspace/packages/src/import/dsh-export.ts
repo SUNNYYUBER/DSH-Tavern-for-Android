@@ -17,6 +17,8 @@ import type { LoreBook } from '../lore/entry.ts'
 import { importStPreset } from '../preset/st-import.ts'
 import { neutralizePromptVariables } from '../preset/compiler.ts'
 import { bytesToBase64 } from './card-export.ts'
+// 【F5 2026-09-14】稳定短哈希单源（导入/导出两侧必须同算法；见 hash.ts 头注）
+import { hash36 } from '../dsht-plugin-shared/hash.ts'
 
 // ---------------------------------------------------------------------------
 // 类型
@@ -57,15 +59,11 @@ export interface ExportResult {
 // 工具
 // ---------------------------------------------------------------------------
 
-/** 稳定哈希（FNV-1a 32bit → base36），给中文/任意名生成 DSH 要求的 kebab-case id */
-function hash36(input: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
-  }
-  return (h >>> 0).toString(36)
-}
+// 【F5 2026-09-14 单源化】hash36 下沉到 dsht-plugin-shared/hash.ts——此前
+// import/dsh-export.ts、preset/st-import.ts、dsht-plugin/index.ts 三处各有一份同算法
+// 实现（其中 dsh-plugin 那份还叫 fnv36），而它决定**导入/导出两侧的卡与批次 id**：
+// 一旦某处单独改动算法，同一张卡导入/导出会得到不同 id，且不会报错。
+// 见 packages/src/dsht-plugin-shared/hash.ts 头注。
 
 /** DSH skill name / preset id 要求 [a-z0-9][a-z0-9-]*：ASCII 安全段 + 哈希保证唯一 */
 export function dshSlug(prefix: 'wb' | 'rp', originalName: string): string {

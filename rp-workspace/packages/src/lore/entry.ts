@@ -1,11 +1,11 @@
 /**
  * DSHTavern 世界书条目模型（M1 / T1.6，计划文档 §4.2 + §4.5 st-worldbook-* 知识条目）
  *
- * SillyTavern 世界书 JSON → 内部条目库的导入映射（规则层，无 LLM）。
+ * ST 世界书 JSON → 内部条目库的导入映射（规则层，无 LLM）。
  * 语义保持（§4.2）：constant 常驻 / 关键词触发（正则关键词、大小写、全词匹配）/
  * 递归扫描 / 深度注入 / scanDepth / token 预算。
- * P2#11 补齐（对照 dsh-worldbook worldbook.ts/tools/index.ts，MIT）：
- * timed effects（sticky/cooldown/delay，消费侧见 trigger.ts）/ inclusion group（组互斥）。
+ * P2#11 补齐：timed effects（sticky/cooldown/delay，消费侧见 trigger.ts）/
+ * inclusion group（组互斥）。
  * 明确弃用（导入时记录 warning）：概率触发。
  */
 

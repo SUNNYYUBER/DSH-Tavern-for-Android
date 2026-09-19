@@ -78,13 +78,53 @@ describe('CSS 五件套（对照 dsh-client-ui-mobile-adapt v20）', () => {
     expect(MOBILE_CSS).toContain('env(safe-area-inset-bottom)')
   })
   it('⑤ 触控目标 ≥38px', () => {
-    // 汉堡 40px / rail 图标 40px / RP 控件 44px
-    expect(MOBILE_CSS).toMatch(/\.dsht-mobile-hamburger \{[^}]*width: 40px; height: 40px;/s)
-    expect(MOBILE_CSS).toContain('[data-dsht-mobile="sidebar-rail"] [data-dsht-mobile="rail-icon-button"] { width: 40px; height: 40px; }')
-    expect(MOBILE_CSS).toContain('min-height: 44px')
+    // 【2026-09-14 第二十轮 · 判据改为「结果」而非「具体数值」（P-24）】
+    // 原判据写死 `width: 40px; height: 40px;`，而本轮把汉堡从 40 抬到 44
+    // （设备探针 ef-touch-targets.mjs 实测 40 属 P2 未达目标）⇒ **判据把已改好的报成坏**。
+    // 这正是 P-24 说的「判据不得锁死实现」：应断言**结果**（尺寸 ≥ 底线 38）。
+    const ham = /\.dsht-mobile-hamburger \{[^}]*\}/s.exec(MOBILE_CSS)
+    expect(ham, '未找到 .dsht-mobile-hamburger 规则（结构变了，需同步本护栏）').not.toBeNull()
+    const hamW = Number(/width:\s*(\d+)px/.exec(ham?.[0] ?? '')?.[1] ?? 0)
+    const hamH = Number(/height:\s*(\d+)px/.exec(ham?.[0] ?? '')?.[1] ?? 0)
+    expect(hamW, `.dsht-mobile-hamburger 宽 ${hamW}px 低于 38 拇指底线`).toBeGreaterThanOrEqual(38)
+    expect(hamH, `.dsht-mobile-hamburger 高 ${hamH}px 低于 38 拇指底线`).toBeGreaterThanOrEqual(38)
+    const rail = /\[data-dsht-mobile="sidebar-rail"\] \[data-dsht-mobile="rail-icon-button"\] \{[^}]*\}/s.exec(MOBILE_CSS)
+    const railW = Number(/width:\s*(\d+)px/.exec(rail?.[0] ?? '')?.[1] ?? 0)
+    expect(railW, `rail 图标按钮宽 ${railW}px 低于 38 拇指底线`).toBeGreaterThanOrEqual(38)
+    // 【2026-09-14 第二十轮】原断言 `MOBILE_CSS` 含 'min-height: 44px' —— 那条来自
+    // `.dsht-rp-btn { min-height: 44px }`，而该规则已迁到 rp-ui（P-26）。
+    // ⇒ 改为断言「mobile 包内**仍存在**触控尺寸放大（≥44）」这件**结果**，不绑定具体类名。
+    const dims = [...MOBILE_CSS.matchAll(/(?:min-width|min-height|width|height):\s*(\d+)px/g)].map(m => Number(m[1]))
+    expect(Math.max(...dims), 'mobile 包内无任何 ≥44px 的触控尺寸声明').toBeGreaterThanOrEqual(44)
   })
-  it('竖屏规则收拢在 @media (max-width: 700px) 内', () => {
-    expect(MOBILE_CSS).toContain('@media (max-width: 700px)')
+  it('竖屏规则收拢在「宽度或触屏」并集媒体查询内（L2 竖屏/横屏 · P-1 单源）', () => {
+    // 【2026-09-14 第十七轮】原判据只查 `@media (max-width: 700px)`。
+    // 设备实测（scripts/ef-orientation.mjs）：手机横屏 CSS 视口 873×345 ⇒
+    // `(max-width:700px)` = false 而 `(pointer: coarse)` = true ⇒ 五件套整体失效
+    // （汉堡消失 / 侧栏退回静态三栏）。⇒ 判据改为**并集**，本护栏同步收紧：
+    // 必须同时含宽度与触屏两个条件，二者缺一即为「手机横屏失配」回归。
+    expect(MOBILE_CSS).toContain('@media (max-width: 700px), (pointer: coarse)')
+    // 负控：不得退回只按宽度（会把横屏手机判成桌面）
+    expect(MOBILE_CSS).not.toMatch(/@media \(max-width: 700px\) \{/)
+  })
+  it('【P-1 单源】CSS 与 file-preview 的「手机判据」必须同源（否则半适配）', () => {
+    // 症状：手机横屏时若 CSS 按手机渲染、而 JS 按桌面放行 ⇒ 点文件引用无预览。
+    // 两处判据必须**同时**含 `(pointer: coarse)`；任一缺失即为漂移。
+    const fp = readFileSync(join(here, '..', 'src', 'dsht-plugin-mobile', 'client', 'file-preview.ts'), 'utf8')
+    expect(MOBILE_CSS).toContain('(pointer: coarse)')
+    expect(fp).toContain("matchMedia('(pointer: coarse)')")
+    // 负控：取 narrow() 的函数体，其中**必须**同时出现宽度与触屏两个判据
+    // （只按宽度 = 手机横屏下 JS 按桌面放行 ⇒ 半适配）
+    const m = /const narrow = \(\): boolean => \{([\s\S]*?)\n  \}/.exec(fp)
+    expect(m, '未找到 narrow() 定义').not.toBeNull()
+    const body = m?.[1] ?? ''
+    expect(body).toContain("matchMedia('(max-width: 700px)')")
+    expect(body).toContain("matchMedia('(pointer: coarse)')")
+  })
+  it('【P-1 单源】同源 iframe 页 import-center.html 的手机判据同步为并集', () => {
+    // 该页是**同源 iframe**（RpOverlay 内），若它仍只按宽度，手机横屏下导入页仍是桌面版式。
+    const html = readFileSync(join(here, '..', 'src', 'dsh-plugin', 'assets', 'import-center.html'), 'utf8')
+    expect(html).toContain('@media (max-width: 700px), (pointer: coarse)')
   })
 })
 
@@ -180,18 +220,53 @@ describe('dsht-rp-ui/style.ts 抽离后回归锁', () => {
     expect(rpStyle).toContain('.dsht-rp-statusbar')
     expect(rpStyle).toContain('@media (prefers-reduced-motion: reduce)')
   })
-  it('抽离的 RP 竖屏规则在新插件里保留（样式不能丢）', () => {
+  it('抽离的 RP 竖屏规则在正确的位置保留（第二十轮起改由 rp-ui 自己承载）', () => {
+    // 【2026-09-14 第二十轮 · 本用例随架构收口更新】
+    // 原断言「这些规则在 MOBILE_CSS 里」—— 但设备实测证明**它们在那里是死规则**：
+    // 与 rp-ui 桌面基线**同特异性**（都是 0,1,0），而 mobile 注入**先于** rp-ui
+    // ⇒ 同特异性下后写者胜 ⇒ 实测 .dsht-rp-back 32px / .dsht-rp-tab 28px /
+    //   .dsht-rp-card-gear 26px（三项均低于 38px 拇指底线）。
+    // ⇒ 规则已迁到 rp-ui 自己的 (pointer: coarse) 段（P-26：归属原则）。
+    // 本用例改为：断言**它们出现在 rp-ui 的 coarse 段里**（新位置）。
+    const coarse = (() => {
+      const start = rpStyle.indexOf('@media (pointer: coarse) {')
+      if (start < 0) return ''
+      let depth = 0, end = -1
+      for (let i = rpStyle.indexOf('{', start); i < rpStyle.length; i++) {
+        if (rpStyle[i] === '{') depth++
+        else if (rpStyle[i] === '}') { depth--; if (depth === 0) { end = i; break } }
+      }
+      return end > 0 ? rpStyle.slice(rpStyle.indexOf('{', start) + 1, end) : ''
+    })()
+    expect(coarse, '未找到 rp-ui 的 (pointer: coarse) 段').not.toBe('')
     for (const marker of [
-      '.dsht-rp-overlay {',
-      '.dsht-rp-tab { flex: 1; height: 44px;',
-      '.dsht-rp-card-gear { width: 36px; height: 36px;',
-      '.dsht-rp-drawer { max-height: none; height: 100%;',
-      '.wb-chip { min-height: 44px;',
-      '.dsht-fold-header { min-height: 44px;',
-      '.dsht-rp-greeting-dock { margin: 0 8px 6px; }',
-      '@media (hover: none) { .dsht-rp-card-gear { opacity: 1; } }',
+      '.dsht-rp-overlay',
+      '.dsht-rp-tab ',
+      '.dsht-rp-card-gear',
+      '.dsht-rp-drawer',
+      '.dsht-rp-books .wb-chip',
+      '.dsht-fold-header',
+      '.dsht-rp-greeting-dock',
     ]) {
-      expect(MOBILE_CSS).toContain(marker)
+      expect(coarse, `rp-ui coarse 段缺 ${marker}（迁入后样式不能丢）`).toContain(marker)
+    }
+    // 反向：这些规则**不得**回流到 mobile 包（回流 = 死规则复发）。
+    // 注意必须**排除注释**再查 —— 迁移说明里会提到这些类名（那是历史记录，不是规则）。
+    const mobSels = (() => {
+      const out = []
+      let inBlock = false
+      for (const line of MOBILE_CSS.split('\n')) {
+        const t = line.trim()
+        if (inBlock) { if (t.includes('*/')) inBlock = false; continue }
+        if (t.startsWith('/*')) { if (!t.includes('*/')) inBlock = true; continue }
+        if (t.startsWith('*') || t.startsWith('//')) continue
+        const i = line.indexOf('{')
+        if (i >= 0) out.push(line.slice(0, i))
+      }
+      return out.join('\n')
+    })()
+    for (const back of ['.dsht-rp-back', '.dsht-rp-card-gear', '.dsht-rp-tab']) {
+      expect(mobSels, `${back} 作为**规则选择器**回流到 mobile 包（P-26：跨包规则是死规则）`).not.toContain(back)
     }
   })
 })

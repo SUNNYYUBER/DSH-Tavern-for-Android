@@ -210,8 +210,21 @@ export function judgeOccluders(list, ctrlHit) {
 
 /** 面 7·触控目标：命中尺寸（含 ::after 放大层）必须 ≥ 44×44。 */
 export function judgeTargets(list, min = 44) {
+  // 【W30 修 · 零覆盖冒充通过（本项目最危险的假绿形态）】
+  //  原实现：`bad.length === 0` ⇒ ok。而**空列表**（页面未渲染完 / 采到空集）
+  //  同样满足 `bad.length === 0` ⇒ 会打印「共检 0 个不达标 · 全部达标」——
+  //  「一个都没扫到」被读成「全部合格」。这正是 `ef-touch-targets.mjs` 专门加
+  //  「≥80% 零元素即报探针缺陷」护栏要防的那一类（P-20 覆盖空洞 / P-30 零样本）。
+  //  ⇒ 口径改为：**必须有样本**才谈得上「达标」；0 样本 ⇒ ok:false 且**明确出声**
+  //    说明「这是探针没扫到，不是产品结论」（R7/P-17：不把「测不出来」写成已验证）。
+  if (!Array.isArray(list)) {
+    return { ok: false, detail: '入参不是数组 —— 判据无判据力' }
+  }
+  if (list.length === 0) {
+    return { ok: false, detail: '样本为 0 —— **无判据力**：本次未扫到任何我方触控目标，不得据此报「全部达标」' }
+  }
   const bad = list.filter(t => (t.w ?? 0) < min || (t.h ?? 0) < min)
-  return { ok: bad.length === 0, detail: `${bad.length} 个 <${min}px` }
+  return { ok: bad.length === 0, detail: `${bad.length} 个 <${min}px（共检 ${list.length} 个）` }
 }
 
 /** 面 7·浮层：自研悬浮 UI 不得覆盖输入框（>0.5% 即算遮挡）。 */
@@ -306,7 +319,16 @@ CPU usage from 315000ms to 14873ms ago:
   check(judgeTargets([{ cls: 'sf-btn', w: 36, h: 32, txt: '刷新' }]).ok === false,
     '面 7 反控：36×32 触控目标 ⇒ 必须报红（<44）')
   check(judgeTargets([{ cls: 'x', w: 44, h: 44, txt: '' }]).ok === true, '面 7 正控：44×44 ⇒ 绿')
-  check(judgeTargets([]).ok === true, '面 7 正控：无自研按钮 ⇒ 绿（不因空集合报红）')
+  // 【W30 修 · 这条期望值此前是 `true`，即**把「零覆盖冒充通过」固化成了正控**】
+  //  原注释写「无自研按钮 ⇒ 绿（不因空集合报红）」—— 但「空集合」有两种来源：
+  //    ① **产品确实没有自研按钮**（场景成立，报绿合理）
+  //    ② **探针没扫到**（页面未渲染完 / 选择器失效 —— 这是「覆盖空洞」）
+  //  而判据**无法区分**①与②（同一个空数组）⇒ 报绿就把②也吞了。
+  //  按 R7/P-17：区分不了时**不许声称已验证** ⇒ 0 样本一律判「无判据力」并出声。
+  //  （本项目的正确先例：`ef-stateview-rows.mjs` 的「空样本必须判不通过」负控。）
+  check(judgeTargets([]).ok === false,
+    '面 7 反控：★ 空样本 ⇒ 必须判「无判据力」（防「共检 0 个 ⇒ 全部达标」的假绿；P-20/P-30）')
+  check(judgeTargets(null).ok === false, '面 7 反控：非数组入参 ⇒ 必须判红')
   check(judgeFloatOverlap([{ sel: '.x', overlapPct: 0 }]).ok === true, '面 7 正控：浮层 0% 覆盖 ⇒ 绿')
   check(judgeFloatOverlap([{ sel: '.x', overlapPct: 12.5 }]).ok === false,
     '面 7 反控：浮层覆盖输入框 12.5% ⇒ 必须报红')
@@ -622,7 +644,7 @@ console.log('\n  【面 6】后端轮询负载（CDP fetch 钩子计数）')
     // 判据口径：44 CSS px（WebView 视口是 width=device-width ⇒ CSS px ≈ dp）。
     console.log('\n  【面 7】UI 遮挡与触控目标（CDP 注入检测）')
     const probeUi = `(() => {
-      const res = { composer: null, occluders: [], small: [], floats: [] };
+      const res = { composer: null, occluders: [], small: [], floats: [], unreachable: [] };
       const c = document.querySelector('[data-composer-input]');
       if (!c) { res.composer = { found: false }; return JSON.stringify(res) }
       const r = c.getBoundingClientRect();
@@ -653,8 +675,29 @@ console.log('\n  【面 6】后端轮询负载（CDP fetch 钩子计数）')
         if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) continue;
         const b = el.getBoundingClientRect();
         if (b.width < 1 || b.height < 1) continue;
+        // 【W30 修 · 与 ef-touch-targets.mjs 对齐「可点性」口径（P-1 单源）】
+        //  背景：两个探针曾对同一元素给出**相反**结论 ——
+        //    · ef-touch-targets.mjs 有 elementFromPoint 反查 ⇒ .dsht-rp-sidebar-btn
+        //      在**折叠侧栏**里（rect.left = **-288**、视口外、点不到）⇒ 跳过（第 45 次坑，判为假告警）
+        //    · 本面**不做视口判定** ⇒ 报「31×44 < 44」⇒ 与上者矛盾
+        //  设备决定性取证（tmp/w30-sidebar-btn.mjs）：
+        //    侧栏**展开**时该按钮实测 **256×44**（桌面 width:100% 撑满容器）⇒ **完全达标**；
+        //    侧栏**折叠**时才 31×44，但那时它在视口外、elementFromPoint 命不中 ⇒ 用户点不到。
+        //  ⇒ 结论：这不是产品缺陷，而是**本面缺一道「可点性」前置判定**（判据范围问题）。
+        //    口径统一为：**只有「用户当前真能点到」的元素才纳入触控目标判据**
+        //    （R17：判据范围 = 责任边界；P-17：测不到 ≠ 事实否定）。
+        //    ⚠️ 注意：本函数是模板串，注释里**不能出现反引号**（A11 闸门）。
         const k = Math.round(b.x)+','+Math.round(b.y)+','+Math.round(b.width);
         if (seen.has(k)) continue; seen.add(k);
+        const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+        let hitEl = null;
+        try { hitEl = document.elementFromPoint(cx, cy) } catch { hitEl = null }
+        if (!hitEl || !(hitEl === el || el.contains(hitEl))) {
+          // 出声记录（P-3 不许静默）：这些是「当前点不到」的，不算触控目标缺口
+          res.unreachable = res.unreachable || [];
+          res.unreachable.push({ cls: String(el.className||'').slice(0,50), w: Math.round(b.width), h: Math.round(b.height), left: Math.round(b.left) });
+          continue;
+        }
         const t = hit(el);
         if (t.w < 44 || t.h < 44) res.small.push({ cls: String(el.className||'').slice(0,50), w: t.w, h: t.h, txt: (el.textContent||'').trim().slice(0,10) });
       }
@@ -681,7 +724,7 @@ console.log('\n  【面 6】后端轮询负载（CDP fetch 钩子计数）')
     const uiCtrl = JSON.parse(await evl(probeUi))
     await evl(`(() => { const d = document.getElementById('__pa_occluder'); if (d) d.remove(); return 'ok' })()`)
 
-    out.metrics.ui = { composer: ui.composer, occluders: ui.occluders, smallTargets: ui.small, floats: ui.floats }
+    out.metrics.ui = { composer: ui.composer, occluders: ui.occluders, smallTargets: ui.small, floats: ui.floats, unreachable: ui.unreachable }
 
     if (!ui.composer.found) {
       row('输入框可定位（UI 遮挡检测前提）', false,
@@ -695,8 +738,19 @@ console.log('\n  【面 6】后端轮询负载（CDP fetch 钩子计数）')
       row('输入框取样点无元素遮挡', jOc.ok,
         ui.occluders.length === 0 ? '零遮挡' : `仍报 ${ui.occluders.length} 个遮挡点：${JSON.stringify(ui.occluders.slice(0, 3))}`)
       const jT = judgeTargets(ui.small)
+      // 【W30 修】文案不再用「全部达标」单表述 —— 那在 0 样本时会与 detail 自相矛盾
+      //  （`judgeTargets` 现在把 0 样本判为不通过，理由写在 detail 里）。
       row(`触控目标 ≥44px（共检 ${ui.small.length} 个不达标）`, jT.ok,
-        ui.small.length === 0 ? '全部达标' : ui.small.slice(0, 5).map(s => `${s.cls}[${s.txt}] ${s.w}×${s.h}`).join(' · '))
+        ui.small.length === 0
+          ? (jT.ok ? '全部达标' : jT.detail)
+          : ui.small.slice(0, 5).map(s => `${s.cls}[${s.txt}] ${s.w}×${s.h}`).join(' · '))
+      // 【W30 出声】当前点不到的我方元素（不算触控缺口，但必须可见 —— P-3 不许静默）
+      //  典型：侧栏折叠时被推到视口外的 `.dsht-rp-sidebar-btn`（left=-288）。
+      const unre = ui.unreachable || []
+      if (unre.length > 0) {
+        row('点不到的我方元素（已排除，不计入触控缺口）', true,
+          `${unre.length} 个：` + unre.slice(0, 3).map(u => `${u.cls} ${u.w}×${u.h}@left=${u.left}`).join(' · '))
+      }
       const jF = judgeFloatOverlap(ui.floats)
       row('自研浮层不覆盖输入框', jF.ok,
         ui.floats.length === 0 ? '无浮层可见' : ui.floats.map(f => f.sel.replace('.dsht-rp-', '') + ' ' + f.overlapPct + '%').join(' / '))

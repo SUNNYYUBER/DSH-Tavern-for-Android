@@ -13,7 +13,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   isSnapshotEligible, readLatestTurn, restoreSnapshotsAfter, snapshotBeforeWrite,
-  snapshotDir, snapshotRestoreBoundary, type TurnFileSnapshot,
+  snapshotDir, snapshotRestoreBoundary, snapshotRestoreBoundaryFromEvents, boundaryFromTurnPairs,
+  type TurnFileSnapshot,
 } from '../src/dsht-plugin-shared/file-snapshots.ts'
 
 let base = ''
@@ -132,6 +133,52 @@ describe('file-snapshots: 截断边界与恢复', () => {
     expect(snapshotRestoreBoundary(content, 5)).toEqual({ fromTurn: 2, includeBoundary: true })
     // 截到 0（只留 header + turn/start 1）：fromTurn=1 且 turn 1 腰斩
     expect(snapshotRestoreBoundary(content, 0)).toEqual({ fromTurn: 1, includeBoundary: true })
+  })
+
+  // -------------------------------------------------------------------------
+  // 【B3 2026-09-14】两入口同源（P-1）：live 分支与文本分支必须得出同一结论
+  // -------------------------------------------------------------------------
+
+  it('✅ boundaryFromTurnPairs：与文本入口同源（完整保留 / 腰斩两态）', () => {
+    const pairs = [
+      { seq: 1, turn: 1 }, { seq: 2, turn: 1 }, { seq: 3, turn: 1 }, { seq: 4, turn: 1 },
+      { seq: 5, turn: 2 }, { seq: 6, turn: 2 }, { seq: 7, turn: 2 }, { seq: 8, turn: 2 },
+    ]
+    // 截到 8（turn 2 的最后一个事件）：turn 2 完整保留、无腰斩
+    expect(boundaryFromTurnPairs(pairs, 8)).toEqual({ fromTurn: 2, includeBoundary: false })
+    // 截到 7（turn 2 内部）：seq 8 同属 turn 2 被截掉 ⇒ 腰斩
+    expect(boundaryFromTurnPairs(pairs, 7)).toEqual({ fromTurn: 2, includeBoundary: true })
+    // 截到 5（turn 2 的 user/message）：同样腰斩
+    expect(boundaryFromTurnPairs(pairs, 5)).toEqual({ fromTurn: 2, includeBoundary: true })
+    // 截到 4（turn 1 末）：fromTurn=1 且 turn 1 无事件被截 ⇒ 不腰斩
+    expect(boundaryFromTurnPairs(pairs, 4)).toEqual({ fromTurn: 1, includeBoundary: false })
+    // 负控：空输入 → fromTurn 0、不腰斩（不假装恢复到某个 turn）
+    expect(boundaryFromTurnPairs([], 5)).toEqual({ fromTurn: 0, includeBoundary: false })
+  })
+
+  it('✅ 两入口结论一致：同一会话的「文本」与「事件」必须算出同一边界（防漂移）', async () => {
+    const file = await makeSession('sid-b3', 3)
+    const content = await readFile(file, 'utf8')
+    // 从文本解析出事件（模拟 live 侧 sessionEventsSnapshot 的形态）
+    const events = content.split('\n').slice(1).filter(l => l.trim() !== '')
+      .map(l => JSON.parse(l) as { seq?: number; data?: unknown })
+    // 对每个可能的截断点，两入口结论必须逐字相同
+    for (const keep of [0, 1, 3, 5, 7, 9, 11, 999]) {
+      expect(
+        snapshotRestoreBoundaryFromEvents(events, keep),
+        `keepThroughSeq=${keep} 时两入口不一致`,
+      ).toEqual(snapshotRestoreBoundary(content, keep))
+    }
+  })
+
+  it('负控：事件缺 data.turn 时不计入（与文本入口的坏行跳过同语义）', () => {
+    const events = [
+      { seq: 1, data: { turn: 1 } },
+      { seq: 2, data: { role: 'user', content: [] } }, // 无 turn（真实 user/message 形态）
+      { seq: 3, data: { turn: 1 } },
+      { seq: 4, data: null },
+    ]
+    expect(snapshotRestoreBoundaryFromEvents(events, 3)).toEqual({ fromTurn: 1, includeBoundary: false })
   })
 
   it('rollback 恢复文件内容：逆序整批写回 before，快照记录删除', async () => {

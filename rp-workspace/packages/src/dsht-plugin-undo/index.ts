@@ -42,6 +42,8 @@ import {
 import { canSurgicallyTruncate, findLastUserMessage, scanSessionHeaders, truncateSessionJsonl } from '../dsht-plugin-shared/session-surgery.ts'
 import { snapshotRestoreBoundary } from '../dsht-plugin-shared/file-snapshots.ts'
 import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
+// 【W4 2026-09-14】官方投影读取单源（此前 `payload.agent?.session?.header?.cwd` 裸读）
+import { readSessionCwd } from '../dsht-plugin-shared/host-projection.ts'
 import {
   captureWorkspaceSnapshot, resolveWorkspaceSnapshotConfig, restoreWorkspaceSnapshots,
   type ResolvedWorkspaceSnapshotConfig, type WorkspaceRestoreResult, type WorkspaceSnapshotConfig,
@@ -264,7 +266,7 @@ class TurnSnapshotCoordinator {
 
   async capture(payload: LikePreStepPayload): Promise<void> {
     const sessionId = payload.agent?.id
-    const cwd = payload.agent?.session?.header?.cwd
+    const cwd = readSessionCwd(payload.agent?.session)
     const turn = payload.turn
     if (typeof sessionId !== 'string' || sessionId === '' || typeof cwd !== 'string' || cwd === '') return
     if (typeof turn !== 'number' || !Number.isInteger(turn) || turn < 0) return

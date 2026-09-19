@@ -9,7 +9,7 @@
  * - 采样参数全量映射（P1#7）：temperature/top_p/top_k/top_a/min_p/penalties/seed/
  *   openai_max_tokens/openai_max_context/stream_openai/custom_stopping_strings/
  *   logit_bias/reasoning_effort；宏变量（setvar 初值 + getvar/裸宏占位）登记进
- *   RPPreset.macros（对照 dsh-plugin-prompt-tool sillytavern.ts，MIT © Czerror）
+ *   RPPreset.macros
  * - extensions.regex_scripts[]：预设内嵌正则（思维链美化等）→ 预设作用域正则文件
  *
  * 产物（用户定案「预设 = 行为指令包」的导入路径）：
@@ -28,6 +28,8 @@
 import type { RPPreset, PresetSlot, SlotType, ToggleGroup } from './schema.ts'
 import { DEFAULT_BUDGET } from './schema.ts'
 import type { RegexScript } from '../regex/engine.ts'
+// 【F5 2026-09-14】稳定短哈希单源（预设/技能 id 后缀；见 hash.ts 头注）
+import { hash36 } from '../dsht-plugin-shared/hash.ts'
 
 // ---------------------------------------------------------------------------
 // ST 侧类型（最小面）
@@ -79,15 +81,9 @@ const MARKER_MAP: Record<string, string> = {
   worldInfoAfter: 'worldAfter',
 }
 
-/** 稳定短哈希（FNV-1a 32bit → base36）——id 去重后缀 */
-function hash36(input: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
-  }
-  return (h >>> 0).toString(36)
-}
+// 【F5 2026-09-14 单源化】hash36 下沉到 dsht-plugin-shared/hash.ts（此前两处同名复制 +
+// 一处改名复制）。它决定预设/技能的 id 后缀，漂移会导致「同一预设导入两次得到两个 id」。
+// 见 dsht-plugin-shared/hash.ts 头注。
 
 /** 条目名 → 可读 slot id（原名直用——中文条目名是 UI 主识别面；超长截断） */
 function nameSlug(name: string): string {
@@ -359,9 +355,8 @@ export function renderPendingSkillMd(presetDisplayName: string, skill: { name: s
 
 // ---------------------------------------------------------------------------
 // P1#7：采样/生成参数完整映射 + 宏变量登记
-// （对照 dsh-plugin-prompt-tool src/host/sillytavern.ts（MIT © Czerror）：
-//   采样参数按字段全量剥离到 params 侧登记；L322 的"未定义宏登记"= 卡内引用但
-//   无变量源的 {{key}} 以空值占位入登记册）
+//   采样参数按字段全量剥离到 params 侧登记；卡内引用但无变量源的 {{key}}
+//   以空值占位入登记册（缺失宏不该在渲染时变成字面文本）。
 // ---------------------------------------------------------------------------
 
 /** ST custom_stopping_strings → string[]（字符串内嵌 JSON 数组 / 直接数组 两种形态） */
@@ -392,7 +387,7 @@ function parseStLogitBias(raw: unknown): Array<{ text: string; value: number }> 
   return out.length > 0 ? out : undefined
 }
 
-/** 宏名（setvar/getvar/裸宏共用）：字母数字 . _ - 与 CJK（对照参考实现的字符类） */
+/** 宏名（setvar/getvar/裸宏共用）：字母数字 . _ - 与 CJK */
 const MACRO_KEY = 'A-Za-z0-9_.一-鿿-'
 const SETVAR_RE = new RegExp(`\\{\\{setvar::([${MACRO_KEY}]+)::([^}]*)\\}\\}`, 'g')
 const GETVAR_RE = new RegExp(`\\{\\{getvar::([${MACRO_KEY}]+)(?:::([^}]*))?\\}\\}`, 'g')

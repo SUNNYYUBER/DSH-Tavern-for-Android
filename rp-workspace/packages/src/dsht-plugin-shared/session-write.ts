@@ -337,18 +337,45 @@ export function readSurgicalPayload(source: unknown): SurgicalPayload {
 }
 
 /**
- * 读历史标记锚点（新形态 + 存量形态统一读法）。
- * 返回「需要隐藏到哪一 seq」的锚点与标记自身 seq（UI 掩码用）。
+ * 读历史标记的**完整手术信息**（锚点 + 载荷），单源入口。
+ *
+ * 【为什么需要它，而不是只要 anchor】锚点（hideAfter）是**阈值**语义——
+ * 「该 seq 之后的内容都算被移出」。这和事实不符：回退之后用户正常发的新消息
+ * seq 也大于锚点，会被阈值一起隐掉；于是旧实现不得不加一条「marker 之后出现新用户
+ * 消息 → 掩码整体归零」的补丁，而那条补丁又让**被回退的旧楼层全部复活**
+ * （用户实测：回退 → 重发 → 旧楼层重新出现）。
+ *
+ * 根因是**用阈值表达集合**：集合会随新事件增长，阈值不会。
+ * 正解是直接用载荷里的 `shadowedSeqs`（写侧已逐条记录被 replace 移出的 seq）——
+ * 它精确且持久，与后续新增消息无关。
+ *
+ * 本函数同时返回两者：`shadowedSeqs` 为权威判据，`anchor` 仅供降级与诊断
+ * （存量会话可能只写了锚点、没有 shadowedSeqs）。
  */
-export function readSurgicalAnchor(ev: { seq?: unknown; type?: unknown; data?: unknown }): { anchor: number | null } {
+export function readSurgical(ev: { seq?: unknown; type?: unknown; data?: unknown }): {
+  anchor: number | null
+  payload: SurgicalPayload
+} {
   const src = ev?.type === 'user/message' || ev?.type === 'assistant/message'
     ? ((ev.data as { source?: unknown } | undefined)?.source ?? (ev.data as { message?: { source?: unknown } } | undefined)?.message?.source)
     : undefined
   const p = readSurgicalPayload(src)
-  if (typeof p.rolledBackTo === 'number') return { anchor: p.rolledBackTo }
-  if (typeof p.regeneratedFrom === 'number') return { anchor: p.regeneratedFrom }
-  if (typeof p.editedFrom === 'number') return { anchor: p.editedFrom - 1 }
-  return { anchor: null }
+  let anchor: number | null = null
+  if (typeof p.rolledBackTo === 'number') anchor = p.rolledBackTo
+  else if (typeof p.regeneratedFrom === 'number') anchor = p.regeneratedFrom
+  else if (typeof p.editedFrom === 'number') anchor = p.editedFrom - 1
+  return { anchor, payload: p }
+}
+
+/**
+ * 读历史标记锚点（新形态 + 存量形态统一读法）。
+ * 返回「需要隐藏到哪一 seq」的锚点与标记自身 seq（UI 掩码用）。
+ *
+ * 【2026-09-14】保留本函数仅为兼容既有调用点；新代码请用 `readSurgical`
+ * （同时拿到精确的 shadowedSeqs，避免阈值语义的固有缺陷）。
+ */
+export function readSurgicalAnchor(ev: { seq?: unknown; type?: unknown; data?: unknown }): { anchor: number | null } {
+  return { anchor: readSurgical(ev).anchor }
 }
 
 // ---------------------------------------------------------------- 事件信封

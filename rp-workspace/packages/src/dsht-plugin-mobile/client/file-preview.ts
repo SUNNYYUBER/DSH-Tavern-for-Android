@@ -124,11 +124,20 @@ function closePreview(): void {
 
 /**
  * 安装文件引用预览（capture 代理 + 全屏抽屉）。返回 disposer。
- * 窄屏生效（与 CSS 五件套同断点）；桌面端直接放行宿主原生行为。
+ * 窄屏生效（与 CSS 五件套**同一判据**）；桌面端直接放行宿主原生行为。
+ *
+ * 【L2「竖屏 / 横屏」格 · 2026-09-14 第十七轮】判据必须与 CSS 五件套**逐字同源**（P-1）：
+ * 原为 `(max-width: 700px)`，与 mobile/style.ts 的媒体查询同源；本轮把那边改为
+ * 并集 `(max-width: 700px), (pointer: coarse)`，此处**必须同步**，否则会出现
+ * 「CSS 按手机渲染、JS 按桌面放行」的**半适配**状态（手机横屏时点文件引用无预览）。
+ * 两处一并对齐后：竖屏两者都真、横屏由 coarse 兜住、桌面两者都假。
  */
 export function installFilePreview(doc: Document): () => void {
-  const narrow = (): boolean =>
-    typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 700px)').matches
+  const narrow = (): boolean => {
+    if (typeof window.matchMedia !== 'function') return false
+    return window.matchMedia('(max-width: 700px)').matches
+      || window.matchMedia('(pointer: coarse)').matches
+  }
 
   const onClick = (e: MouseEvent): void => {
     if (!narrow()) return

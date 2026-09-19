@@ -18,7 +18,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/index.tsx
+// packages/src/dsht-plugin-mobile/client/index.tsx
 var index_exports = {};
 __export(index_exports, {
   apply: () => apply,
@@ -26,7 +26,7 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/anchors.ts
+// packages/src/dsht-plugin-mobile/client/anchors.ts
 var ANCHOR_ATTR = "data-dsht-mobile";
 var ANCHOR_DEFS = [
   { anchor: "app-frame", strategy: "overlay-parent", selectors: [".pI_x6G_frame"] },
@@ -104,7 +104,7 @@ function installAnchors(doc) {
   };
 }
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/style.ts
+// packages/src/dsht-plugin-mobile/client/style.ts
 var MOBILE_STYLE_ID = "dsht-plugin-mobile-style";
 function ensureMobileStyle() {
   if (typeof document === "undefined" || document.getElementById(MOBILE_STYLE_ID)) return;
@@ -123,21 +123,70 @@ var MOBILE_CSS = `
 .dsht-mobile-scrim { display: none !important; }
 
 /* \u89E6\u5C4F\u65E0 hover\uFF1A\u89D2\u8272\u5361\u8BBE\u7F6E\u89D2\u6807\u5E38\u663E\uFF08\u4ECE dsht-rp-ui/style.ts \u62BD\u79BB\u7684\u89E6\u5C4F\u89C4\u5219\uFF09 */
-@media (hover: none) { .dsht-rp-card-gear { opacity: 1; } }
+/* \u30102026-09-14 \u7B2C\u4E8C\u5341\u8F6E \xB7 \u5DF2\u5220\u9664\u4E00\u6761\u8DE8\u5305\u89C4\u5219\u3011
+ * \u539F\u4E3A\uFF1A@media (hover: none) { .dsht-rp-card-gear { opacity: 1; } }
+ * \u5220\u9664\u7406\u7531\uFF08P-26\uFF09\uFF1A.dsht-rp-card-gear \u662F **dsht-rp-ui \u81EA\u6709\u7EC4\u4EF6**\uFF0C
+ * \u8BE5\u89C4\u5219\u4E0E rp-ui \u7684\u684C\u9762\u57FA\u7EBF\u5C5E**\u540C\u7279\u5F02\u6027**\uFF080,1,0\uFF09\uFF0C\u800C\u672C\u6587\u4EF6\u6CE8\u5165**\u5148\u4E8E** rp-ui
+ * \u21D2 \u80DC\u8D1F\u7531\u6CE8\u5165\u987A\u5E8F\u51B3\u5B9A\uFF08\u4E0D\u53EF\u9760\uFF09\u3002\u4E14\u5176\u610F\u56FE\uFF08\u89E6\u5C4F\u4E0B\u9F7F\u8F6E\u94AE\u5E38\u663E\uFF09\u5DF2\u7531
+ * rp-ui \u81EA\u5DF1\u7684 (pointer: coarse) \u6BB5\u627F\u8F7D\uFF1A.dsht-rp-card-gear \u5E26 opacity: 1 !important
+ * \u2014\u2014**\u540C\u5C5E\u6027\u3001\u540C\u5305\u5185\u3001\u4E14\u5E26 !important**\uFF0C\u8986\u76D6\u529B\u66F4\u5F3A \u21D2 \u672C\u6761\u5C5E\u5197\u4F59\u4E14\u4E0D\u53EF\u9760\u7684\u6B7B\u89C4\u5219\u3002
+ * \u673A\u5668\u5316\u9632\u7EBF\uFF1Ascripts/audit-cross-package-css.mjs\uFF08A15\uFF09\u3002
+ * \u6CE8\u610F\uFF1A\u672C\u6587\u4EF6\u662F TS \u6A21\u677F\u4E32\uFF0C\u6CE8\u91CA\u91CC**\u4E0D\u80FD\u51FA\u73B0\u53CD\u5F15\u53F7**\u3002 */
 
 /* \u{1F4CE} \u9644\u4EF6\u4E0A\u4F20\u6309\u94AE\uFF08conversation.input.left \u5E2D\u4F4D\uFF09\uFF1A\u5BF9\u9F50\u539F\u751F\u56FE\u6807\u94AE\u7684\u89E6\u63A7\u5C3A\u5BF8\u4E0E\u6697\u8272\u89C2\u611F */
+/* \u30102026-09-14 L1 \u7A77\u4E3E\u4FEE\u590D\u3011\u539F\u4E3A 34\xD734\uFF08\u4F4E\u4E8E 38 \u5E95\u7EBF \u21D2 \u62C7\u6307\u5FC5\u7136\u8BEF\u89E6\uFF0CP1\uFF09\u3002
+ * \u6CE8\u610F\u8FD9\u6761**\u5728\u5A92\u4F53\u67E5\u8BE2\u4E4B\u5916**\uFF08\u5168\u5C40\u751F\u6548\uFF09\uFF0C\u6240\u4EE5\u684C\u9762\u7AEF\u4E5F\u8DDF\u7740\u653E\u5927\u2014\u2014\u8FD9\u662F\u53EF\u63A5\u53D7\u7684\uFF1A
+ * 38 \u662F\u62C7\u6307\u4E0B\u9650\uFF0C\u684C\u9762\u7AEF\u591A 4px \u4E0D\u4EA7\u751F\u4EFB\u4F55\u526F\u4F5C\u7528\uFF0C\u6362\u6765\u7684\u662F\u300C\u4E0D\u4F1A\u5728\u624B\u673A\u4E0A\u51FA\u95EE\u9898\u300D\u3002
+ *
+ * \u30102026-09-14 \u7B2C\u5341\u4E5D/\u4E8C\u5341\u8F6E\u4E8C\u6B21\u4FEE\u6B63\u301138 \u2192 **44**\u3002
+ * \u4F9D\u636E\uFF1A\u8BBE\u5907\u63A2\u9488 scripts/ef-touch-targets.mjs \u7A77\u4E3E\u6211\u65B9\u53EF\u70B9\u5143\u7D20\u65F6\u5B9E\u6D4B\u672C\u94AE **38\xD738**\uFF0C
+ * \u5C5E\u300C\u8FC7\u5E95\u7EBF\u4F46\u672A\u8FBE\u76EE\u6807\u300D\u7684 P2 \u9879\u3002**\u53D6 44 \u800C\u975E\u7559 38 \u7684\u7406\u7531**\uFF1A38 \u662F\u300C\u80FD\u4E0D\u80FD\u7528\u300D\u7684\u4E0B\u9650\uFF0C
+ * 38 \u610F\u5473\u7740\u96F6\u4F59\u91CF\uFF1B\u800C \xA7\u4E8C L1 \u7684\u4E24\u7EA7\u53E3\u5F84\u91CC 44 \u624D\u662F\u76EE\u6807\u503C\u3002\u65E2\u7136\u8981\u52A8\u5C31\u4E00\u6B65\u5230\u4F4D\u3002
+ * \u540C\u6279\u4FEE\u6B63\u7684\u8FD8\u6709 .dsht-mobile-hamburger\uFF0840 \u2192 44\uFF0C\u89C1\u4E0B\u65B9\uFF09\u3002 */
 .dsht-mobile-attach {
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 34px; height: 34px; padding: 0 6px;
+  min-width: 44px; height: 44px; padding: 0 6px; flex-shrink: 0;
   border: none; border-radius: 8px; background: transparent;
   font-size: 17px; line-height: 1; cursor: pointer; user-select: none;
   color: var(--dsw-alias-label-secondary, inherit);
 }
 .dsht-mobile-attach:active { background: var(--dsw-specific-bg-layer-hover, rgba(128, 128, 128, 0.18)); }
 
-@media (max-width: 700px) {
+/* \u3010L2\u300C\u7AD6\u5C4F / \u6A2A\u5C4F\u300D\u683C \xB7 2026-09-14 \u7B2C\u5341\u4E03\u8F6E \u8BBE\u5907\u5B9E\u6D4B\u4FEE\u590D\u3011
+ *
+ * ## \u75C7\u72B6\uFF08\u8BBE\u5907\u5B9E\u6D4B\uFF0C'scripts/ef-orientation.mjs'\uFF09
+ * \u624B\u673A**\u6A2A\u5C4F**\u65F6\uFF081080x2400 @440dpi \u8F6C\u5C4F \u21D2 CSS \u89C6\u53E3 873\xD7345\uFF09\uFF1A
+ *   '(max-width: 700px)' = **false**\u3001'(pointer: coarse)' = **true**
+ *   \u21D2 \u4E0B\u9762\u6574\u6BB5\u300C\u4E94\u4EF6\u5957\u300D**\u6574\u4F53\u5931\u6548**\uFF1A\u6C49\u5821 'display:none'\uFF08\u5B9E\u6D4B hamVisible=false\uFF09\u3001
+ *     \u4FA7\u680F\u4ECE fixed \u62BD\u5C49**\u9000\u56DE\u9759\u6001\u4E09\u680F**\uFF08\u5B9E\u6D4B position: static\uFF09\u3001grid \u8F68\u9053\u9501\u5B9A\u5931\u6548\u3002
+ *   \u51C0\u6548\u679C = **\u684C\u9762\u4E09\u680F\u5E03\u5C40\u88AB\u585E\u8FDB 345px \u9AD8\u7684\u89C6\u53E3**\u3002
+ *
+ * ## \u6839\u56E0\uFF08\u67B6\u6784\u5C42 / P-1\uFF09
+ * \u628A\u300C**\u624B\u673A**\u300D\u8FD9\u4E2A**\u8BBE\u5907\u5C5E\u6027**\u7528\u300C**\u89C6\u53E3\u5BBD\u5EA6**\u300D\u8FD9\u4E2A**\u51E0\u4F55\u5C5E\u6027**\u8868\u8FBE\u3002\u4E8C\u8005\u53EF\u4EE5\u5206\u79BB
+ * \u2014\u2014\u6700\u5178\u578B\u7684\u5C31\u662F\u624B\u673A\u6A2A\u5C4F\u3002\u800C\u672C\u4ED3**\u540C\u4E00\u8BED\u4E49\u5B58\u5728\u4E24\u5957\u5224\u636E**\uFF1A
+ *   \xB7 \u672C\u6587\u4EF6\uFF08\u65E7\uFF09\uFF1A'max-width: 700px'  \u2190 \u6A2A\u5C4F\u5931\u914D
+ *   \xB7 'dsht-rp-ui/client/style.ts'\uFF1A'(pointer: coarse)' \u2190 \u6B63\u786E\uFF08\u89E6\u5C4F\u5C5E\u6027\uFF09
+ * \u8FD9\u6B63\u662F P-1 \u7684\u8FD0\u884C\u65F6\u5F62\u6001\uFF1A\u4FEE\u4E86\u4E00\u5904\uFF08rp-ui\uFF09\u800C\u53E6\u4E00\u5904\uFF08\u672C\u6587\u4EF6\u7684\u4E94\u4EF6\u5957\uFF09\u4ECD\u662F\u574F\u7684\u3002
+ *
+ * ## \u4FEE\u6CD5\uFF08\u53D6\u5E76\u96C6\uFF0C\u4E0D\u5220\u65E2\u6709\u80FD\u529B \u2014\u2014 \u5B88 B10\uFF09
+ * '@media (max-width: 700px), (pointer: coarse)'\uFF1A\u5BBD\u5EA6**\u6216**\u89E6\u5C4F\u5C5E\u6027\u4EFB\u4E00\u6210\u7ACB\u5373\u751F\u6548\u3002
+ *   \xB7 \u624B\u673A\u7AD6\u5C4F\uFF1A\u4E24\u8005\u90FD\u6210\u7ACB \u21D2 \u884C\u4E3A\u4E0E\u4FEE\u524D**\u5B8C\u5168\u4E00\u81F4**\uFF08\u96F6\u56DE\u5F52\uFF09
+ *   \xB7 \u624B\u673A\u6A2A\u5C4F\uFF1A\u7C97\u6307\u9488\u6210\u7ACB \u21D2 \u4E94\u4EF6\u5957\u6062\u590D\u751F\u6548\uFF08\u672C\u4FEE\u7684\u76EE\u6807\uFF09
+ *   \xB7 \u684C\u9762\uFF08\u9F20\u6807\uFF09\uFF1A\u4E24\u8005\u90FD\u4E0D\u6210\u7ACB \u21D2 \u684C\u9762\u5F62\u6001\u4E0D\u53D8\uFF08'pointer' \u6307\u4E3B\u6307\u9488\u8BBE\u5907\uFF0C\u89E6\u5C4F\u7B14\u8BB0\u672C
+ *     \u7684\u4E3B\u6307\u9488\u4ECD\u662F\u9F20\u6807 \u21D2 \u901A\u5E38\u62A5 fine\uFF0C\u4E0D\u4F1A\u88AB\u8BEF\u5224\u4E3A\u624B\u673A\uFF09
+ * \u9009\u5E76\u96C6\u800C\u975E\u76F4\u63A5\u6362\u6210 coarse\uFF1A\u7A84\u684C\u9762\u7A97\u53E3\uFF08<700px\uFF09\u5F53\u524D\u4E5F\u5728\u4EAB\u53D7\u8FD9\u5957\u9002\u914D\uFF0C
+ * \u6362\u6210 coarse \u4F1A\u628A\u90A3\u6761\u80FD\u529B**\u5220\u6389**\uFF08B10 \u7981\u6B62\u5220\u80FD\u529B\uFF09\u3002
+ *
+ * \u6CE8\u610F\uFF1A\u672C\u6587\u4EF6\u662F TS \u6A21\u677F\u4E32\uFF0C\u6CE8\u91CA\u91CC**\u4E0D\u80FD\u51FA\u73B0\u53CD\u5F15\u53F7**\u3002 */
+@media (max-width: 700px), (pointer: coarse) {
   /* \u2460 \u52A8\u6001\u89C6\u53E3\uFF1A\u907F\u514D\u79FB\u52A8\u6D4F\u89C8\u5668\u5DE5\u5177\u680F\u906E\u6321\u5E95\u90E8\u8F93\u5165\u533A */
   html, body { height: 100dvh; }
+
+  /* \u3010L2 2026-09-14 \u5B57\u53F7\u7F29\u653E\u4FEE\u590D\u3011\u6291\u5236 Android WebView \u7684 text autosizing\u3002
+   * \u672C\u63D2\u4EF6\u8986\u76D6\u7684\u6240\u6709\u7EC4\u4EF6\u5E03\u5C40\u5C3A\u5BF8\u5747\u4E3A\u786C\u7F16\u7801 px\uFF08\u89C1 L2 \u7A77\u4E3E\u6E05\u5355\uFF09\uFF0C\u5B57\u53F7\u88AB\u6309\u5BBD\u5EA6\u653E\u5927\u800C
+   * \u76D2\u6A21\u578B\u4E0D\u8DDF\u968F \u21D2 \u6EA2\u51FA\u4E0E\u70B9\u51FB\u533A\u9519\u4F4D\u3002\u53D6 100% \u4FDD\u7559\u7CFB\u7EDF\u7EA7\u5B57\u4F53\u8BBE\u7F6E\u610F\u56FE\u3002
+   * \u6CE8\u610F\uFF1A\u672C\u6587\u4EF6\u662F TS \u6A21\u677F\u4E32\uFF0C\u6CE8\u91CA\u91CC**\u4E0D\u80FD\u51FA\u73B0\u53CD\u5F15\u53F7**\u3002 */
+  html, body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
   /* \u2461 grid \u8F68\u9053\u9501\u5B9A\uFF1A\u4E09\u680F\u7F51\u683C \u2192 \u53EA\u6709\u4E2D\u680F\u3002\u663E\u5F0F\u9501\u5B9A\u6BCF\u5217\u6240\u5C5E\u8F68\u9053\u2014\u2014
      \u4FA7\u680F\u8131\u79BB\u6587\u6863\u6D41\uFF08fixed\uFF09\u540E grid \u81EA\u52A8\u5E03\u5C40\u624D\u4E0D\u4F1A\u628A\u4E2D\u680F\u6324\u8FDB 0 \u5BBD\u8F68\u9053 */
@@ -158,12 +207,14 @@ var MOBILE_CSS = `
   /* \u4FA7\u680F\u5185\u5BB9\u7EC4\u4EF6\u586B\u6EE1\u62BD\u5C49\u5BBD\u5EA6 */
   [data-dsht-mobile="sidebar-col"] > :first-child { width: 100% !important; }
 
-  /* \u2463 safe-area\uFF1A\u6C49\u5821\u907F\u5F00\u5218\u6D77/\u72B6\u6001\u680F */
+  /* \u2463 safe-area\uFF1A\u6C49\u5821\u907F\u5F00\u5218\u6D77/\u72B6\u6001\u680F
+   * \u30102026-09-14 \u7B2C\u4E8C\u5341\u8F6E\u301140 \u2192 **44**\uFF1A\u8BBE\u5907\u63A2\u9488 ef-touch-targets.mjs \u5B9E\u6D4B 40\xD740
+   * \uFF08P2 \u672A\u8FBE\u76EE\u6807\u503C 44\uFF09\u3002\u5F52\u5C5E\u539F\u5219\uFF1A\u672C\u7EC4\u4EF6\u5C5E\u672C\u5305 \u21D2 \u653E\u5927\u89C4\u5219\u5199\u5728\u672C\u5305\u5185\uFF08R17/P-1\uFF09\u3002 */
   .dsht-mobile-hamburger {
     display: grid !important; position: fixed;
     top: max(10px, env(safe-area-inset-top, 0px));
     left: max(12px, env(safe-area-inset-left, 0px));
-    z-index: 41; width: 40px; height: 40px;
+    z-index: 41; width: 44px; height: 44px; flex-shrink: 0;
     border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px;
     background: var(--dsw-alias-button-floating-fill); color: var(--dsw-alias-label-primary);
     box-shadow: var(--dsw-shadow-lv2); place-items: center; cursor: pointer;
@@ -208,64 +259,31 @@ var MOBILE_CSS = `
   [data-dsht-mobile="settings-content"] { min-height: 0 !important; } /* \u5217\u5E03\u5C40\u4E0B\u8BA9 options \u533A\u53EF\u6EDA */
   [data-dsht-mobile="settings-options"] { padding: 0 14px 16px; }
 
-  /* ---- RP \u7EC4\u4EF6\u7AD6\u5C4F\u89C4\u5219\uFF08\u4ECE dsht-rp-ui/style.ts R11 \u62BD\u79BB\uFF1B\u7EC4\u4EF6\u81EA\u6709\u7A33\u5B9A\u7C7B\u540D\uFF0C
-     \u65E0 RP \u63D2\u4EF6\u65F6\u65E0\u5339\u914D\u5143\u7D20\u5373\u7A7A\u8F6C\uFF09---- */
-  /* RP overlay\uFF1Asafe-area inset\uFF08\u2460\u2463 \u5BF9 RP \u9762\u7684\u843D\u5730\uFF09\u3002
-     \u6CE8\u610F\uFF1Aoverlay \u6839\u662F fixed inset:0\uFF08dsht-rp-ui/style.ts L40\uFF09\u2014\u2014\u4E0D\u80FD\u518D\u8BBE height:100dvh
-     \uFF08height \u4F1A\u8986\u76D6 bottom \u7EA6\u675F\uFF0C\u53E0\u52A0 safe-area padding \u540E\u603B\u9AD8 > \u89C6\u53E3\uFF1A384dp \u5B9E\u6D4B\u6EA2\u51FA
-     47px\uFF0C2026-09-04 \u6392\u67E5\uFF09\u3002inset:0 \u5DF2\u5168\u5C4F\uFF0Cborder-box + padding \u8BA9\u5185\u5BB9\u907F\u5F00\u5B89\u5168\u533A\u3002 */
-  .dsht-rp-overlay {
-    box-sizing: border-box;
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  .dsht-rp-topbar { flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
-  .dsht-rp-back { width: 44px; height: 44px; font-size: 22px; }
-  /* tab \u680F\u72EC\u5360\u4E00\u884C\u5168\u5BBD\uFF0C\u89E6\u63A7\u76EE\u6807 44px */
-  .dsht-rp-tabs { flex: 1 1 100%; gap: 6px; margin-left: 0; overflow-x: auto; }
-  .dsht-rp-tab { flex: 1; height: 44px; border-radius: 12px; font-size: 14px; }
-
-  /* \u89D2\u8272\u5BAB\u683C\uFF1A\u53CC\u5217\u81EA\u9002\u5E94\uFF08\u8D85\u7A84\u81EA\u52A8\u5355\u5217\uFF09\uFF0C\u5361\u7247\u5168\u5BBD */
-  .dsht-rp-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; padding: 12px; }
-  .dsht-rp-card { padding: 14px; min-height: 44px; }
-  .dsht-rp-card-gear { width: 36px; height: 36px; font-size: 16px; opacity: 1; }
-
-  /* \u89D2\u8272\u8BE6\u60C5/\u5BFC\u51FA\u62BD\u5C49\uFF1A\u5168\u5C4F\uFF08\u4E0D\u518D\u5E95\u90E8 70%\uFF09 */
-  .dsht-rp-drawer-mask { align-items: stretch; }
-  .dsht-rp-drawer { max-height: none; height: 100%; border-radius: 0; border-top: none; }
-
-  /* \u9884\u8BBE/\u6B63\u5219/\u5BFC\u5165/\u4E16\u754C\u4E66\u9762\u677F\uFF1A\u53BB max-width \u5C45\u4E2D\uFF0C\u5168\u5BBD */
-  .dsht-rp-preset, .dsht-rp-regex, .dsht-rp-import, .dsht-rp-books { max-width: none; margin: 0; padding: 16px; }
-
-  /* \u4E16\u754C\u4E66 chips \u89E6\u63A7\u76EE\u6807 44px */
-  .wb-row { min-height: 44px; }
-  .wb-chip { min-height: 44px; padding: 8px 16px; font-size: 14px; border-radius: 22px; }
-
-  /* \u89E6\u63A7\u76EE\u6807\u653E\u5927\uFF08\u2464 \u5BF9 RP \u9762\u7684\u843D\u5730\uFF09 */
-  .dsht-rp-btn { min-height: 44px; }
-  .dsht-rp-action-btn { min-height: 44px; }
-  .dsht-rp-preset-toggle .pt-opt { padding: 6px 12px; min-height: 36px; }
-  .rx-toggle span { width: 40px; height: 22px; border-radius: 11px; }
-  .rx-toggle span::after { width: 18px; height: 18px; }
-  .rx-toggle input:checked + span::after { transform: translateX(18px); }
-  .rx-del { width: 36px; height: 36px; font-size: 15px; }
-  .dsht-rp-regex-row { padding: 10px 0; flex-wrap: wrap; }
-
-  /* \u804A\u5929\u6D88\u606F\u533A 480px \u9650\u5236\u7AD6\u5C4F\u653E\u5F00 */
-  .dsht-rp-statusbar, .dsht-rp-actions, .dsht-rp-reasoning, .dsht-rp-mvu-statusbar,
-  .dsht-rp-collapsible, .dsht-rp-state-update, .dsht-rp-foreshadowing { max-width: 100%; }
-
-  /* \u7AD6\u5C4F\u89E6\u63A7\u76EE\u6807\u653E\u5927\uFF08\u56DE\u9000\u6309\u94AE / \u9884\u8BBE\u6761\u76EE\u5C55\u5F00\u94AE\uFF09 */
-  .dsht-rp-rollback-btn { height: 36px; font-size: 12px; }
-  .pe-expand { width: 40px; height: 40px; font-size: 15px; }
-  .dsht-rp-user-stack { max-width: 92%; }
-
-  /* \u4E3B\u4F1A\u8BDD\u8FC7\u7A0B\u6298\u53E0\u6807\u9898\u884C\uFF1A\u89E6\u63A7\u76EE\u6807 44px */
-  .dsht-fold-header { min-height: 44px; font-size: 13px; }
-
-  /* \u5F00\u573A\u767D dock \u7A84\u5C4F */
-  .dsht-rp-greeting-dock { margin: 0 8px 6px; }
-  .dsht-rp-greeting-dock .dsht-rp-btn { min-height: 44px; }
+  /* ---- \uFF08\u5DF2\u8FC1\u51FA\uFF09RP \u7EC4\u4EF6\u7AD6\u5C4F\u89C4\u5219 ----
+   *
+   * \u30102026-09-14 \u7B2C\u4E8C\u5341\u8F6E \xB7 \u67B6\u6784\u5C42\u6536\u53E3\u3011\u672C\u8282\u539F\u6709\u7EA6 27 \u6761 '.dsht-rp-*' \u89C4\u5219\uFF0C
+   * \u73B0**\u5168\u90E8\u8FC1\u5230 dsht-rp-ui \u81EA\u5DF1\u7684 client/style.ts \u7684 (pointer: coarse) \u6BB5**\u3002
+   *
+   * ## \u4E3A\u4EC0\u4E48\u5FC5\u987B\u8FC1\u8D70\uFF08\u8BBE\u5907\u5B9E\u6D4B\uFF0CP-26 \u7684\u300C\u540C\u7279\u5F02\u6027\u9760\u6CE8\u5165\u987A\u5E8F\u300D\u5F62\u6001\uFF09
+   * \u672C\u8282\u8FD9\u4E9B\u89C4\u5219\u4E0E rp-ui \u7684\u684C\u9762\u57FA\u7EBF**\u7279\u5F02\u6027\u76F8\u540C**\uFF08\u90FD\u662F 0,1,0 = 100\uFF09\uFF0C
+   * \u800C\u672C\u6587\u4EF6\u6CE8\u5165\u4E3A dsht-plugin-mobile-style\u3001**\u5148\u4E8E** dsht-rp-ui-style
+   * \u21D2 \u540C\u7279\u5F02\u6027\u4E0B**\u540E\u5199\u8005\u80DC** \u21D2 \u672C\u8282\u7684\u58F0\u660E**\u5168\u90E8\u88AB\u8986\u76D6**\u3002
+   *
+   * \u8BBE\u5907\u5B9E\u6D4B\uFF08CDP \u679A\u4E3E\u300C\u5339\u914D\u4E14 media \u751F\u6548\u300D\u7684\u5168\u90E8\u89C4\u5219 + \u5B9E\u9645\u6E32\u67D3\u503C\uFF09\uFF1A
+   *   .dsht-rp-back        \u672C\u6587\u4EF6 44px  vs  rp-ui 32px  \u21D2 \u5B9E\u6D4B **32px**\uFF08\u672C\u8282\u6B7B\uFF09
+   *   .dsht-rp-tab         \u672C\u6587\u4EF6 44px  vs  rp-ui 28px  \u21D2 \u5B9E\u6D4B **28px**\uFF08\u672C\u8282\u6B7B\uFF09
+   *   .dsht-rp-card-gear   \u672C\u6587\u4EF6 38px  vs  rp-ui 26px  \u21D2 \u5B9E\u6D4B **26px**\uFF08\u672C\u8282\u6B7B\uFF09
+   *   .dsht-rp-user-stack  \u672C\u6587\u4EF6 92%   vs  rp-ui min(525px,82%) \u21D2 \u5B9E\u6D4B **82% \u6863**\uFF08\u672C\u8282\u6B7B\uFF09
+   *   .dsht-rp-grid        gap 10px     vs  rp-ui 12px  \u21D2 \u5B9E\u6D4B **12px**\uFF08\u672C\u8282\u6B7B\uFF09
+   * \u5176\u4E2D '.dsht-rp-back'(32) \u4E0E '.dsht-rp-card-gear'(26) **\u4F4E\u4E8E 38px \u62C7\u6307\u5E95\u7EBF**\uFF08P1 \u7EA7\uFF09\u3002
+   *
+   * ## \u7ED3\u8BBA\uFF08\u5DF2\u56FA\u5316\u4E3A\u7EAA\u5F8B\uFF09
+   * **\u8DE8\u5305\u5199\u5BF9\u65B9\u81EA\u6709\u7EC4\u4EF6\u7684\u7C7B\u540D\u89C4\u5219\u4E00\u5F8B\u65E0\u6548/\u4E0D\u53EF\u9760** \u2014\u2014 \u65E0\u8BBA\u7279\u5F02\u6027\u9AD8\u4F4E\uFF0C
+   * \u90FD\u53D6\u51B3\u4E8E\u6CE8\u5165\u987A\u5E8F\u3002\u21D2 \u53EA\u5141\u8BB8\u8DE8\u5305\u5199**\u5BBF\u4E3B\u951A\u70B9**\uFF08'[data-dsht-mobile]'\uFF0C
+   * \u7531 anchors.ts \u5355\u70B9\u7EF4\u62A4\uFF09\u3002\u672C\u8282\u7684\u5BBF\u4E3B\u951A\u70B9\u89C4\u5219\uFF08chat-header \u7B49\uFF09**\u4FDD\u7559\u5728\u672C\u6587\u4EF6**\u3002
+   *
+   * \u8FC1\u79FB\u53BB\u5411\uFF1Adsht-rp-ui/src/client/style.ts \u7684 (pointer: coarse) \u6BB5
+   * \u2014\u2014 \u89C1\u90A3\u91CC\u6807\u9898\u4E3A\u300C\u4ECE dsht-plugin-mobile \u8FC1\u5165\u300D\u7684\u5757\u3002 */
 
   /* ---- \u4F1A\u8BDD\u9876\u680F\u7A84\u5C4F\u4FEE\u590D\uFF082026-09-04 \u771F\u673A\u622A\u56FE\u5B9E\u8BC1\uFF0C\u4E24\u8F6E\u8FED\u4EE3\uFF09----
      \u6C49\u5821 fixed \u5728\u5DE6\u4E0A\uFF0812px \u8D77\uFF09\u2192 header \u5185\u5BB9\u6574\u4F53\u8BA9\u4F4D\uFF1B\u591A\u7EA7\u9762\u5305\u5C51\uFF08\u5DE5\u4F5C\u533A +
@@ -324,7 +342,7 @@ var MOBILE_CSS = `
 }
 `;
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/file-preview.ts
+// packages/src/dsht-plugin-mobile/client/file-preview.ts
 var PREVIEW_Z = 2200;
 var FETCH_CAP = 256 * 1024;
 function findPreviewTarget(el) {
@@ -411,7 +429,10 @@ function closePreview() {
   previewHost = null;
 }
 function installFilePreview(doc) {
-  const narrow = () => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 700px)").matches;
+  const narrow = () => {
+    if (typeof window.matchMedia !== "function") return false;
+    return window.matchMedia("(max-width: 700px)").matches || window.matchMedia("(pointer: coarse)").matches;
+  };
   const onClick = (e) => {
     if (!narrow()) return;
     const target = e.target;
@@ -450,7 +471,97 @@ function installFilePreview(doc) {
   };
 }
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/index.tsx
+// packages/src/dsht-plugin-shared/webview-api-guard.ts
+function fallbackUuid(g) {
+  const c = g.crypto;
+  const hex = [];
+  if (c !== void 0 && typeof c.getRandomValues === "function") {
+    const buf = new Uint8Array(16);
+    c.getRandomValues(buf);
+    for (const b of buf) hex.push(b.toString(16).padStart(2, "0"));
+  } else {
+    for (let i = 0; i < 32; i++) hex.push(Math.floor(Math.random() * 16).toString(16));
+  }
+  const s = hex.join("");
+  return `${s.slice(0, 8)}-${s.slice(8, 12)}-4${s.slice(13, 16)}-a${s.slice(17, 20)}-${s.slice(20, 32)}`;
+}
+function ensureWebviewApiGuard(g = globalThis) {
+  const polyfilled = [];
+  const missing = [];
+  const c = g.crypto;
+  if (c === void 0) {
+    missing.push("crypto");
+  } else if (typeof c.randomUUID !== "function") {
+    c.randomUUID = () => fallbackUuid(g);
+    polyfilled.push("crypto.randomUUID");
+  }
+  if (typeof g.structuredClone !== "function") {
+    g.structuredClone = (v) => JSON.parse(JSON.stringify(v));
+    polyfilled.push("structuredClone");
+  }
+  if (typeof g.queueMicrotask !== "function") {
+    const P = g.Promise;
+    if (P === void 0) {
+      missing.push("queueMicrotask\uFF08\u4E14\u65E0 Promise \u53EF\u515C\u5E95\uFF09");
+    } else {
+      g.queueMicrotask = (fn) => {
+        void P.resolve().then(fn);
+      };
+      polyfilled.push("queueMicrotask");
+    }
+  }
+  const O = g.Object;
+  if (O === void 0) {
+    missing.push("Object");
+  } else if (typeof O.hasOwn !== "function") {
+    O.hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+    polyfilled.push("Object.hasOwn");
+  }
+  const AP = g.Array?.prototype;
+  if (AP === void 0) {
+    missing.push("Array.prototype");
+  } else if (typeof AP.at !== "function") {
+    AP.at = function at(index) {
+      const len = this.length >>> 0;
+      const i = Math.trunc(index) || 0;
+      const k = i < 0 ? len + i : i;
+      if (k < 0 || k >= len) return void 0;
+      return this[k];
+    };
+    polyfilled.push("Array.prototype.at");
+  }
+  const A = g.AbortSignal;
+  if (A === void 0) {
+    missing.push("AbortSignal");
+  } else if (typeof A.any !== "function") {
+    A.any = (signals) => {
+      const controller = new AbortController();
+      const onAbort = () => {
+        try {
+          controller.abort(controller.signal.reason);
+        } catch {
+          controller.abort();
+        }
+      };
+      for (const s of signals ?? []) {
+        if (s?.aborted === true) {
+          try {
+            controller.abort(s.reason);
+          } catch {
+            controller.abort();
+          }
+          break;
+        }
+        s?.addEventListener?.("abort", onAbort);
+      }
+      return controller.signal;
+    };
+    polyfilled.push("AbortSignal.any");
+  }
+  return { polyfilled, missing };
+}
+
+// packages/src/dsht-plugin-mobile/client/index.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
 var booted = false;
 function boot() {
@@ -512,6 +623,12 @@ function MobileAttach() {
 }
 var inject = ["slots", "layout"];
 function apply(ctx) {
+  {
+    const report = ensureWebviewApiGuard();
+    if (report.polyfilled.length > 0) {
+      console.warn(`[dsht-plugin-mobile] \u65E7 WebView \u80FD\u529B\u8865\u9F50\uFF1A${report.polyfilled.join(", ")}`);
+    }
+  }
   boot();
   ctx.effect(() => ctx.slots.inject("conversation.input.left", () => ctx.slots.register(
     { name: "conversation.input.left", id: "dsht-mobile-attach", order: 10 },

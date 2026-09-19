@@ -1,8 +1,7 @@
 /**
  * 宿主锚点解析器：把宿主 shell 的关键元素打成 data-* 锚点，CSS 只消费锚点。
  *
- * 约定（对照 dsh-tavern dsh-client-ui-mobile-adapt 的 data-sidebar-collapsed 状态钩子
- * 思路，MIT）：CSS 里绝不硬编码宿主编译后的哈希类名（.pI_x6G_* / .VOzbGW_* /
+ * 约定：CSS 里绝不硬编码宿主编译后的哈希类名（.pI_x6G_* / .VOzbGW_* /
  * .hHd-Xa_*）——哈希类名只允许出现在本文件的候选选择器里（单点维护，DSH 升级
  * 只改这一个文件）；样式侧一律写 [data-dsht-mobile="<anchor>"]。
  *
@@ -28,9 +27,10 @@ export interface AnchorDef {
 }
 
 /**
- * 锚点表。rc.7 基线（dsh-client-ui-layout / ui-settings-general / ui-sidebar）：
- * 布局 frame 类名与 dsh-tavern 参考实现同源（.pI_x6G_*），设置面板 .VOzbGW_*、
- * 侧栏 rail .hHd-Xa_* 为本仓 style.ts 既有 hack 的迁移——全部锚点化。
+ * 锚点表（rc.7 基线的 dsh-client-ui-layout / ui-settings-general / ui-sidebar）：
+ * 布局 frame 类名 .pI_x6G_*、设置面板 .VOzbGW_*、侧栏 rail .hHd-Xa_* 均为宿主
+ * 编译产物里的实际类名（本仓 style.ts 既有 hack 的迁移——全部锚点化）。
+ * 宿主升级若改哈希，只需更新本表的候选选择器。
  */
 export const ANCHOR_DEFS: AnchorDef[] = [
   { anchor: 'app-frame', strategy: 'overlay-parent', selectors: ['.pI_x6G_frame'] },

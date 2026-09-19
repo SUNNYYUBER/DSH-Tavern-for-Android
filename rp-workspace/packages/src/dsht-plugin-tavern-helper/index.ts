@@ -21,7 +21,6 @@ import {
 } from './for-session.ts'
 import { runMacroExpand } from './macros.ts'
 import { appendUndoEntries, diffUndoEntries, makeUndoEntry, type UndoScope } from '../dsht-plugin-shared/undo.ts'
-import { snapshotBeforeWrite } from '../dsht-plugin-shared/file-snapshots.ts'
 import {
   queryOf, readJsonBody, registerPrefix, resolveDshHome, sendJson,
   type LikePluginContext,
@@ -143,13 +142,14 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
     await writeFile(scriptsPath, JSON.stringify({ scripts }, null, 1), 'utf8')
   }
 
-  /** 任务 1：写前文件快照（有 sessionId 才记——回滚以会话为单位；失败不阻塞写） */
-  const snapshotFiles = async (sessionId: string, relPaths: string[]): Promise<void> => {
-    if (!sessionId) return
-    try {
-      await snapshotBeforeWrite(dshHome, sessionId, relPaths)
-    } catch { /* 快照失败不阻塞写操作 */ }
-  }
+  /**
+   * 任务 1：写前文件快照（有 sessionId 才记——回滚以会话为单位；失败不阻塞写）。
+   *
+   * 【W8 2026-09-15 单源收口（P-1）】原为**就地实现**，与 `facade.ts:snapshotFor`
+   * 逐字相同（同包跨文件复制）。现委托单源那份 —— 收口只搬不改语义。
+   */
+  const snapshotFiles = (sessionId: string, relPaths: string[]): Promise<void> =>
+    facade.snapshotFor(dshHome, sessionId, relPaths)
   /** 作用域 → $DSH_HOME 相对文件路径（与 saveScope 落盘点一一对应） */
   const scopeRelPath = (scope: VariableScope, slug: string, sessionId: string): string =>
     scope === 'global' ? 'rp/variables/global.json'

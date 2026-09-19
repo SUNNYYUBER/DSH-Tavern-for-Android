@@ -4,21 +4,16 @@
  * 方案选型：Android node 不能编译原生模块，隔离域二选一——
  * ① Node 内建 vm（vm.Script + vm.createContext + timeout）：零新依赖、
  *    Android node 原生可用、同步执行可用 timeout 硬性中断（while(true) 必死）；
- * ② quickjs-emscripten（参考实现 dsh-agent-rp/agent-loop-rp 的
- *    @jitl/quickjs-singlefile-mjs-release-sync 变体）：纯 JS/WASM 虽可跑，
- *    但引入 ~1MB base64 WASM 依赖、esbuild 打包体积膨胀，且每次渲染
- *    newRuntime 的 WASM 实例化成本高于 vm context。
+ * ② quickjs-emscripten（纯 JS/WASM 方案）：纯 JS/WASM 虽可跑，但引入 ~1MB
+ *    base64 WASM 依赖、esbuild 打包体积膨胀，且每次渲染 newRuntime 的 WASM
+ *    实例化成本高于 vm context。
  * 结论：采用 ①。vm 不是 V8 级安全边界（官方明示），但模板渲染的威胁模型是
  * 「角色卡/世界书里的不可信文本不得触碰宿主 require/process/fs 与事件循环」，
  * vm 隔离域 + 无宿主全局 + timeout + 输出上限已覆盖；记忆上限以输出上限兜底。
  *
- * 参考（MIT 许可，特此致谢）：
- * - dsh-agent-rp（hewzhew/dsh-agent-rp）src/ejs-template.ts L588-679
- *   EjsTemplateEngine：每渲染全新 runtime/context、资源上限、失败分类
- *   EjsTemplateFailureKind（错误信息不含模板源码）、确定性防护
- *   （Date=undefined / Math.random 抛错）；
- * - agent-loop-rp（2428139739pregnant-web/agent-loop-rp）src/ejs-template.ts
- *   L328-378 segments() 切分（<%_/%%>/-%> 空白裁剪）、L1154-1158 注入桥接。
+ * 隔离域内的环境是刻意做「确定性」的：`Date` 不提供、`Math.random` 抛错——
+ * 模板内容由卡作者编写，不可信；去掉这些非确定源可让同一模板对同一输入稳定复现，
+ * 也让「模板里偷偷读当前时间做条件分支」这类行为当场暴露成可诊断的错误。
  *
  * 与 ejs.ts（解释子集）的关系：子集引擎保留为默认（零依赖、行为已冻结）；
  * 本沙箱引擎由 /render 的 engine:'sandbox' 显式启用，路由契约不变。
@@ -36,7 +31,8 @@ const DEFAULT_TIMEOUT_MS = 1000
 const MIN_TIMEOUT_MS = 10
 const MAX_TIMEOUT_MS = 5_000
 
-/** 稳定失败分类（对照参考 EjsTemplateFailureKind；错误不含模板源码）。 */
+/** 稳定失败分类：把沙箱内部抛出的错误归一成有限几类，供调用方按类降级。
+ *  注意错误信息**不含模板源码**——模板来自不可信输入，原文回显会把它泄露进日志/UI。 */
 export type SandboxFailureKind =
   | 'source-limit'
   | 'syntax-error'
@@ -60,7 +56,9 @@ export interface SandboxRenderOptions {
 }
 
 // ---------------------------------------------------------------------------
-// 模板切分（移植自参考 segments()，另保留我方 {{ }} 宏 → raw 输出段）
+// 模板切分：把模板正文切成「字面文本 / 代码 / 转义输出 / 原始输出」四类段。
+// EJS 的空白裁剪约定（`<%_` 吃掉前导空白、`-%>` 吃掉后随换行、`%%>` 是字面 `%>`）
+// 在此一并处理；另保留我方 `{{ }}` 宏 → raw 输出段。
 // ---------------------------------------------------------------------------
 
 type Segment = { readonly kind: 'text' | 'code' | 'escaped' | 'raw'; readonly value: string }

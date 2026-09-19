@@ -14,6 +14,7 @@
  */
 import { useEffect, useMemo, useRef, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { thApi } from './rpc.ts'
+import { useEscapeClose } from './a11y-props.ts'
 import {
   SEARCH_RESULT_LIMIT,
   searchMessages,
@@ -49,12 +50,9 @@ export function RpSearchPanel(props: { sessionId: string; onClose: () => void })
     return () => { clearTimeout(t) }
   }, [query])
 
-  // Esc 关闭（面板级快捷键，与原生浮层习惯一致）
-  useEffect(() => {
-    const onKey = (ev: globalThis.KeyboardEvent): void => { if (ev.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => { window.removeEventListener('keydown', onKey) }
-  }, [onClose])
+  // Esc 关闭（面板级快捷键，与原生浮层习惯一致）。
+  // 【W8 2026-09-15】原为**就地实现**；现收口到单源 hook（此前 4 个面板各写一份逐字相同的实现）。
+  useEscapeClose(onClose)
 
   // 挂载即聚焦输入框（搜索优先交互）
   useEffect(() => { inputRef.current?.focus() }, [])

@@ -148,10 +148,21 @@ foreach ($f in @('lib\ejs-worker.js','lib\client.js','assets\app.js')) {
 }
 Say ''
 # 【T-87 等价性闸门（心跳 77 接入）】与 build-dsht.ps1 / build-plugins.sh / build-wb.sh 同款：
-# 「总包加载 ≡ 5 个独立包加载」（13 判据 + 反控）。A15 类文本断言证明不了「行为等价」——
+# 「总包加载 ≡ 5 个独立包加载」（15 判据 + 反控）。A15 类文本断言证明不了「行为等价」——
 # 注册顺序（B5）/ 服务声明（B1）/ 命名空间与路由（B3/B4）出问题都不会让构建失败。
+# 【2026-09-16 W28】判据数 13 → 15：新增 8c（**解析器自证**）。判据 8②③ 的结论依赖
+# verify-rp-consolidation.mjs 的 parseSplitEntries() 从 build-dsht.ps1 里解析「权威路径
+# 是否已归一」，解析器漏形态会让结论**反向**（P-41 推论三：判据的覆盖面本身也要有判据）。
+# ⚠️ 本文件是 PowerShell：注释里**不要用反引号**（PS 的行内转义符，会吞掉后一个字符、
+#    破坏后续引号配对 ⇒ 报错位置会漂到一个毫不相干的远处行号）。
 $verifyRp = "$ws\scripts\verify-rp-consolidation.mjs"
 if (-not (Test-Path $verifyRp)) { throw "T-87: 等价性验证脚本缺失（$verifyRp）" }
+# 先跑**解析器自证**（合成输入，秒级）：清单解析错了，后面的 8② 结论就不必看了
+$ErrorActionPreference = 'Continue'
+& $node $verifyRp --selftest-parser 2>&1 | Select-String -Pattern 'selftest-parser' | Select-Object -Last 1
+$rcParser = $LASTEXITCODE
+$ErrorActionPreference = 'Stop'
+if ($rcParser -ne 0) { throw 'T-87: 构建路径解析器自证未通过（清单可能残缺 ⇒ 判据8② 的结论不可采信）' }
 $ErrorActionPreference = 'Continue'
 & $node $verifyRp --negative-control 2>&1 | Select-String -Pattern 'negctl' | Select-Object -Last 2
 $rcNeg = $LASTEXITCODE
@@ -162,5 +173,5 @@ $ErrorActionPreference = 'Continue'
 $rcVerify = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 if ($rcVerify -ne 0) { throw 'T-87: 总包与 5 个独立包**不等价**（注册顺序/路由/命名空间/服务声明有差异）—— 勿发货' }
-Say '  T-87 等价性（13 判据 + 反控）OK'
+Say '  T-87 等价性（15 判据 + 解析器自证 + 反控）OK'
 Say '插件构建完成。'

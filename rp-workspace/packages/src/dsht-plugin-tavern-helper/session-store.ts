@@ -26,6 +26,9 @@
  */
 
 /** 六作用域（ST 酒馆助手变量命名空间全量） */
+// 【F5 2026-09-14 单源化·补漏】`isTree` 改为委托共享层（见下方 const 定义）。
+import { isMergeableObject } from '../dsht-plugin-shared/deep-merge.ts'
+
 export type TavernScope = 'global' | 'preset' | 'character' | 'chat' | 'message' | 'script'
 export const TAVERN_SCOPES: readonly TavernScope[] = ['global', 'preset', 'character', 'chat', 'message', 'script']
 
@@ -38,12 +41,12 @@ export const SNAPSHOT_KEY = 'tavern'
 
 type Tree = Record<string, unknown>
 
-/** 一次快照变更（整树替换语义，与参考实现 applyTavernHelperMutation 的 namespace replacement 一致） */
+/** 一次快照变更（整树替换语义：同 scope 的旧树被整棵换掉，不做深合并） */
 export type SnapshotMutation =
   | { readonly scope: 'preset' | 'message'; readonly tree: Tree; readonly ts?: number }
   | { readonly scope: 'script'; readonly scriptId: string; readonly tree: Tree; readonly ts?: number }
 
-/** 会话持有层的完整快照（对应参考实现 TavernHelperState 的会话私有部分） */
+/** 会话持有层的完整快照（preset/message/scripts 三个作用域的私有状态） */
 export interface TavernSessionSnapshot {
   readonly format: 0
   /** 单调递增修订号（每次 mutation +1；加载时用于识别快照新旧） */
@@ -54,7 +57,7 @@ export interface TavernSessionSnapshot {
   }
   /** script 作用域：scriptId → 变量树（Host 持有，脚本互相隔离） */
   readonly scripts: Readonly<Record<string, Tree>>
-  /** 最近一次变更溯源（对应参考实现 lastMutation；cause 细化为 ts） */
+  /** 最近一次变更溯源（哪个作用域、哪个脚本、何时；用于排障与失效判定） */
   readonly lastMutation?: {
     readonly scope: SessionHeldScope
     readonly scriptId?: string
@@ -67,9 +70,10 @@ export function emptySnapshot(): TavernSessionSnapshot {
   return { format: 0, revision: 0, scopes: { preset: {}, message: {} }, scripts: {} }
 }
 
-function isTree(value: unknown): value is Tree {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
+/* 【F5 2026-09-14 单源化·补漏】`isTree` 原为本地函数体（与 `deep-merge.ts` 的
+ * `isMergeableObject` 逐字相同，只是返回类型收窄成 `Tree`）——审计脚本判据 4 抓到。
+ * 现委托共享层；`Tree` 收窄由 `as` 桥接（判据本身完全相同，收窄只是本文件的类型便利）。 */
+const isTree = (value: unknown): value is Tree => isMergeableObject(value)
 
 /**
  * 快照解码 + 校验（坏快照返回 undefined——与 loadScope"坏 JSON = 空树"的容错风格一致，

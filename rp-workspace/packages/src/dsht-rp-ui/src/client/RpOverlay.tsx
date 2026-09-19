@@ -17,6 +17,8 @@ import { UpdatePanel } from './UpdatePanel.tsx'
 import { PersonaPanel } from './PersonaPanel.tsx'
 import { SessionsPanel } from './SessionsPanel.tsx'
 import { invalidateWsCache } from './RpNativeChat.tsx'
+// 【W4 2026-09-14】官方投影读取单源（`session.list` 结果的 blank 判定）
+import { readSessionBlank } from './host-projection.ts'
 
 type Tab = 'chars' | 'import' | 'books' | 'regex' | 'preset' | 'persona' | 'sessions'
 
@@ -376,11 +378,14 @@ export function RpOverlay(props: RpOverlayInjected): JSX.Element | null {
         const r = await dshRpc<{ items: SessionListItem[] }>('session.list', { _request: {} })
         const mine = (r.items ?? [])
           .filter(it => it.cwd?.replace(/\\/g, '/').endsWith(`/rp/${ws.slug}`))
-          .sort((a, b) => (Number(a.blank === true) - Number(b.blank === true)) || ((b.updatedAt ?? 0) - (a.updatedAt ?? 0)))
+          // 【W4】`blank` 判定改走单源（与 RpStateFloat / RpTokenMeter / RpGreetingDock 同口径：
+          // 只有明确 true 才算空白）。此处原写 `a.blank === true` —— 与单源**恰好同值**，
+          // 但仍是第二处读法：官方改字段名/语义时它会静默漂移（P-1）。
+          .sort((a, b) => (Number(readSessionBlank(a)) - Number(readSessionBlank(b))) || ((b.updatedAt ?? 0) - (a.updatedAt ?? 0)))
         const best = mine[0]
         // 空白会话：卡有开场白时不复用（新开一个物化开场白的，避免每次点击都开白板）；
         // 卡无开场白则直接复用空白会话。
-        if (best && (!best.blank || !ws.firstMes)) sessionId = best.sessionId
+        if (best && (!readSessionBlank(best) || !ws.firstMes)) sessionId = best.sessionId
       }
       if (!sessionId) {
         // 没有可续会话 → 建一个，开场白物化为首条 assistant 消息。

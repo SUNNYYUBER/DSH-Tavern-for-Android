@@ -21,7 +21,21 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { atomicWriteText } from '../dsht-plugin-shared/atomic-fs.ts'
+// 【W8 单源收口】`sendJson` 是「JSON 响应」的**唯一实现**
+//（本文件原有一份逐字相同的就地闭包，已改为委托）
+import { sendJson } from '../dsht-plugin-shared/http.ts'
+// 【F5 2026-09-14】路径工具单源：cwd↔rp 工作区 slug 判定（曾有两份复制，见 rp-workspace.ts 头注）
+import { normalizeAndroidPath, rpSlugFromCwd } from '../dsht-plugin-shared/rp-workspace.ts'
+// 【F5 2026-09-14】稳定短哈希单源（曾散落四处实现，含改名复制；见 hash.ts 头注）
+import { hash36 } from '../dsht-plugin-shared/hash.ts'
+// 【W4 2026-09-14】官方投影读取单源（cwd / sessionId / header.agentPreset / surface.nodes
+// —— 此前本文件 12 处裸读，都在 agent/pre-step 的 try 内 ⇒ 官方改形状即整轮 RP 注入静默失效）
+import {
+  readHeaderAgentPreset, readHostSessionId, readSessionCwd,
+  readSurfaceNodes, readSurfaceNodesOrNull,
+} from '../dsht-plugin-shared/host-projection.ts'
 import z from '@deepseek-ai/schemastery'
 import JSZip from 'jszip'
 import { triggerWorldInfo, visibleMessageCursor } from '../lore/trigger.ts'
@@ -49,12 +63,12 @@ import { renderMessagesSandbox as ejsRenderMessagesSandboxVm, asSandboxMessagesR
 import { loadSheets, renderTablePrompt, expandTableMacros } from '../dsht-plugin-memory/tables.ts'
 import { expandTavernMacros, readVarPath, writeVarPath, registerMacro, unregisterMacro, listCustomMacros, hydrateCustomMacros } from '../dsht-plugin-shared/macros.ts'
 import { appendUndoEntries, makeUndoEntry, replayUndoLog } from '../dsht-plugin-shared/undo.ts'
-import { restoreSnapshotsAfter, snapshotBeforeWrite, snapshotRestoreBoundary } from '../dsht-plugin-shared/file-snapshots.ts'
+import { restoreSnapshotsAfter, snapshotBeforeWrite, snapshotRestoreBoundary, snapshotRestoreBoundaryFromEvents } from '../dsht-plugin-shared/file-snapshots.ts'
 import { scanSessionHeaders as scanSessionHeadersShared, normalizeSnapshotMessageRoles, repairDuplicateTurnStarts, currentSessionLogPath, canSurgicallyTruncate, relocatedSessionLogPath } from '../dsht-plugin-shared/session-surgery.ts'
 // 【阶段3 2026-09-10】会话写入合法形态层：surfaceOp 字段名自适应 + 合法标记载体
 // （0.1.5 把 start/end 改成 startSeq/endSeq，且禁止 assistant/message 做 replace 节点）
 import {
-  appendReplace, replaceRange, isReplaceOp, markerSource, readMarker, readLegacySourceKeys, readSurgicalAnchor,
+  appendReplace, replaceRange, isReplaceOp, markerSource, readMarker, readLegacySourceKeys, readSurgical, readSurgicalAnchor,
   sanitizeEnvelope, planAssistantRewrite, assistantSettlement, boundAppend, type AppendableSession, type SurgicalMarkerPayload,
 } from '../dsht-plugin-shared/session-write.ts'
 // 【阶段3 2026-09-10】存量 v0 会话 → 0.1.5 可迁移形态（8 类不合规的纯函数重写器）
@@ -230,8 +244,9 @@ interface RpWorkspace {
 
 export const name = 'dsht-rp-plugin'
 /** /rp/rollback-mask 结果缓存（键 = session.jsonl 绝对路径；mtime 失效；逻辑回退/
- *  编辑/重新生成成功后 clear——前端 refreshRollbackMask 立即拿到最新锚） */
-const rollbackMaskCache = new Map<string, { size: number; mtimeMs: number; hide: number }>()
+ *  编辑/重新生成成功后 clear——前端 refreshRollbackMask 立即拿到最新锚）
+ *  seqs = 精确的被移出 seq 集合（集合语义的权威判据；hide 仅降级/兼容用） */
+const rollbackMaskCache = new Map<string, { size: number; mtimeMs: number; hide: number; seqs: number[] }>()
 // services 声明（Cordis 访问保护：未 inject 的服务属性读取直接 throw "cannot get property without inject"）
 // - tools/systemPrompt：lore_query 注册
 // - sessions：变体操作读取 session（events/append）
@@ -276,7 +291,7 @@ export function scanSurfaceHistory(session: LikeSession, claimed: LikeMessage[],
     }
     if (t) texts.push(t)
   }
-  for (const seq of session.surface.nodes) {
+  for (const seq of readSurfaceNodes(session)) {
     // @adapt contract:session-api.eventAt
     // 0.1.2 坑 #22：Session 事件读取 API 变更——.events[seq] 直索引移除，改 eventAt(seq)
     const ev = typeof (session as unknown as { eventAt?: unknown }).eventAt === 'function'
@@ -525,11 +540,6 @@ export function filterTemplateStatements<T extends object>(messages: T[]): { mes
   return { messages: filtered > 0 ? messagesOut : messages, filtered }
 }
 
-/** I8-2（移动端鲁棒性）：原子写文件——temp 独占创建 + fsync + rename 发布 + 父目录 fsync。
- * 0.1.2 的 dsh-atomic-write rename 前不 fsync（官方 TODO），我们自己补齐：
- * 手机端进程被杀在任意时刻都不能留下半写文件（torn tail 可修复，但覆盖型半写=静默丢尾部）。 */
-/** 同毫秒并发写同路径的 tmp 名去重（L1b 宏注册爆发实机抓到的 EEXIST 冲突） */
-let atomicWriteSeq = 0
 /** /macros/register|unregister 读改写串行链（并发注册防丢更新；catch 兜底保证链永不拒绝） */
 let macroWriteChain: Promise<{ status: number; body: Record<string, unknown> }> = Promise.resolve({ status: 200, body: {} })
 
@@ -546,21 +556,118 @@ function withLiveSurgery<T>(sessionId: string, fn: () => Promise<T>): Promise<T>
   void liveSurgeryChains.get(sessionId) // 触发 catch 规避 unhandledrejection
   return next
 }
-export async function atomicWriteFile(path: string, content: string): Promise<void> {
-  const tmp = `${path}.${Date.now()}.${atomicWriteSeq++}.${Math.random().toString(36).slice(2, 8)}.tmp`
-  const handle = await open(tmp, 'wx')
-  try {
-    await handle.writeFile(content, 'utf8')
-    await handle.sync()
-  } finally {
-    await handle.close()
+/** I8-2（移动端鲁棒性）：原子写文件——temp 独占创建 + fsync + rename 发布 + 父目录 fsync。
+ * 0.1.2 的 dsh-atomic-write rename 前不 fsync（官方 TODO），我们自己补齐：
+ * 手机端进程被杀在任意时刻都不能留下半写文件（torn tail 可修复，但覆盖型半写=静默丢尾部）。
+ *
+ * 【F5 2026-09-14 单源化·补漏】此处原为**逐字函数体**，与
+ * `dsht-plugin-shared/atomic-fs.ts` 的 `atomicWriteText` 完全相同（审计脚本判据 4
+ * 「不同名但函数体逐字相同」抓到）——改名复制 ⇒ 判据 2 永远不报 ⇒ 改一处漏一处不可见。
+ * 现委托共享层；导出名保留（本文件 30+ 处调用点与既有外部 import 都用 `atomicWriteFile`）。
+ * 注意：tmp 名去重序号 `atomicWriteSeq` 也随之由共享层**统一持有**——这是必需的，
+ * 两侧各有独立序号时「同毫秒同路径并发写」仍可能撞名（EEXIST）。 */
+export const atomicWriteFile = atomicWriteText
+
+/**
+ * 【2026-09-14 F4-C1 真根因 · 设备实测】读 pi-ai 内建模型目录的能力字段。
+ *
+ * ## 为什么单独抽成函数（P-12 能力契约集中在入口 + 可单测）
+ * 原实现内联在路由里，且用 `createRequire(import.meta.url).resolve(<子路径>)`
+ * 定位目录 JSON —— **在真机上恒失败**：
+ *   `ERR_PACKAGE_PATH_NOT_EXPORTED: Package subpath
+ *    './dist/providers/data/deepseek.json' is not defined by "exports"`
+ * pi-ai 的 `package.json#exports` 只声明了 `.` / `./compat` / `./providers/*` /
+ * `./api/*` / `./oauth` / `./bedrock-provider` / `./bun-oauth`，**不含 `./dist/*`**。
+ * 于是 `/rp/model-capability` 恒返回 `contextWindow: null` ⇒ 前端只好落到
+ * 「预算未知」占位值 ⇒ **F4-C1「优先取模型真实上下文能力」从未生效**
+ *（设备实测：`{"contextWindow":null,...,"origin":null}`，而模型真实值是 1000000）。
+ * 这类缺陷的形态是「静默降级」：路由不报错、HTTP 200、字段合法（null 是合法值），
+ * 只有对账「该有值却拿到 null」才照得出来（P-11 产物即事实 / P-3 静默失败）。
+ *
+ * ## 修法
+ * 不用「CJS resolve 子路径」（被 exports 白名单拒绝），改**两步**：
+ *  1. 定位 pi-ai 包根目录。优先 `import.meta.resolve('@earendil-works/pi-ai')`
+ *     （解析**包名**本身——`exports` 里有 `.` ⇒ 合法）；该 API 在 vite/vitest 的
+ *     转换环境里可能是 `undefined`，故备一条**向上遍历 node_modules** 的路径
+ *     （`<dir>/node_modules/<pkg>/package.json` 存在即命中，逐级上行）。
+ *     两条路都不依赖 exports 白名单。
+ *  2. 按 pi-ai 自己的**磁盘布局**拼数据文件：
+ *     `<pkgRoot>/dist/providers/data/<provider>.json`（`files` 字段含 `dist`，
+ *     目录 JSON 是它的运行时数据资产，随包发布）。
+ *
+ * ## 为什么不用 `createRequire(...).resolve('@earendil-works/pi-ai')` 兜底
+ * 实测同样失败：该包 ESM-only，`exports` 只有 `import` 条件，CJS 侧报
+ * `ERR_PACKAGE_PATH_NOT_EXPORTED: No "exports" main defined`。
+ *
+ * ## 失败语义
+ * 解析不到 / 文件不存在 / 该 provider 无目录文件 / 该 model 不在目录里 → **返回 null**
+ * （不是 0、不是抛错）：调用方据 null 走「预算未知」降级并在 UI 标注。二者**不同**的是
+ * 「真的没有」vs「读取出错」——后者由调用方 catch 后 `console.warn` 出声（R8）。
+ *
+ * @param provider pi-ai 的 provider 路由名（目录文件名，如 `deepseek`）
+ * @param model    pi-ai 的 model id（如 `deepseek-v4-flash`）
+ * @param field    要读的字段（`contextWindow` | `maxTokens`）
+ * @returns 正数值，或 null（未找到/非法）
+ */
+export async function readPiAiCatalogCapability(
+  provider: string,
+  model: string,
+  field: 'contextWindow' | 'maxTokens',
+): Promise<number | null> {
+  if (!provider || !model) return null
+  // provider 名直接拼路径 ⇒ 必须先做路径穿越防御（外部传入，不可信）
+  if (!/^[A-Za-z0-9._-]+$/.test(provider)) return null
+  const pkgRoot = findUpPackageDir(dirname(fileURLToPath(import.meta.url)), PI_AI_PKG_NAME)
+  if (pkgRoot === null) return null // pi-ai 不在本进程模块树上（裁剪部署）→ 调用方降级
+  const dataFile = join(pkgRoot, 'dist', 'providers', 'data', `${provider}.json`)
+  if (!existsSync(dataFile)) return null
+  const raw = JSON.parse(await readFile(dataFile, 'utf8')) as Record<string, Record<string, Record<string, unknown>> | undefined>
+  // 目录形状：{ <api 名>: { <model id>: {contextWindow, maxTokens, …}, … }, … }
+  // 同一个 model 可能挂在多个 api 下（如 openai-completions / anthropic-messages）；
+  // 取**第一个命中的**即可——能力字段与 api 线路无关（pi-ai 自身也这么用）。
+  for (const models of Object.values(raw)) {
+    const entry = models?.[model]
+    if (entry === undefined) continue
+    const v = entry[field]
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v
   }
-  await rename(tmp, path)
-  // 父目录 fsync（POSIX rename 耐久性要求；Android ext4/f2fs 私有目录有效）
-  try {
-    const dirHandle = await open(dirname(path), 'r')
-    try { await dirHandle.sync() } finally { await dirHandle.close() }
-  } catch { /* 目录 fsync 失败不阻塞（Windows 上目录句柄 fsync 不允许） */ }
+  return null
+}
+
+/** pi-ai 包名（读取其内建模型目录用；单源，避免多处各写一遍字符串） */
+const PI_AI_PKG_NAME = '@earendil-works/pi-ai'
+
+/**
+ * 定位某包在磁盘上的根目录（含 `package.json` 的那一层）。
+ *
+ * ## 为什么需要它（而不是直接 resolve 子路径）
+ * 见 `readPiAiCatalogCapability` 头注：pi-ai 的 `exports` 不含 `./dist/*`，
+ * 任何「resolve 到数据文件」的写法都会被 `ERR_PACKAGE_PATH_NOT_EXPORTED` 拒绝。
+ * 而 resolve **包名**在 vite/vitest 转换环境下又不可用（`import.meta.resolve`
+ * 是 `undefined`）。向上遍历是唯一在「真 node」与「vite 转换环境」下都成立的方式，
+ * 且行为完全可预测（node 自己的解析算法也是逐级向上）。
+ *
+ * 设备实测路径（两份布局都能命中）：
+ *   · 插件产物 `…/profiles/web/node_modules/dsht-rp-plugin/lib/` → 上一级
+ *     `…/profiles/node_modules/@earendil-works/pi-ai` ✓
+ *   · PC 工作区 `…/rp-workspace/packages/src/dsh-plugin/lib/` →
+ *     `…/rp-workspace/node_modules/@earendil-works/pi-ai` ✓
+ *
+ * @param startDir 起始目录（通常是本模块所在目录）
+ * @param pkgName  包名（可含 scope，如 `@earendil-works/pi-ai`）
+ * @returns 包根目录绝对路径；找不到返回 null（不抛——调用方降级）
+ */
+export function findUpPackageDir(startDir: string, pkgName: string): string | null {
+  let dir = startDir
+  // 上限保护：Windows 最长路径 + 防万一的循环（dirname 到根会稳定返回自身）
+  for (let i = 0; i < 40; i += 1) {
+    const candidate = join(dir, 'node_modules', pkgName)
+    if (existsSync(join(candidate, 'package.json'))) return candidate
+    const parent = dirname(dir)
+    if (parent === dir) break // 已到盘根
+    dir = parent
+  }
+  return null
 }
 
 /** I8-3（移动端鲁棒性）：会话文件手术锁——0.1.2 无 lease，多写者（残留 runtime /
@@ -660,10 +767,11 @@ export function renderWorldInfoSnapshot(
   ].join('\n\n')
 }
 
-/** Android 路径归一：/data/user/0/<pkg> 与 /data/data/<pkg> 是同一目录的两种形态 */
-function normAndroidPath(p: string): string {
-  return p.replace(/^\/data\/user\/0\//, '/data/data/')
-}
+/** Android 路径归一：/data/user/0/<pkg> 与 /data/data/<pkg> 是同一目录的两种形态。
+ *  【F5 2026-09-14 单源化】实现已下沉到 dsht-plugin-shared/rp-workspace.ts
+ *  （与该模块的 rpSlugFromCwd 同源，避免两侧规范化口径漂移）。此处保留本地别名
+ *  以减少本文件内 7 处调用点的改动面；新代码请直接用共享模块。 */
+const normAndroidPath = normalizeAndroidPath
 
 // ---------------------------------------------------------------------------
 // 存量 session cwd 修复（纯逻辑，可单测）
@@ -1506,16 +1614,11 @@ export function searchLoreEntries(
   ].join('\n')
 }
 
-/** 从 cwd 提取 RP 工作区段（$DSH_HOME/rp/<slug> → slug；非 RP 返回 null） */
-export function rpSlugFromCwd(cwd: string | undefined, dshHome: string): string | null {
-  if (!cwd) return null
-  const prefix = `${normAndroidPath(dshHome)}/rp/`
-  const normalized = normAndroidPath(cwd)
-  if (!normalized.startsWith(prefix)) return null
-  const slug = normalized.slice(prefix.length)
-  if (!slug || slug.includes('/')) return null
-  return slug
-}
+/** 从 cwd 提取 RP 工作区段（$DSH_HOME/rp/<slug> → slug；非 RP 返回 null）
+ *  【F5 2026-09-14 单源化】实现已下沉到 dsht-plugin-shared/rp-workspace.ts——
+ *  dsht-plugin-tavern-helper 也曾有一份本地复制（参数顺序不同），现已统一。
+ *  此处重新导出以保持既有 import 面（本文件内 7 处调用 + 外部 1 处）。 */
+export { rpSlugFromCwd }
 
 // ---------------------------------------------------------------------------
 // D-6（T-08 / T-12）：RP 会话的 agent 层工具修剪
@@ -1607,15 +1710,13 @@ export function rpNameFrom(json: string): string {
 // R0/R4：导入批次暂存 + API 配置导入（纯逻辑，可单测）
 // ---------------------------------------------------------------------------
 
-/** FNV-1a → base36 短哈希（批次 id 用；与 dsh-export.hash36 同款算法） */
-function fnv36(input: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
-  }
-  return (h >>> 0).toString(36)
-}
+/** FNV-1a → base36 短哈希（批次 id 用）。
+ *  【F5 2026-09-14 单源化】实现下沉到 dsht-plugin-shared/hash.ts。
+ *  此前本仓有 **四处** 同算法实现（本处的 fnv36、import/dsh-export.ts 与
+ *  preset/st-import.ts 各一份 hash36）——**改名复制**是复制里最恶劣的一类：
+ *  同名判据抓不到它，而它正是「导入/导出对同一张卡算出不同 id」的土壤。
+ *  现统一为 hash36（原名 fnv36 是历史叫法，语义相同，此处保留别名避免改动面）。 */
+const fnv36 = hash36
 
 /** 批次 id：时间戳 base36 + 文件名短哈希（rp-import/<batchId>/） */
 export function makeBatchId(name: string, now: number = Date.now()): string {
@@ -2637,7 +2738,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   // 内容轴（上方快照注入）不依赖本探测结果；探测只做一次性可观测性提示，失败静默。
   const capabilityAxisSeen = new WeakMap<LikeAgent, string>()
   const probeCapabilityAxis = async (agent: LikeAgent, preset: RPPreset): Promise<void> => {
-    const agentPreset = agent.session.header.agentPreset
+    const agentPreset = readHeaderAgentPreset(agent.session)
     const key = `${preset.id}@${agentPreset ?? ''}`
     if (capabilityAxisSeen.get(agent) === key) return
     capabilityAxisSeen.set(agent, key)
@@ -2899,11 +3000,11 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   /** ⑧ 预设机制移植的共享解析：agent → RP 工作区 + 有效预设（assemble/request 瀑布与 pre-step 共用） */
   const resolveAgentPreset = async (agent: LikeAgent): Promise<{ slug: string; rp: RpWorkspace; preset: RPPreset; sessionId: string } | null> => {
     try {
-      const slug = rpSlugFromCwd(agent.session.header.cwd, dshHome)
+      const slug = rpSlugFromCwd(readSessionCwd(agent.session), dshHome)
       if (!slug) return null
       const rp = await loadRpJson(slug, new AbortController().signal)
       if (!rp) return null
-      const sessionId = String((agent.session as unknown as { id?: string }).id ?? '')
+      const sessionId = readHostSessionId(agent.session)
       const presetId = sessionId ? await resolveSessionPresetId(sessionId) : await resolveActiveStPresetId()
       if (!presetId) return null
       const preset = await resolvePreset(presetId, new AbortController().signal)
@@ -2928,11 +3029,11 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
     if (!SLOT_ROUTING) return []
     const out: SlotSection[] = []
     try {
-      const slug = rpSlugFromCwd(agent.session.header.cwd, dshHome)
+      const slug = rpSlugFromCwd(readSessionCwd(agent.session), dshHome)
       if (!slug) return out
       const rp = await loadRpJson(slug, new AbortController().signal)
       if (!rp) return out
-      const sid = String((agent.session as unknown as { id?: string }).id ?? '')
+      const sid = readHostSessionId(agent.session)
       if (!sid) return out
 
       // 角色卡（TT dump-008 [3] stage_1_base_requirements 同位置语义）
@@ -3404,7 +3505,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       isConcurrencySafe: () => true,
       async execute(args, exec) {
         const query = String((args as { query?: unknown }).query ?? '')
-        const slug = exec.agent ? rpSlugFromCwd(exec.agent.session.header.cwd, dshHome) : null
+        const slug = exec.agent ? rpSlugFromCwd(readSessionCwd(exec.agent.session), dshHome) : null
         if (slug === null) return 'No roleplay workspace in this session.'
         const rp = await loadRpJson(slug, exec.signal)
         if (!rp || rp.books.length === 0) return 'This roleplay workspace has no worldbooks.'
@@ -3640,7 +3741,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       // 迁移类会话的 cwd 是 `rp-import/<batchId>`（**不匹配** `rp/` 前缀，见 rpSlugFromCwd），
       // 且它们靠工具干活 → 天然不受影响。
       // 若 presetId 解析不出（resolved=null）→ shouldStripRpTools(undefined)=true → 照样修剪。
-      if (rpSlugFromCwd(agent.session.header.cwd, dshHome)) {
+      if (rpSlugFromCwd(readSessionCwd(agent.session), dshHome)) {
         if (shouldStripRpTools(resolved?.preset.path)) {
           const stripped = stripAssemblyTools(assembly as unknown as { tools?: unknown; sections?: unknown })
           if (stripped.removed.length > 0) {
@@ -3769,7 +3870,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           seq += 1
           await writeFile(join(gdir, `dump-${String(seq).padStart(3, '0')}.json`), JSON.stringify({
             tag: 'agent_request_config', seq, env: 'dshtavern', ts: new Date().toISOString(),
-            cwd: agent.session?.header?.cwd ?? null,
+            cwd: readSessionCwd(agent.session) || null,
             data: { config: out },
           }, null, 1))
           await writeFile(seqFile, String(seq))
@@ -3880,8 +3981,8 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
     if (decision.kind !== 'enter') return decision
     const { agent, messages, signal } = raw as LikePreStepEvent
 
-    const slug = rpSlugFromCwd(agent.session.header.cwd, dshHome)
-    console.log(`[dsht-rp] pre-step: cwd=${agent.session.header.cwd ?? '(none)'} slug=${slug ?? '(not-rp)'} turn=${(raw as LikePreStepEvent).turn}`)
+    const slug = rpSlugFromCwd(readSessionCwd(agent.session), dshHome)
+    console.log(`[dsht-rp] pre-step: cwd=${readSessionCwd(agent.session) || '(none)'} slug=${slug ?? '(not-rp)'} turn=${(raw as LikePreStepEvent).turn}`)
     // ---- Golden Master 对照（DSHT 侧 dump#2）：**本批真正发给 LLM 的消息序列** ----
     // agent/request 瀑布只有采样参数；消息序列在 pre-step。rp/golden/dsht-ENABLED 存在时落盘，
     // 与 TT/ST 侧 chat_completion_prompt_ready（GENERATE_AFTER_COMBINE_PROMPTS）配对 diff。
@@ -3903,7 +4004,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         seq += 1
         await writeFile(join(gdir, `msg-${String(seq).padStart(3, '0')}.json`), JSON.stringify({
           tag: 'agent_prestep_messages', seq, env: 'dshtavern', ts: new Date().toISOString(),
-          cwd: a.session.header.cwd ?? null,
+          cwd: readSessionCwd(a.session) || null,
           turn: turn ?? null,
           data: { messages: msgs },
         }, null, 1))
@@ -3919,7 +4020,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       const rp = await loadRpJson(slug, signal)
       if (!rp) return decision
       const turnNo = (raw as LikePreStepEvent).turn ?? 0
-      const traceKey = String((agent.session as unknown as { id?: string }).id ?? slug)
+      const traceKey = readHostSessionId(agent.session) || slug
       // I8-6：登记 live 会话（flush-all 通道的 flush 对象清单）
       registerLiveSession(traceKey, agent.session)
 
@@ -3970,7 +4071,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         }
         try {
           signal.throwIfAborted()
-          const sid = String((agent.session as unknown as { id?: string }).id ?? '')
+          const sid = readHostSessionId(agent.session)
           if (!sid) return finalize(d)
           const st = await loadSessionState(sid)
           // ---- D-3 启用时：本区四类内容（状态/角色卡/记忆/表格）全部改由
@@ -4092,7 +4193,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       // DSH 从 surface 原文重建，claimed 已空——只跑 claimed 会让正则在 step 2+ 失效。
       // ST 语义 = 每轮对整个 prompt 过正则 → 对 decision.messages 全批跑。
       // T2.8：三源合并（全局 + 预设 + 角色）
-      const sessionIdForRegex = String((agent.session as unknown as { id?: string }).id ?? '')
+      const sessionIdForRegex = readHostSessionId(agent.session)
       const regexScripts = await mergedRegex(rp, signal, sessionIdForRegex)
       // 【2026-09-10】预热 promptOnly 投影脚本（供 llm/stream 同步读取——该钩子是 generator
       // 型 waterfall，handler 不能 async）。只留 promptOnly 脚本，减少钩子内过滤开销。
@@ -4183,7 +4284,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
 
       // ---- T2.3：MVU 状态提取（本批新 assistant 消息的 <UpdateVariable> → 合并落盘）----
       // 幂等：按消息 id 去重（多 step turn 后续 step 的批从 surface 重建，防 delta 重复累加）
-      const stateSid = String((agent.session as unknown as { id?: string }).id ?? '')
+      const stateSid = readHostSessionId(agent.session)
       if (stateSid) {
         const st0 = await loadSessionState(stateSid)
         let sessionState = st0.state ?? {}
@@ -4209,8 +4310,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         }
       }
 
-      // ---- P0-5：per-turn 闸门 + 时间游标（照抄 dsh-worldbook src/context/inject.ts
-      // L39-42 与 L99-107；MIT © aam452，见 REF_PROJECTS_COMPARISON.md 领域六）----
+      // ---- P0-5：per-turn 闸门 + 时间游标 ----
       // 闸门：本 step 的 inbox 消息里没有 source.kind==='user' 的真实用户消息 =
       // 工具/思考轮 → 跳过世界书注入（不重复注入；prompt 正则与 MVU 提取不受影响）。
       // 游标：事件流里真实 user/assistant 消息累计数（排除插件注入/快照），写进
@@ -4262,7 +4362,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       }
 
       // 新会话首步：开场白注入（surface 无任何消息时，firstMes 作为剧情起点进快照）
-      const isNewChat = agent.session.surface.nodes.every(seq => {
+      const isNewChat = readSurfaceNodes(agent.session).every(seq => {
         const ev = sessionEventAt(agent.session, seq)
         return ev === undefined || (ev.type !== 'user/message' && ev.type !== 'assistant/message')
       })
@@ -4277,7 +4377,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
             }
 
       const traceRuntime: AssemblyTraceRuntime = {
-        sessionId: String((agent.session as unknown as { id?: string }).id ?? slug),
+        sessionId: readHostSessionId(agent.session) || slug,
         turn: turnNo,
         ts: Date.now(),
         regexHits: [],
@@ -4617,10 +4717,12 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
         void (async () => {
           const req = rawReq as { method?: string; url?: string; headers: Record<string, unknown> } & AsyncIterable<Buffer>
           const res = rawRes as { writeHead: (code: number, headers?: Record<string, string | number>) => void; end: (body?: string) => void }
-          const send = (code: number, body: unknown): void => {
-            res.writeHead(code, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify(body))
-          }
+          // 【W8 2026-09-15 单源收口（P-1）】原为就地闭包，函数体与
+          // `dsht-plugin-shared/http.ts:sendJson` **逐字相同**（跨包复制）。
+          // 漂移后果：一处改了响应形态（如加 `charset=utf-8`、加 CORS 头），另一处不变
+          // ⇒ 同一服务端在不同路由前缀下响应头不一致，且零报错。
+          // ⇒ 委托单源那份（闭包保留，只把实现换掉，破坏面最小）。
+          const send = (code: number, body: unknown): void => { sendJson(res, code, body) }
           if (!isTrusted(req)) return send(403, { error: 'forbidden' })
           const sub = decodeURIComponent((req.url ?? '').replace(/^\/dsht-rp/, '')) || '/'
           // query 拆分（§4.16.1 断点续跑 GET /rp/import-checkpoint?batchId= 的读参形态；
@@ -5428,8 +5530,11 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               // 锚消息本身连同其后一切一起移出上下文（文本由前端放回 composer 供修改重发，
               // ST「回退」同语义）。掩码 rolledBackTo = anchor-1 → UI 连锚一起隐藏。
               const includeAnchor = payload.includeAnchor === true
-              if (live !== undefined && typeof live.append === 'function' && Array.isArray(live.surface?.nodes)) {
-                const liveNodes = live.surface.nodes
+              // 【W4】原写 `Array.isArray(live.surface?.nodes)` 后 `live.surface.nodes`
+              // —— 裸深层读 + 手写形状守卫。改走单源 OrNull 变体（语义等价：非数组 ⇒ null）。
+              const liveView = readSurfaceNodesOrNull(live)
+              if (live !== undefined && typeof live.append === 'function' && liveView !== null) {
+                const liveNodes = liveView
                 // 【心跳 47】本块的内联类型把 `append` 声明为**可选**（守卫已证实它是函数），
                 // 而 `appendReplace` 需要「必需 append」的 AppendableSession → 断言收敛一次。
                 const liveWritable = live as unknown as AppendableSession
@@ -5497,6 +5602,29 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 }, { start, end }, seqs)
                 logLine(`${isEdit ? 'session-edit' : 'session-rollback'}(live): ${sessionId} 锚 seq ${anchor} → replace [${start},${end}] ${seqs.length} 事件；变量回滚 ${undo.restored} 条`)
                 console.log(`[dsht-rp] ${isEdit ? 'session-edit' : 'session-rollback'}: ${sessionId} (live) replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`)
+                // 【B3 2026-09-14 三条路径对齐】文件快照整批回滚——**live 分支此前完全缺失**。
+                // 判据（goal 轨道 B / B3）：rollback / regenerate / edit 的连带状态必须一致
+                // （消息投影 + 变量 + 文件快照 + 帧内脚本状态）。此前只有**非 live** 分支
+                // 做了文件快照回滚（见下方 restoreSnapshotsAfter 的 3 处调用点），
+                // live 分支漏了 ⇒ 回退后「该 turn 写过的会话内文件」仍是新内容，
+                // 而 ST 语义是**一并回退**（用户看到的是「回退了但世界状态没退」）。
+                // 边界判据与文本入口**共用同一函数**（snapshotRestoreBoundaryFromEvents →
+                // boundaryFromTurnPairs），零漂移。
+                try {
+                  const evSnap = sessionEventsSnapshot(live)
+                  const boundary = snapshotRestoreBoundaryFromEvents(
+                    evSnap.map(e => ({ seq: e.seq, data: e.data })),
+                    isEdit ? anchor - 1 : keepThroughSeq,
+                  )
+                  const fsnap = await restoreSnapshotsAfter(dshHome, sessionId, boundary)
+                  if (fsnap.restoredTurns.length > 0 || fsnap.errors.length > 0) {
+                    logLine(`${isEdit ? 'session-edit' : 'session-rollback'}(live) 文件快照回滚 ${fsnap.restoredTurns.length} turn/${fsnap.filesRestored + fsnap.filesDeleted} 文件${fsnap.errors.length > 0 ? `（${fsnap.errors.length} 项错误）` : ''}`)
+                  }
+                } catch (e) {
+                  // 【R8 失败必须出声】快照回滚失败**不得**吞掉已成功的会话回退——
+                  // 但必须留痕并如实回报（前端据此提示「世界状态可能未完全回退」）。
+                  console.warn(`[dsht-rp] ${isEdit ? 'session-edit' : 'session-rollback'}(live) 文件快照回滚失败：${(e as Error).message}`)
+                }
                 // I8-1：立即耐久 barrier——手机端进程被杀在 200ms 窗口内 = 回退标记丢失
                 try { await flushLiveSession(ctx.sessions, live) } catch (e) {
                   return send(500, { error: `${isEdit ? '编辑' : '回退'}已应用但落盘失败：${(e as Error).message}` })
@@ -5615,16 +5743,16 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               const live = ctx.sessions?.get(sessionId) as
                 | { surface?: { nodes?: number[] }; events?: Record<string | number, { type?: unknown; time?: unknown; data?: { content?: unknown; source?: { kind?: unknown } } | undefined }> | Map<string | number, { type?: unknown; time?: unknown; data?: { content?: unknown; source?: { kind?: unknown } } | undefined }>; append?: (type: string, data: unknown, opts?: { surfaceOp?: { op: 'replace'; start: number; end: number }; sourceEventSeqs?: number[] }) => unknown }
                 | undefined
-              if (live !== undefined && typeof live.append === 'function' && Array.isArray(live.surface?.nodes)) {
-                const liveNodes = live.surface.nodes
-                // 【心跳 47】本块的内联类型把 `append` 声明为**可选**（守卫已证实它是函数），
-                // 而 `appendReplace` 需要「必需 append」的 AppendableSession → 断言收敛一次。
-                const liveWritable = live as unknown as AppendableSession
-                // 【心跳 47】守卫收窄固化（闭包内 TS 会丢弃对 live.append / live.surface 的收窄，
-                // 报 TS2722 / TS18048）。
+              // 【W4】同 rollback 路由：裸深层读 + 手写形状守卫 → 单源 OrNull 变体。
+              const regenView = readSurfaceNodesOrNull(live)
+              if (live !== undefined && typeof live.append === 'function' && regenView !== null) {
+                const liveNodes = regenView
+                // 【心跳 47/55】`appendReplace` 需要「必需 append」的 AppendableSession：
+                // 守卫已证实 append 是函数，但闭包内 TS 会丢弃该收窄（TS2722 / TS18048）。
                 // 【心跳 55 修正】必须 **bind**：官方 Session.append 读 `this.log`，
                 // `const f = live.append; f(...)` 会 detach → `Cannot read properties of undefined (reading 'log')`
                 // （设备实证：本路由 500 且零事件写入）。
+                const liveWritable = live as unknown as AppendableSession
                 const liveAppend = boundAppend(liveWritable)
                 // live：找事件流里最后一条真 user 消息——【鲁棒轮】per-session 串行（同 rollback）
                 return await withLiveSurgery(sessionId, async () => {
@@ -5678,6 +5806,23 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 }, { start, end }, seqs)
                 logLine(`session-regenerate(live): ${sessionId} 锚 seq ${anchorEv.seq} → replace [${start},${end}] ${seqs.length} 事件；变量回滚 ${undo.restored} 条`)
                 console.log(`[dsht-rp] session-regenerate: ${sessionId} (live) anchor=${anchorEv.seq} replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`)
+                // 【B3 2026-09-14 三条路径对齐】文件快照整批回滚（与 rollback/edit 的 live 分支同款）。
+                // 判据：三条路径的连带状态必须一致；此前 live 分支只有 rollback/regenerate 的
+                // **非 live**  counterparts 做了快照回滚，live 全漏。边界取锚消息 seq
+                // （= 最后一条 user/message；该 turn 被腰斩 → includeBoundary 生效）。
+                try {
+                  const evSnap = sessionEventsSnapshot(live)
+                  const boundary = snapshotRestoreBoundaryFromEvents(
+                    evSnap.map(e => ({ seq: e.seq, data: e.data })),
+                    anchorEv.seq,
+                  )
+                  const fsnap = await restoreSnapshotsAfter(dshHome, sessionId, boundary)
+                  if (fsnap.restoredTurns.length > 0 || fsnap.errors.length > 0) {
+                    logLine(`session-regenerate(live) 文件快照回滚 ${fsnap.restoredTurns.length} turn/${fsnap.filesRestored + fsnap.filesDeleted} 文件${fsnap.errors.length > 0 ? `（${fsnap.errors.length} 项错误）` : ''}`)
+                  }
+                } catch (e) {
+                  console.warn(`[dsht-rp] session-regenerate(live) 文件快照回滚失败：${(e as Error).message}`)
+                }
                 // I8-1：立即耐久 barrier（同 rollback）
                 try { await flushLiveSession(ctx.sessions, live) } catch (e) {
                   return send(500, { error: `重生成标记已应用但落盘失败：${(e as Error).message}` })
@@ -5726,10 +5871,19 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               }
             }
             // ---- R18b：/rp/rollback-mask —— 逻辑回退掩码查询（前端 UI 隐藏被回退消息）----
-            // {sessionId} → {hideAfter}：从 session.jsonl 扫 dsht-rp 的回退/编辑/重新生成
-            // marker（source.rolledBackTo / editedFrom / regeneratedFrom），取最大锚。
-            // 客户端投影不透传 marker 的 source 字段（真机实证），故由 host 从日志解析、
-            // 前端 store 拉取——UI 隐藏 seq > hideAfter 的真实消息（楼层号同步重排）。
+            // {sessionId} → {hideAfter, hiddenSeqs}：从 session.jsonl 扫 dsht-rp 的回退/编辑/
+            // 重新生成 marker，解析出**精确的被移出 seq 集合**。
+            //
+            // 【2026-09-14 F2 架构修复】此前的实现有两个根本缺陷，用户实测触发：
+            //   ① 判据是**阈值** `hideAfter`（「seq 大于它就隐藏」）——但回退后用户正常
+            //      发的新消息 seq 也大于锚点，会被一起隐掉；
+            //   ② 为修补 ①，加了一条「marker 之后出现新用户消息 → hide 整体归零」的
+            //      兜底 —— 结果用户「回退 → 重发」时（必然产生新用户消息）掩码归零，
+            //      **被回退的旧楼层全部复活**（用户截图实证）。
+            // 正解：直接用写侧已记录的 `shadowedSeqs`（被 replace 逐条移出的 seq）——
+            // 集合语义精确且**持久有效**，与后续新增消息无关。
+            // `hideAfter` 保留在响应里 **仅为兼容旧前端与降级路径**（存量会话可能只写锚点）；
+            // 前端必须优先用 `hiddenSeqs`。
             if (sub === '/rp/rollback-mask') {
               const sessionId = String(payload.sessionId ?? '')
               if (!sessionId) return send(400, { error: 'sessionId required' })
@@ -5737,18 +5891,16 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               // session.jsonl 在大会话上是可观的重复 I/O。按文件 mtime 失效：变了才重扫。
               // （逻辑回退/编辑/重新生成的 live 分支成功后会 clear 本缓存——见下）
               let hide = 0
+              const hidden = new Set<number>()
               const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId)
               if (hit) {
                 const file = hit.file
                 const fm = await stat(file).then(s => ({ size: s.size, mtimeMs: s.mtimeMs })).catch(() => null)
                 const cached = rollbackMaskCache.get(file)
                 if (fm !== null && cached !== undefined && cached.size === fm.size && cached.mtimeMs === fm.mtimeMs) {
-                  return send(200, { hideAfter: cached.hide })
+                  return send(200, { hideAfter: cached.hide, hiddenSeqs: cached.seqs })
                 }
                 const content = await readFile(file, 'utf8')
-                // 【⑨修复 2026-09-05】掩码只隐被 replace 的那段，不隐 marker 之后的新消息：
-                // 扫描时若 marker 之后已存在 source.kind === 'user' 的新消息，掩码失效
-                //
                 // 【阶段4 2026-09-11 修复 · 静默失败族】原实现**只读 source 顶层**的
                 // `rolledBackTo / editedFrom / regeneratedFrom`。0.1.5 迁移不再允许
                 // source 上的扩展键（`source has unexpected member` 整会话打不开），
@@ -5756,33 +5908,45 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 // text: JSON.stringify(payload)}]`（0.1.2 存量会话被迁移器搬进
                 // `name:'dsht:legacy'` 段）。顶层键从此恒 undefined → hide 恒 0 →
                 // **回退/编辑/重新生成后 UI 永不隐藏被移除的楼层**（服务端已正确截断，
-                // 前端照旧显示，无任何报错——典型静默失败）。统一走 readSurgicalAnchor
+                // 前端照旧显示，无任何报错——典型静默失败）。统一走 readSurgical
                 // （新形态 + 存量形态 + 顶层键三路兜底，与写侧同一套语义）。
                 let markerSeq = -1
+                let anchorCount = 0
                 for (const line of content.split('\n')) {
                   if (!line.includes('dsht:surgical') && !line.includes('dsht:legacy')
                     && !line.includes('rolledBackTo') && !line.includes('editedFrom') && !line.includes('regeneratedFrom')) continue
                   try {
                     const ev = JSON.parse(line) as { type?: string; seq?: number; data?: unknown }
-                    const { anchor } = readSurgicalAnchor(ev)
-                    if (anchor !== null) { hide = Math.max(hide, anchor); markerSeq = Math.max(markerSeq, ev.seq ?? -1) }
+                    const { anchor, payload } = readSurgical(ev)
+                    if (anchor !== null) { hide = Math.max(hide, anchor); markerSeq = Math.max(markerSeq, ev.seq ?? -1); anchorCount += 1 }
+                    // 精确集合：写侧逐条记录的被移出 seq（权威判据）
+                    for (const q of payload.shadowedSeqs ?? []) hidden.add(q)
+                    // edit 语义 = 锚消息本身也移出 → 把它并入集合（阈值路径下靠 editedFrom-1 表达）
+                    if (typeof payload.editedFrom === 'number') hidden.add(payload.editedFrom)
                   } catch { /* 坏行跳过 */ }
                 }
-                // marker 之后的新用户消息 → 掩码失效（新消息 seq > markerSeq 且 source.kind === 'user'）
-                if (markerSeq >= 0) {
+                // 【2026-09-14 F2】删除了原「marker 之后出现新用户消息 → hide 归零」补丁。
+                // 该补丁是为绕开阈值语义的固有缺陷而加，代价是「回退后重发 = 旧楼层复活」。
+                // 改用集合语义后不再需要它：新消息的 seq 不在 hidden 集合里 → 正常显示；
+                // 被回退的旧 seq 在集合里 → 永久隐藏。两件事互不干扰。
+                // 但**降级路径**（存量会话没写 shadowedSeqs，只有锚点）仍受阈值语义限制：
+                // 此时若 marker 之后已出现新的真用户消息，阈值会把它们一起隐掉 →
+                // 只能退回「不隐藏」并**出声**（不许静默）。
+                if (hidden.size === 0 && hide > 0 && markerSeq >= 0) {
                   for (const line of content.split('\n')) {
                     try {
                       const ev = JSON.parse(line) as { seq?: number; type?: string; data?: { source?: { kind?: string } } }
                       if (typeof ev.seq === 'number' && ev.seq > markerSeq && ev.type === 'user/message' && ev.data?.source?.kind === 'user') {
-                        hide = 0 // 掩码失效：新消息已覆盖回退段
+                        console.warn(`[dsht-rp] rollback-mask 降级：会话 ${sessionId} 的回退标记缺少 shadowedSeqs（存量格式），且其后已有新用户消息——阈值语义会把新消息一并隐藏，故本次不隐藏（hideAfter=${hide} → 0）`)
+                        hide = 0
                         break
                       }
                     } catch { /* 坏行跳过 */ }
                   }
                 }
-                if (fm !== null) rollbackMaskCache.set(file, { ...fm, hide })
+                if (fm !== null) rollbackMaskCache.set(file, { ...fm, hide, seqs: [...hidden] })
               }
-              return send(200, { hideAfter: hide })
+              return send(200, { hideAfter: hide, hiddenSeqs: [...hidden] })
             }
             // ---- R19：/rp/import-reset —— 清空 RP 相关数据（zip 重导重置；前端弹窗确认后调）----
             // （/rp/session-edit 已并入 R18 双路径：live 逻辑回退 + 非 live 文件截断）
@@ -6265,7 +6429,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               //   ① user/message 标记（合法 replace）把当前 active 变体移出模型上下文
               //   ② 目标变体文本作为新 assistant/message **追加**（落进打开的 step）
               // 前端显示层照旧按变体组覆盖渲染（RpNativeChat variantOverride 不变）。
-              const existingView = (session as unknown as { surface?: { nodes?: number[] } }).surface?.nodes ?? []
+              const existingView = readSurfaceNodes(session)
               if (!existingView.includes(group.activeSeq)) {
                 return send(400, { error: '当前变体不在模型视图（可能已被回退/折叠），无法切换' })
               }
@@ -6488,6 +6652,58 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               const headers = await scanSessionHeaders()
               const h = headers.find(x => x.sessionId === sessionId)
               return send(200, { cwd: h?.cwd ?? null })
+            }
+            // ---- 【2026-09-14 F4】/rp/model-capability —— 当前模型的真实上下文能力 ----
+            // 前端 token 计量条的「分母」必须来自模型真实能力，而不是「预设拉不到就
+            // 兜底 16384」——后者会显示 `≈ 1.1M / 16.4k tokens` 这种自相矛盾的读数
+            // （用户实测截图）。数据源：
+            //   ① pi-ai 内建模型目录（@earendil-works/pi-ai/dist/providers/data/<provider>.json
+            //      的 contextWindow/maxTokens）—— 这是 CONTEXT_WINDOW_EXCEEDED 的真实判据来源；
+            //   ② settings 里 llm-pi-ai 的用户层 models 覆盖（resolveRouteModels 契约：
+            //      profile 配置的 models 会整体替换内建目录）；
+            //   ③ 都拿不到 → 显式返回 null（前端标注「预算未知」，不许装作准确）。
+            // 只读，无副作用；失败一律返回 null（调用方降级），绝不抛给前端。
+            if (sub === '/rp/model-capability') {
+              const sel = (() => {
+                try { return ctx.agentDefaultModel?.currentSelection?.() ?? null } catch { return null }
+              })()
+              if (sel === null || !sel.provider) return send(200, { contextWindow: null, maxTokens: null, provider: null, model: null, origin: null })
+              const provider = sel.provider
+              const model = sel.model
+              // ① 用户层覆盖（llm-pi-ai.providers.<provider>.models[]）
+              let cw: number | null = null
+              let mt: number | null = null
+              try {
+                const getS = ctx.settings?.get
+                if (ctx.settings && typeof getS === 'function') {
+                  const section = getS.call(ctx.settings, 'llm-pi-ai') as
+                    | { providers?: Record<string, { models?: Array<Record<string, unknown>> }> }
+                    | undefined
+                  const hit = section?.providers?.[provider]?.models?.find(m => m?.id === model)
+                  if (hit) {
+                    if (typeof hit.contextWindow === 'number' && hit.contextWindow > 0) cw = hit.contextWindow
+                    if (typeof hit.maxTokens === 'number' && hit.maxTokens > 0) mt = hit.maxTokens
+                  }
+                }
+              } catch { /* settings 不可读 → 走内建目录 */ }
+              // ② pi-ai 内建目录
+              if (cw === null) {
+                try {
+                  cw = await readPiAiCatalogCapability(provider, model, 'contextWindow')
+                  mt = mt ?? await readPiAiCatalogCapability(provider, model, 'maxTokens')
+                } catch (e) {
+                  // 出声（R8）：目录读不到时**必须**留痕，否则「预算未知」在 UI 上
+                  // 与「目录里真没有这个模型」无法区分（P-9 可观测性）。
+                  console.warn(`[dsht-rp] model-capability：读 pi-ai 目录失败（${provider}/${model}）：${(e as Error).message}`)
+                }
+              }
+              return send(200, {
+                contextWindow: cw,
+                maxTokens: mt,
+                provider,
+                model,
+                origin: cw !== null ? 'model-catalog' : null,
+              })
             }
             // ---- 任务 C：/rp/status —— 迁移验收面板的只读聚合（大白话数据源）----
             // 最近批次（meta.json manifest 计数）+ 最新 migration-report.md 资源清单表计数
@@ -6842,7 +7058,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               if (!session) return send(404, { error: 'session not live（先经 session.create 创建）' })
               const rp = await loadRpJson(slug, new AbortController().signal)
               if (!rp) return send(404, { error: `rp.json not found: ${slug}` })
-              const hasMessages = session.surface.nodes.some(seq => {
+              const hasMessages = readSurfaceNodes(session).some(seq => {
                 // 0.1.2 坑 #22：eventAt(seq) 替代 .events[seq]（直索引会 TypeError）
                 const ev = (session as unknown as { eventAt?: (q: number) => { type?: string } | undefined }).eventAt?.(seq)
                 return ev !== undefined && (ev.type === 'user/message' || ev.type === 'assistant/message')
@@ -7022,9 +7238,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               if (targets.length === 0) return send(400, { error: 'targets required' })
               const live = ctx.sessions?.get(sessionId)
               if (!live) return send(404, { error: 'session not live' })
-              // 【心跳 47】官方 Session.surface.nodes 是 readonly，直转可变类型报 TS2352 → 走 unknown。
-              const view = (live as unknown as { surface?: { nodes?: number[] } }).surface?.nodes
-              if (!Array.isArray(view)) return send(409, { error: 'session surface unavailable' })
+              // 【心跳 47】官方 Session.surface.nodes 是 readonly；W4 起统一走单源
+              // OrNull 变体（非数组 ⇒ null ⇒ 409，与原守卫同语义）。
+              const view = readSurfaceNodesOrNull(live)
+              if (view === null) return send(409, { error: 'session surface unavailable' })
               // 【阶段3 2026-09-10】TH 楼层元数据 sidecar（thData/thSystem 已迁出 source）
               const thFloors = readThFloors(dshHome, sessionId)
               // message_id → {seq, event} 映射：与 facade chatMessages 导出同构

@@ -7,7 +7,14 @@
 #   A3 NodeService.kt 必须无 BOM（坑 R35 双 BOM 编译炸）
 #   A4 zip 内容必须抽验 fixTag（防旧产物进包——v185 事故）
 #   A5 gradle 产物必须存在且 > 50MB（防增量打包空壳，坑#8）
-#   A6 每次构建 sentinel 必须恰好 +1（覆盖安装重解压的依据）
+#   A6 每次构建 sentinel 必须恰好 +1（覆盖安装重解压的依据），且**产物内 sentinel 与源码一致**
+#      （2026-09-14：both 模式曾因重复递增导致两包不一致，见 [4/6] 与 [A6] 处注释）
+#   A7 官方方法引用提取必须绑定接收者（audit-method-binding，防 detach this）
+#   A8/A9 dsht-preflight 产物必须进包且**必须被加载**（产物在但没人加载 = 空防线）
+#   A10 前后端路由契约（路径必须存在，不止挂对 method）
+#   A11 shim 模板串体内不得有未转义反引号
+#   A12 不得出现**未裁决**的「同一功能多实现」（重复实现须单源化，或加白名单写明理由）
+#   A14 iframe sandbox 允许项齐备（缺 allow-modals ⇒ confirm/alert 被静默丢弃），且站点数不减少
 set -euo pipefail
 
 ARCH="${1:-x86_64}"
@@ -160,6 +167,48 @@ build_one() {
   "$NODE" "$WS/scripts/audit-shim-template-literal.mjs" \
     || die "A11: th-shim.ts 模板串体内有未转义反引号（L70）——其后的 shim 源码全部失效"
 
+  # A12 —— 「同一功能多实现」结构性审计（F5 / 心跳 66 新增）。
+  # 背景：回退功能曾有三套平行载体（dsh-plugin 的 live 逻辑回退 / dsht-plugin-undo 的文件截断 /
+  # 另一 DSH 部署上的副本），维持一致靠「记得两边都改」——而「靠人记，必然漏」。
+  # 同族还有已收口的 hash36（4 处）、decodeSeg（3 处）、rpSlugFromCwd（2 处）。
+  # 本闸门把「多实现」变成机器可查信号：动作语义路由跨插件重复 + 同名函数跨包复制。
+  # 判据是「未裁决」而非「存在重复」——有意的「权威 + 降级」/「语义面不同」在白名单里
+  # （DECIDED / FN_ALLOW，每条必须写 why），其余一律拦下。
+  say "[A12] 同一功能多实现审计"
+  "$NODE" "$WS/scripts/audit-impl-duplication.mjs" --selftest >/dev/null \
+    || die "A12: 闸门自检失败（正/负/零控未全过）——闸门本身不可信"
+  grep -aq "audit-impl-duplication" "$WS/scripts/build-wb.sh" || die "A12: 自指断言失败"
+  "$NODE" "$WS/scripts/audit-impl-duplication.mjs" \
+    || die "A12: 出现未裁决的「同一功能多实现」（重复实现须收口成单源，或加白名单并写明理由）"
+
+  # A14 —— iframe sandbox 允许项闸门（L5 / 2026-09-14 新增）。
+  # 背景：L5 穷举发现「所有 iframe 都含 allow-modals」这条判据**零机器化断言**，
+  # 而失效形态是静默的：缺 allow-modals 时 iframe 内 confirm()/alert() 被 Chromium
+  # 静默丢弃（到不了 WebChromeClient.onJsConfirm）——「飞讯点联系人无响应」的实测根因。
+  # 判据两条：① 每处构造点含 allow-scripts + allow-modals；② 站点数不得低于基线
+  # （A11 教训：只查一个文件 ⇒ 同类结构在别处漏掉时闸门不作声）。
+  say "[A14] iframe sandbox 允许项闸门"
+  "$NODE" "$WS/scripts/audit-iframe-sandbox.mjs" --selftest >/dev/null \
+    || die "A14: 闸门自检失败（正/负/零控未全过）——闸门本身不可信"
+  grep -aq "audit-iframe-sandbox" "$WS/scripts/build-wb.sh" || die "A14: 自指断言失败"
+  "$NODE" "$WS/scripts/audit-iframe-sandbox.mjs" \
+    || die "A14: iframe sandbox 缺必需允许项（缺 allow-modals ⇒ confirm/alert 被静默丢弃）"
+
+  # A15 —— 跨包 CSS 规则闸门（P-26 / 2026-09-14 第二十轮新增）。
+  # 背景：不允许一个包在 CSS 里写「另一个包自有组件的类名」规则。实测两种失效形态：
+  #   ① 特异性形态：mobile 的 .vb-arrow{38px}(0,1,0) 被 rp-ui 的
+  #      .dsht-rp-variant-bar .vb-arrow{20px}(0,2,0) 压死 ⇒ 渲染 20×20。
+  #   ② 注入顺序形态：mobile 的约 27 条 .dsht-rp-*（与 rp-ui 桌面基线**同特异性**）
+  #      被后注入的 rp-ui 覆盖 ⇒ 实测 .dsht-rp-back 32px / .dsht-rp-tab 28px /
+  #      .dsht-rp-card-gear 26px（均低于 38px 拇指底线）。
+  # 两次都满足「规则文本存在」的静态检查 ⇒ 属 P-11「规则存在 ≠ 规则生效」。
+  say "[A15] 跨包 CSS 规则闸门"
+  "$NODE" "$WS/scripts/audit-cross-package-css.mjs" --selftest >/dev/null \
+    || die "A15: 闸门自检失败（正/负/零控未全过）——闸门本身不可信"
+  grep -aq "audit-cross-package-css" "$WS/scripts/build-wb.sh" || die "A15: 自指断言失败"
+  "$NODE" "$WS/scripts/audit-cross-package-css.mjs" \
+    || die "A15: 存在跨包写对方自有组件类名的规则（层叠胜负不可控 ⇒ 静默失效）"
+
   say "[1/6] esbuild dsh-plugin（绝对 outfile, A1）"
   "$NODE" "$ESB" "$PKG/src/dsh-plugin/index.ts" --bundle --format=esm --platform=node \
     --outfile="$DST/node_modules/dsht-rp-plugin/lib/index.js" >/dev/null
@@ -181,13 +230,22 @@ build_one() {
   ls "$DST/lib" | grep -q libbusybox || die "lib 刷新异常（libbusybox 缺失）"
 
   say "[4/6] sentinel +1（A6, python 无 BOM 读写）"
-  "$PY" -c "
+  # 【2026-09-14 修复】sentinel 语义 = **构建批次号**，同一批次的两个 ABI 包必须携带同一值
+  # （否则无法用它判断「手上这两个包是否同源」）。原实现无条件 +1，而 `both` 模式会连跑两次
+  # `build_one` ⇒ x86_64 包里是 v306、arm64 包里是 v307，**两包 sentinel 不一致**
+  # （实测：解 dex 得 [306] / [307]，违反 R11 的硬要求，而此前所有断言都不会发现它）。
+  if [ "${SENTINEL_BUMPED:-0}" = "0" ]; then
+    "$PY" -c "
 import re
 p=r'$ANDROID\app\src\main\java\com\dshtavern\app\NodeService.kt'
 t=open(p,'rb').read().decode('utf-8')
 m=re.search(r'\.installed-v(\d+)',t); old=int(m.group(1)); new=old+1
 open(p,'wb').write(t.replace(f'.installed-v{old}',f'.installed-v{new}').encode('utf-8'))
 print(f'  sentinel v{old} -> v{new}')"
+    SENTINEL_BUMPED=1
+  else
+    say "  sentinel 已在本批次递增（both 模式：两包共用同一批次号）"
+  fi
 
   say "[5/6] 打 runtime.zip + A4 zip 内容抽验"
   # 【不用 rm】zip 内含 50+ 条目，`rm -f` 命中批量删除安全闸（构建中止）。
@@ -230,6 +288,27 @@ sys.exit(0 if need in names else 1)" || die "A13: zip 内缺 st-modules 资产�
   [ "$SZ" -gt 52428800 ] || die "A5: APK 仅 $SZ 字节（<50MB，疑似空壳，坑#8）"
   cp -f "$APK_ARTIFACT" "$APK_OUT"
   say "交付: $APK_OUT ($((SZ/1048576)) MB, $BUILD_TYPE, ABI=$ARCH)"
+
+  # A6 —— sentinel 必须**真的进包**，且与源码当前值一致（2026-09-14 补断言）。
+  # 背景：A6 此前只做「+1」动作，**从不校验产物**。实测 `both` 模式下两包 sentinel
+  # 不一致（x86_64=v306 / arm64=v307，因每跑一次 build_one 就递增一次），而所有断言全绿。
+  # 这正是本项目「产物核验缺失」家族的又一例：改了源码 ≠ 产物里有 ≠ 两个产物一样。
+  say "[A6] 产物 sentinel 核验（解 dex 与源码比对）"
+  EXPECT=$("$PY" -c "
+import re
+t=open(r'$ANDROID\app\src\main\java\com\dshtavern\app\NodeService.kt','rb').read().decode('utf-8')
+print(int(re.search(r'\.installed-v(\d+)',t).group(1)))")
+  "$PY" -c "
+import zipfile,re,sys
+want=int($EXPECT)
+z=zipfile.ZipFile(r'$APK_OUT')
+got=set()
+for n in z.namelist():
+    if n.endswith('.dex'):
+        for m in re.finditer(rb'\.installed-v(\d+)', z.read(n)): got.add(int(m.group(1)))
+print(f'  源码期望 v{want}；$ARCH 包内 {sorted(got)}')
+sys.exit(0 if got=={want} else 1)" || die "A6: $ARCH 包内 sentinel 与源码不一致（产物陈旧或 sentinel 未进包）"
+
   say "=== 构建完成: $ARCH ==="
 }
 

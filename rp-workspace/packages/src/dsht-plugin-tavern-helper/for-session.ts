@@ -17,6 +17,12 @@
 /** state 文件形状保留键（与 dsh-plugin STATE_RESERVED_KEYS 对齐） */
 export const STATE_RESERVED_KEYS = new Set(['presetId', 'state', 'variables', 'variableSchema', 'cursor', 'loreTimed', 'tavern'])
 
+// 【F5 2026-09-14 单源化·补漏】`isTree` 原为本地函数体，与
+// `dsht-plugin-shared/deep-merge.ts` 的 `isMergeableObject` **逐字相同**（审计脚本
+// 判据 4「不同名但函数体逐字相同」抓到；同包 facade.ts 亦为同名副本）。
+// 「可合并对象」判据必须单源——一处收紧另一处不收，即两处对同一数据判得不一样。
+import { isMergeableObject as isTree } from '../dsht-plugin-shared/deep-merge.ts'
+
 /** 脚本库条目（原始形态，宽松） */
 export interface RawScriptEntry {
   type?: unknown
@@ -43,9 +49,8 @@ export interface SessionScript {
   source: 'preset' | 'character'
 }
 
-function isTree(v: unknown): v is Record<string, unknown> {
-  return v !== null && typeof v === 'object' && !Array.isArray(v)
-}
+/* 【F5 2026-09-14 单源化·补漏】本地 `isTree` 已删：「可合并对象」判据的单源在
+ * `dsht-plugin-shared/deep-merge.ts` 的 `isMergeableObject`（见顶部 import 别名）。 */
 
 function normalizeButton(raw: unknown): { enabled: boolean; buttons: Array<{ name: string; visible: boolean }> } {
   if (!isTree(raw)) return { enabled: false, buttons: [] }

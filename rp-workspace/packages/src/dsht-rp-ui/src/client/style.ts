@@ -37,12 +37,20 @@ const css = `
 .dsht-rp-sidebar-btn .ico { font-size: 15px; line-height: 1; }
 
 /* ---- 全屏 RP 启动器（shell.overlay 席位；原生主题 token 直供）---- */
+/* 【L2 2026-09-14 字号缩放修复】-webkit-text-size-adjust: 100% 抑制 Android WebView 的
+ * text autosizing（按容器宽度自动放大字号）。本子树布局尺寸全是硬编码 px（L2 穷举统计：
+ * style.ts 内约 200 处布局 px、全仓 rem 使用数 = 0），一旦被 autosizing 放大字号而
+ * padding/height 不跟随 ⇒ 文字溢出容器、点击区错位。
+ * 取 100%（而非 none）：保留用户系统级字体设置的可访问性意图，只禁掉「按宽度自动放大」
+ * 这种与布局 px 不匹配的机制。判据见 docs/MOBILE-TEST-METHODOLOGY.md §二 L2 第 7 项。
+ * 注意：本文件是 TS 模板串，注释里**不能出现反引号**。 */
 .dsht-rp-overlay {
   position: fixed; inset: 0; z-index: 1000;
   display: flex; flex-direction: column;
   background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
   pointer-events: auto; /* overlay 席位默认 click-through，显式接管 */
   font-family: var(--dsw-font-family);
+  -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
 }
 .dsht-rp-topbar {
   display: flex; align-items: center; gap: 12px; flex-shrink: 0;
@@ -68,7 +76,27 @@ const css = `
   background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-primary);
   border-color: var(--dsw-alias-border-l2);
 }
-.dsht-rp-main { flex: 1; overflow-y: auto; min-height: 0; }
+/* 【2026-09-14 L1 穷举修复·手势冲突面】主滚动容器补 overscroll-behavior: contain。
+ * 背景：L1 必测项「手势冲突（帧内滚动 vs 拖拽、双指、passive 默认值）」的静态穷举结论——
+ * 全仓 overscroll-behavior 原先只有 1 处（.dsht-rp-ctx-panel），**主滚动区没有**。
+ * 后果（Android WebView 常见形态）：滚到顶/底时滚动链外溢到宿主外层容器
+ * ⇒ 触发宿主的整页滚动或下拉刷新，观感是「内容滚着滚着整页跳了」。
+ * contain = 「滚到头就停住，不外溢」，正是滚动容器应有的默认语义。
+ * 注意：本文件是 TS 模板串，注释里**不能出现反引号**。 */
+.dsht-rp-main { flex: 1; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+
+/* 【2026-09-14 L1 穷举修复·手势冲突面（二）】所有**子滚动容器**统一不外溢滚动链。
+ * 为什么要一条聚合规则而不是逐个加：这些容器（面板 body / 抽屉 body / 状态视图 /
+ * 搜索结果 / 长文本块）分散在本文件十余处，逐个加必然漏（本项目反复出现的「改一处漏两处」，
+ * 见 P-1）。此处按**结构特征**（我方命名空间下的滚动区）统一收口。
+ * 语义：滚到自己的顶/底就停住，不再把滚动传给宿主外层 ⇒ 不触发宿主整页滚动/下拉刷新。
+ * 注意：本文件是 TS 模板串，注释里**不能出现反引号**。 */
+.dsht-rp-main,
+.dsht-rp-statefloat-panel .sf-body,
+.dsht-rp-script-panel .sf-body,
+.dsht-rp-drawer-body,
+.dsht-rp-stateview .sv-body,
+.dsht-rp-searchview .se-body { overscroll-behavior: contain; }
 
 /* ---- T2.11：嵌入导入中心 iframe（导入页全功能；同源 /dsht-rp/import-center）---- */
 .dsht-rp-import-frame {
@@ -160,6 +188,58 @@ const css = `
 .dsht-rp-floor-head-assistant .dsht-rp-floor-meta { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 .dsht-rp-assistant-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 
+/* 【2026-09-15 W5 长文本/宽元素横向溢出兜底 · 设备决定性实验驱动】
+ *
+ * ## 为什么必须加（实测复现，不是推测）
+ * 设备实测（scripts/ef-overflow-probe.mjs，真机页面内挂探针，基线 = .dsht-rp-main 的
+ * clientWidth = 393px）：把 markdown 典型超宽产物注入**真实** .dsht-rp-assistant-body 后，
+ * 内容 scrollWidth 远超可用宽，且是 overflow:visible ⇒ **画到盒外**、被祖先滚动容器接住：
+ *   longUrl   4694px（11.9 倍）· preBlock 7489px（19 倍）· longWord 3131px（8 倍）
+ * 用户可见症状 = 长楼层横向可拖、正文被推出屏幕。宿主侧无任何 overflow-x 兜底
+ * （实测宿主 assistant-step 容器 overflow-x: visible / min-width: 0px），故必须由我方加。
+ *
+ * ## 为什么是这几条（阶梯消融，P-20 判据必须自带杠杆）
+ * 逐级加规则实测（同一次实验，仅差规则集）：
+ *   S1 只给 body/html 加 overflow-x:auto（2 条） ⇒ **无效**，内容仍 4694px
+ *   S2 再给直接子级加 max/min-width（4 条）     ⇒ **无效**，内容仍 4694px
+ *   S3 再加「断行 + pre/table」共 9 条          ⇒ 长串/代码块/宽表格全治住
+ *   S4 再加 img/video/canvas/svg 限宽 + 外壳    ⇒ 裸大图也治住（2000px → 319px）
+ *
+ * 为什么光 overflow-x:auto 治不住（这是本条的机理，不是经验）：
+ * 真正撑破页面的是**内容驱动的 min-content 传递**——不可断长串（URL/长词）的 min-content
+ * 等于整串宽度，flex 链上各级 min-width:auto 会把它一路传到外层。overflow 只让**盒子**
+ * 可滚，盒子本身仍被 min-content 撑成 4694px。⇒ 必须同时「给后代允许断行」。
+ *
+ * ## 【重要】一次**结论反转**必须记下来（P-27 / P-20 的教训）
+ * 第一版消融只用了 4 个样本（longUrl / wideTable / preBlock / longWord），据此判定
+ * 「img/svg 那 3 条无杠杆 ⇒ 不加」。但补上两个**真会溢出**的样本后结论反转：
+ *   · wideTable 的单元格很窄 ⇒ 表格自适应 319px，**测不出** table 规则是否需要；
+ *   · 没有裸大图样本 ⇒ **测不出** img 规则是否需要（实测 img 元素 width=2000 时达 2000px）。
+ * ⇒ 少一个样本就会把**必要规则**当成**死规则**删掉。纪律：消融样本必须覆盖
+ *   **每一类待删规则各自的真实触发场景**，否则消融结论无效（不是「无杠杆」，是「没测到」）。
+ * 本组规则即按补全样本后的 S4 落地（12 条）。
+ *
+ * 语义选择：overflow-x: auto（可滚，不裁切）。实测已确认内容未被裁掉（clipped=no），
+ * 用户仍能看到全部内容——只是改为在楼层内横向滚动，而不是把整页撑破。
+ * 注意：本文件是 TS 模板串，注释里**不能出现反引号**。 */
+.dsht-rp-assistant { min-width: 0; max-width: 100%; }
+.dsht-rp-assistant-body,
+.dsht-rp-html { min-width: 0; max-width: 100%; overflow-x: auto; }
+.dsht-rp-assistant-body > *,
+.dsht-rp-html > * { max-width: 100%; min-width: 0; }
+/* 不可断长串（URL / 超长单词 / 连续符号）允许任意位置断行 */
+.dsht-rp-assistant-body a, .dsht-rp-assistant-body p, .dsht-rp-assistant-body li,
+.dsht-rp-assistant-body h1, .dsht-rp-assistant-body h2, .dsht-rp-assistant-body h3,
+.dsht-rp-html > * { overflow-wrap: anywhere; }
+/* 代码块 / 表格：自身可横向滚，不撑破父级 */
+.dsht-rp-assistant-body pre, .dsht-rp-html pre { max-width: 100%; min-width: 0; overflow-x: auto; }
+.dsht-rp-assistant-body table, .dsht-rp-html table { display: block; max-width: 100%; min-width: 0; overflow-x: auto; }
+/* 媒体元素：卡内正文常写 img width=2000 这类硬尺寸 ⇒ 必须限宽（实测 2000px 溢出） */
+.dsht-rp-assistant-body img, .dsht-rp-assistant-body video,
+.dsht-rp-assistant-body canvas, .dsht-rp-assistant-body svg,
+.dsht-rp-html img, .dsht-rp-html video,
+.dsht-rp-html canvas, .dsht-rp-html svg { max-width: 100% !important; height: auto !important; }
+
 /* ---- §2.3 ③ 楼层号徽章（#N 0 起始，与 ST 观感一致；插件设置「楼层号显示」可关）---- */
 .dsht-rp-floor {
   font-size: 10px; line-height: 14px; font-family: ui-monospace, monospace;
@@ -211,15 +291,331 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
  * 这些按钮的载体就是 turn-tail 行（真机 probe 实证：按钮在 flowItem[data-chat-flow-kind=
  * turn-tail] 内，宿主自己把按钮定为 28×28）——上面那条 display:none 把按钮连人带藏。
  * 触屏没有 hover：coarse 指针下显示该行，只藏与楼层头重复的文本 span（用时/时间戳），
- * 保留动作按钮（ST 移动端动作常驻同语义）。桌面（fine pointer）维持原隐藏。 */
+ * 保留动作按钮（ST 移动端动作常驻同语义）。桌面（fine pointer）维持原隐藏。
+ *
+ * 【2026-09-14 L1 穷举修复】原 span { display: none !important } **误伤我方注入组件**：
+ * 变体条（span.dsht-rp-variant-bar）与时间戳同为 span，被一并隐藏 ⇒
+ * 触屏用户永远看不到「‹ 1/3 ›」变体切换（功能存在但不可见 = L1 必测项
+ * 「不存在『功能存在但永远出不来』」的违反）。
+ * 修法：按**命名空间前缀**排除我方组件（宿主的时间戳 span 无 dsht- 前缀，照旧隐藏），
+ * 不依赖宿主 hash 类名（那会随版本漂移）。
+ * 判据：我方注入的任何组件都不得被宿主行级规则连带隐藏（P-5 边界隔离）。
+ * 注意：本文件是 TS 模板串，注释里**不能出现反引号**。 */
 @media (pointer: coarse) {
   body[data-dsht-rp-active] [data-chat-flow-kind="turn-tail"] { display: flex !important; }
-  body[data-dsht-rp-active] [data-chat-flow-kind="turn-tail"] span { display: none !important; }
+  /* 排除我方组件（dsht- 前缀命名空间）；宿主的时间戳 span 无 dsht- 前缀，照旧隐藏 */
+  body[data-dsht-rp-active] [data-chat-flow-kind="turn-tail"] span:not([class*="dsht-"]) { display: none !important; }
+  /* 我方注入的动作容器必须常显（重申，防被更具体的选择器压回） */
+  body[data-dsht-rp-active] [data-chat-flow-kind="turn-tail"] span[class*="dsht-"] { display: inline-flex !important; }
+  /* 【2026-09-14 L1 穷举修复】宿主在 turn-tail 行内渲染的**动作钮**（复制 / 分支 /
+   * 我方「重新生成」）是 28×28（宿主 CSS .xzv4MW_action 用 calc(28px + 字号增量)），
+   * 低于 38 拇指下限 ⇒ 手机上易误触。与 .bhn1Oq_searchInput 同法做**作用域覆盖**
+   * （宿主 hash 类名，随版本可能漂移——失效即无害，回落到 28px 而非报错）。
+   * 说明：宿主已内置「复制」按钮（MessageIconActions.onCopy → writeClipboard），
+   * 故 L1「长按/复制」项在**消息文本**这一面上不是缺口；缺的只是触屏尺寸与失败反馈。
+   * 注意：本文件是 TS 模板串，注释里**不能出现反引号**。 */
+  body[data-dsht-rp-active] [data-chat-flow-kind="turn-tail"] button[class*="action"] {
+    width: 38px !important; height: 38px !important; border-radius: 10px !important;
+  }
+  body[data-dsht-rp-active] [data-chat-flow-kind="turn-tail"] button[class*="action"] svg {
+    width: 18px !important; height: 18px !important;
+  }
+  /* 我方「重新生成」钮（button，不受上面的 span 规则影响）触屏放大 */
+  body[data-dsht-rp-active] [data-chat-flow-kind="turn-tail"] .dsht-rp-regen-btn {
+    height: 38px !important; font-size: 13px !important;
+  }
+
+  /* ===========================================================================
+   * 【L1 2026-09-14 设备实测修复】我方自有组件的触控目标放大，**必须放在本文件**。
+   *
+   * ## 根因（设备 CDP 实测，架构层）
+   * 这些放大规则原本只写在 dsht-plugin-mobile 的 client/style.ts 的
+   * 窄屏媒体查询（max-width 700px）段里。设备实测（1080x2400 @440dpi = 393dp 宽）
+   * innerWidth=393、matchMedia('(max-width:700px)')=true —— 媒体查询**匹配**，
+   * 但 getComputedStyle(.dsht-rp-scriptball).width 仍是 **36px**（规则未生效）。
+   *
+   * 原因 = **层叠顺序**：两条同名规则，谁后写谁赢。实测样式表注入顺序为
+   *   dsht-plugin-mobile-style → dsht-rp-ui-style
+   * ⇒ mobile 插件写的 44px 被本文件后写的 36px **覆盖回去**，且**零报错**。
+   * 即「跨包覆盖靠层叠顺序」= 脆弱的隐式依赖：注入顺序一变（或插件加载顺序变），
+   * 放大规则就**静默失效**，而所有静态护栏（检查规则文本存在）都是绿的。
+   * 这正是 P-11「产物即事实 / 规则存在 ≠ 规则生效」的又一实例。
+   *
+   * ## 修法（R4：在架构层收口，不修单点）
+   * 我方自有组件（dsht-rp-*）的触控尺寸**由本文件自己负责**——同包同文件，
+   * 层叠顺序天然确定，不依赖任何外部插件的注入时机。
+   * 判据用 (pointer: coarse) 而非 max-width：拇指误触是**触屏属性**，
+   * 不是宽度属性（平板 / 横屏 / 大屏手机同样需要）。
+   *
+   * 尺寸取 44（P2 目标）而非 38（P1 底线）：这几个都是**高频或高误触代价**的控件
+   * （脚本球、回退、重新生成），取目标值。
+   * 注意：本文件是 TS 模板串，注释里**不能出现反引号**。
+   * =========================================================================== */
+  /* 【L2 2026-09-14「字号与缩放」格设备实测修复】触控尺寸**必须抗 flex 压缩**。
+   *
+   * ## 根因（设备实测，架构层 —— P-11 的布局层形态）
+   * 上面这批规则原本只写 height:44px !important。设备实测（ef-font-scale.mjs）
+   * 发现 .dsht-rp-import-dock 渲染高度 **19.45px** —— 而它命中规则、且带 !important。
+   * 决定性实验（逐条单独施加 inline !important）：
+   *   height:44px !important 单独施加          → 仍 19.45px（**无效**）
+   *   min-height:44px 单独施加                 → 44px（有效）
+   *   height:44px + flex-shrink:0 同时施加     → 44px（有效）
+   * ⇒ 该元素是 flex item（祖先为 composerStack 的 column flex），
+   *   **flex-shrink 把 height 压回去**。height 是「建议主尺寸」，flex-shrink 是「下限之外可压」，
+   *   二者不在同一层，important 救不了。
+   *
+   * ## 修法（架构层收口，不修单点 —— R4）
+   * 凡「在 flex 容器内靠 height 撑触控尺寸」的规则，一律补 flex-shrink: 0。
+   * 对非 flex item 无害（flex-shrink 在非 flex 容器里被忽略）。
+   * 先例：dsht-plugin-mobile/client/style.ts 的 settings-nav-cell 早已写
+   * 「height: 48px !important; flex-shrink: 0」—— **同一坑一处已修一处未修**，
+   * 正是 P-1（同一语义两处不同实现）的又一实例。
+   * 注意：本文件是 TS 模板串，注释里**不能出现反引号**。 */
+  .dsht-rp-scriptball { width: 44px !important; height: 44px !important; font-size: 20px !important; }
+  .dsht-rp-script-pill { min-height: 44px !important; padding: 8px 14px !important; font-size: 14px !important; flex-shrink: 0 !important; }
+  .dsht-rp-rollback-btn { height: 44px !important; min-width: 44px !important; font-size: 13px !important; flex-shrink: 0 !important; }
+  .dsht-rp-import-dock { height: 44px !important; padding: 0 14px !important; font-size: 13px !important; flex-shrink: 0 !important; }
+  .dsht-rp-preset-switch .ps-select { height: 44px !important; font-size: 13px !important; flex-shrink: 0 !important; }
+  /* 头像既是展示也是详情入口（36 -> 44）；row flex 里同样会被压宽 */
+  .dsht-rp-avatar { width: 44px !important; height: 44px !important; flex-shrink: 0 !important; }
+
+  /* ===========================================================================
+   * 【L1 2026-09-14 触控目标穷举修复】第二批：设备探针 ef-touch-targets.mjs 抓到的项。
+   *
+   * ## 为什么这一批必须放在**本文件**（架构层收口 —— R4 / P-1）
+   * 下面这些元素在同一份探针里被测出 <38px（P1 阻塞级），而
+   * dsht-plugin-mobile/client/style.ts **已经**为它们写了放大规则：
+   *     .vb-arrow { width: 38px; height: 38px; }
+   * 但**永不生效** —— 因为本文件有特异性更高的桌面基线规则：
+   *     .dsht-rp-variant-bar .vb-arrow { width: 20px; height: 20px; }   （0,2,0 > 0,1,0）
+   * 于是产生**死规则**：mobile 侧那条「看起来有防护、实则静默失效」，
+   * 而 mobile 侧注释当时还写着「保留的 vb-arrow 不属 rp-ui 自有类（层叠无冲突）」
+   * —— **那句判断是错的**（P-1 实例：同一语义两处判据不一致）。
+   *
+   * ## 判据依据（设备实测，非推测）
+   * ef-touch-targets.mjs 穷举我方可点元素（按 dsht- 类名前缀判定归属）：
+   *   .vb-arrow 20×20 · .dsht-rp-sidebar-btn 31×36 · .tm-hit 355×20（P1 阻塞）
+   *   .dsht-rp-regen-btn 84×38（P2 未达 44）
+   * 归因（决定性实验）：全部 height-effective ⇒ 无 flex 压制，**纯粹是基线值不够**。
+   *
+   * ## 修法
+   * 一律在本文件的 (pointer: coarse) 段给出**高于桌面基线特异性**的放大规则
+   * （用 !important 并带足选择器层级），使「手机放大」与「桌面基线」在同一包内可控。
+   * 同时把 mobile 侧的对应死规则**显式标注**（见该文件注释），避免下次又有人去改那边。
+   *
+   * ## 归属原则（R17 / P-1 的推论，本条已固化为纪律）
+   * **放大规则必须写在「该组件所属的那个包」里**，不得跨包写。
+   * 故 dsht-mobile-* 的两个控件（attach 38 / hamburger 40）**不在本文件修**，
+   * 而是修在 dsht-plugin-mobile 自己的 (pointer: coarse) 段（与它俩同包）。
+   *
+   * ## 尺寸取值
+   * 一律取 **44**（目标值）—— 不为「刚好过 38 底线」而留余量不足的隐患。
+   * 注意：本文件是 TS 模板串，注释里**不能出现反引号**。
+   * =========================================================================== */
+  /* 变体条箭头（桌面基线 20×20）：必须压过 .dsht-rp-variant-bar .vb-arrow（0,2,0） */
+  .dsht-rp-variant-bar .vb-arrow { width: 44px !important; height: 44px !important; font-size: 18px !important; flex-shrink: 0 !important; }
+  /* 侧栏 footer 按钮（桌面基线 height:36px / width:100%）：只抬高度，宽度保持整行 */
+  .dsht-rp-sidebar-btn { height: 44px !important; flex-shrink: 0 !important; }
+  /* token 进度条命中区（桌面基线 height 由内容决定，实测 20px）：整行可点，抬到 44 */
+  .dsht-rp-tokenmeter .tm-hit { height: 44px !important; flex-shrink: 0 !important; }
+  /* 重新生成钮（桌面基线 38）→ 44 */
+  .dsht-rp-regen-btn { height: 44px !important; min-height: 44px !important; flex-shrink: 0 !important; }
+  /* 世界书钮（桌面基线 height:30px）→ 44。注意：mobile 侧那条 .lore-btn 规则是
+   * **死规则**（无 .dsht- 前缀、且 rp-ui 的 .dsht-rp-lore .lore-btn 特异性更高）。 */
+  .dsht-rp-lore .lore-btn { height: 44px !important; flex-shrink: 0 !important; }
+  /* 状态视图切换钮（桌面基线见 .dsht-rp-stateview .sv-view-btn）→ 44 */
+  .dsht-rp-stateview .sv-view-btn { height: 44px !important; flex-shrink: 0 !important; }
+  /* 【2026-09-14 定标 · 2026-09-16 W26 补齐】状态查看 / 节点表里的**树节点行**。
+   *
+   * ## 为什么此前漏了（W14 取证）
+   * GOAL §11.2 W14 记的是「上一轮该页未渲染这两个控件」——本轮实测**并非渲染问题**：
+   * 探针 ef-touch-targets.mjs 的 stateview 态**已能进态**（进态=ok、扫到 11 个元素），
+   * 只是这 6 个节点行在**该态下才可见**，而当时没有把它们纳入修复批。
+   * ⇒ 教训：把「没测到」写成「没渲染」会**掩盖真实缺陷**（P-17：测不出来 ≠ 事实否定；
+   *   反之亦然 —— 这次是「测出来了，但被当成没渲染而搁置」）。
+   *
+   * ## 实测数据（设备 393×803，CDP）
+   *   button.sv-row.sv-node **312×25**（6 个：stat_data / 世界信息 / time / location /
+   *   节点倒计时 / media），computedH=24.5455px、minH=0px、**flexShrink=1**。
+   *   归因（决定性实验，逐条单独施加 inline !important）：
+   *     onlyHeight=312×44 · onlyMinH=312×44 · heightNoShrink=312×44 · minHNoShrink=312×44
+   *   ⇒ 判为 **height-effective**（无 flex 压制）——即**纯粹是基线高度不够**。
+   *   但 computed flex-shrink:1 说明它**确实处在 flex 容器里**（.sv-row 是
+   *   display: flex，本按钮 width:100% 是 flex item）⇒ 按既有纪律③**必须一并给
+   *   flex-shrink:0**：否则一旦行内出现更宽的内容（长 key / 长 summary），
+   *   按钮会被压回。这是 P-25 的**预防性**形态：**当次的归因不足以证明未来安全**。
+   *
+   * ## 选择器与取值
+   * 特异性 0,3,0（与桌面基线 .dsht-rp-stateview .sv-row.sv-node 同值，靠**注入顺序 +
+   * !important** 取胜 —— 同包内两条规则，本段在后）。高度取 **44**（目标值，见纪律②）；
+   * 不改宽度（宽度就该整行）。注意：本文件是 TS 模板串，注释里**不能出现反引号**。 */
+  .dsht-rp-stateview .sv-row.sv-node { min-height: 44px !important; flex-shrink: 0 !important; align-items: center !important; }
+  /* 剧情控制台的 NPC 切换条（mobile 侧写 38，此处给足特异性并抬到 44） */
+  /* 【W30 补齐宽度】原先只给了 height: 44px —— 而设备实测该按钮是 **36×44**：
+   * 宽度仍是桌面基线的 36px，低于 38 底线 ⇒ **宽度这一维从来没被修过**。
+   *
+   * ## 为什么此前没发现（P-20 覆盖空洞）
+   * 这个按钮位于**宿主设置页的「插件」tab 下、展开的设置卡里**，
+   * 而 W2 的跨态穷举**没有设置面板态** ⇒ 该控件从未真正被扫到过。
+   * W30 补了 host-settings-plugins / host-settings-card-open 两个态后，
+   * 又发现探针只扫**当前视口**，而设置卡挂在 2613px 的滚动面
+   * （宿主的设置内容列，overflow-y:auto）里 ⇒ 首版只报 2 个元素、17 个 switch 全在视口外。
+   * 补**滚动扫描**后一次暴露 **17 个 P1**（全部 36×44）。
+   *
+   * ## 归因（决定性实验，逐条单独施加 inline !important）
+   *   onlyWidth=44×44 · onlyMinWidth=44×44 · width44+noShrink=44×44
+   * ⇒ **width-effective**（只给宽度就够，无 flex 压制）；
+   *   但 computed flex-shrink 值得留意，故按纪律③一并写 0（预防性，同 W14 处置）。
+   *
+   * ## 取值
+   * 宽度取 **44**（目标值，非仅 38 底线）：这是**拇指高频切换**控件，
+   * 且与既有 height: 44px 对齐成正方形，视觉与命中率同时改善。 */
+  .dsht-npc-switch { width: 44px !important; height: 44px !important; flex-shrink: 0 !important; }
+
+  /* ===========================================================================
+   * 【2026-09-14 第二十轮 · 从 dsht-plugin-mobile 迁入】
+   *
+   * ## 为什么迁进来（设备实测，P-26「同特异性靠注入顺序」形态）
+   * 这批规则原来写在 'dsht-plugin-mobile/client/style.ts' 的窄屏媒体查询里，
+   * 与**本文件**的桌面基线规则**特异性相同**（都是 0,1,0）。
+   * 而 mobile 文件注入为 'dsht-plugin-mobile-style'、**先于** 'dsht-rp-ui-style'
+   * ⇒ 同特异性下**后写者胜** ⇒ 那批规则**全部被本文件覆盖**（死规则）。
+   *
+   * CDP 实测证据（枚举「匹配且 media 生效」的全部规则 + 实际渲染值）：
+   *   .dsht-rp-back        迁出前 44px vs 本文件 32px ⇒ 实测 **32px**（低于 38 底线，P1）
+   *   .dsht-rp-tab         迁出前 44px vs 本文件 28px ⇒ 实测 **28px**（P1）
+   *   .dsht-rp-card-gear   迁出前 38px vs 本文件 26px ⇒ 实测 **26px**（P1）
+   *   .dsht-rp-user-stack  迁出前 92%  vs 本文件 min(525px,82%) ⇒ 实测 82% 档（静默失效）
+   *   .dsht-rp-grid        gap 10px    vs 本文件 12px ⇒ 实测 12px（静默失效）
+   *
+   * ## 迁入后的写法原则
+   * ① 用**与桌面基线同等或更高特异性**的选择器 + '!important'（同包内确定性可控）；
+   * ② 触控尺寸一律取 **44**（目标值；低于 38 即 P1 阻塞）；
+   * ③ 凡「靠尺寸属性撑触控目标」的，**必须**带 'flex-shrink: 0'（P-25）；
+   * ④ 本文件**不写** mobile 自有组件（'dsht-mobile-*'）——归属原则（P-26）。
+   * 注意：本文件是 TS 模板串，注释里**不能出现反引号**。
+   * =========================================================================== */
+  /* RP overlay：safe-area inset。注意 overlay 根是 fixed inset:0（本文件 L40）——
+   * 不能再设 height:100dvh（会覆盖 bottom 约束，叠加 padding 后总高 > 视口）。 */
+  .dsht-rp-overlay {
+    box-sizing: border-box !important;
+    padding-top: env(safe-area-inset-top) !important;
+    padding-bottom: env(safe-area-inset-bottom) !important;
+  }
+  .dsht-rp-topbar { flex-wrap: wrap !important; gap: 6px !important; padding: 8px 10px !important; }
+  .dsht-rp-back { width: 44px !important; height: 44px !important; font-size: 22px !important; flex-shrink: 0 !important; }
+  /* tab 栏独占一行全宽，触控目标 44px */
+  .dsht-rp-tabs { flex: 1 1 100% !important; gap: 6px !important; margin-left: 0 !important; overflow-x: auto !important; }
+  .dsht-rp-tab { flex: 1 !important; height: 44px !important; border-radius: 12px !important; font-size: 14px !important; }
+  /* 角色宫格：双列自适应（超窄自动单列），卡片全宽 */
+  .dsht-rp-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important; gap: 10px !important; padding: 12px !important; }
+  .dsht-rp-card { padding: 14px !important; min-height: 44px !important; }
+  /* 齿轮钮 26 → 44（原 mobile 侧写 38，但那是死规则；且 38 也仅够底线） */
+  .dsht-rp-card-gear { width: 44px !important; height: 44px !important; font-size: 16px !important; opacity: 1 !important; flex-shrink: 0 !important; }
+  /* 角色详情/导出抽屉：全屏（不再底部 70%） */
+  .dsht-rp-drawer-mask { align-items: stretch !important; }
+  .dsht-rp-drawer { max-height: none !important; height: 100% !important; border-radius: 0 !important; border-top: none !important; }
+  /* 预设/正则/导入/世界书面板：去 max-width 居中，全宽 */
+  .dsht-rp-preset, .dsht-rp-regex, .dsht-rp-import, .dsht-rp-books { max-width: none !important; margin: 0 !important; padding: 16px !important; }
+  /* 世界书 chips 触控目标 44px */
+  .dsht-rp-books .wb-row { min-height: 44px !important; }
+  .dsht-rp-books .wb-chip { min-height: 44px !important; padding: 8px 16px !important; font-size: 14px !important; border-radius: 22px !important; }
+  /* 触控目标放大 */
+  .dsht-rp-btn { min-height: 44px !important; }
+  .dsht-rp-action-btn { min-height: 44px !important; }
+  .dsht-rp-preset-toggle .pt-opt { padding: 6px 12px !important; min-height: 44px !important; flex-shrink: 0 !important; }
+  .dsht-rp-regex .rx-toggle span { width: 40px !important; height: 22px !important; border-radius: 11px !important; }
+  .dsht-rp-regex .rx-toggle span::after { width: 18px !important; height: 18px !important; }
+  .dsht-rp-regex .rx-toggle input:checked + span::after { transform: translateX(18px) !important; }
+  .dsht-rp-regex .rx-del { width: 44px !important; height: 44px !important; font-size: 15px !important; flex-shrink: 0 !important; }
+  /* 【2026-09-14 第二十轮续三 · 跨态穷举抓到】两处正则面板的触控目标不达标：
+   *   · .rx-name（点击进入编辑）实测 **126×24** —— 低于 38 底线（P1 阻塞）；
+   *   · .rx-toggle（label 包住 checkbox 的**隐式** label）实测仅 40×22。
+   * 归因（决定性实验）：.rx-name 单独施加 height:44px 即变 44 ⇒ **无压制**，
+   * 纯粹是「桌面基线没给下限」（不是 P-25 的 flex-shrink 形态）。
+   * ⇒ 用 min-height 给下限（比 height 稳：内容再多也能撑开，且不受 flex-shrink 影响）。 */
+  .dsht-rp-regex .rx-name { min-height: 44px !important; }
+  .dsht-rp-regex .rx-toggle { min-height: 44px !important; min-width: 44px !important; justify-content: center !important; }
+  /* 【2026-09-14 第二十轮续三 · 抽屉态】复选框行 .rx-check（label 包住 checkbox）
+   * 是最早漏扫的一类：探针原先只查 'label[for]'（**显式** label），
+   * 而本仓全部是 **implicit label**（无 for）⇒ 整类可点元素从未被测过（P-19 同族）。
+   * 补上口径后立刻抓到：抽屉内「世界书勾选」行实测 **353×37** —— 差 1px 低于 38 底线（P1）。
+   * 该行 <label> 内联写了 display:flex; padding:7px 0，桌面基线 .rx-check 是
+   * inline-flex + line-height:18px ⇒ 高度由内容撑出 37px。
+   * 归因（决定性实验）：单独施加 height:44px 即变 44 ⇒ 无压制，纯粹缺下限。
+   * ⇒ 按 P-1（同类一处修须全仓收口）**统一**给 .rx-check 下限，而不是只修抽屉那一处
+   *   （RegexPanel / PersonaPanel 也用同一个类，同样是触控目标）。 */
+  .rx-check { min-height: 44px !important; }
+  .dsht-rp-regex-row { padding: 10px 0 !important; flex-wrap: wrap !important; }
+  /* 聊天消息区 480px 限制竖屏放开 */
+  .dsht-rp-statusbar, .dsht-rp-actions, .dsht-rp-reasoning, .dsht-rp-mvu-statusbar,
+  .dsht-rp-collapsible, .dsht-rp-state-update, .dsht-rp-foreshadowing { max-width: 100% !important; }
+  /* 回退按钮 / 预设条目展开钮 */
+  .dsht-rp-rollback-btn { height: 44px !important; font-size: 12px !important; flex-shrink: 0 !important; }
+  .dsht-rp-preset-entry .pe-expand { width: 44px !important; height: 44px !important; font-size: 15px !important; flex-shrink: 0 !important; }
+  /* 人设行展开钮：窄屏放大到 44（不能再依赖内联尺寸——见 PersonaPanel.tsx 处注释） */
+  .dsht-rp-persona-row .pr-expand { width: 44px !important; height: 44px !important; font-size: 16px !important; flex-shrink: 0 !important; }
+  .dsht-rp-user-stack { max-width: 92% !important; }
+  /* 主会话过程折叠标题行：触控目标 44px */
+  .dsht-fold-header { min-height: 44px !important; font-size: 13px !important; }
+  /* 上下文参数面板（剧情控制台）：关闭 / 步进器 / 展开 */
+  .dsht-rp-ctx-panel .cp-close { width: 44px !important; height: 44px !important; font-size: 18px !important; flex-shrink: 0 !important; }
+  .dsht-rp-ctx-panel .cp-stepper button { width: 44px !important; height: 44px !important; font-size: 16px !important; flex-shrink: 0 !important; }
+  .dsht-rp-ctx-panel .cp-stepper input { height: 44px !important; font-size: 14px !important; }
+  .dsht-rp-ctx-panel .cp-expand-btn { height: 44px !important; padding: 0 14px !important; font-size: 13px !important; flex-shrink: 0 !important; }
+  .dsht-rp-ctx-panel .cp-row { min-height: 44px !important; }
+  /* 状态浮球面板 / 脚本面板 / 状态视图：底部按钮行 */
+  .dsht-rp-statefloat-panel .sf-btn,
+  .dsht-rp-script-panel .sf-btn,
+  .dsht-rp-stateview .sf-btn { min-width: 44px !important; min-height: 44px !important; font-size: 13px !important; flex-shrink: 0 !important; }
+  /* 开场白 dock 窄屏 */
+  .dsht-rp-greeting-dock { margin: 0 8px 6px !important; }
+  .dsht-rp-greeting-dock .dsht-rp-btn { min-height: 44px !important; }
 }
 
 .dsht-rp-stopped {
   font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary);
   font-style: italic;
+}
+
+/* 【F1 2026-09-14】turn-error 节点（我方 shadowing 版）：人话为主 + 技术详情折叠。
+ * 与官方 turnErrorRow 视觉对齐（错误点 + 标题 + 正文 + 错误码），
+ * 但正文是隔离过内部细节的用户可懂表述。 */
+.dsht-rp-turn-error {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 12px; margin: 6px 0;
+  border-left: 3px solid var(--dsw-alias-state-error-primary, #d9534f);
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: 6px;
+}
+.dsht-rp-turn-error .te-dot {
+  color: var(--dsw-alias-state-error-primary, #d9534f);
+  font-size: 10px; line-height: 20px; flex-shrink: 0;
+}
+.dsht-rp-turn-error .te-copy {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1;
+}
+.dsht-rp-turn-error .te-title {
+  font-size: 12px; font-weight: 600;
+  color: var(--dsw-alias-state-error-primary, #d9534f);
+}
+.dsht-rp-turn-error .te-message {
+  font-size: 13px; line-height: 20px;
+  color: var(--dsw-alias-label-primary); word-break: break-word;
+}
+.dsht-rp-turn-error .te-detail { margin-top: 4px; }
+.dsht-rp-turn-error .te-detail > summary {
+  font-size: 11px; color: var(--dsw-alias-label-tertiary); cursor: pointer;
+}
+.dsht-rp-turn-error .te-raw {
+  margin: 4px 0 0; padding: 6px 8px; max-height: 160px; overflow: auto;
+  font-size: 11px; line-height: 16px; white-space: pre-wrap; word-break: break-all;
+  background: var(--dsw-alias-bg-layer-2, rgb(128 128 128 / .12));
+  border-radius: 4px; color: var(--dsw-alias-label-secondary);
+}
+.dsht-rp-turn-error .te-code {
+  font-size: 11px; flex-shrink: 0;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 /* 状态栏卡片（statusTags / statusbar 代码块 → 组件） */
@@ -639,6 +1035,16 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
   color: var(--dsw-alias-label-tertiary); cursor: pointer; flex-shrink: 0; font-size: 12px;
 }
 .pe-expand:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+/* 人设行的「展开/收起」钮（PersonaPanel）。
+ * 【2026-09-14 L1 穷举修复】该按钮原先借用 dsht-rp-back 类 + 内联 28×28：
+ * 内联值压制了窄屏 44px 规则 ⇒ 手机上只有 28px（远低于 38 拇指下限，P1）。
+ * 现独立成类，尺寸交给 CSS（桌面 32，窄屏见 dsht-plugin-mobile 的 44 放大规则）。
+ * 注意：本文件是 TS 模板串，注释里**不能出现反引号**。 */
+.pr-expand {
+  width: 32px; height: 32px; border: none; border-radius: 6px; background: transparent;
+  color: var(--dsw-alias-label-tertiary); cursor: pointer; flex-shrink: 0; font-size: 14px;
+}
+.pr-expand:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .pe-editor {
   display: flex; flex-direction: column; gap: 8px; padding: 8px 0 12px 30px;
 }

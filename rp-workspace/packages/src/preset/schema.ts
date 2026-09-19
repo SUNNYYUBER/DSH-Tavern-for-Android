@@ -108,8 +108,7 @@ export interface RPPreset {
   budget: PresetBudget
   sampling: PresetSampling
   /**
-   * P1#7 宏变量登记（参考 dsh-plugin-prompt-tool sillytavern.ts L322 的
-   * 未定义宏登记）：ST 预设条目里的 {{setvar::k::v}} 初值 + {{getvar::k}}/裸 {{key}}
+   * P1#7 宏变量登记：ST 预设条目里的 {{setvar::k::v}} 初值 + {{getvar::k}}/裸 {{key}}
    * 的空值占位。key = 宏名，value = setvar 初值或 getvar fallback 或 ''。
    * 运行期宏引擎（expandTavernMacros getvar 源）据此补默认值；无宏预设缺省不带本字段。
    */

@@ -59,6 +59,7 @@ const vendorEntrySource = `
 import jQuery from 'jquery';
 import * as z from 'zod';
 import * as YAML from 'yaml';
+import { installTouchMouseBridge } from './touch-mouse-bridge.ts';
 window.$ = jQuery;
 window.jQuery = jQuery;
 // YAML 全局（真 TH 经 predefine 从宿主合并 globalThis.YAML；MVU bundle 顶层 YAML.parse）。
@@ -78,6 +79,11 @@ require('jquery-ui/ui/widgets/draggable.js');
 require('jquery-ui/ui/widgets/droppable.js');
 require('jquery-ui/ui/widgets/sortable.js');
 require('jquery-ui/ui/widgets/resizable.js');
+// 触屏适配（P0-1，2026-09-14）：jQuery UI 只绑 mouse 事件，触摸屏无 mousedown 系列 →
+// 卡脚本的浮窗在移动端拖不动。此调用把 touch 序列翻译成原生 mouse 序列（自研，非
+// Touch Punch；理由见 touch-mouse-bridge.ts 头注）。必须晚于上面的 jQuery UI require
+//（需要 $.ui.mouse.prototype 已存在）。
+try { installTouchMouseBridge(jQuery); } catch (e) { console.warn('[dsht-th-vendor] touch-mouse bridge 安装失败:', e); }
 window.Zod = z;
 window.z = z;
 // ---- zod 跨版本兼容垫已删除（v4.4+ 原生有 loose/prefault，垫是给旧 zod 3.25 vendor 写的）----
@@ -105,6 +111,7 @@ import lodash from 'lodash';
 import jQuery from 'jquery';
 import * as zod from 'zod';
 import * as YAML from 'yaml';
+import { installTouchMouseBridge } from './touch-mouse-bridge.ts';
 // jQuery UI 同款 require() 延迟（见 vendorEntrySource 注释）；同源放开后脚本拿 parent.$
 // 时 draggable 等组件已在宿主 jQuery 上就绪。widget/mouse/version 依赖链按序先挂
 window._ = window._ ?? lodash;
@@ -120,6 +127,9 @@ require('jquery-ui/ui/widgets/draggable.js');
 require('jquery-ui/ui/widgets/droppable.js');
 require('jquery-ui/ui/widgets/sortable.js');
 require('jquery-ui/ui/widgets/resizable.js');
+// 触屏适配（P0-1，2026-09-14）——**本处是主战场**：真 TH 同态下卡脚本经 window.parent.$
+// 把浮窗 append 进宿主 body，走的就是宿主这份 jQuery。见 touch-mouse-bridge.ts 头注。
+try { installTouchMouseBridge(jQuery); } catch (e) { console.warn('[dsht-host-vendor] touch-mouse bridge 安装失败:', e); }
 window.z = window.z ?? zod;
 window.Zod = window.Zod ?? zod;
 window.YAML = window.YAML ?? YAML;

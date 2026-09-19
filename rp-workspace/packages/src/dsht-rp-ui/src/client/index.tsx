@@ -19,20 +19,23 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { ensureStyle } from './style.ts'
 import { installHostVendor, installHostFontAwesome, installHostToastr, installHostSillyTavern, ensureStRegexAnchor } from './host-vendor.ts'
 import { RpOverlay, RP_OPEN_EVENT } from './RpOverlay.tsx'
-import { RpAssistantNodeView, RpRegenerateAction, RpUserNodeView, RpVariantActions, notifyDisplayMutation } from './RpNativeChat.tsx'
+import { RpAssistantNodeView, RpRegenerateAction, RpUserNodeView, RpTurnErrorView, RpVariantActions, notifyDisplayMutation } from './RpNativeChat.tsx'
 import { RpPresetSwitch } from './RpPresetSwitch.tsx'
 import { RpImportDockEntry } from './RpImportDock.tsx'
 import { RpGreetingDock } from './RpGreetingDock.tsx'
 import { RpStateFloat } from './RpStateFloat.tsx'
 import { RpScriptHost, RpScriptButtonsBar, getActiveRpSessionId, getLastRpContextSnapshot, reloadActiveRpContext } from './RpScriptHost.tsx'
+import { installClipboardGuard } from './clipboard-guard.ts'
+import { showDomToast } from './toast.ts'
+import { ensureWebviewApiGuard } from '../../../dsht-plugin-shared/webview-api-guard.ts'
 import { hostSubstituteParams, hostSubstituteParamsExtended, getHostMacroEnv } from './host-macro-bridge.ts'
 import { RpTokenMeter } from './RpTokenMeter.tsx'
 import { installProcessFolder } from './ProcessFolder.ts'
-import { installScriptUiGuard } from './script-ui-guard.ts'
 import { PLUGIN_CARD_KEYS, makePluginCard } from './PluginCards.tsx'
 import { dshRpc, rpApi } from './rpc.ts'
 import { clientTimeZoneFields, installClientTimeZonePatch } from './time-zone.ts'
 import { installComposerEnterFix } from './composer-enter-fix.ts'
+import { broadcastHostScheme } from './th-shim.ts'
 import type { JSX } from 'react'
 
 /** footer action 席位收到的 owner props（SidebarRoot 传 { wide }） */
@@ -73,28 +76,13 @@ declare global {
 export const inject = ['slots', 'sessions']
 
 // @adapt contract:webview.abort-signal-any
-/** Android WebView（System WebView 旧版）缺 AbortSignal.any——DSH 前端工作区/会话
- * 渲染用到（用户实测：选择工作区报 AbortSignal.any is not a function → 侧边栏异常）。
- * 兜底 polyfill：任一信号已中止则立即中止，否则监听首个中止。 */
-function ensureAbortSignalAny(): void {
-  const A = globalThis.AbortSignal as (typeof AbortSignal & { any?: (signals: readonly AbortSignal[] | undefined) => AbortSignal }) | undefined
-  if (!A || typeof A.any === 'function') return
-  A.any = (signals) => {
-    const controller = new AbortController()
-    const onAbort = (): void => {
-      try { controller.abort(controller.signal.reason) } catch { controller.abort() }
-    }
-    const list = signals ?? []
-    for (const s of list) {
-      if (s?.aborted) {
-        try { controller.abort(s.reason) } catch { controller.abort() }
-        break
-      }
-      s?.addEventListener('abort', onAbort)
-    }
-    return controller.signal
-  }
-}
+// 【2026-09-14 轨道 A / L4 穷举】原 ensureAbortSignalAny() 的实现在此，现已**下沉**到
+// webview-api-guard.ts 的 ensureWebviewApiGuard()（P-1：能力补齐是同一语义，
+// 不得在 index.tsx 与别处各写一份）。那里一并补齐 crypto.randomUUID /
+// structuredClone / Object.hasOwn / Array.prototype.at / queueMicrotask ——
+// 穷举发现这 5 个 API 在本仓**有守卫与无守卫混用**（漏 8 处，含显示渲染主路径
+// display-compiler.ts 的 .at(-1)）。契约标记在本文件保留（contracts/adaptations.json 引用），
+// 实现位置见该模块头注。
 
 export function apply(ctx: {
   effect: (fn: () => () => void, label?: string) => unknown
@@ -107,8 +95,26 @@ export function apply(ctx: {
   // 主发送路径（composer 原生提交）由官方客户端模块自己采样（详见 time-zone.ts 头注），
   // 官方源零修改，所以只能在这一层替换。不装 = 系统时区为 GMT 的设备**发不出任何消息**。
   installClientTimeZonePatch()
-  ensureAbortSignalAny()
+  // 【L4】旧 WebView 现代 API 能力补齐（一次性、幂等）。补了什么必须**出声**（R8）：
+  // 非空 polyfilled 即证明这台设备内核偏旧 —— 这是可观测线索，不能静默。
+  {
+    const report = ensureWebviewApiGuard()
+    if (report.polyfilled.length > 0) {
+      console.warn(`[dsht-rp-ui] 旧 WebView 能力补齐：${report.polyfilled.join(', ')}（内核偏旧，建议更新系统 WebView）`)
+    }
+    if (report.missing.length > 0) {
+      console.warn(`[dsht-rp-ui] 环境异常，以下能力无法补齐：${report.missing.join(', ')}`)
+    }
+  }
   ensureStyle()
+  // 【2026-09-14 F2-B3】会话快照刷新桥：RpNativeChat 里的回退/编辑/重新生成按钮拿不到
+  // ctx.sessions（组件只收 props），但操作后必须刷新会话基线，否则后续 prompt 会基于
+  // 过期的 summaries；并且「回退 → 重发」路径上还会让前端误判会话代次。
+  // 注册到 globalThis，由 RpNativeChat 按需调用（未注册时它自己会 warn 出声）。
+  ;(globalThis as { __dshtRpSessionsRefresh?: () => Promise<void> }).__dshtRpSessionsRefresh = async (): Promise<void> => {
+    const s = ctx.sessions as (typeof ctx.sessions & { refresh?: () => Promise<unknown> }) | undefined
+    if (s && typeof s.refresh === 'function') await s.refresh()
+  }
   // 宿主环境复刻（host-vendor / vendor2）：client 启动即补挂缺失的 window._/$/jQuery/z/Zod/YAML
   //（复刻 TH third_party_object.initThirdPartyObject 的 globalThis.z(zod v4)/YAML 注入 + ST
   // 自带全局 $/_；只在 undefined 时装，绝不覆盖宿主已有）——sandbox 放开同源后，脚本 iframe
@@ -181,8 +187,26 @@ export function apply(ctx: {
   // 「N 次工具调用 · M 条消息」可点按钮；无工具调用轮次行高 0 不可见）。
   // ctx.effect(() => installProcessFolder(), 'dsht-rp-ui: process folder')
 
-  // 【审计 A 类 2026-09-08】脚本注入悬浮 UI 守卫：装饰层触摸穿透（详见 script-ui-guard.ts）
-  ctx.effect(() => installScriptUiGuard(), 'dsht-rp-ui: script ui guard')
+  // 【2026-09-14 用户拍板】原「脚本注入悬浮 UI 守卫」（script-ui-guard.ts）已整体移除。
+  // 移除理由（用户实测反馈）：
+  //   ① 它检测到脚本浮窗与输入区重叠时弹「自动避让／忽略」——**打扰用户**，且把
+  //      「我方 UI 与脚本浮窗同层」的问题转嫁成用户决策；
+  //   ② 它主动改脚本浮窗位置（nudge）——卡作者布局被改，脚本下次自检又复位，来回打架；
+  //   ③ 它给装饰类浮层无条件置 pointer-events:none——**脚本浮窗点不动**；
+  //   ④ 真正的病根是「jQuery UI 拖拽在触摸屏上不工作」（见 vendor 触屏适配），
+  //      该守卫只是掩盖症状。
+  // 现改为：脚本浮窗**完全由卡脚本自己管**，宿主不做任何位移/穿透干预。
+
+  // 【2026-09-14 L1 穷举 / P-3 / P-7】剪贴板能力守卫。
+  // 背景：L1 必测项「长按/复制」静态穷举结论 = 宿主**已内置**复制按钮
+  // （dsh-client-ui-chat 的 MessageIconActions → writeClipboard），故不缺入口；
+  // 但官方实现在失败时**静默 return**（不改按钮态、不提示、不打日志）——属 R8 禁止的
+  // 静默兜底。「复制点了没反应」是用户侧的未定义行为，我方层必须在**能力层**兜住：
+  // 探测不可用 ⇒ 首次点击楼层动作钮时出一声提示（仅一次，防噪音）。
+  // 不能改官方源码（B4），也不能替它重写复制（那会造出平行实现，违反 P-1）。
+  ctx.effect(() => installClipboardGuard({
+    notify: (m) => { showDomToast('info', m) },
+  }), 'dsht-rp-ui: clipboard capability guard')
 
   // 通知深链消费（PROJECT_PLAN §4.16.2 B 类）：Android 壳把系统通知/外部
   // dsht://session/<id> 深链转成 window 'dsht-rp-ui:locate-session' CustomEvent 派发
@@ -303,6 +327,16 @@ export function apply(ctx: {
     RpUserNodeView,
   ))
 
+  // 【F1 2026-09-14】turn-error 节点 shadowing：官方把上游 SDK 的原始错误措辞
+  // （如 `pi-ai detected context overflow for model "…"`）直接摆到用户面前
+  // （dsh-client-ui-chat 的 failureMessage 除 AUTH 外原样透传）。我们不能改官方
+  // 源码，故在本层做「内部实现细节隔离」：人话为主 + 原文折叠为技术详情。
+  // @adapt contract:slots.conversation.chat.node
+  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register(
+    { name: 'conversation.chat.node', key: 'turn-error', priority: -1 },
+    RpTurnErrorView,
+  ))
+
   // T2.5c：变体条 ‹ n/m › → assistant-actions list 席位（IconActions 行内，copy 与 branch 之间）
   // @adapt contract:slots.conversation.chat.assistant-actions
   ctx.slots.inject('conversation.chat.assistant-actions', () => ctx.slots.register(
@@ -330,6 +364,13 @@ export function apply(ctx: {
             const m = await (globalThis as { __dshtRpRefreshRollbackMask?: (sid: string) => Promise<void> }).__dshtRpRefreshRollbackMask?.(sessionId)
             void m
           } catch { /* 掩码刷新失败不阻塞重发 */ }
+          // 【2026-09-14 B3 三路径对齐】显示面缓存失效——rollback 分支（RpNativeChat）
+          // 已有此动作，本处此前漏了。显示面缓存（display 正则三源 / 预设 prompt_order）
+          // 直接影响楼层 display，不失效 ⇒ 重生成后旧楼层的显示仍用旧上下文。
+          try {
+            const n = (globalThis as { __dshtRpNotifyDisplayMutation?: () => void }).__dshtRpNotifyDisplayMutation
+            if (typeof n === 'function') n()
+          } catch { /* 缓存失效失败不阻塞重发 */ }
           await dshRpc('session.prompt', {
             request: {
               requestId: crypto.randomUUID(),
@@ -410,4 +451,29 @@ export function apply(ctx: {
   // contenteditable div，KEY_ENTER_COMMAND 无条件提交。插件侧挂 capture 阶段
   // keydown 拦截器，把裸 Enter 改 insertLineBreak（发送仍走界面上的发送按钮）。
   installComposerEnterFix()
+
+  // 【L2 穷举 2026-09-14 · P-7/P-3】宿主切主题 → 广播给**全部已存在的 RP 帧**。
+  //
+  // 缺陷（设备实测 `tmp/probe-theme-toggle.mjs`）：宿主主题是**应用内设置**
+  //（`body[data-ds-dark-theme]` 属性，与 OS 的 `prefers-color-scheme` 可分离），
+  // 而帧内 `color-scheme` 只在**建帧时求值一次** ⇒ 切主题后既有帧不跟随
+  //（实测：宿主体感 dark→light、我方 token 色跟随，而帧内 `color-scheme` 仍 dark）。
+  // SDK 侧已在每个帧内注入 `__dshtApplyHostScheme()`（见 th-shim 的 frameSchemeBoot），
+  // 此处只负责**观测宿主属性变化并广播**——属性的唯一事实来源仍在宿主（P-1）。
+  ctx.effect(() => {
+    if (typeof MutationObserver !== 'function' || !document.body) return () => { /* 环境不支持：无副作用可清 */ }
+    const broadcast = (): void => { broadcastHostScheme() }
+    const mo = new MutationObserver(broadcast)
+    mo.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
+    // 兜底：OS 层明暗切换（宿主属性不变但帧内 prefers-color-scheme 变了）
+    let mq: MediaQueryList | null = null
+    try { mq = window.matchMedia('(prefers-color-scheme: dark)') } catch { mq = null }
+    const onOs = (): void => { broadcast() }
+    if (mq !== null) { try { mq.addEventListener('change', onOs) } catch { /* 旧内核无 addEventListener */ } }
+    broadcast() // 安装即对齐一次（防止「安装前已建的帧」漏掉）
+    return () => {
+      mo.disconnect()
+      if (mq !== null) { try { mq.removeEventListener('change', onOs) } catch { /* noop */ } }
+    }
+  }, 'dsht-rp-ui: host theme → frame scheme broadcast')
 }

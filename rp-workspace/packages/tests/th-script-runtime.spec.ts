@@ -11,7 +11,7 @@ import {
 import {
   buildIframeDocument, buildShimSource, deepMergeAssign, deepMergeInsert, getButtonEventId,
   handleBridgeCall, parseIncomingMessage, IFRAME_EVENTS, SHIM_BRIDGE_APIS, TAVERN_EVENTS,
-  UNSUPPORTED_APIS, UNSUPPORTED_REASONS,
+  UNSUPPORTED_APIS, UNSUPPORTED_REASONS, BUILTIN_GLOBAL_ALLOW, TH_FACE_VALUE_NAMES,
   type ScriptStatus, type ThBridgeDeps, type ThPreset,
 } from '../src/dsht-rp-ui/src/client/th-shim.ts'
 
@@ -234,6 +234,160 @@ describe('shim：vendor 注入（jQuery + zod）', () => {
     ) as { success: boolean; data?: Record<string, unknown> }
     expect(r.success).toBe(true)
     expect(r.data).toMatchObject({ s: 'x', n: 5, e: 'a', arr: [1], rec: { k: true }, pre: '9' })
+  })
+})
+
+describe('shim：裸全局 ReferenceError 归因（L5 方案 C · P-14）', () => {
+  /** 触发沙箱里的 window 'error' 监听（等价未捕获 ReferenceError） */
+  const fireError = (f: FakeFrame, message: string): void => {
+    for (const fn of f.handlers.error ?? []) fn({ message })
+  }
+  const missingOf = (f: FakeFrame): string[] =>
+    f.posted.filter(m => m.th === 'missing').map(m => String(m.api))
+
+  it('正控：未支持的驼峰 API 名被归因到「缺 API」通道，且原错误仍上报', () => {
+    const f = makeFrame('s1')
+    fireError(f, 'Uncaught ReferenceError: getSomeUnknownThApi is not defined')
+    expect(missingOf(f)).toContain('getSomeUnknownThApi')
+    // 原始错误**照旧上报**（归因是追加，不是替换）
+    const errs = f.posted.filter(m => m.th === 'script-error').map(m => String(m.error))
+    expect(errs.some(e => e.includes('getSomeUnknownThApi'))).toBe(true)
+  })
+
+  it('负控：JS 内建全局（JSON）不得被误标成缺 TH API', () => {
+    const f = makeFrame('s1')
+    fireError(f, 'Uncaught ReferenceError: JSON is not defined')
+    expect(missingOf(f)).toEqual([])
+    // 但原错误仍要上报（不能吞）
+    expect(f.posted.filter(m => m.th === 'script-error')).toHaveLength(1)
+  })
+
+  it('负控：shim 已挂的非 TH 语义面（SillyTavern / Mvu）不得被误标', () => {
+    const f = makeFrame('s1')
+    fireError(f, 'ReferenceError: SillyTavern is not defined')
+    fireError(f, 'ReferenceError: Mvu is not defined')
+    expect(missingOf(f)).toEqual([])
+  })
+
+  it('负控：已实现面（getVariables）不应走到这里；即便走到也不归因（保守）', () => {
+    const f = makeFrame('s1')
+    fireError(f, 'ReferenceError: getVariables is not defined')
+    expect(missingOf(f)).toEqual([])
+  })
+
+  it('负控：清单内「已知不支持」的名字不重复归因（它们有 stub，不是本缺口）', () => {
+    const f = makeFrame('s1')
+    fireError(f, `ReferenceError: ${UNSUPPORTED_APIS[0]} is not defined`)
+    expect(missingOf(f)).toEqual([])
+  })
+
+  it('边界：非 ReferenceError / 形态不像 API 的名字不归因', () => {
+    const f = makeFrame('s1')
+    fireError(f, 'TypeError: x is not a function')      // 不是 ReferenceError
+    fireError(f, 'ReferenceError: ABC is not defined')   // 全大写常量（无小写→大写过渡）
+    fireError(f, 'ReferenceError: _x is not defined')    // 无驼峰无下划线词
+    expect(missingOf(f)).toEqual([])
+  })
+
+  it('边界：下划线式 API 名也归因（真 TH 面里有 eventOn 这类驼峰，亦有 xxx_yyy 形态）', () => {
+    const f = makeFrame('s1')
+    fireError(f, 'ReferenceError: some_unknown_api is not defined')
+    expect(missingOf(f)).toContain('some_unknown_api')
+  })
+
+  it('幂等：同名重复报错只记一次 missing 通道（reportMissing 自身去重）', () => {
+    const f = makeFrame('s1')
+    fireError(f, 'ReferenceError: getUnknownThing is not defined')
+    fireError(f, 'ReferenceError: getUnknownThing is not defined')
+    expect(missingOf(f).filter(a => a === 'getUnknownThing')).toHaveLength(1)
+    // 但原错误每次都上报（不吞）
+    expect(f.posted.filter(m => m.th === 'script-error')).toHaveLength(2)
+  })
+
+  it('白名单常量已导出，且含三类代表项（结构护栏：防被清空）', () => {
+    expect(BUILTIN_GLOBAL_ALLOW).toContain('JSON')
+    expect(BUILTIN_GLOBAL_ALLOW).toContain('SillyTavern')
+    expect(BUILTIN_GLOBAL_ALLOW).toContain('document')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 【W3 · 2026-09-15】真 TH 裸全局面覆盖率（B3「不允许静默 undefined」）
+// ---------------------------------------------------------------------------
+describe('shim：真 TH 裸全局面覆盖率（W3 · B3）', () => {
+  it('正控：本轮新实现的三项 API 已挂到 window，且 typeof 形态与真 TH 一致', () => {
+    const f = makeFrame('s1')
+    // 真 TH：这三项分别是 function / function / function
+    expect(vm.runInContext('typeof window.errorCatched', f.ctx)).toBe('function')
+    expect(vm.runInContext('typeof window.getTavernHelperExtensionId', f.ctx)).toBe('function')
+    expect(vm.runInContext('typeof window.initializeGlobal', f.ctx)).toBe('function')
+  })
+
+  it('正控：initializeGlobal 与 waitGlobalInitialized 配对（写入即可等待到）', () => {
+    const f = makeFrame('s1')
+    // 提供方：写入共享接口名
+    runScript(f, `initializeGlobal('__w3Shared', { v: 42 });`)
+    expect(vm.runInContext('window.__w3Shared.v', f.ctx)).toBe(42)
+    // 消费方：等待即刻就绪（不超时）
+    // 注：本测试的假沙箱 setTimeout 不调度，故 waitGlobalInitialized 的 tick 首轮即命中
+    runScript(f, `window.__w3Waited = 'pending'; waitGlobalInitialized('__w3Shared').then(function (g) { window.__w3Waited = g.v; });`)
+    return new Promise<void>((resolve) => {
+      setImmediate(() => {
+        expect(vm.runInContext('window.__w3Waited', f.ctx)).toBe(42)
+        resolve()
+      })
+    })
+  })
+
+  it('正控：errorCatched 报错后**重抛**（基准语义，已从产物取证）', () => {
+    const f = makeFrame('s1')
+    // 基准 dist 产物：catch(g_) { return t(g_) }，t 内是 throw → 即重抛
+    const threw = vm.runInContext(`
+      var __w3Caught = null;
+      try { errorCatched(function () { throw new Error('boom') })(); }
+      catch (e) { __w3Caught = e.message; }
+      __w3Caught
+    `, f.ctx)
+    expect(threw).toBe('boom')
+    // 且经 toastr 通道出声（报错方式与基准同一通道语义）
+    expect(f.posted.filter(m => m.th === 'toast').length).toBeGreaterThan(0)
+  })
+
+  it('正控：errorCatched 接住**异步** rejection（基准的 thenable 分支）', async () => {
+    const f = makeFrame('s1')
+    runScript(f, `window.__w3Async = 'pending'; errorCatched(function () { return Promise.reject(new Error('async-boom')) })().then(function () { window.__w3Async = 'settled' }).catch(function () { window.__w3Async = 'rejected-by-caller' });`)
+    await new Promise(r => setImmediate(r))
+    // 基准：`.then(void 0, e => 报错)` ⇒ 返回的 promise 变 fulfilled ⇒ 调用方的 .then 走成功分支
+    expect(vm.runInContext('window.__w3Async', f.ctx)).toBe('settled')
+    expect(f.posted.filter(m => m.th === 'toast').length).toBeGreaterThan(0)
+  })
+
+  it('负控：值/同步型缺失名挂的是 **getter**（typeof 仍 undefined，不改脚本行为）', () => {
+    const f = makeFrame('s1')
+    // 这 13 项在真 TH 里是「值」或「同步函数」——若误挂成函数，脚本的 typeof 守卫会通过
+    // 然后拿到 Promise ⇒ 抛 TypeError（比 undefined 更坏）。判据钉住「仍是 undefined」。
+    for (const n of ['default_preset', 'builtin_prompt_default_order', 'getPersonaIds',
+      'getCurrentPersonaName', 'getCharData', 'getWorldbookNames', 'getMessageId']) {
+      expect(vm.runInContext(`typeof window[${JSON.stringify(n)}]`, f.ctx)).toBe('undefined')
+    }
+  })
+
+  it('负控：读取值型缺失名 → **出声**（进 missing 通道）但不抛', () => {
+    const f = makeFrame('s1')
+    const before = f.posted.filter(m => m.th === 'missing').length
+    // 读取动作（脚本里的 typeof 守卫正是这么做的）
+    expect(vm.runInContext('typeof default_preset', f.ctx)).toBe('undefined')
+    const after = f.posted.filter(m => m.th === 'missing').map(m => String(m.api))
+    expect(after.length).toBeGreaterThan(before)
+    expect(after).toContain('default_preset')
+  })
+
+  it('P-20 杠杆断言：值型清单非空且与函数 stub 清单**不相交**', () => {
+    // 「两个清单恰好分工」是这条判据的杠杆点：若某天有人把值型名字也塞进
+    // TH_UNSUPPORTED_APIS（挂函数 stub），上一条负控会红；此处再钉住集合关系。
+    expect(TH_FACE_VALUE_NAMES.length).toBeGreaterThanOrEqual(10)
+    const overlap = TH_FACE_VALUE_NAMES.filter(n => (UNSUPPORTED_APIS as readonly string[]).includes(n))
+    expect(overlap).toEqual([])
   })
 })
 

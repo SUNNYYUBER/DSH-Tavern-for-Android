@@ -54,6 +54,24 @@ describe('preset 编译器（T1.9：表层 → DSH preset 目录；§2.3 ② 起
     expect(neutralizePromptVariables('无宏文本')).toBe('无宏文本')
   })
 
+  // 【第二十三轮 W6 续 · P-34】占位哨兵不得被卡作者正文撞车。
+  // 原实现用**裸 NUL** 定界（`\u0000DSHT_M\u0000`）——NUL 可以出现在正文里，
+  // 而本函数输入是**卡作者可控的预设文本** ⇒ 正文含同形串时被替换成 `{{model}}`（篡改）。
+  it('✅ 中性化占位哨兵改私用区：正文里的旧 NUL 形态字面量必须原样保留', () => {
+    // 正控：旧哨兵形态的字面量出现在正文里 ⇒ 必须原样保留（不得被换成 {{model}}）
+    const legacy = '卡作者写的：\u0000DSHT_M\u0000 与 \u0000DSHT_C\u0000 结束'
+    expect(neutralizePromptVariables(legacy), '旧 NUL 形态占位被消费（卡作者内容被篡改成宏）').toBe(legacy)
+    // 负控：新私用区形态**不含 DSHT_M/C 语义**的私用区串必须原样保留
+    // （注意：不能拿 `\uE000DSHT_M\uE001` 当负控样本 —— 那**正是新哨兵本身**，
+    //   它被替换成 `{{model}}` 是**正确行为**。这是 P-30 的纪律：负控样本必须取自
+    //   「真实失效形态」，不能取自「正确行为」，否则测试自身写错。）
+    const puaOther = '\uE000DSHT_OTHER\uE001'
+    expect(neutralizePromptVariables(puaOther), '无关私用区串被消费').toBe(puaOther)
+    // 负控·真实形态仍工作：真 {{model}} 必须仍被保护并通过（否则修法把功能改坏了）
+    expect(neutralizePromptVariables('前{{model}}后')).toBe('前{{model}}后')
+    expect(neutralizePromptVariables('前{{cwd}}后')).toBe('前{{cwd}}后')
+  })
+
   it('§2.3 ② 任意路径（direct）：槽位正文不进 persona；marker 动态位保持跳过', () => {
     const p = emptyPreset('test2', '测试2')
     const main = p.slots.find(s => s.id === 'main')

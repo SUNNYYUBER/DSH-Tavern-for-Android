@@ -16,6 +16,9 @@
  */
 
 import { deepMergeExistingClone } from '../dsht-plugin-shared/deep-merge.ts'
+// 【F5 2026-09-14 单源化】JSONPointer 段编解码下沉共享层（见下方 decodeSeg 注释）
+import { decodePointerSeg as decodeSeg, encodePointerSeg as encodeSeg } from '../dsht-plugin-shared/json-pointer.ts'
+import { stripMatchingQuotes } from '../dsht-plugin-shared/text-normalize.ts'
 
 /** JSONPatch 操作（ST 酒馆助手/MVU 常用子集 + delta 增量 + move/copy/insert） */
 export type StatePatchOp = 'add' | 'replace' | 'remove' | 'delta' | 'move' | 'copy' | 'insert'
@@ -114,10 +117,10 @@ export function parseUpdateVariable(text: string, state?: Record<string, unknown
   return out
 }
 
-/** JSONPointer 段编码：`~`→`~0`、`/`→`~1`（decodeSeg 逆运算） */
-function encodeSeg(seg: string): string {
-  return seg.replace(/~/g, '~0').replace(/\//g, '~1')
-}
+/* 【F5 2026-09-14 单源化·补漏】`encodeSeg` 原本是本地函数体（与共享层
+ * `encodePointerSeg` 逐字相同）——编解码是一对，只收口 decode 侧不完整
+ * （P-1b：复制即必然漂移；转义顺序错会让变量写到错误路径）。
+ * 现改为 import 共享层（见文件顶部 import 的 as 别名）。 */
 
 /** 宽松取值解析：JSON.parse 成功即用（数字/bool/null/数组/对象），否则去引号按字符串 */
 function parseLooseValue(s: string): unknown {
@@ -129,15 +132,12 @@ function parseLooseValue(s: string): unknown {
   }
 }
 
-/** 去包裹引号（半角单双引号与全角弯引号） */
-function stripQuotes(s: string): string {
-  const t = s.trim()
-  if (t.length >= 2
-    && ((t.startsWith('"') && t.endsWith('"'))
-      || (t.startsWith("'") && t.endsWith("'"))
-      || (t.startsWith('“') && t.endsWith('”')))) return t.slice(1, -1)
-  return t
-}
+/** 去包裹引号（半角单双引号与全角弯引号）
+ *  【F5 2026-09-14 单源化·补漏】原为本地函数体 `stripQuotes`，与
+ *  `dsht-plugin-memory/tables.ts` 的 `stripArgQuotes` **逐字相同**（审计脚本判据 4
+ *  「不同名但函数体逐字相同」抓到）——引号口径属文本解析判据，一处补全角另一处没补
+ *  即行为不一致。现委托共享层；本地名 `stripQuotes` 保留（本文件 4 处调用点）。 */
+const stripQuotes = stripMatchingQuotes
 
 /** 引号感知的顶层逗号切分（半角/全角逗号；引号内逗号不切） */
 function splitTopLevelArgs(s: string): string[] {
@@ -318,10 +318,9 @@ export function parseYamlLite(src: string): Record<string, unknown> | null {
   return root
 }
 
-/** JSONPointer 段解码：`~1`→`/`、`~0`→`~` */
-function decodeSeg(seg: string): string {
-  return seg.replace(/~1/g, '/').replace(/~0/g, '~')
-}
+/** JSONPointer 段解码：`~1`→`/`、`~0`→`~`
+ *  【F5 2026-09-14 单源化】下沉到 dsht-plugin-shared/json-pointer.ts
+ *  （此前 tavern-helper / 本文件 / macros.ts 三处各一份；转义顺序错了会静默写错位置）。 */
 
 /**
  * 应用补丁（逐层建对象/数组索引）。

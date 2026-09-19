@@ -1,23 +1,22 @@
 /**
  * DSHTavern 世界书触发引擎（M1 / T1.7，计划文档 §4.2 被动检索）
  *
- * SillyTavern checkWorldInfo 语义核心子集（§4.2 明确保留的部分）：
+ * 语义核心子集（§4.2 明确保留的部分）：
  * constant 常驻 / 关键词触发（正则关键词、大小写、全词匹配）/ 副关键词逻辑 /
  * 递归扫描（已激活条目内容作为下一轮扫描文本，最多 5 层）/ scanDepth 窗口 / token 预算。
- * P2#11 已落地（对照 dsh-worldbook src/context/worldbook.ts bookCandidates/dedupeGroups，MIT）：
- * timed effects（sticky/cooldown/delay，以可见消息游标计）/ inclusion group 组互斥（dedupeGroups）。
- * delay 语义注意：本引擎按 entry.ts 契约取「游标 < delay 不触发」（ST 聊天长度不足前 N 条不触发）；
- * dsh-worldbook 同名字段是「游标 < delay 强制注入」，两者语义相反，勿混抄。
- * 递归语义已与 dsh-worldbook bookCandidates L94 对齐确认：
- * preventRecursion=命中但内容不进递归 buffer；excludeRecursion=递归轮跳过该条目（既有实现，未改）。
+ * P2#11 已落地：timed effects（sticky/cooldown/delay，以可见消息游标计）/
+ * inclusion group 组互斥（同组内只取一条）。
+ * delay 语义注意：本引擎按 entry.ts 契约取「游标 < delay 不触发」（聊天长度不足前 N
+ * 条时不触发）；另一常见口径是「游标 < delay 强制注入」——两者语义相反，接卡时勿混。
+ * 递归语义：preventRecursion=命中但内容不进递归 buffer；excludeRecursion=递归轮跳过该条目。
  * @D 深度（position=4）由调用侧 spliceDepthInjections 实现（dsh-plugin/index.ts，
- * 深者先插语义同 dsh-worldbook inject.ts L56-77），不在本引擎。
- * AI 自写守卫（dsh-worldbook tools/index.ts 三层守卫 devGuard/scopeGuard/syncDevTool）：
- * 本仓库无 AI 侧世界书写入工具，无攻击面，不适用；未来若引入写工具需整套照抄三层守卫。
+ * 深者先插），不在本引擎。
+ * AI 自写守卫：本仓库无 AI 侧世界书写入工具，无攻击面，不适用；未来若引入写工具，
+ * 需要补三层守卫（开发期守卫 / 作用域守卫 / 同步开发工具）。
  * 已弃用（不在本引擎）：概率触发。
  *
- * P0-5：visibleMessageCursor 时间游标照抄 dsh-worldbook src/context/inject.ts 的
- * visibleMessageCursor（MIT © aam452，见 REF_PROJECTS_COMPARISON.md 领域六与致谢表）。
+ * P0-5：visibleMessageCursor 时间游标——用「可见消息累计数」而非墙钟做时效基准，
+ * 这样回退/重新生成后时效判定与用户实际看到的内容一致（墙钟会漂移）。
  */
 
 import type { LoreEntry } from './entry.ts'
@@ -26,11 +25,11 @@ import {
 } from './safe-regex.ts'
 
 /**
- * 模型可见真实消息游标（dsh-worldbook inject.ts L99-107 同款语义）：只累计事件流里
+ * 模型可见真实消息游标：只累计事件流里
  * 真实的 user（source.kind==='user'，排除插件注入/快照）与 assistant 消息——对齐
  * ST chat.length 的时间轴语义。decision.messages 是 inbox 取出批（长度不变），
  * 不能作时间游标；正确来源是会话事件流。游标值由 dsh-plugin pre-step 写进
- * rp/state/<sid>.json 的 cursor 键（供未来 sticky/cooldown/delay 等跨轮语义消费）。
+ * rp/state/<sid>.json 的 cursor 键（供 sticky/cooldown/delay 等跨轮语义消费）。
  */
 /**
  * 【心跳 47】`type` 放宽为可选：消费方 `sessionEventsSnapshot`（dsh-plugin/index.ts:302）
@@ -52,9 +51,8 @@ export function visibleMessageCursor(events: Array<{ type?: string; data?: unkno
 }
 
 /**
- * 跨轮 timed effect 区间（dsh-worldbook data/worldbook.ts TimedEffect 同款，MIT）：
- * 以「模型可见消息数」（visibleMessageCursor）为时间游标，[start, end) 生效。
- * 由调用方持久化（dsh-plugin 存 rp/state/<sid>.json 的 loreTimed 键）。
+ * 跨轮 timed effect 区间：以「模型可见消息数」（visibleMessageCursor）为时间游标，
+ * [start, end) 生效。由调用方持久化（dsh-plugin 存 rp/state/<sid>.json 的 loreTimed 键）。
  */
 export interface TimedEffect {
   entryId: string
@@ -72,7 +70,7 @@ export function isTimedActive(effects: TimedEffect[], entryId: string, type: Tim
 export interface TriggerConfig {
   /** 扫描最近 N 条消息（全局默认；条目可覆盖） */
   scanDepth: number
-  /** 递归最大轮数（ST/dsh-worldbook MAX_RECURSION=5） */
+  /** 递归最大轮数（ST 惯例 MAX_RECURSION=5） */
   maxRecursionSteps: number
   /** 关键词大小写敏感 */
   caseSensitive: boolean
@@ -182,8 +180,8 @@ export function buildScanText(messages: string[], scanDepth: number, entryOverri
 }
 
 /**
- * inclusion group 组互斥（dsh-worldbook worldbook.ts dedupeGroups L341-373 同款语义，MIT）：
- * 无组 / groupOverride 条目全部保留；其余按逗号拆组，每组只留 insertionOrder 最高的一条。
+ * inclusion group 组互斥：无组 / groupOverride 条目全部保留；
+ * 其余按逗号拆组，每组只留 insertionOrder 最高的一条（同组内多条全注入会互相矛盾）。
  */
 function dedupeGroups(items: ActivatedEntry[]): ActivatedEntry[] {
   const self = new Set<string>() // 无 group 或 groupOverride → 全部保留
@@ -240,8 +238,8 @@ export function triggerWorldInfo(
   const guard = cfg.regexGuard ?? loreRegexGuard
   const session = guard.beginScan()
 
-  // ---- timed effects 基准（dsh-worldbook bookCandidates L104-112 同款，MIT）----
-  // 过期 effect 清理（pruneTimedEffects 语义：end<=cursor 不再生效也不带回给调用方）
+  // ---- timed effects 基准 ----
+  // 过期 effect 清理（end<=cursor 不再生效，也不带回给调用方）
   const cursor = cfg.cursor
   const priorEffects = (cfg.timedEffects ?? []).filter(e => e.end > cursor)
   const newEffects: TimedEffect[] = []
@@ -251,7 +249,7 @@ export function triggerWorldInfo(
   const activate = (entry: LoreEntry, reason: ActivatedEntry['reason'], round: number, key: string) => {
     activated.set(entry.id, { entry, reason })
     trace.push({ round, entryId: entry.id, key })
-    // 写入跨轮 timed effects（dsh-worldbook L193-199：sticky/cooldown 未生效中的才新开区间）
+    // 写入跨轮 timed effects：只在尚未生效时新开区间，否则每次命中都会把区间往后推
     if ((entry.sticky ?? 0) > 0 && !stickyActive(entry.id)) {
       newEffects.push({ entryId: entry.id, type: 'sticky', start: cursor, end: cursor + entry.sticky })
     }
@@ -260,7 +258,7 @@ export function triggerWorldInfo(
     }
   }
 
-  // delay 门（本引擎契约：游标 < delay 不触发；dsh-worldbook 同名字段为强制注入，语义相反）
+  // delay 门（本引擎契约：游标 < delay 不触发，即聊天长度不足前 N 条时静默）
   const delayBlocked = (entry: LoreEntry) => (entry.delay ?? 0) > 0 && cursor < entry.delay
 
   // ---- 第 0 轮：sticky 强制 / constant 常驻 / 主关键词扫描 ----
@@ -316,7 +314,8 @@ export function triggerWorldInfo(
     if (!newHits) break
   }
 
-  // ---- inclusion group 组互斥（预算裁剪前，dsh-worldbook renderWorldbookInjection L323-324 同款顺序）----
+  // ---- inclusion group 组互斥（在 token 预算裁剪**之前**做：先定下每组选哪条，
+  //      再拿这组结果去比预算，避免「先裁掉该组的胜者、留下次优」）----
   const deduped = dedupeGroups([...activated.values()])
 
   // ---- token 预算裁剪 ----

@@ -37,6 +37,27 @@ http.createServer(async (req, res) => {
   const model = payload.model ?? 'golden-mock';
   console.log(`[mock-llm] messages=${payload.messages?.length ?? '?'} model=${model} stream=${!!payload.stream}`);
 
+  // ── 错误注入（F1 正控用）：请求里出现 MOCK_ERROR 即回一个**含官方内部字面量**的错误 ──
+  // 为什么需要：F1「错误文案归一化」的**正控**必须能真实触发一条泄漏消息，
+  // 否则只能验「页面上没有泄漏」（负控），验不了「泄漏真的被翻译掉」（正控）。
+  // 返回体刻意复刻官方 `dsh-llm-pi-ai/lib/index.js` 的 `mapStopReason` 字面量形态
+  // （含第三方 SDK 名 `pi-ai` 与 `provider/model` 内部路由）。
+  // 用法：MOCK_ERROR=1 让**所有**请求都回错；或在消息里写 MOCK_ERROR 触发单次。
+  const wantErr = process.env.MOCK_ERROR === '1'
+    || (payload.messages ?? []).some(m => String(m?.content ?? '').includes('MOCK_ERROR'));
+  if (wantErr) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      error: {
+        code: 'CONTEXT_WINDOW_EXCEEDED',
+        message: 'pi-ai detected context overflow for model "deepseek/deepseek-v4-flash"',
+        type: 'invalid_request_error',
+      },
+    }));
+    console.log('[mock-llm] injected error (CONTEXT_WINDOW_EXCEEDED)');
+    return;
+  }
+
   // 【2026-09-11 心跳 47 新增】可选落盘最终出站 payload（排障/取证用，默认关闭）。
   // 用途：验证 prompt 装配产物（槽位是否注入、楼层正文是否为空、MVU 初始变量是否下发）
   // 时，光看"请求成功"不够 —— 必须看真实字节。设 MOCK_DUMP=<路径前缀> 即落盘

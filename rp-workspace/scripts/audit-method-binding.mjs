@@ -24,11 +24,16 @@
  *   node scripts/audit-method-binding.mjs -v           # 列出全部候选提取（含放行的）
  *   node scripts/audit-method-binding.mjs --selftest   # 正控/负控自检（退出码 3 = 自检失败）
  *   node scripts/audit-method-binding.mjs --verify-lib # 顺带核对官方库里这些方法是否仍读 this.
+ * 退出码：0 = 无违约；1 = 有违约（fail-closed）；3 = selftest 失败
+ *   ★ W76 修：原只写「0 / 3」而实现里主流程是 `process.exit(1)`（有违约）
+ *     ⇒ 补 1（**P-75** 双向：实现的每个码都必须被声明）
  * ============================================================================
  */
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import process from 'node:process'
+// ★ W72：自证分数契约的**唯一产出点**（P-1；**不自己拼分数行**）
+import { reportSelftest } from './selftest-summary.mjs'
 
 const ROOT = join(import.meta.dirname, '..', '..')            // D:/DSH RolePlay
 const WS = join(ROOT, 'rp-workspace')
@@ -137,6 +142,9 @@ export function audit(files) {
 // ---------------------------------------------------------------- 自检（正控 + 负控）
 
 function selftest() {
+  // ★ W72：接入自证分数契约需要计数（P-50 的落地）
+  let recPass = 0, recTotal = 0
+  const rec = (ok) => { recTotal++; if (ok) recPass++ }
   const bad = {
     path: 'SELFTEST/bad.ts',
     text: [
@@ -154,15 +162,18 @@ function selftest() {
   const flagged = r.violations.map(v => v.localName).sort()
   const want = ['liveAppend', 'onEvt']
   const okBad = JSON.stringify(flagged) === JSON.stringify(want)
+  rec(okBad)
   console.log(`${okBad ? '[ok]' : '[FAIL]'} 正控：坏样例被报 ${JSON.stringify(flagged)}（期望 ${JSON.stringify(want)}）`)
 
   // 负控：把坏样例修好，必须一条都不报（证明不是「见 const 就报」）
   const good = { path: 'SELFTEST/good.ts', text: bad.text.replace('const liveAppend = live.append', 'const liveAppend = live.append.bind(live)').replace('const onEvt = emitter.on', 'const onEvt = emitter.on.bind(emitter)') }
   const okGood = audit([good]).violations.length === 0
+  rec(okGood)
   console.log(`${okGood ? '[ok]' : '[FAIL]'} 负控：修好后 0 违约（实际 ${audit([good]).violations.length}）`)
 
   // 零控：空输入必须 0 报（防「恒报」）
   const okEmpty = audit([{ path: 'SELFTEST/empty.ts', text: '' }]).violations.length === 0
+  rec(okEmpty)
   console.log(`${okEmpty ? '[ok]' : '[FAIL]'} 零控：空文件 0 违约`)
 
   // 【心跳 56 补】包装形态覆盖：类型断言 / 非空断言 / 括号包裹 —— 都不改变 this 会丢
@@ -184,9 +195,10 @@ function selftest() {
   const wFlagged = audit([wrapped]).violations.map(v => v.localName).sort()
   const wWant = ['append', 'flush', 'onEvt']
   const okWrapped = JSON.stringify(wFlagged) === JSON.stringify(wWant)
+  rec(okWrapped)
   console.log(`${okWrapped ? '[ok]' : '[FAIL]'} 包装控：断言/非空/括号三种包装被报 ${JSON.stringify(wFlagged)}（期望 ${JSON.stringify(wWant)}）`)
 
-  return okBad && okGood && okEmpty && okWrapped
+  return { pass: recPass, total: recTotal, ok: recPass === recTotal }
 }
 
 // ---------------------------------------------------------------- 官方库核对（可选）
@@ -211,7 +223,14 @@ function verifyLib() {
 // ---------------------------------------------------------------- main
 
 const args = process.argv.slice(2)
-if (args.includes('--selftest')) process.exit(selftest() ? 0 : 3)
+if (args.includes('--selftest')) {
+  // ★★ W72：接入单源自证分数契约（P-50）——
+  //   此前收尾只打 [ok]/[FAIL] 行 ⇒ **机器读不出分数** ⇒ 文档里的分数声明无法被证伪（P-11 元级）。
+  //   ⇒ 按 P-1 复用唯一产出点 reportSelftest。
+  const r = selftest()
+  reportSelftest('method-binding', r.pass, r.total)
+  process.exit(r.ok ? 0 : 3)
+}
 
 const files = walk(SRC).map(p => ({ path: relative(ROOT, p).split(sep).join('/'), text: readFileSync(p, 'utf8') }))
 const { violations, all } = audit(files)

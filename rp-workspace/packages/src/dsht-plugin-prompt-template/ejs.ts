@@ -420,19 +420,36 @@ function cachedParse(template: string): Node[] {
 // B7：<pre> 代码块保护（ST code_blocks 关 = 代码块不做模板处理，原样保留）
 // ---------------------------------------------------------------------------
 
-/** 提取 <pre>…</pre> 段替换为占位符（渲染后 restorePreBlocks 还原）。 */
+/**
+ * 提取 <pre>…</pre> 段替换为占位符（渲染后 restorePreBlocks 还原）。
+ *
+ * ## 哨兵形态（P-34 · 2026-09-15 第二十三轮 W6 续）
+ * 原为**裸 NUL 定界**（`\u0000EJS_PRE_<n>\u0000`）。NUL 虽然罕见，但**可以出现在文本里**
+ * （粘贴二进制、模型泄出控制字符、卡作者手写 `\u0000` 字面量），而本函数要保护的恰恰是
+ * **用户/卡可控正文** ⇒ 正文里出现同形串时会被当成占位符，还原成**别的** `<pre>` 内容
+ * （篡改，实测见常驻探针 `scripts/ef-sentinel-family.mjs` 的动态验证段）。
+ * ⇒ 改用**私用区**定界（U+E000 / U+E001）—— 与 `dsht-rp-ui/display-compiler.ts` 的
+ * `HANDOFF_MARK` / `FENCE` / `SEG` 三处哨兵**同一规则**（规则单源见 P-34）。
+ */
 export function protectPreBlocks(text: string): { text: string; blocks: string[] } {
   if (!text.includes('<pre')) return { text, blocks: [] }
   const blocks: string[] = []
   const replaced = text.replace(/<pre[\s\S]*?<\/pre>/gi, (m) => {
     blocks.push(m)
-    return `\u0000EJS_PRE_${blocks.length - 1}\u0000`
+    return `\uE000EJS_PRE_${blocks.length - 1}\uE001`
   })
   return { text: replaced, blocks }
 }
 
+/**
+ * 还原 <pre> 占位符。
+ *
+ * 【P-34 第二条】下标越界（= 正文里恰好长得像哨兵的串）必须**原样保留**。
+ * 首版是 `blocks[Number(i)] ?? ''` —— 越界时替换成空串 = **静默删掉用户内容**
+ * （实测见常驻探针 `scripts/ef-sentinel-family.mjs`：`'<pre>BBB</pre>前后'`，中间那段消失）。
+ */
 export function restorePreBlocks(text: string, blocks: string[]): string {
-  return blocks.length === 0 ? text : text.replace(/\u0000EJS_PRE_(\d+)\u0000/g, (_m, i: string) => blocks[Number(i)] ?? '')
+  return blocks.length === 0 ? text : text.replace(/\uE000EJS_PRE_(\d+)\uE001/g, (m, i: string) => blocks[Number(i)] ?? m)
 }
 
 function stringify(v: unknown): string {
