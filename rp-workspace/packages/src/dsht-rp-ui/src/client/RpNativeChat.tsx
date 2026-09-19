@@ -17,7 +17,7 @@
  */
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type MutableRefObject } from 'react'
 import { Fragment, type JSX, type ReactNode } from 'react'
-import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { DisclosureRow, IconBrowseOutline16, IconContextInjectionOutline16, MarkdownText, ReferenceIcon } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { dshRpc, humanizeError, isServiceUnavailable, rpApi, type RpWorkspaceInfo } from './rpc.ts'
 import { showDomToast, showDomConfirm } from './toast.ts'
@@ -880,26 +880,39 @@ export const RpTurnErrorView = TurnErrorNodeView
  * 可卸载性（P7）：拔掉本插件 = 本 shadowing 消失，官方两行渲染器复位。
  */
 const HarnessRow = memo(function HarnessRow({ icon, title, meta, body, testId }: {
-  icon: string
+  icon: ReactNode
   title: string
   meta?: string | undefined
   body: ReactNode
   testId: string
 }) {
+  // 【外观一致性】承载用官方 `DisclosureRow`（primitives 的公开导出；官方 SystemPromptRow /
+  // ContextInjectionRow 就是用它组合的）——这样正常状态下的行高/图标位/chevron/hover
+  // 与官方**同一个组件**渲染，不会出现「接管后长相变了」。props 契约按官方实参形态传。
+  const [open, setOpen] = useState(false)
+  const onToggle = useCallback(() => { setOpen(v => !v) }, [])
   return (
-    <details className="dsht-rp-harness-row" data-testid={testId}>
-      <summary>
-        <span className="hr-icon" aria-hidden="true">{icon}</span>
-        <span className="hr-title">{title}</span>
-        {meta !== undefined && meta !== '' && (
-          <>
-            <span className="hr-sep" aria-hidden="true" />
-            <span className="hr-meta">{meta}</span>
-          </>
-        )}
-      </summary>
-      <div className="hr-body">{body}</div>
-    </details>
+    <DisclosureRow
+      className="dsht-rp-harness-row"
+      icon={icon}
+      title={title}
+      open={open}
+      expandable
+      expandOnRowClick
+      onToggle={onToggle}
+      {...(meta === undefined || meta === ''
+        ? {}
+        : {
+            collapsedContent: (
+              <>
+                <span className="hr-sep" aria-hidden="true" />
+                <span className="hr-meta">{meta}</span>
+              </>
+            ),
+          })}
+    >
+      <div className="hr-body" data-testid={testId}>{body}</div>
+    </DisclosureRow>
   )
 })
 
@@ -912,7 +925,7 @@ export const RpSystemPromptNodeView = memo(function RpSystemPromptNodeView({ nod
   if (text === '') return null
   return (
     <HarnessRow
-      icon="📄" title="系统提示词" testId="dsht-rp-system-prompt"
+      icon={<IconBrowseOutline16 size={14} />} title="系统提示词" testId="dsht-rp-system-prompt"
       body={<pre className="hr-pre">{text}</pre>}
     />
   )
@@ -932,13 +945,18 @@ export const RpContextNodeView = memo(function RpContextNodeView({ node, session
   const anchor = readNodeAnchorSeq(node) ?? readNodeSeq(data)
   if (isSeqHidden(mask, anchor)) return null
   const prov = data.provenance
-  const label = prov !== undefined && prov !== null && typeof prov === 'object'
-    ? (typeof (prov as { label?: unknown }).label === 'string' ? (prov as { label: string }).label : '')
-    : ''
-  const title = (prov as { role?: unknown } | undefined)?.role === 'recall' ? '跨会话召回' : '上下文注入'
+  const provObj = prov !== undefined && prov !== null && typeof prov === 'object'
+    ? (prov as { role?: unknown; label?: unknown })
+    : null
+  const role = provObj?.role === 'recall' ? 'recall' : 'inject'
+  const label = typeof provObj?.label === 'string' ? provObj.label : ''
+  const title = role === 'recall' ? '跨会话召回' : '上下文注入'
   return (
     <HarnessRow
-      icon="📥" title={title} meta={label === '' ? undefined : label} testId="dsht-rp-context-injection"
+      icon={role === 'recall'
+        ? <span data-context-recall-icon="true"><ReferenceIcon kind="session" /></span>
+        : <IconContextInjectionOutline16 size={14} />}
+      title={title} meta={label === '' ? undefined : label} testId="dsht-rp-context-injection"
       body={body === '' ? <span className="hr-empty">（无文本内容）</span> : <pre className="hr-pre">{body}</pre>}
     />
   )

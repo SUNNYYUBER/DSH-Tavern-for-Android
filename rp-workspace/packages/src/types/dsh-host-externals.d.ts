@@ -21,7 +21,7 @@
 declare module '@deepseek-ai/dsh-client-ui-slots'
 
 declare module '@deepseek-ai/dsh-client-ui-primitives' {
-  import type { JSX } from 'react'
+  import type { JSX, ReactNode } from 'react'
 
   /**
    * 官方同款 Markdown 渲染器（与宿主会话气泡同一实现，见 RpNativeChat.tsx 头注）。
@@ -43,4 +43,45 @@ declare module '@deepseek-ai/dsh-client-ui-primitives' {
       [key: string]: unknown
     }
   }): JSX.Element
+
+  /**
+   * 官方可折叠行（`SystemPromptRow` / `ContextInjectionRow` 的载体）。
+   *
+   * 【2026-09-19 回退连带面修复】我方要 shadowing 官方的 `system-prompt` / `context`
+   * 两个节点渲染器（原因见 RpNativeChat.tsx 的 harness 行头注），**复用它**而不是自绘，
+   * 才能让正常状态下的外观与官方一致（同一个组件 + 同样的 props 结构）。
+   *
+   * props 契约取自 shell bundle 里该组件的实参解构
+   * （`function jd({icon,title,open,expandable,onToggle,expandOnRowClick=!1,previewChevron=expandable,
+   * keepContentWhenOpen=!1,collapsedContent,children,className,rowClassName,leadingClassName,
+   * chevronClassName,titleClassName})`）：前 5 个必需，其余可选。
+   */
+  export function DisclosureRow(props: {
+    icon: ReactNode
+    title: ReactNode
+    open: boolean
+    expandable: boolean
+    onToggle: () => void
+    /** 整行可点即可展开（官方两行都传 true） */
+    expandOnRowClick?: boolean
+    /** 折叠态是否显示 chevron（默认 = expandable） */
+    previewChevron?: boolean
+    /** 展开时是否保留 collapsedContent */
+    keepContentWhenOpen?: boolean
+    /** 折叠态跟在标题后的内容（官方用于「· 生产者名」） */
+    collapsedContent?: ReactNode
+    children?: ReactNode
+    className?: string
+    rowClassName?: string
+    leadingClassName?: string
+    chevronClassName?: string
+    titleClassName?: string
+  }): JSX.Element
+
+  /** 官方 16px 线性图标（`size` 为实参，官方 SystemPromptRow 传 14）。 */
+  export function IconBrowseOutline16(props: { size?: number; className?: string }): JSX.Element
+  /** 官方 16px 线性图标（上下文注入行的图标，官方 ContextInjectionRow 传 14）。 */
+  export function IconContextInjectionOutline16(props: { size?: number; className?: string }): JSX.Element
+  /** 官方引用图标（跨会话召回行的图标；官方传 `kind="session"`）。 */
+  export function ReferenceIcon(props: { kind?: string; size?: number; className?: string }): JSX.Element
 }

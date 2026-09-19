@@ -619,36 +619,21 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
 }
 
 /* 【2026-09-19 回退连带面修复】harness 运行过程行（系统提示词 / 上下文注入）
- * —— shadowing 官方 SystemPromptRow / ContextInjectionRow 后的重绘形态：
- * 默认折叠成一行（图标 + 标题 + 「·」+ producer 名），展开看正文。
- * 视觉参数对照官方（14px 图标位 / 次级字色 / 2px 圆点分隔 / 24px 行高）。 */
-.dsht-rp-harness-row { max-width: 100%; }
-.dsht-rp-harness-row > summary {
-  cursor: pointer; user-select: none; list-style: none;
-  display: flex; align-items: center;
-  font-size: var(--dsh-content-font-size-secondary, 13px); line-height: 24px;
-  color: var(--dsw-alias-label-secondary);
-  padding: 0 2px; padding-right: calc(0.7em + 14px); position: relative;
-}
-.dsht-rp-harness-row > summary::-webkit-details-marker { display: none; }
-.dsht-rp-harness-row > summary::after {
-  content: '▾'; position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
-  font-size: 12px; color: var(--dsw-alias-label-tertiary);
-  transition: transform var(--ds-transition-duration-fast, 0.15s) var(--ds-ease-in-out, ease);
-}
-.dsht-rp-harness-row[open] > summary::after { transform: translateY(-50%) rotate(180deg); }
-.dsht-rp-harness-row .hr-icon { flex: none; font-size: 13px; opacity: 0.9; margin-right: 8px; }
-.dsht-rp-harness-row .hr-title { flex: none; }
+ * —— shadowing 官方 SystemPromptRow / ContextInjectionRow 后的重绘形态。
+ * **行本体与图标由官方 DisclosureRow / Icon* 渲染**（同一个组件 ⇒ 行高 / 图标位 /
+ * chevron / hover 与官方一致），这里只补两件官方用 CSS module 表达、我们无法复用的东西：
+ * 折叠态的「· 生产者名」与展开体容器。分隔点尺寸对齐官方 .XrJvXW_sep。 */
 .dsht-rp-harness-row .hr-sep {
-  flex: none; width: 2px; height: 2px; border-radius: 1px;
+  display: inline-block; vertical-align: middle;
+  width: 2px; height: 2px; border-radius: 1px;
   background: var(--dsw-alias-label-caption, rgba(145, 145, 145, 0.8)); margin: 0 8px;
 }
 .dsht-rp-harness-row .hr-meta {
-  min-width: 0; color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dsht-rp-harness-row .hr-body {
-  margin: 2px 2px 8px 2px; padding: 6px 8px 6px 14px;
+  margin: 2px 0 8px 0; padding: 6px 8px 6px 14px;
   border-left: 2px solid rgba(145, 145, 145, 0.55); border-radius: 2px;
 }
 .dsht-rp-harness-row .hr-pre {

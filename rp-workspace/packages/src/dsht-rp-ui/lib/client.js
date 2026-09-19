@@ -6362,36 +6362,21 @@ body[data-dsht-rp-active] .bhn1Oq_searchInput { pointer-events: auto !important;
 }
 
 /* \u30102026-09-19 \u56DE\u9000\u8FDE\u5E26\u9762\u4FEE\u590D\u3011harness \u8FD0\u884C\u8FC7\u7A0B\u884C\uFF08\u7CFB\u7EDF\u63D0\u793A\u8BCD / \u4E0A\u4E0B\u6587\u6CE8\u5165\uFF09
- * \u2014\u2014 shadowing \u5B98\u65B9 SystemPromptRow / ContextInjectionRow \u540E\u7684\u91CD\u7ED8\u5F62\u6001\uFF1A
- * \u9ED8\u8BA4\u6298\u53E0\u6210\u4E00\u884C\uFF08\u56FE\u6807 + \u6807\u9898 + \u300C\xB7\u300D+ producer \u540D\uFF09\uFF0C\u5C55\u5F00\u770B\u6B63\u6587\u3002
- * \u89C6\u89C9\u53C2\u6570\u5BF9\u7167\u5B98\u65B9\uFF0814px \u56FE\u6807\u4F4D / \u6B21\u7EA7\u5B57\u8272 / 2px \u5706\u70B9\u5206\u9694 / 24px \u884C\u9AD8\uFF09\u3002 */
-.dsht-rp-harness-row { max-width: 100%; }
-.dsht-rp-harness-row > summary {
-  cursor: pointer; user-select: none; list-style: none;
-  display: flex; align-items: center;
-  font-size: var(--dsh-content-font-size-secondary, 13px); line-height: 24px;
-  color: var(--dsw-alias-label-secondary);
-  padding: 0 2px; padding-right: calc(0.7em + 14px); position: relative;
-}
-.dsht-rp-harness-row > summary::-webkit-details-marker { display: none; }
-.dsht-rp-harness-row > summary::after {
-  content: '\u25BE'; position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
-  font-size: 12px; color: var(--dsw-alias-label-tertiary);
-  transition: transform var(--ds-transition-duration-fast, 0.15s) var(--ds-ease-in-out, ease);
-}
-.dsht-rp-harness-row[open] > summary::after { transform: translateY(-50%) rotate(180deg); }
-.dsht-rp-harness-row .hr-icon { flex: none; font-size: 13px; opacity: 0.9; margin-right: 8px; }
-.dsht-rp-harness-row .hr-title { flex: none; }
+ * \u2014\u2014 shadowing \u5B98\u65B9 SystemPromptRow / ContextInjectionRow \u540E\u7684\u91CD\u7ED8\u5F62\u6001\u3002
+ * **\u884C\u672C\u4F53\u4E0E\u56FE\u6807\u7531\u5B98\u65B9 DisclosureRow / Icon* \u6E32\u67D3**\uFF08\u540C\u4E00\u4E2A\u7EC4\u4EF6 \u21D2 \u884C\u9AD8 / \u56FE\u6807\u4F4D /
+ * chevron / hover \u4E0E\u5B98\u65B9\u4E00\u81F4\uFF09\uFF0C\u8FD9\u91CC\u53EA\u8865\u4E24\u4EF6\u5B98\u65B9\u7528 CSS module \u8868\u8FBE\u3001\u6211\u4EEC\u65E0\u6CD5\u590D\u7528\u7684\u4E1C\u897F\uFF1A
+ * \u6298\u53E0\u6001\u7684\u300C\xB7 \u751F\u4EA7\u8005\u540D\u300D\u4E0E\u5C55\u5F00\u4F53\u5BB9\u5668\u3002\u5206\u9694\u70B9\u5C3A\u5BF8\u5BF9\u9F50\u5B98\u65B9 .XrJvXW_sep\u3002 */
 .dsht-rp-harness-row .hr-sep {
-  flex: none; width: 2px; height: 2px; border-radius: 1px;
+  display: inline-block; vertical-align: middle;
+  width: 2px; height: 2px; border-radius: 1px;
   background: var(--dsw-alias-label-caption, rgba(145, 145, 145, 0.8)); margin: 0 8px;
 }
 .dsht-rp-harness-row .hr-meta {
-  min-width: 0; color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-tertiary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dsht-rp-harness-row .hr-body {
-  margin: 2px 2px 8px 2px; padding: 6px 8px 6px 14px;
+  margin: 2px 0 8px 0; padding: 6px 8px 6px 14px;
   border-left: 2px solid rgba(145, 145, 145, 0.55); border-radius: 2px;
 }
 .dsht-rp-harness-row .hr-pre {
@@ -19024,17 +19009,29 @@ var TurnErrorNodeView = (0, import_react9.memo)(function TurnErrorNodeView2({ no
 });
 var RpTurnErrorView = TurnErrorNodeView;
 var HarnessRow = (0, import_react9.memo)(function HarnessRow2({ icon, title, meta, body, testId }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("details", { className: "dsht-rp-harness-row", "data-testid": testId, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("summary", { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "hr-icon", "aria-hidden": "true", children: icon }),
-      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "hr-title", children: title }),
-      meta !== void 0 && meta !== "" && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "hr-sep", "aria-hidden": "true" }),
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "hr-meta", children: meta })
-      ] })
-    ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "hr-body", children: body })
-  ] });
+  const [open, setOpen] = (0, import_react9.useState)(false);
+  const onToggle = (0, import_react9.useCallback)(() => {
+    setOpen((v) => !v);
+  }, []);
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+    import_dsh_client_ui_primitives.DisclosureRow,
+    {
+      className: "dsht-rp-harness-row",
+      icon,
+      title,
+      open,
+      expandable: true,
+      expandOnRowClick: true,
+      onToggle,
+      ...meta === void 0 || meta === "" ? {} : {
+        collapsedContent: /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "hr-sep", "aria-hidden": "true" }),
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "hr-meta", children: meta })
+        ] })
+      },
+      children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "hr-body", "data-testid": testId, children: body })
+    }
+  );
 });
 var RpSystemPromptNodeView = (0, import_react9.memo)(function RpSystemPromptNodeView2({ node, sessionId }) {
   const mask = useRollbackMaskState(sessionId);
@@ -19045,7 +19042,7 @@ var RpSystemPromptNodeView = (0, import_react9.memo)(function RpSystemPromptNode
   return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
     HarnessRow,
     {
-      icon: "\u{1F4C4}",
+      icon: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_dsh_client_ui_primitives.IconBrowseOutline16, { size: 14 }),
       title: "\u7CFB\u7EDF\u63D0\u793A\u8BCD",
       testId: "dsht-rp-system-prompt",
       body: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("pre", { className: "hr-pre", children: text2 })
@@ -19060,12 +19057,14 @@ var RpContextNodeView = (0, import_react9.memo)(function RpContextNodeView2({ no
   const anchor = readNodeAnchorSeq(node) ?? readNodeSeq(data);
   if (isSeqHidden(mask, anchor)) return null;
   const prov = data.provenance;
-  const label = prov !== void 0 && prov !== null && typeof prov === "object" ? typeof prov.label === "string" ? prov.label : "" : "";
-  const title = prov?.role === "recall" ? "\u8DE8\u4F1A\u8BDD\u53EC\u56DE" : "\u4E0A\u4E0B\u6587\u6CE8\u5165";
+  const provObj = prov !== void 0 && prov !== null && typeof prov === "object" ? prov : null;
+  const role = provObj?.role === "recall" ? "recall" : "inject";
+  const label = typeof provObj?.label === "string" ? provObj.label : "";
+  const title = role === "recall" ? "\u8DE8\u4F1A\u8BDD\u53EC\u56DE" : "\u4E0A\u4E0B\u6587\u6CE8\u5165";
   return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
     HarnessRow,
     {
-      icon: "\u{1F4E5}",
+      icon: role === "recall" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { "data-context-recall-icon": "true", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_dsh_client_ui_primitives.ReferenceIcon, { kind: "session" }) }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_dsh_client_ui_primitives.IconContextInjectionOutline16, { size: 14 }),
       title,
       meta: label === "" ? void 0 : label,
       testId: "dsht-rp-context-injection",
