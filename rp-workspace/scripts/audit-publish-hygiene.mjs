@@ -60,6 +60,11 @@ const DOMAIN_ALLOW = new RegExp(
     String.raw`^github\.com`, String.raw`^api\.github\.com`, String.raw`^raw\.github`, String.raw`^gist\.`,
     String.raw`^maven\.aliyun\.com`, String.raw`^schemas\.android\.com`, String.raw`^appassets\.androidplatform\.net`,
     String.raw`^packages\.termux\.dev`, String.raw`^dl\.`, String.raw`^stuk\.github\.io`, String.raw`^tidelift\.com`,
+    // 【T-25b 2026-09-19】Termux 的**国内镜像站**（清华 TUNA）。与 `packages.termux.dev`
+    // **同性质**（公开包仓库镜像，非本机配置、非隐私）：写在 `scripts/fetch-native-libs.mjs`
+    // 的 `MIRRORS` 里，供国内用户加速获取原生库 deb。判据（L50）：任何人复刻该脚本
+    // 都会写到这个地址 ⇒ 属公开基础设施。
+    String.raw`^mirrors\.tuna\.tsinghua\.edu\.cn`,
     String.raw`^opencollective\.com`, String.raw`^stuartk\.com`, String.raw`^testingcf\.jsdelivr\.net`,
     String.raw`^cdn\.jsdelivr\.net`, String.raw`^unpkg\.com`, String.raw`^fonts\.googleapis\.com`,
     // 上游库的官网（vendored 库的 license 注释里带，是第三方公开信息、非本机配置）
