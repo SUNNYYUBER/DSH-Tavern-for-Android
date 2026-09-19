@@ -1,5 +1,7 @@
 # DSH Tavern for Android
 
+**中文** ｜ [English](#english)
+
 把你的 SillyTavern 数据（角色卡 / 世界书 / 预设 / 正则 / 聊天记录）搬进一个安卓 App。
 装上即用，全部本地运行，不上传你的任何数据。
 
@@ -206,3 +208,216 @@ DSH RolePlay/
 - 内嵌的 DSH 运行时及其官方包为 MIT，仅作依赖使用、未做任何修改
 - 打包物中无 copyleft 代码链接；busybox 为独立可执行文件聚合分发，其 GPL-2.0 义务见 [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md)
 - 生态上游的商业限制提示见「法律边界」第 4 条
+
+---
+
+# English
+
+[中文](#dsh-tavern-for-android) ｜ **English**
+
+Move your SillyTavern data (character cards / world books / presets / regexes / chat history) into one Android app.
+Ready to use out of the box, fully local — nothing of yours gets uploaded.
+
+**Current version**: `0.2.0` (bundles DSH `0.1.5-rc.1`)　|　**Status**: ⚠️ Alpha (early test build)
+
+## ⚠️ Read this first
+
+- **Bugs are numerous**, some severe enough to break features, corrupt data, or require reinstall. **Don't make this your daily driver; don't use it on data you can't afford to lose.**
+- Only verified on one emulator and a few real devices — other devices will likely hit problems.
+- A personal spare-time project; fixes come slowly (see "Feedback & Contributing" below).
+
+Why is it public? Two reasons: to share a working approach for running the DSH runtime on Android, and because ST compatibility is a long tail no single person can finish — forks are welcome to keep going.
+
+**AI collaboration disclosure**: design is human-led; code and docs were written with heavy AI involvement (Kimi K3 · DeepSeek V4 Flash 0731 · GLM 5.3 Flash · DeepSeek V4.1 Flash). Trust what the app actually does over what the docs claim.
+
+---
+
+# Part 1: For users
+
+## Quick start
+
+1. Download and install the APK for your architecture (`arm64` = real devices, `x86_64` = emulators). First launch unpacks ~24,000 files — let it finish.
+2. Open the app → **Settings → Model** → enter your API key (DeepSeek official, or any OpenAI-compatible endpoint).
+3. Sidebar bottom "🎭 Roleplay" → "Import" tab, pick an import mode:
+
+   | Import mode | What it does |
+   |---|---|
+   | 📦 **Full data package** | A zip of your `data/` folder — cards, world books, chats, presets in one migration |
+   | 🎴 **Character card** | A single PNG or JSON — creates a workspace + a session with the greeting |
+   | 📚 **World book** | world JSON |
+
+4. Back to the "Characters" tab, open a card and start chatting. **Try one card first to confirm the pipeline works, then import the full package.**
+
+## What it can do
+
+| Capability | Details |
+|---|---|
+| **Data migration** | ST full `data.zip`, character cards (PNG/JSON), world books, presets, chat history; resume mid-chat |
+| **World book triggers** | constant / keywords (incl. regex, case, whole-word) / secondary keys / recursive scan / scanDepth / timed effects / mutual-exclusion groups / token budget |
+| **Presets** | ST OpenAI Settings import (prompts + prompt_order + regex_scripts), per-entry toggles, switch anytime |
+| **Regex** | three stages (display / prompt / permanent), placement, depth, substituteRegex, three-source scoping |
+| **MVU** | `<UpdateVariable>` / `<JSONPatch>` full operators / `<initvar>` / `_.set` family / stat_data dual-tree merge / status bar |
+| **Tavern Helper (JS-Slash-Runner)** | TH APIs split into local / bridged / named-refusal (counts grow with development — check the source); all 82 `tavern_events`; event ordering; script manager panel |
+| **Interaction loop** | rollback / edit / regenerate / variants, floor numbering (1 input = 1 floor), plot memory, thinking time |
+| **Rendering** | floor headers, collapsible reasoning, pretty code blocks, status bar, quote coloring, card frontend HTML (full documents in sandboxed iframes) |
+
+## Up front
+
+- Fully self-written code, zero lines of ST source — we read ST's asset formats.
+- 100% compatibility is unreachable (ST itself breaks cards with new releases); we commit in three tiers (below).
+- Fully local; your API key stays on the device; we collect and upload nothing.
+- No character cards, world books, or any content in the repo — you import everything yourself.
+
+### Compatibility tiers (whether a breakage is a bug — look here)
+
+| Tier | Promise | Scope |
+|---|---|---|
+| **Tier 1** | Breakage counts as a bug and gets fixed | Everything in "What it can do" |
+| **Tier 2** | Best effort, logged as known issues | TH APIs beyond the named-stub list (81 currently refused), full EJS syntax (currently a subset: no function calls / arrow functions / template literals / regex literals), sampling-parameter long tail, per-card script adaptation, table-memory long tail |
+| **Tier 3** | Explicitly not supported | chat-history edit/delete/rotate TH APIs (session log is append-only; rollback/edit uses our own mechanism), extension-scope variables, `importRaw*`, ScriptTrees, audio player controls, character card CRUD long tail, depth-N exact history anchoring |
+
+## Alpha limitations (please read all)
+
+| # | Limitation | What to do |
+|---|---|---|
+| 1 | Upgrading to DSH 0.1.5 migrates old sessions, **irreversibly** | 80/80 real sessions migrated in tests, but **back up first** |
+| 2 | First open of an old chat takes time | ~1.7s for a 151MB session; larger ones take longer |
+| 3 | Only arm64 (devices) and x86_64 (emulators) builds | Build other architectures yourself |
+| 4 | **Device timezone must be a real IANA name** | Offset-style zones like `GMT` cause "sending does nothing at all". Use `Asia/Shanghai` or similar during testing |
+| 5 | Tier 2/3 capabilities are incomplete or unimplemented | See the tiers table |
+| 6 | UI is still being adjusted | Expect layout glitches and dead buttons |
+| 7 | **Editing DSH directly on Android risks bricking the app** | The on-device DSH is trimmed to run on phones (no `bash`, no `flock`…). One wrong edit can leave the app unable to start, and **there's no second harness on Android to rescue it**. To modify DSH, do it on Windows / macOS and import back |
+
+**Data safety**: export important sessions regularly; keep a copy before any migration-like operation.
+
+## FAQ
+
+**Q: Sending does nothing at all?**
+Check the timezone first (limitation #4). If it's fine, check your API key and network.
+
+**Q: A floating ball won't drag / a panel is misaligned?**
+Mobile adaptation is still being polished; Tier 2.
+
+**Q: Can I import ST extensions?**
+No. But in-card scripts (Tavern Helper ecosystem) have a compat layer — see "What it can do".
+
+**Q: Will my data be uploaded?**
+No. Network requests go only to the model API endpoint you configured.
+
+**Q: Commercial use?**
+Yes (MIT). But note the upstream commercial restriction (item 4 in "Legal boundaries").
+
+## Legal boundaries
+
+1. This repo contains no character cards, world books, or chat logs — bring your own data and ensure you're allowed to use it.
+2. You call models through your own API configuration; the provider's terms are on you.
+3. For personal study and self-use; don't distribute content you have no right to distribute.
+4. ⚠️ This project is MIT-licensed, but the upstream of the compat ecosystem, [JS-Slash-Runner (Tavern Helper)](https://github.com/N0VI028/JS-Slash-Runner), is AFPL and **explicitly forbids commercial distribution**. This repo contains none of its source, so its terms don't carry over; but if your use case redistributes JS-Slash-Runner itself or its ecosystem scripts (preinstalling, bundling, shipping with your package), verify and comply with those terms yourself.
+5. Provided "as is", no warranty. Data loss, account risk, and legal disputes are on the user.
+6. Rights holders: if you believe this repo infringes you, open an Issue (with file paths and line numbers) — we'll fix or remove it promptly after verification.
+
+---
+
+# Part 2: For builders and contributors
+
+## Build prerequisite: native libs are not in the repo
+
+`jniLibs/*.so` (Node binary + proot + busybox etc., 14 files, ~100 MB) all come from the official Termux repos; proot / busybox are GPL-2.0. This repo does not distribute third-party binaries — they're fetched at build time:
+
+```
+node rp-workspace/scripts/fetch-native-libs.mjs
+```
+
+The script verifies per-deb SHA256; the first run needs network, later runs skip idempotently. The build script's Step 0.1 checks automatically.
+
+## Android platform constraints (read before modifying)
+
+| Constraint | Symptom | Handling |
+|---|---|---|
+| No `bash` | DSH bash tool spawn EACCES | platform-aware switch to `/system/bin/sh` |
+| No `flock(2)` | session write-lock throws — **messages can't be sent** | single-process runtime: succeed immediately (same as upstream's browser-worker handling) |
+| SELinux forbids hard links | session logs can't be published via `link()` | use `rename()` |
+| SELinux allows exec only from `nativeLibraryDir` | binaries in the app dir can't exec | rename executables to `.so` under `jniLibs` |
+| phantom process killer (Android 12+) | background child processes over 32 get silently SIGKILLed | foreground service + battery whitelist; for long tasks enable "Disable child process restrictions" in developer options |
+| WebView lacks a `zstd` encoder | default-compressed session logs unreadable | build-time patch to plain JSONL |
+| `ripgrep` unavailable | linux prebuilt is glibc | pure-JS fallback |
+| Native modules unavailable | `sharp` / `koffi` / `node-pty` etc. | platform stubs; call sites throw controlled errors |
+
+Patches live in `rp-workspace/scripts/apply-platform-patches.py` and `build-dsht.ps1`, idempotent with hit-count assertions. The proot route's risk assessment: `docs/C-ANDROID-HARNESS-ASSESSMENT-2026-09-13.md` (Android 15's tightened seccomp will break it).
+
+## About DSH
+
+The runtime is **DSH** (`@deepseek-ai/dsh`, MIT). Compliance red lines:
+
+- Zero modification to DSH's official source and local runtime
+- All customization goes through DSH's official plugin mechanism (7 self-built plugins, 6 effective; `dsht-plugin-undo` is intentionally not composed into the profile — its `/dsht-undo/*` routes 404ing under DSHTavern is expected)
+- Platform adaptation is injected as build-time patches (the table above)
+
+## Project structure
+
+```
+DSH RolePlay/
+├─ rp-workspace/
+│  ├─ packages/src/         self-written source
+│  │  ├─ dsh-plugin/        RP host plugin (session data plane / injection pipeline / import engine)
+│  │  ├─ dsht-plugin-*/     self-built plugin packages: MVU / Tavern Helper / prompt template / memory / undo / mobile
+│  │  │                     + dsht-plugin-shared (shared library)
+│  │  ├─ import/            ST asset import/export
+│  │  ├─ regex/ preset/ macros/ state/ lore/   compat subsystems
+│  │  └─ dsht-rp-ui/        client UI (React + TH shim)
+│  ├─ android/              Android shell (NodeService launches the DSH runtime)
+│  ├─ scripts/              build / verify / diagnostic tools
+│  └─ dsh-runtime-android/  DSH runtime staging (build artifact, not in repo)
+├─ docs/                    freeze lists / compat contracts / upgrade plans
+└─ MASTER_TODO.md           status & background (the only living document)
+```
+
+**Developer docs**:
+
+| Topic | Where |
+|---|---|
+| Status & background | [MASTER_TODO.md](MASTER_TODO.md) |
+| Compat contract | [ST-COMPAT-PACT.md](rp-workspace/docs/ST-COMPAT-PACT.md) |
+| Feature freeze & tiering | [V0.3-FREEZE.md](docs/V0.3-FREEZE.md) |
+| Upstream licenses | [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md) |
+| Device verification | [B-DEVICE-VERIFY-CHECKLIST.md](docs/B-DEVICE-VERIFY-CHECKLIST.md) |
+| Long-term goal (single source) | [GOAL.md](docs/GOAL.md) |
+
+## Feedback & contributing
+
+**Issues are open and welcome** (the only feedback channel; include device model, Android version, repro steps).
+**Pull Requests are not merged directly** — a spare-time solo project can't afford review and post-merge responsibility; to contribute code, open an Issue describing the change and I'll re-implement it myself.
+**Want to be a co-developer** → open an Issue describing what you plan to do; once approved I'll add you as a collaborator (direct commit access).
+
+Tier 3 incompatibilities are expected behavior, not bugs.
+
+Full policy: [CONTRIBUTING.md](CONTRIBUTING.md) (wording is kept consistent between the two).
+
+---
+
+# Appendix
+
+## Third-party compatibility statement
+
+1. The "Tavern Helper compat layer" is a **self-written API re-implementation** — it contains, bundles, and redistributes no source from JS-Slash-Runner or its ecosystem scripts.
+2. Third-party card scripts (e.g. MVU) are loaded by your browser from public CDNs at runtime — their licenses and distribution obligations belong to their authors; check the license yourself if you need offline use.
+3. This project ships no character cards, world books, or presets.
+
+## Acknowledgements
+
+- **[DeepSeek](https://deepseek.com)** — the DSH runtime (`@deepseek-ai/dsh`, MIT)
+- **[Node.js](https://nodejs.org)** (MIT), **[Termux](https://termux.dev)** (source of proot & busybox binaries), **[busybox](https://busybox.net)** (GPL-2.0, distributed as an independent executable; source access in [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md))
+- **[SillyTavern](https://github.com/SillyTavern/SillyTavern)** and its community — the compat target (definer of the asset formats and interaction patterns)
+- **[JS-Slash-Runner (Tavern Helper)](https://github.com/N0VI028/JS-Slash-Runner)** (AFPL) — the script-runtime API compat reference (self-written re-implementation, no source included)
+- **TauriTavern (Canary branch)** — the behavior-alignment reference (no source copied)
+- Architecture references (all MIT): `hewzhew/dsh-agent-rp` · `aam452/dsh-worldbook` · `Czerror/dsh-plugin-prompt-tool` · `lutrodev/dsh-roleplay`
+- Early versions borrowed individual ideas from `flizzywine/dsh-tavern` (AGPL-3.0) and `2428139739pregnant-web/agent-loop-rp` (no declared license) — **all since re-implemented from scratch; nothing of them remains** (audit: [COPYRIGHT-AUDIT-FULL-2026-09-14.md](docs/COPYRIGHT-AUDIT-FULL-2026-09-14.md))
+- All character card / world book / preset authors — the ecosystem's value belongs to you
+
+## License
+
+**MIT** (see [LICENSE](LICENSE)).
+
+- The bundled DSH runtime and its official packages are MIT, used as dependencies without modification
+- No copyleft code is linked in the shipped artifacts; busybox is distributed as an independent executable (aggregation) — its GPL-2.0 obligations are in [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md)
+- Upstream commercial restriction: item 4 in "Legal boundaries"
