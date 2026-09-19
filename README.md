@@ -140,6 +140,44 @@ node rp-workspace/scripts/fetch-native-libs.mjs
 - 所有个性化一律通过 DSH 官方插件机制实现（构建 7 个自研插件，生效 6 个；`dsht-plugin-undo` 有意不 compose 进 profile，它的 `/dsht-undo/*` 路由在 DSHTavern 下 404 属预期）
 - 平台适配以构建期补丁形式注入（上面那张表）
 
+## 代码逻辑结构
+
+一条消息从发出到渲染的完整链路（括号里是代码位置）：
+
+```
+用户发消息
+  │
+  ▼
+① 组装层 assemble（agent/request 瀑布）
+   解析 RP 工作区 + 当前有效预设 ──────────── packages/src/dsh-plugin/
+  │
+  ▼
+② pre-step 注入管线（agent/pre-step，按序执行）
+   世界书：关键词扫描 + 预算裁剪 ──────────── packages/src/lore/
+   角色卡 persona（过宏引擎）────────────── rp.json.promptPersona
+   RP 预设快照（每轮从 preset.json 现值生成）─ packages/src/preset/
+   正则（prompt 时机）───────────────────── packages/src/regex/
+   状态树 / 剧情记忆 ─────────────────────── packages/src/state/ · dsht-plugin-memory/
+  │
+  ▼
+③ 模型调用（llm/stream）
+   规划：预设编译将迁移到这一层（bychv/dsh-preset-enhance）
+  │
+  ▼
+④ 响应处理
+   MVU 变量写（UpdateVariable / JSONPatch）─ packages/src/dsht-plugin-mvu/
+   正则（display 时机）─────────────────── packages/src/regex/
+  │
+  ▼
+⑤ 渲染与 UI
+   楼层头 / 思考折叠 / 状态栏 / 沙箱 iframe ─ packages/src/dsht-rp-ui/
+   酒馆助手桥接（tavern_events 82 项）────── packages/src/dsht-plugin-tavern-helper/
+  │
+  ▼
+⑥ 会话手术（回退 / 编辑 / 重新生成 / 变体）
+   逻辑回退 + 变量回滚 + 文件快照回滚 ────── dsh-plugin /rp/session-* 路由
+```
+
 ## 项目结构
 
 ```
@@ -168,6 +206,7 @@ DSH RolePlay/
 | 功能冻结与承诺分级 | [V0.3-FREEZE.md](docs/V0.3-FREEZE.md) |
 | 上游许可清单 | [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md) |
 | 真机验证手册 | [B-DEVICE-VERIFY-CHECKLIST.md](docs/B-DEVICE-VERIFY-CHECKLIST.md) |
+| 插件拆包方案 | [T-88-PLUGIN-DECOMPOSITION.md](docs/T-88-PLUGIN-DECOMPOSITION.md) |
 | 长期目标（单源） | [GOAL.md](docs/GOAL.md) |
 
 ## 反馈与贡献
@@ -353,6 +392,44 @@ The runtime is **DSH** (`@deepseek-ai/dsh`, MIT). Compliance red lines:
 - All customization goes through DSH's official plugin mechanism (7 self-built plugins, 6 effective; `dsht-plugin-undo` is intentionally not composed into the profile — its `/dsht-undo/*` routes 404ing under DSHTavern is expected)
 - Platform adaptation is injected as build-time patches (the table above)
 
+## Code logic
+
+The full pipeline of one message from send to render (with code locations):
+
+```
+User sends a message
+  │
+  ▼
+① Assembly (agent/request waterfall)
+   Resolve RP workspace + active preset ────── packages/src/dsh-plugin/
+  │
+  ▼
+② pre-step injection pipeline (agent/pre-step, in order)
+   World book: keyword scan + budget trim ──── packages/src/lore/
+   Card persona (through macro engine) ─────── rp.json.promptPersona
+   RP preset snapshot (regenerated per turn) ─ packages/src/preset/
+   Regex (prompt stage) ────────────────────── packages/src/regex/
+   State tree / plot memory ────────────────── packages/src/state/ · dsht-plugin-memory/
+  │
+  ▼
+③ Model call (llm/stream)
+   Planned: preset compilation moves here (bychv/dsh-preset-enhance)
+  │
+  ▼
+④ Response handling
+   MVU variable writes (UpdateVariable / JSONPatch) ─ packages/src/dsht-plugin-mvu/
+   Regex (display stage) ───────────────────── packages/src/regex/
+  │
+  ▼
+⑤ Rendering & UI
+   Floor headers / reasoning folds / status bar / sandboxed iframes ─ packages/src/dsht-rp-ui/
+   Tavern Helper bridge (82 tavern_events) ─── packages/src/dsht-plugin-tavern-helper/
+  │
+  ▼
+⑥ Session surgery (rollback / edit / regenerate / variants)
+   Logical rollback + variable restore + file snapshot restore ─ dsh-plugin /rp/session-* routes
+```
+
 ## Project structure
 
 ```
@@ -381,6 +458,7 @@ DSH RolePlay/
 | Feature freeze & tiering | [V0.3-FREEZE.md](docs/V0.3-FREEZE.md) |
 | Upstream licenses | [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md) |
 | Device verification | [B-DEVICE-VERIFY-CHECKLIST.md](docs/B-DEVICE-VERIFY-CHECKLIST.md) |
+| Plugin decomposition plan | [T-88-PLUGIN-DECOMPOSITION.md](docs/T-88-PLUGIN-DECOMPOSITION.md) |
 | Long-term goal (single source) | [GOAL.md](docs/GOAL.md) |
 
 ## Feedback & contributing
