@@ -74,3 +74,26 @@
 - 副本版本：`1.1.0`（`package.json`）
 - 与主仓共享层的差异：**无需同步**——本副本走文件截断路径，不写/不读 surgical 标记
 - 已知边界：本副本**不支持** live 会话回退（设计如此，非缺陷）
+
+---
+
+## 五、共享层变更记录（按 §三 触发条件同步副本）
+
+### 2026-09-19 回退连带面修复（`shadowedRange`）
+
+用户实测：RP 部署里回退后，**harness 的运行过程没跟着退**——会话流残留「系统提示词」
+「上下文注入 · …」「本轮运行失败 QUOTA」。根因是回退写入的 `shadowedSeqs` 只含
+**surface 事件**（user/message、assistant/message、tool/result），而这三类节点的锚
+**不是** surface 事件（`system-prompt` 锚在 `turn/start`，真实会话实证 seq=6 早于
+用户消息 seq=9；`context` 锚在注入事件；`turn-error` 锚在失败事件）。
+
+- `dsht-plugin-shared/session-write.ts`：`SurgicalPayload` 与 `SurgicalMarkerPayload`
+  新增可选字段 `shadowedRange: { start, end }`；`readSurgicalPayload` 增加一路解析
+  （缺字段 / `end < start` / 非对象一律忽略，不落值）。
+- `dsht-plugin-shared/host-projection.ts`：新增单源读取器
+  `readNodeAnchorSeq(node)`（读节点信封的 `anchorSeq`，与 `readNodeSeq` 读 `data.seq` 区分）。
+- **对本插件（文件截断路径）无行为影响**：截断是**物理删除**，被移除那一轮的一切事件
+  （含 `turn/start` / `request/header` / `turn/end`）都不在日志里，不存在"连带面残留"；
+  本副本也不读 `shadowedRange`。
+- **本次同步 = 保持两侧共享层逐字同源（P-1b）**：产物用主仓当前源码重新构建后整文件覆盖，
+  不是手工改产物里的代码（§三「同步方式」）。

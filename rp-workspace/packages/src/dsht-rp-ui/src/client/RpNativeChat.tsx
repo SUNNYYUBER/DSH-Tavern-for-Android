@@ -49,7 +49,7 @@ import { wrapStQuotes } from './st-quotes.ts'
 // SlotErrorBoundary 吞成整片楼层消失）、`data.finalNode.seq`（11 处，回退/变体/耗时
 // 全部判据的锚点）、`chat.nodes.values()`（5 处双形态断言）。见 host-projection.ts 头注。
 import {
-  readBlocks, readChat, readFinalMessageId, readFinalSeq, readFinalTiming, readNodeData,
+  readBlocks, readChat, readFinalMessageId, readFinalSeq, readFinalTiming, readNodeAnchorSeq, readNodeData,
   readNodeKey, readNodeKind, readNodeSeq, readNodeStatus, readNodeTime, readNodeTurn,
   readSessionChat, readSessionRunning, readSourceKind, forEachChatNode,
 } from './host-projection.ts'
@@ -470,12 +470,22 @@ function floorMapOf(snapshot: unknown): Map<string, number> {
 
 /** 掩码状态：集合优先，阈值为降级 */
 export interface MaskState {
-  /** 精确的被移出 seq 集合（权威判据） */
+  /** 精确的被移出 seq 集合（权威判据；只含 surface 事件） */
   hidden: ReadonlySet<number>
-  /** 阈值降级（仅当集合为空且宿主给了非零 hideAfter 时使用；存量会话路径） */
+  /**
+   * 【2026-09-19 回退连带面修复】被移除的**整轮**事件 seq 区间（含非 surface 事件）。
+   *
+   * 为什么集合不够：harness 的运行过程节点（`system-prompt` 系统提示词、`context`
+   * 上下文注入、`turn-error` 本轮运行失败）的 anchorSeq **不在** `hidden` 里——
+   * 系统提示词的锚是 `turn/start` 的 seq（真实会话实证：比用户消息还早），注入/错误的锚
+   * 落在 `request/header` / `turn/end` 上，而 `hidden` 只含 surface 事件
+   * （user/message、assistant/message、tool/result）。用户实测：回退后这些行仍留在会话流里。
+   */
+  ranges: ReadonlyArray<{ start: number; end: number }>
+  /** 阈值降级（仅当集合与区间都为空且宿主给了非零 hideAfter 时使用；存量会话路径） */
   hideAfter: number
 }
-const EMPTY_MASK: MaskState = { hidden: new Set<number>(), hideAfter: 0 }
+const EMPTY_MASK: MaskState = { hidden: new Set<number>(), ranges: [], hideAfter: 0 }
 
 const maskCache = new Map<string, MaskState>()
 const maskListeners = new Map<string, Set<() => void>>()
@@ -484,15 +494,21 @@ async function refreshRollbackMask(sessionId: string): Promise<void> {
   if (maskInflight.has(sessionId)) return
   maskInflight.add(sessionId)
   try {
-    const r = await rpApi<{ hideAfter?: number; hiddenSeqs?: number[] }>('rp/rollback-mask', { sessionId })
+    const r = await rpApi<{ hideAfter?: number; hiddenSeqs?: number[]; hiddenRanges?: Array<{ start?: number; end?: number }> }>('rp/rollback-mask', { sessionId })
     const seqs = Array.isArray(r.hiddenSeqs) ? r.hiddenSeqs.filter(n => typeof n === 'number') : []
     const hide = typeof r.hideAfter === 'number' && r.hideAfter > 0 ? r.hideAfter : 0
-    // 集合非空 ⇒ 只用集合（阈值完全不用，避免「阈值连坐新消息」的老毛病复发）
-    const next: MaskState = seqs.length > 0
-      ? { hidden: new Set(seqs), hideAfter: 0 }
-      : { hidden: new Set<number>(), hideAfter: hide }
+    // 【2026-09-19】连带范围（含非 surface 事件；服务端每次回退/编辑/重生成写一条）
+    const ranges = Array.isArray(r.hiddenRanges)
+      ? r.hiddenRanges.filter(x => typeof x?.start === 'number' && typeof x?.end === 'number')
+        .map(x => ({ start: x.start as number, end: x.end as number }))
+      : []
+    // 集合或区间任一非空 ⇒ 精确判据生效（阈值完全不用，避免「阈值连坐新消息」的老毛病复发）
+    const next: MaskState = (seqs.length > 0 || ranges.length > 0)
+      ? { hidden: new Set(seqs), ranges, hideAfter: 0 }
+      : { hidden: new Set<number>(), ranges: [], hideAfter: hide }
     const prev = maskCache.get(sessionId)
-    const same = prev !== undefined && prev.hideAfter === next.hideAfter && prev.hidden.size === next.hidden.size
+    const same = prev !== undefined && prev.hideAfter === next.hideAfter
+      && prev.hidden.size === next.hidden.size && prev.ranges.length === next.ranges.length
     if (!same) {
       maskCache.set(sessionId, next)
       maskListeners.get(sessionId)?.forEach(cb => cb())
@@ -522,10 +538,14 @@ export function useRollbackMaskState(sessionId: string | undefined): MaskState {
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY_MASK)
 }
 
-/** 某 seq 是否已被回退/编辑/重新生成移出上下文（集合优先，阈值为降级） */
+/** 某 seq 是否已被回退/编辑/重新生成移出上下文（区间 + 集合优先，阈值为降级）
+ *  【2026-09-19】区间先行：harness 运行过程节点的锚（turn/start、request/header、
+ *  turn/end）只被区间覆盖；集合与区间都空时才退回阈值（存量会话）。 */
 function isSeqHidden(mask: MaskState, seq: number | undefined): boolean {
   if (seq === undefined) return false
+  for (const r of mask.ranges) if (seq >= r.start && seq <= r.end) return true
   if (mask.hidden.size > 0) return mask.hidden.has(seq)
+  if (mask.ranges.length > 0) return false
   return mask.hideAfter > 0 && seq > mask.hideAfter
 }
 
@@ -783,6 +803,14 @@ const MvuStatusbar = memo(function MvuStatusbar({ sessionId }: { sessionId: stri
   return <div className="dsht-rp-mvu-statusbar" data-testid="dsht-rp-statusbar" dangerouslySetInnerHTML={{ __html: html }} />
 })
 
+/** conversation.chat.node 席位里「harness 运行过程」行（turn-error / system-prompt /
+ *  context）收到的 props：只需 node（含 anchorSeq）与 sessionId（掩码查询用）。
+ *  `data` 声明为 unknown（同 LikeChatNode 的理由：beta 期字段不得当既定契约）。 */
+interface HarnessNodeViewProps {
+  node: LikeChatNode
+  sessionId?: string | undefined
+}
+
 /**
  * 【F1 2026-09-14】turn-error 节点 shadowing 渲染器。
  *
@@ -800,10 +828,14 @@ const MvuStatusbar = memo(function MvuStatusbar({ sessionId }: { sessionId: stri
  *
  * 可卸载性（P7）：拔掉本插件 = 本 shadowing 消失，官方 TurnErrorNodeView 复位。
  */
-const TurnErrorNodeView = memo(function TurnErrorNodeView({ node }: { node: { data?: { message?: unknown; code?: unknown } } }) {
-  const data = node?.data ?? {}
+const TurnErrorNodeView = memo(function TurnErrorNodeView({ node, sessionId }: HarnessNodeViewProps) {
+  // 【2026-09-19 回退连带面修复】掩码判定：被回退的那一轮，本行与 user/assistant 同款消失。
+  // 判据走 node.anchorSeq（失败事件的 seq），见 host-projection.readNodeAnchorSeq 头注。
+  const mask = useRollbackMaskState(sessionId)
+  const data = readNodeData(node)
   const raw = typeof data.message === 'string' ? data.message : String(data.message ?? '')
   const code = typeof data.code === 'string' ? data.code : ''
+  if (isSeqHidden(mask, readNodeAnchorSeq(node) ?? readNodeSeq(data))) return null
   const friendly = humanizeError(Object.assign(new Error(raw), { code }))
   // 隔离前后一致 = 这条消息没有内部细节泄漏，无需折叠区（避免给所有错误都加噪音）
   const leaked = friendly !== raw
@@ -826,6 +858,101 @@ const TurnErrorNodeView = memo(function TurnErrorNodeView({ node }: { node: { da
 })
 
 export const RpTurnErrorView = TurnErrorNodeView
+
+/**
+ * 【2026-09-19 回退连带面修复】harness 运行过程行的 shadowing 渲染器
+ * （keyed `system-prompt` 系统提示词 / keyed `context` 上下文注入）。
+ *
+ * ## 为什么必须接管
+ * 回退（逻辑回退）只把 **surface 节点**（user/message、assistant/message、tool/result）
+ * 移出上下文并写进 `shadowedSeqs`；而这两类行的锚**不是** surface 事件——
+ * `system-prompt` 锚在 **turn/start**（真实会话实证：seq 6 < 用户消息 seq 9）、
+ * `context` 锚在注入事件自身。官方 view 不认识我们的掩码，于是用户实测看到：
+ * 回退后「系统提示词 / 上下文注入」仍留在会话流里（截图实证）。
+ *
+ * ## 为什么是"重绘"而不是改官方
+ * 官方 `SystemPromptNodeView` / `ContextMessageNodeView` 在 ui-chat 内部、**不可 import**；
+ * 我们**不改官方源码**（合规红线），故按 `conversation.chat.node` 席位 shadowing
+ * （与 `assistant-step` / `user` / `turn-error` 同一机制，priority -1 覆盖）。
+ * 本层只保证「同样的信息量、更简的形式」：默认折叠一行，展开看正文；
+ * 被回退的行返回 null（隐藏）。
+ *
+ * 可卸载性（P7）：拔掉本插件 = 本 shadowing 消失，官方两行渲染器复位。
+ */
+const HarnessRow = memo(function HarnessRow({ icon, title, meta, body, testId }: {
+  icon: string
+  title: string
+  meta?: string | undefined
+  body: ReactNode
+  testId: string
+}) {
+  return (
+    <details className="dsht-rp-harness-row" data-testid={testId}>
+      <summary>
+        <span className="hr-icon" aria-hidden="true">{icon}</span>
+        <span className="hr-title">{title}</span>
+        {meta !== undefined && meta !== '' && (
+          <>
+            <span className="hr-sep" aria-hidden="true" />
+            <span className="hr-meta">{meta}</span>
+          </>
+        )}
+      </summary>
+      <div className="hr-body">{body}</div>
+    </details>
+  )
+})
+
+/** keyed `system-prompt`：模型请求的完整系统提示词（官方默认折叠；prompt 为空时不渲染——同官方） */
+export const RpSystemPromptNodeView = memo(function RpSystemPromptNodeView({ node, sessionId }: HarnessNodeViewProps) {
+  const mask = useRollbackMaskState(sessionId)
+  const data = readNodeData(node)
+  const text = typeof data.text === 'string' ? data.text : ''
+  if (isSeqHidden(mask, readNodeAnchorSeq(node))) return null
+  if (text === '') return null
+  return (
+    <HarnessRow
+      icon="📄" title="系统提示词" testId="dsht-rp-system-prompt"
+      body={<pre className="hr-pre">{text}</pre>}
+    />
+  )
+})
+
+/** keyed `context`：注入进模型历史的非用户上下文（skill 目录 / 插件注入 / 跨会话召回…）。
+ *  标题 = 「上下文注入 · <producer>」——producer 名取官方已算好的 `data.provenance.label`
+ *  （官方 `contextProvenance(source)` 的产物，本层不重算，避免两套口径）。 */
+export const RpContextNodeView = memo(function RpContextNodeView({ node, sessionId }: HarnessNodeViewProps) {
+  const mask = useRollbackMaskState(sessionId)
+  const data = readNodeData(node)
+  // 内容块走单源读取器（readBlocks 兼容 content/blocks 两个官方字段名）——
+  // 裸迭代 `data.content` 会被 projection-shape-defense 护栏判红（真实踩过）
+  const blocks = readBlocks(data)
+  const body = contextBodyText(blocks)
+  // 【判据顺序】锚优先用 node.anchorSeq（= 注入事件 seq）；缺失退回 data.seq（同值兜底）
+  const anchor = readNodeAnchorSeq(node) ?? readNodeSeq(data)
+  if (isSeqHidden(mask, anchor)) return null
+  const prov = data.provenance
+  const label = prov !== undefined && prov !== null && typeof prov === 'object'
+    ? (typeof (prov as { label?: unknown }).label === 'string' ? (prov as { label: string }).label : '')
+    : ''
+  const title = (prov as { role?: unknown } | undefined)?.role === 'recall' ? '跨会话召回' : '上下文注入'
+  return (
+    <HarnessRow
+      icon="📥" title={title} meta={label === '' ? undefined : label} testId="dsht-rp-context-injection"
+      body={body === '' ? <span className="hr-empty">（无文本内容）</span> : <pre className="hr-pre">{body}</pre>}
+    />
+  )
+})
+
+/** 注入内容的文本形态（content blocks → 文本；非文本块标记类型名，不丢信息也不炸） */
+function contextBodyText(blocks: readonly Record<string, unknown>[]): string {
+  const out: string[] = []
+  for (const b of blocks) {
+    if (b.type === 'text' && typeof b.text === 'string') out.push(b.text)
+    else if (typeof b.type === 'string') out.push(`[${b.type}]`)
+  }
+  return out.join('\n\n')
+}
 
 /**
  * 完整 HTML 文档段的 iframe 渲染器（P0-2）：

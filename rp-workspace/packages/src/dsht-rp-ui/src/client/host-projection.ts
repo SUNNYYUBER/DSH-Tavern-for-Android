@@ -38,6 +38,7 @@ export {
   readBlocks,
   readNodeStatus,
   readNodeSeq,
+  readNodeAnchorSeq,
   readNodeTurn,
   readNodeTime,
   readFinalSeq,

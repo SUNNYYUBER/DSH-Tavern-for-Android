@@ -245,8 +245,9 @@ interface RpWorkspace {
 export const name = 'dsht-rp-plugin'
 /** /rp/rollback-mask 结果缓存（键 = session.jsonl 绝对路径；mtime 失效；逻辑回退/
  *  编辑/重新生成成功后 clear——前端 refreshRollbackMask 立即拿到最新锚）
- *  seqs = 精确的被移出 seq 集合（集合语义的权威判据；hide 仅降级/兼容用） */
-const rollbackMaskCache = new Map<string, { size: number; mtimeMs: number; hide: number; seqs: number[] }>()
+ *  seqs = 精确的被移出 seq 集合（集合语义的权威判据；hide 仅降级/兼容用）
+ *  ranges = 【2026-09-19】连带范围（含非 surface 事件；harness 运行过程节点靠它隐藏） */
+const rollbackMaskCache = new Map<string, { size: number; mtimeMs: number; hide: number; seqs: number[]; ranges: Array<{ start: number; end: number }> }>()
 // services 声明（Cordis 访问保护：未 inject 的服务属性读取直接 throw "cannot get property without inject"）
 // - tools/systemPrompt：lore_query 注册
 // - sessions：变体操作读取 session（events/append）
@@ -345,6 +346,53 @@ export function sessionEventsSnapshot(session: unknown): Array<{ type?: string; 
   if (Array.isArray(s.events)) return s.events as Array<{ type?: string; data?: unknown; time?: unknown; seq?: number }>
   if (s.events && typeof s.events === 'object') return Object.values(s.events) as Array<{ type?: string; data?: unknown; time?: unknown; seq?: number }>
   return []
+}
+
+/**
+ * 【2026-09-19 回退连带面修复】anchorSeq 所属 turn 的 **turn/start seq**（连带范围起点）。
+ *
+ * 为什么要单独算这个：回退/编辑/重生成写入的 `shadowedSeqs` 只含 **surface 事件**
+ * （user/message、assistant/message、tool/result），而 harness 的运行过程节点
+ * （system-prompt 系统提示词 / context 上下文注入 / turn-error 本轮运行失败）的锚
+ * 分别落在 `request/header`、注入 user/message、`turn/end` 上——**且 system-prompt 的
+ * 锚是 `turn/start` 的 seq，比用户消息还早**（真实会话实证：turn/start=6 → step/start=8
+ * → user/message=9 → request/header=11 → turn/end=124）。因此以用户消息为起点的任何
+ * 判据都拦不住它，必须从**该轮的 turn/start** 起算。
+ *
+ * 算法：按 seq 升序扫到 anchorSeq 为止，维护「当前打开中的 turn 起点」
+ * （turn/start 打开、turn/end 关闭）；锚所在的那个打开中的 turn 即目标。
+ * 无 turn 配对信息（存量/异常日志）→ 退回 anchorSeq 自身（行为与修复前一致）。
+ */
+export function turnStartSeqFor(events: ReadonlyArray<{ type?: unknown; seq?: unknown }>, anchorSeq: number): number {
+  const rows: Array<{ type: string; seq: number }> = []
+  for (const e of events) {
+    if (typeof e.seq !== 'number' || typeof e.type !== 'string') continue
+    rows.push({ type: e.type, seq: e.seq })
+  }
+  rows.sort((a, b) => a.seq - b.seq)
+  let openStart: number | null = null
+  let hit: number | null = null
+  for (const r of rows) {
+    if (r.seq > anchorSeq) break
+    if (r.type === 'turn/start') openStart = r.seq
+    else if (r.type === 'turn/end') openStart = null
+    if (openStart !== null) hit = openStart
+  }
+  return hit ?? anchorSeq
+}
+
+/**
+ * 【2026-09-19 回退连带面修复】回退那一刻日志的**最大事件 seq**（连带范围终点）。
+ *
+ * 为什么必须有界：无界阈值（"seq 大于锚就隐藏"）会把回退之后用户新发的内容一起隐掉
+ * —— 这正是 `hideAfter` 阈值语义的固有缺陷（F2 已用集合语义修掉）。区间取"回退那一刻
+ * 的日志末尾"，则：被移除的那一轮（含其 harness 过程事件）全部落在区间内；回退之后
+ * 新产生的事件 seq 必然更大，天然在区间外。
+ */
+export function maxEventSeq(events: ReadonlyArray<{ seq?: unknown }>): number {
+  let max = 0
+  for (const e of events) if (typeof e.seq === 'number' && e.seq > max) max = e.seq
+  return max
 }
 
 // ---------------------------------------------------------------------------
@@ -5580,6 +5628,11 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 // **紧邻** marker replace（影子化协议铁律）——旧顺序 claim → await replayUndoLog
                 // → marker，await 窗口里运行中 turn 的 append 会插进两者之间，投影/meter 漂移。
                 const anchorTime = typeof sessionEventAt(live, anchor)?.time === 'number' ? sessionEventAt(live, anchor)?.time as number : Date.now()
+                // 【2026-09-19 回退连带面修复】连带范围（含非 surface 事件）：起点 = 锚所在轮
+                // 的 turn/start（早于用户消息），终点 = 回退那一刻的日志末尾。harness 运行过程
+                // 节点（系统提示词 / 上下文注入 / 本轮运行失败）的锚只落在这条区间里。
+                const evSnapForRange = sessionEventsSnapshot(live)
+                const shadowedRange = { start: turnStartSeqFor(evSnapForRange, anchor), end: maxEventSeq(evSnapForRange) }
                 const undo = await replayUndoLog(dshHome, sessionId, anchorTime)
                 liveAppend('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed })
                 const markerText = isEdit
@@ -5592,15 +5645,15 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 // 判 `source has unexpected member` → 整会话在 0.1.5 下打不开（实测 6 个真实会话）。
                 // 改用 form:'snapshot' + sections（官方唯一能带结构化文本的合法形态）。
                 const markerPayload: SurgicalMarkerPayload = isEdit
-                  ? { editedFrom: anchor, shadowedSeqs: seqs }
-                  : { rolledBackTo: includeAnchor ? anchor - 1 : keepThroughSeq, shadowedSeqs: seqs }
+                  ? { editedFrom: anchor, shadowedSeqs: seqs, shadowedRange }
+                  : { rolledBackTo: includeAnchor ? anchor - 1 : keepThroughSeq, shadowedSeqs: seqs, shadowedRange }
                 appendReplace(liveWritable, 'user/message', {
                   id: `dsht-rp-${isEdit ? 'edit' : 'rollback'}-${randomUUID()}`,
                   role: 'user',
                   content: [{ type: 'text', text: markerText }],
                   source: markerSource('dsht-rp', 'surgical', markerPayload as unknown as Record<string, unknown>),
                 }, { start, end }, seqs)
-                logLine(`${isEdit ? 'session-edit' : 'session-rollback'}(live): ${sessionId} 锚 seq ${anchor} → replace [${start},${end}] ${seqs.length} 事件；变量回滚 ${undo.restored} 条`)
+                logLine(`${isEdit ? 'session-edit' : 'session-rollback'}(live): ${sessionId} 锚 seq ${anchor} → replace [${start},${end}] ${seqs.length} 事件；连带范围 [${shadowedRange.start},${shadowedRange.end}]；变量回滚 ${undo.restored} 条`)
                 console.log(`[dsht-rp] ${isEdit ? 'session-edit' : 'session-rollback'}: ${sessionId} (live) replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`)
                 // 【B3 2026-09-14 三条路径对齐】文件快照整批回滚——**live 分支此前完全缺失**。
                 // 判据（goal 轨道 B / B3）：rollback / regenerate / edit 的连带状态必须一致
@@ -5794,6 +5847,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 }
                 // 【2026-09-08 鲁棒性】undo 回放挪到 claim 之前（紧邻铁律，同 session-rollback）
                 const anchorTime = typeof anchorEv.time === 'number' ? anchorEv.time : Date.now()
+                // 【2026-09-19 回退连带面修复】连带范围（同 rollback/edit 的 live 分支）
+                const evSnapForRange = sessionEventsSnapshot(live)
+                const shadowedRange = { start: turnStartSeqFor(evSnapForRange, anchorEv.seq), end: maxEventSeq(evSnapForRange) }
                 const undo = await replayUndoLog(dshHome, sessionId, anchorTime)
                 liveAppend('compaction/prune', { shadowedRange: { start, end }, shadowedSeqs: seqs, shadowedTokenCount: shadowed })
                 const markerText = `[重新生成中] 该消息此前的回复已从上下文移除，正在以原消息重新生成。`
@@ -5802,9 +5858,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                   id: `dsht-rp-regenerate-${randomUUID()}`,
                   role: 'user',
                   content: [{ type: 'text', text: markerText }],
-                  source: markerSource('dsht-rp', 'surgical', { regeneratedFrom: anchorEv.seq, shadowedSeqs: seqs }),
+                  source: markerSource('dsht-rp', 'surgical', { regeneratedFrom: anchorEv.seq, shadowedSeqs: seqs, shadowedRange }),
                 }, { start, end }, seqs)
-                logLine(`session-regenerate(live): ${sessionId} 锚 seq ${anchorEv.seq} → replace [${start},${end}] ${seqs.length} 事件；变量回滚 ${undo.restored} 条`)
+                logLine(`session-regenerate(live): ${sessionId} 锚 seq ${anchorEv.seq} → replace [${start},${end}] ${seqs.length} 事件；连带范围 [${shadowedRange.start},${shadowedRange.end}]；变量回滚 ${undo.restored} 条`)
                 console.log(`[dsht-rp] session-regenerate: ${sessionId} (live) anchor=${anchorEv.seq} replace[${start},${end}] n=${seqs.length} undoRestored=${undo.restored}`)
                 // 【B3 2026-09-14 三条路径对齐】文件快照整批回滚（与 rollback/edit 的 live 分支同款）。
                 // 判据：三条路径的连带状态必须一致；此前 live 分支只有 rollback/regenerate 的
@@ -5892,13 +5948,15 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               // （逻辑回退/编辑/重新生成的 live 分支成功后会 clear 本缓存——见下）
               let hide = 0
               const hidden = new Set<number>()
+              // 【2026-09-19】连带范围集合（每次回退/编辑/重生成一条）——见 payload.shadowedRange
+              const ranges: Array<{ start: number; end: number }> = []
               const hit = (await scanSessionHeaders()).find(h => h.sessionId === sessionId)
               if (hit) {
                 const file = hit.file
                 const fm = await stat(file).then(s => ({ size: s.size, mtimeMs: s.mtimeMs })).catch(() => null)
                 const cached = rollbackMaskCache.get(file)
                 if (fm !== null && cached !== undefined && cached.size === fm.size && cached.mtimeMs === fm.mtimeMs) {
-                  return send(200, { hideAfter: cached.hide, hiddenSeqs: cached.seqs })
+                  return send(200, { hideAfter: cached.hide, hiddenSeqs: cached.seqs, hiddenRanges: cached.ranges })
                 }
                 const content = await readFile(file, 'utf8')
                 // 【阶段4 2026-09-11 修复 · 静默失败族】原实现**只读 source 顶层**的
@@ -5923,6 +5981,13 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                     for (const q of payload.shadowedSeqs ?? []) hidden.add(q)
                     // edit 语义 = 锚消息本身也移出 → 把它并入集合（阈值路径下靠 editedFrom-1 表达）
                     if (typeof payload.editedFrom === 'number') hidden.add(payload.editedFrom)
+                    // 【2026-09-19】连带范围：harness 运行过程节点（系统提示词 / 上下文注入 /
+                    // 本轮运行失败）的锚不是 surface 事件 seq（见 session-write.ts 的字段注释），
+                    // 逐条 seq 集合拦不住它们，只能靠区间判定。
+                    if (payload.shadowedRange !== undefined) {
+                      const dup = ranges.some(r => r.start === payload.shadowedRange!.start && r.end === payload.shadowedRange!.end)
+                      if (!dup) ranges.push(payload.shadowedRange)
+                    }
                   } catch { /* 坏行跳过 */ }
                 }
                 // 【2026-09-14 F2】删除了原「marker 之后出现新用户消息 → hide 归零」补丁。
@@ -5944,9 +6009,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                     } catch { /* 坏行跳过 */ }
                   }
                 }
-                if (fm !== null) rollbackMaskCache.set(file, { ...fm, hide, seqs: [...hidden] })
+                if (fm !== null) rollbackMaskCache.set(file, { ...fm, hide, seqs: [...hidden], ranges: [...ranges] })
               }
-              return send(200, { hideAfter: hide, hiddenSeqs: [...hidden] })
+              return send(200, { hideAfter: hide, hiddenSeqs: [...hidden], hiddenRanges: [...ranges] })
             }
             // ---- R19：/rp/import-reset —— 清空 RP 相关数据（zip 重导重置；前端弹窗确认后调）----
             // （/rp/session-edit 已并入 R18 双路径：live 逻辑回退 + 非 live 文件截断）

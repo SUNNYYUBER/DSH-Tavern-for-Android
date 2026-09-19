@@ -294,12 +294,29 @@ export function readLegacySourceKeys(source: unknown): LegacySourceKeys {
  * dsh-plugin 的 /rp/rollback-mask、dsht-plugin-memory 的 extractFloorsFromEvents、
  * dsht-rp-ui 的 hideAfterOf（后者已废弃恒 0，权威来源是前者路由）。
  */
+/** 被移除的**整轮**事件 seq 区间（含非 surface 事件）。 */
+export interface ShadowedRange {
+  /** 该轮起点 = turn/start 的 seq（**早于**用户消息——真实会话实证：turn/start 先写、
+   *  user/message 后写；故不能用用户消息 seq 当区间起点）。 */
+  start: number
+  /** 回退那一刻日志的最大 seq（**有界**是必须的：无界阈值会把回退之后新发的内容一起隐掉）。 */
+  end: number
+}
+
 export interface SurgicalPayload {
   rolledBackTo?: number
   regeneratedFrom?: number
   editedFrom?: number
   variantOf?: number
   shadowedSeqs?: number[]
+  /**
+   * 【2026-09-19 回退连带面修复】shadowedSeqs 只含 **surface 事件**
+   * （user/message、assistant/message、tool/result），而 harness 的运行过程节点
+   * （`system-prompt` 系统提示词、`context` 上下文注入、`turn-error` 本轮运行失败）
+   * 的 anchorSeq **不在**其中——它们的锚分别落在 `request/header`、注入用的 user/message、
+   * `turn/end` 上，而这些事件的 seq 只被本区间表达。用户实测：回退后这些行仍留在会话流里。
+   */
+  shadowedRange?: ShadowedRange
 }
 
 /**
@@ -328,6 +345,15 @@ export function readSurgicalPayload(source: unknown): SurgicalPayload {
     if (out.shadowedSeqs === undefined && Array.isArray(o.shadowedSeqs)) {
       const nums = o.shadowedSeqs.filter((n): n is number => typeof n === 'number')
       if (nums.length > 0) out.shadowedSeqs = nums
+    }
+    if (out.shadowedRange === undefined) {
+      const r = o.shadowedRange
+      if (r !== null && typeof r === 'object' && !Array.isArray(r)) {
+        const rr = r as { start?: unknown; end?: unknown }
+        if (typeof rr.start === 'number' && typeof rr.end === 'number' && rr.end >= rr.start) {
+          out.shadowedRange = { start: rr.start, end: rr.end }
+        }
+      }
     }
   }
   merge(readMarker<SurgicalPayload>(source, 'surgical')) // ① 0.1.5 写侧当前形态
@@ -412,4 +438,8 @@ export interface SurgicalMarkerPayload {
   variantOf?: number
   /** 被本标记移出模型上下文的 surface 节点（供 UI/统计复原） */
   shadowedSeqs?: number[]
+  /** 【2026-09-19】被本标记移除的**整轮**事件区间（含非 surface 事件）——
+   *  harness 运行过程节点（系统提示词 / 上下文注入 / 本轮运行失败）的锚不在
+   *  shadowedSeqs 里，UI 靠本区间把它们一并隐藏。 */
+  shadowedRange?: ShadowedRange
 }

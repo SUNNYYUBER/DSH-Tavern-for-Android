@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { ensureStyle } from './style.ts'
 import { installHostVendor, installHostFontAwesome, installHostToastr, installHostSillyTavern, ensureStRegexAnchor } from './host-vendor.ts'
 import { RpOverlay, RP_OPEN_EVENT } from './RpOverlay.tsx'
-import { RpAssistantNodeView, RpRegenerateAction, RpUserNodeView, RpTurnErrorView, RpVariantActions, notifyDisplayMutation } from './RpNativeChat.tsx'
+import { RpAssistantNodeView, RpContextNodeView, RpRegenerateAction, RpSystemPromptNodeView, RpUserNodeView, RpTurnErrorView, RpVariantActions, notifyDisplayMutation } from './RpNativeChat.tsx'
 import { RpPresetSwitch } from './RpPresetSwitch.tsx'
 import { RpImportDockEntry } from './RpImportDock.tsx'
 import { RpGreetingDock } from './RpGreetingDock.tsx'
@@ -335,6 +335,22 @@ export function apply(ctx: {
   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register(
     { name: 'conversation.chat.node', key: 'turn-error', priority: -1 },
     RpTurnErrorView,
+  ))
+
+  // 【2026-09-19 回退连带面修复】system-prompt / context 节点 shadowing：官方这两行
+  // **不认回退掩码**——它们的锚不是 surface 节点（system-prompt 锚在 turn/start、context
+  // 锚在注入事件本身），回退写的 shadowedSeqs 里没有它们 ⇒ 用户实测：回退后「系统提示词 /
+  // 上下文注入」仍留在会话流里。本层接管后：命中回退区间 → 返回 null（同 user/assistant-step
+  // 的隐藏）；其余情况按同样信息量重绘（默认折叠一行 + 展开看正文）。拔插件官方 view 复位。
+  // @adapt contract:slots.conversation.chat.node
+  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register(
+    { name: 'conversation.chat.node', key: 'system-prompt', priority: -1 },
+    RpSystemPromptNodeView,
+  ))
+  // @adapt contract:slots.conversation.chat.node
+  ctx.slots.inject('conversation.chat.node', () => ctx.slots.register(
+    { name: 'conversation.chat.node', key: 'context', priority: -1 },
+    RpContextNodeView,
   ))
 
   // T2.5c：变体条 ‹ n/m › → assistant-actions list 席位（IconActions 行内，copy 与 branch 之间）

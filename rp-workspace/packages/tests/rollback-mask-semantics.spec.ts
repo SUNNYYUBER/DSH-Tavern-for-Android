@@ -22,6 +22,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { readSurgical, readSurgicalPayload } from '../src/dsht-plugin-shared/session-write.ts'
+import { maxEventSeq, turnStartSeqFor } from '../src/dsh-plugin/index.ts'
 
 /** 构造官方白名单形态的 marker source（与写侧 markerSource 同形） */
 function markerSource(kind: string, payload: Record<string, unknown>): Record<string, unknown> {
@@ -110,24 +111,35 @@ describe('readSurgical（共享层单源读法）', () => {
 /** 前端 `isSeqHidden` 的等价实现（保持与 RpNativeChat.tsx 同判据）。
  *  这里镜像一份是为了让判据本身可被单测直接钉住——若源码里改了语义而此处没改，
  *  「回退后重发旧楼层复活」这条测试会立刻变红（见下方回归护栏）。 */
-interface MaskState { hidden: ReadonlySet<number>; hideAfter: number }
+interface MaskState {
+  hidden: ReadonlySet<number>
+  /** 【2026-09-19】连带范围（含非 surface 事件；harness 运行过程行靠它隐藏） */
+  ranges: ReadonlyArray<{ start: number; end: number }>
+  hideAfter: number
+}
 function isSeqHidden(mask: MaskState, seq: number | undefined): boolean {
   if (seq === undefined) return false
+  for (const r of mask.ranges) if (seq >= r.start && seq <= r.end) return true
   if (mask.hidden.size > 0) return mask.hidden.has(seq)
+  if (mask.ranges.length > 0) return false
   return mask.hideAfter > 0 && seq > mask.hideAfter
 }
 
-/** 后端「由 marker 事件算出掩码」的等价实现（集合优先；阈值降级仅在无集合时生效） */
+/** 后端「由 marker 事件算出掩码」的等价实现（集合 + 区间优先；阈值降级仅在两者皆空时生效） */
 function maskFromMarkers(events: Array<{ seq: number; type: string; data: unknown }>): MaskState {
   const hidden = new Set<number>()
+  const ranges: Array<{ start: number; end: number }> = []
   let hide = 0
   for (const ev of events) {
     const { anchor, payload } = readSurgical(ev)
     if (anchor !== null) hide = Math.max(hide, anchor)
     for (const q of payload.shadowedSeqs ?? []) hidden.add(q)
     if (typeof payload.editedFrom === 'number') hidden.add(payload.editedFrom)
+    if (payload.shadowedRange !== undefined) ranges.push(payload.shadowedRange)
   }
-  return hidden.size > 0 ? { hidden, hideAfter: 0 } : { hidden: new Set<number>(), hideAfter: hide }
+  return (hidden.size > 0 || ranges.length > 0)
+    ? { hidden, ranges, hideAfter: 0 }
+    : { hidden: new Set<number>(), ranges: [], hideAfter: hide }
 }
 
 describe('掩码语义：集合优先、阈值降级', () => {
@@ -155,6 +167,119 @@ describe('掩码语义：集合优先、阈值降级', () => {
     ])
     for (const q of [42, 43, 91, 92]) expect(isSeqHidden(mask, q)).toBe(true)
     expect(isSeqHidden(mask, 50)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 【2026-09-19 回退连带面修复】harness 运行过程行随轮一并回退
+// ---------------------------------------------------------------------------
+
+/**
+ * 用户实测（真机截图）：回退只回退了「我发的消息」，harness 的运行过程**没跟着退**——
+ * 会话流里残留「系统提示词」「上下文注入 · @deepseek-ai/dsh-system-prompt / skill-catalog」
+ * 「本轮运行失败 QUOTA」。
+ *
+ * 根因：这三类节点的**锚不是 surface 事件**——
+ *   · `system-prompt` 锚在 **turn/start**（真实会话实证：seq=6 **早于** 用户消息 seq=9）
+ *   · `context`（上下文注入）锚在注入事件自身
+ *   · `turn-error` 锚在失败事件（turn/end 一带）
+ * 而回退写入的 `shadowedSeqs` 只含 surface 节点（user/message、assistant/message、
+ * tool/result）⇒ 集合判据**结构上拦不住**它们（不是漏写，是判据面不够）。
+ *
+ * 正解：写侧额外记录 `shadowedRange`（该轮 turn/start seq → 回退那一刻日志末尾），
+ * 前端按区间判定。区间**有界**是关键——回退之后新发的内容 seq 必然更大，不受影响。
+ */
+describe('【回退连带面】harness 运行过程行随轮一并回退', () => {
+  /** 取自真实会话的事件坐标（turn/start 早于 user/message——本组测试的立足点） */
+  const TURN_START = 6
+  const USER_MSG = 9
+  const INJECT = 10
+  const TURN_END = 124
+
+  it('系统提示词（锚在 turn/start）：落在回退区间内 → 隐藏（集合判据拦不住的那条）', () => {
+    const mask = maskFromMarkers([userMarkerEvent(
+      { rolledBackTo: USER_MSG, shadowedSeqs: [USER_MSG, 122], shadowedRange: { start: TURN_START, end: TURN_END } },
+    )])
+    // 集合里**没有** turn/start —— 这正是修复前的漏网形态
+    expect(mask.hidden.has(TURN_START)).toBe(false)
+    // 区间判据把它连同注入/错误一起拦下
+    expect(isSeqHidden(mask, TURN_START)).toBe(true)
+    expect(isSeqHidden(mask, INJECT)).toBe(true)
+    expect(isSeqHidden(mask, TURN_END)).toBe(true)
+  })
+
+  it('同轮之前的内容不受影响（区间起点 = 该轮 turn/start，不回溯到上一轮）', () => {
+    const mask = maskFromMarkers([userMarkerEvent(
+      { rolledBackTo: USER_MSG, shadowedSeqs: [USER_MSG], shadowedRange: { start: TURN_START, end: TURN_END } },
+    )])
+    expect(isSeqHidden(mask, TURN_START - 1)).toBe(false)
+    expect(isSeqHidden(mask, 1)).toBe(false)
+  })
+
+  it('【负控】回退之后新发的内容（seq > 区间终点）正常显示——有界性的意义', () => {
+    const mask = maskFromMarkers([
+      userMarkerEvent({ rolledBackTo: USER_MSG, shadowedSeqs: [USER_MSG], shadowedRange: { start: TURN_START, end: TURN_END } }),
+      { seq: 200, type: 'user/message', data: { source: { kind: 'user' } } },
+    ])
+    expect(isSeqHidden(mask, 200)).toBe(false)
+    expect(isSeqHidden(mask, 201)).toBe(false)
+  })
+
+  it('区间缺失（存量会话 / 旧标记）→ 行为与修复前一致（不误伤）', () => {
+    const mask = maskFromMarkers([userMarkerEvent({ rolledBackTo: 41, shadowedSeqs: [42, 43] })])
+    expect(mask.ranges).toEqual([])
+    expect(isSeqHidden(mask, 6)).toBe(false)
+  })
+
+  it('载荷读侧：非法 range（缺字段 / end < start）一律忽略，不落值', () => {
+    const bad1 = readSurgicalPayload({ sections: [{ name: 'dsht:surgical', text: JSON.stringify({ shadowedRange: { start: 10 } }) }] })
+    const bad2 = readSurgicalPayload({ sections: [{ name: 'dsht:surgical', text: JSON.stringify({ shadowedRange: { start: 10, end: 5 } }) }] })
+    const good = readSurgicalPayload({ sections: [{ name: 'dsht:surgical', text: JSON.stringify({ shadowedRange: { start: 6, end: 124 } }) }] })
+    expect(bad1.shadowedRange).toBeUndefined()
+    expect(bad2.shadowedRange).toBeUndefined()
+    expect(good.shadowedRange).toEqual({ start: 6, end: 124 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 【2026-09-19】写侧区间计算：turnStartSeqFor / maxEventSeq
+// ---------------------------------------------------------------------------
+
+describe('回退连带范围的计算（写侧纯函数）', () => {
+  const evs = [
+    { type: 'permission/preset', seq: 0 },
+    { type: 'turn/start', seq: 6 },
+    { type: 'step/start', seq: 8 },
+    { type: 'user/message', seq: 9 },
+    { type: 'request/header', seq: 11 },
+    { type: 'assistant/message', seq: 122 },
+    { type: 'turn/end', seq: 124 },
+    { type: 'turn/start', seq: 125 },
+    { type: 'user/message', seq: 130 },
+    { type: 'turn/end', seq: 200 },
+  ]
+
+  it('锚（用户消息）所在轮的 turn/start —— 早于锚，取的是**打开中**的那个轮', () => {
+    expect(turnStartSeqFor(evs, 9)).toBe(6)
+    expect(turnStartSeqFor(evs, 130)).toBe(125)
+  })
+
+  it('上一轮已关闭 → 不得回落到上一轮的 start（闭合即换锚）', () => {
+    expect(turnStartSeqFor(evs, 130)).not.toBe(6)
+    expect(turnStartSeqFor(evs, 122)).toBe(6)
+  })
+
+  it('无 turn 配对信息（存量 / 异常日志）→ 退回锚自身（与修复前逐字同行为）', () => {
+    expect(turnStartSeqFor([{ type: 'user/message', seq: 9 }], 9)).toBe(9)
+    expect(turnStartSeqFor([], 42)).toBe(42)
+  })
+
+  it('maxEventSeq 取最大数字 seq（忽略无 seq 的增量事件，如 chunk 批量行）', () => {
+    expect(maxEventSeq(evs)).toBe(200)
+    // 增量事件（assistant/chunk 批量行等）不带 seq —— 不得把它当成 0/NaN 参与比较
+    const withNoSeq: Array<{ seq?: unknown }> = [{ seq: 3 }, {}, { seq: undefined }]
+    expect(maxEventSeq(withNoSeq)).toBe(3)
+    expect(maxEventSeq([])).toBe(0)
   })
 })
 

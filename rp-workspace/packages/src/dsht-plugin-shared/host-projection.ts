@@ -361,6 +361,23 @@ export function readNodeSeq(data: unknown): number | undefined {
   return typeof data.seq === 'number' ? data.seq : undefined
 }
 
+/**
+ * 节点的**投影锚 seq**（`chatNode(context, kind, anchorSeq, …)` 的第 3 参；非 number ⇒ undefined）。
+ *
+ * 【2026-09-19 回退连带面修复】与 `readNodeSeq`（读 data.seq）不同：本函数读**节点信封**上的
+ * `anchorSeq`，它才是 harness 运行过程节点的"归属位置"——
+ *   · `system-prompt`（系统提示词）锚在 **turn/start**（真实会话实证：比用户消息还早）
+ *   · `context`（上下文注入）锚在注入事件自身的 seq
+ *   · `turn-error`（本轮运行失败）锚在失败事件（turn/end 一带）的 seq
+ * 这三者都**不是** surface 事件，回退写的 `shadowedSeqs` 里没有它们，
+ * 只有按本条 anchorSeq 落进回退区间才隐藏得掉（见 dsht-rp-ui 的 isSeqHidden）。
+ */
+export function readNodeAnchorSeq(node: unknown): number | undefined {
+  const n = node as { anchorSeq?: unknown } | null | undefined
+  if (n === null || n === undefined) return undefined
+  return typeof n.anchorSeq === 'number' && Number.isFinite(n.anchorSeq) ? n.anchorSeq : undefined
+}
+
 /** 节点 turn（唯一入口；非 number ⇒ `undefined`） */
 export function readNodeTurn(data: unknown): number | undefined {
   if (!isPlainObjectLike(data)) return undefined
