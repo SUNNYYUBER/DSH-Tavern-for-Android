@@ -45,7 +45,7 @@
  */
 import process from 'node:process'
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const argv = process.argv.slice(2)
@@ -120,20 +120,30 @@ if (ADB === null) {
 //   · 纯文本卡（轻脚本）     · 纯文本卡（重文本量）
 //   · 带内嵌正则的卡          · MVU 系（依赖变量树）
 //   · 重前端卡（带脚本 UI 的卡：正则条数多 / 依赖 TH 桥）
-const PREFER = [
-  // [类别] 纯文本卡（重文本量：3.7MB，crmeek 工作区「孤独摇滚」）
-  'st-n0gnfp',
-  // [类别] 纯文本卡（重文本量：3.6MB，ydha7f 工作区「某卡」）
-  'st-clk9pd',
-  // [类别] MVU 系（「GBC mvu重制版」，绑全局世界书 GBC mvu）
-  'st-1q84arh',
-  // [类别] 带内嵌正则的卡（「万界收容所重置版」，11 条内嵌正则）
-  'st-vr2jg2',
-  // [类别] 重前端卡（「某卡二」，12 条内嵌正则 + 内嵌世界书）
-  'st-1jfywz9',
-]
+//
+// ★ 抽样清单来自**外部配置**（不入库）：`rp-workspace/.m7-cards.json`
+//   `{ "cards": ["<sid1>", "<sid2>", ...] }`
+// ★ 为什么外置（T-25b 发布卫生）：SID 是**本机设备上的会话标识** ——
+//   硬编码在脚本里既对别人无用（他们设备上没有这些会话），又暴露了本机抽样清单。
+//   缺失时明确提示怎么补（**不静默降级**，P-3）。
+function loadPreferredCards () {
+  const p = fileURLToPath(new URL('../.m7-cards.json', import.meta.url))
+  try {
+    const j = JSON.parse(readFileSync(p, 'utf8'))
+    return Array.isArray(j.cards) ? j.cards.filter(s => typeof s === 'string' && s) : []
+  } catch { return [] }
+}
+const PREFER = loadPreferredCards()
 const CARDS = AUTO ? PREFER : flag('--cards', '').split(',').map(s => s.trim()).filter(Boolean)
-if (CARDS.length === 0) { console.error('用法：--cards <sid1,sid2,...> 或 --auto'); process.exit(2) }
+if (CARDS.length === 0) {
+  console.error('用法：--cards <sid1,sid2,...> 或 --auto')
+  if (AUTO) {
+    console.error('  --auto 需要抽样清单：rp-workspace/.m7-cards.json')
+    console.error('    格式：{"cards":["<sid1>","<sid2>"]}')
+    console.error('    取 SID：adb shell run-as com.dshtavern.app ls files/.dsh/sessions/*/')
+  }
+  process.exit(2)
+}
 
 /**
  * 【判据自身的坑（P-19）· 第三十二次】CDP 不可达时必须给**可读**的失败，

@@ -202,7 +202,7 @@ def main():
     args = [a for a in sys.argv[1:] if a.strip()]
     if not args:
         print(__doc__)
-        print('示例: python card-disinfector.py "ExampleGame ExampleWorld MVU Edition.json"')
+        print('示例: python card-disinfector.py "ExampleCard MVU Edition.json"')
         return
     for a in args:
         process(Path(a))

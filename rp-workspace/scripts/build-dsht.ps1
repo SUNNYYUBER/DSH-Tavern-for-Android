@@ -55,6 +55,17 @@ Write-Host "  node=$nodeVer JAVA_HOME 已设 OK"
 }
 
 # ---------------------------------------------------------------------------
+# Step 0.1 原生库就位检查（T-25b）—— 【为什么在这一层】
+#   `jniLibs/<abi>/*.so`（14 个、约 100MB）是**第三方二进制**（Termux deb 提取，
+#   含 GPLv2 的 proot/busybox）。本仓库**不再分发**它们 ⇒ 构建前必须先就位，
+#   否则 gradle 会拖到**打包末期**才失败（晚失败 = 白跑整轮构建）。
+#   ★ 获取脚本自带 deb 级 SHA256 校验，可**完整重建**（实测逐字节一致）。
+& node (Join-Path $ws 'scripts\fetch-native-libs.mjs') --check
+if ($LASTEXITCODE -ne 0) {
+    throw "原生库缺失（jniLibs/*.so）—— 见上方清单。补齐：node rp-workspace/scripts/fetch-native-libs.mjs"
+}
+
+# ---------------------------------------------------------------------------
 # Step 0.5 门禁前置（**十三项常驻审计**）——【2026-09-14 E-H 一致性审计修复】
 #
 # ## 为什么必须加在这一层（而不是只留在 build-wb.sh）

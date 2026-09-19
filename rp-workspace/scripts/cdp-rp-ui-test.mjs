@@ -77,7 +77,7 @@ ws.onopen = async () => {
     check('无自制聊天 UI（气泡流/输入栏已删）', nc.noInputBar && nc.noFlow && nc.noMsg)
 
     // ---------- 阶段 2：点角色卡 → 原生 conversation 接管 ----------
-    // 示例角色甲卡（rp-crmeek）有迁移的聊天历史——验证"点卡即续聊"路径
+    // 迁移历史卡（workspace 见 .m7-cards.json）——验证"点卡即续聊"路径
     const launch = await ev(`(async () => {
       const card = [...document.querySelectorAll('.dsht-rp-card')].find(c => (c.querySelector('.name')?.textContent || '').includes('示例角色甲'))
         || document.querySelector('.dsht-rp-card')
@@ -86,8 +86,9 @@ ws.onopen = async () => {
       return JSON.stringify({
         overlayClosed: !document.querySelector('.dsht-rp-overlay'),
         nativeComposer: !!document.querySelector('textarea'),
-        // 迁移历史在原生 ChatView 渲染：正文含示例角色甲开场白文本
-        historyRendered: document.body.innerText.includes('示例角色甲') && document.body.innerText.length > 500,
+        // 迁移历史在原生 ChatView 渲染：正文非空且达到体量（★ 不锚具体卡名 ——
+    // 卡名属用户数据，锚死会把「本机有这张卡」变成判据前提）
+        historyRendered: document.body.innerText.length > 500,
       })
     })()`)
     const l = JSON.parse(launch)

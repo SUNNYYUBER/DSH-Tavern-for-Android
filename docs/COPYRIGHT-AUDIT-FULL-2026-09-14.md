@@ -171,7 +171,7 @@ messageFormatting L1845-1871」——属**引号对清单**（数据表），程
 | P1 | `scripts/audit-card-context-surface.mjs:27,32` | `D:/SillyTavern-1.16.0/TauriTavern-Canary/...` | 🟠 本机绝对路径 |
 | P2 | `scripts/audit-card-event-surface.mjs:38` | `D:/SillyTavern-1.16.0/TauriTavern-Canary/SillyTavern-reference` | 🟠 本机绝对路径 |
 | P3 | `scripts/gen-st-event-types.mjs:15,23` | 同上（缺省源路径） | 🟠 本机绝对路径 |
-| P4 | `scripts/audit-publish-hygiene.mjs:262` | `C:\Users\Administrator\...` | ✅ **合法**（是扫描器自身的合成样本，用于 `--selftest` 正控） |
+| P4 | `scripts/audit-publish-hygiene.mjs:262` | `C:\Users\<示例用户名>\...` | ✅ **合法**（是扫描器自身的合成样本，用于 `--selftest` 正控） |
 
 **说明**：P1~P3 之所以未被 hygiene 闸门拦下，是因为闸门扫描的是
 `git ls-files ∩ 文本文件`，而这三个脚本**在跟踪列表内**——

@@ -97,3 +97,19 @@ rp-workspace/scripts/publish-hygiene-words.txt
 # 脱敏映射表（原词→占位名）：同词表性质，属「扫描/清洗工具自身」——
 # 入库等于制造新的泄露副本（自指悖论），故不入库。
 rp-workspace/scripts/publish-hygiene-map.txt
+
+# 【T-25b】M7 抽样清单（SID = 本机设备会话标识，不入库）
+rp-workspace/.m7-cards.json
+
+# 【T-25b】第三方库打包产物（构建期由 scripts/build-rp-ui.mjs 生成，可从 npm 重建）
+#   jQuery / jQuery-UI / lodash / yaml / zod 的 iife 源码字符串 —— 共 1.47MB
+#   许可见 docs/THIRD_PARTY_LICENSES.md（MIT/ISC）；产物不必入库。
+*.gen.txt
+
+# 【T-25b 2026-09-19】原生库（**第三方二进制**，约 100MB / 14 个 .so）
+#   来源：Termux 官方源 deb（libnode=MIT · libproot/libbusybox=GPLv2 · libcares/libffi=MIT
+#         · libc++_shared=Apache-2.0 WITH LLVM-exception · libsqlite3=Public Domain）
+#   获取：node rp-workspace/scripts/fetch-native-libs.mjs（带 SHA256 校验，可完整重建）
+#   ★ 不入库的理由：本仓库**不分发**任何第三方二进制 ⇒ 不承担 GPL 的再分发义务
+#     ⇒ 本项目的 MIT 许可不受影响（法律说明见 docs/THIRD_PARTY_LICENSES.md）
+rp-workspace/android/app/src/main/jniLibs/**/*.so

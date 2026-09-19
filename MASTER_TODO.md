@@ -2357,7 +2357,7 @@ Y700 五代（1904/2.75≈692dp，8.8" 3040×1904 @408ppi）——聊天 + overl
 - **staging→manifest→preview 全链路通过**：`kind=st-data` ✓；preview 语义分类
   22 卡（顶层真卡）/39 书/21 聊/8 预设/123 EJS 模板/1 丢弃项（backups 目录，设计内
   ——源 zip 本身就是备份）；manifest 计数 52 卡含表情差分子目录 PNG（口径差异非漏识别，
-  `default_Seraphina` 为 ST 示例卡）；chats 归属匹配三键外的目录走 rp/_orphan 待认领
+  `default_Seraphina` 为 ST 官方示例卡）；chats 归属匹配三键外的目录走 rp/_orphan 待认领
   （数据不丢）。
 - inbox 识别（DSHTShare.readSharedInbox）验证 ✓；kickoff（适配 agent + LLM）为既有
   流程未重跑。堆上限 512→1024→**2048**（12.38MB jsonl 会话 history 对象树实测锚定：
@@ -2990,13 +2990,13 @@ TT 聊天记录看不到包装，是因为 `promptOnly: true` **只在生成期�
 ### 2.3 已拍板的五件事（②收益最大先做，其余互相独立可穿插）
 
 **① 角色卡人设迁回工作区【✅ 已完成并验证（2026-09-03，选 B）】**
-- 问题：预设列表里的"陌路人""双子"其实是各角色卡的人设说明书，混在系统预设里。
+- 问题：预设列表里的某两条目其实是各角色卡的人设说明书，混在系统预设里。
 - 实现状态（代码早已就位 + 数据已清 + 2026-09-03 验证）：
   - 导入管线第四轮起不再产出卡说明书 agent preset（卡设定 → rp.json.promptPersona，
     dsh-export.ts L798）；dsh-plugin 启动时自愈迁移（promptPersona 回填 + 冗余 preset 删除，
     index.ts L1185-1236）；
   - 接线：pre-step 对 RP 会话把 rp.json.promptPersona（过宏引擎）作为 system 快照注入 ✓；
-  - 数据验证：全 DSH home 搜"陌路人/双子"零命中（存量已清）✓；预设列表只剩真预设
+  - 数据验证：全 DSH home 搜该两条目名零命中（存量已清）✓；预设列表只剩真预设
     （RP 预设 7 个 + agent 用户档案/风格预设）✓。
 - 做完的标志（已达成）：预设列表只剩真正的预设；每张卡的角色扮演行为不变（人设经
   工作区快照注入）。

@@ -37,7 +37,7 @@ export interface OutputProtocol {
 }
 
 export const PROTO_DEFAULT: OutputProtocol = {
-  actionTags: ['a', 'selection', 'selection'],
+  actionTags: ['a', 'selection'],
   wrapTags: ['content'],
   statusTags: ['status', 'statusbar', 'StatusBlock'],
   // draft：草稿/自检内容折叠块（批次修复：真机实测 <draft> 裸文本外露）

@@ -46,7 +46,7 @@ describe('hash36（导入/导出 id 的稳定哈希，单源）', () => {
 
   it('中文输入可用（角色卡名多为中文——这是本函数存在的原因）', () => {
     expect(hash36('示例游戏')).toBe(hash36('示例游戏'))
-    expect(hash36('示例游戏')).not.toBe(hash36('明朝'))
+    expect(hash36('示例游戏')).not.toBe(hash36('示例游戏二'))
   })
 
   it('输出恒为 base36 字符集（DSH 要求 id 是 kebab-case 安全字符）', () => {

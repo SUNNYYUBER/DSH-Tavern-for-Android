@@ -69,11 +69,20 @@
 | **ICU**（Node 内置） | Unicode License | Node.js | 宽松 |
 | **PDF.js**（经 `dsh-client-ui-sidebar-documentpreview` 内嵌） | Apache-2.0 | DSH 官方包 | 文件头保留完整 license notice |
 
+> **★ 分发层级说明（T-25b 2026-09-19）**：上表这些二进制**曾随本仓库入库**（14 个 `.so`，约 100MB），
+> 现已改为**构建期获取** —— `rp-workspace/scripts/fetch-native-libs.mjs`
+> 从 Termux 官方源 deb 提取 + **逐包 SHA256 校验**（可完整重建，实测逐字节一致）
+> ⇒ **Git 仓库本体不分发任何第三方二进制**。
+> ★★ **但 APK 产物仍然包含它们**（技术必需：SELinux 只允许从 `nativeLibraryDir` 执行）
+> ⇒ 下面 §5 的义务分析**依然适用**。两条分属**不同层级**（仓库 / 产物），不要混淆 ——
+> 「仓库不分发」不等于「产物不分发」。
+
 ## 5. ⚠️ busybox（GPL-2.0）的合规处置
 
 **事实**：`rp-workspace/android/**/jniLibs/*/libbusybox.so`（实为 busybox 二进制改名，
-因 SELinux 只允许从 `nativeLibraryDir` 执行）随 APK 分发。GPL-2.0 要求随分发
-**提供对应源码，或提供获取源码的书面要约**。
+因 SELinux 只允许从 `nativeLibraryDir` 执行）**随 APK 分发**
+（★ 该文件**不在 Git 仓库里**，构建期由 `fetch-native-libs.mjs` 从 Termux deb 提取）。
+GPL-2.0 要求随分发**提供对应源码，或提供获取源码的书面要约**。
 
 **我们的处置**：
 
