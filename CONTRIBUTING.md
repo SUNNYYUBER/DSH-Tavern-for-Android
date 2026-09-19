@@ -2,8 +2,10 @@
 
 **中文** ｜ [English](#english)
 
-**Issue 开着，欢迎提。**
-**Pull Request 不直接合并**——个人业余项目，我一个人 review 不过来，也担不起合并后的责任。想合回来：提 Issue 把改动讲清楚，我会自己重写一遍。
+**Issue 与 Pull Request 都欢迎提。**
+
+- **Issue**：报 bug（附设备型号、Android 版本、复现步骤）或讨论想法
+- **PR**：直接提。维护者评审与合并，合并前可能请你改几轮
 
 ## 你可以做什么
 
@@ -20,13 +22,12 @@
 
 ## 请不要做
 
-- 提 PR 后等合并（不直接合，见上面）
 - 发邮件或私信催修（没有响应时限）
 - 在别处替我承诺支持
 
 ## 改出了有价值的东西
 
-Fork 后自己发布就行，不必回馈上游。想让我知道的话提个 Issue，我尽量看。
+提 PR 贡献回来，或者 Fork 自行发布（MIT 允许，不必回馈上游）。
 
 ## 规则会变吗
 
@@ -38,8 +39,10 @@ Fork 后自己发布就行，不必回馈上游。想让我知道的话提个 Is
 
 [中文](#贡献说明) ｜ **English**
 
-**Issues are open — welcome.**
-**Pull Requests are not merged directly** — this is a solo spare-time project; I can't keep up with reviews and can't take responsibility for merged code. To contribute a change: open an Issue describing it, and I'll re-implement it myself.
+**Issues and Pull Requests are both welcome.**
+
+- **Issues**: report bugs (include device model, Android version, repro steps) or discuss ideas
+- **PRs**: open them directly. Maintainers review and merge; you may be asked for a few rounds of changes
 
 ## What you can do
 
@@ -56,13 +59,12 @@ None of the following needs my permission (MIT license, see [LICENSE](LICENSE)):
 
 ## Please don't
 
-- Open a PR and wait for merge (not merged directly, see above)
 - Email or DM to hurry fixes (no response-time guarantee)
 - Promise support on my behalf elsewhere
 
 ## If you built something valuable
 
-Publish your own fork — no need to give back. If you want me to know, open an Issue; I'll look when I can.
+Contribute it back as a PR, or publish your own fork (MIT allows it; no need to give back).
 
 ## Will this change?
 

@@ -36,7 +36,7 @@ class NodeService : Service() {
         private const val RUNTIME_DIR = "dsh-runtime"
         private const val RUNTIME_ZIP = "dsh-runtime.zip"
         /** 解压哨兵：§4.16.2 前端 dsht-rp-ui client 变更随 runtime.zip 重发布 → v97（覆盖安装强制重解压） */
-        private const val RUNTIME_SENTINEL = ".installed-v364"
+        private const val RUNTIME_SENTINEL = ".installed-v365"
         private const val DSH_PORT = 3080
         private const val OUTPUT_CAP = 200
         private const val PROOT_ROOTFS_DIR = "proot-rootfs"
@@ -311,6 +311,10 @@ class NodeService : Service() {
             val mobilePkgJson = "{\"name\":\"dsht-plugin-mobile\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"exports\":{\".\":\"./lib/index.js\",\"./client\":\"./lib/client.js\",\"./package.json\":\"./package.json\"},\"dsh\":{\"client\":{\"platform\":\"web\",\"external\":[\"@deepseek-ai/dsh-client-ui-layout\"]}}}"
             copyPackage(webProfile, "dsht-plugin-mobile", "lib/index.js", mobilePkgJson)
             copyPackage(webProfile, "dsht-plugin-mobile", "lib/client.js", mobilePkgJson)
+            // dsh-preset-enhance（bychv，MIT）：完整 npm 包形态（lib/ web/ agent-mode/ + 原样 package.json），
+            // 整包树同步；注入面 = llm/stream 消息编译（与 RP 的 pre-step 快照管线默认不冲突：
+            // 它只在会话被显式启用或命中自动启用模式时编译，默认配置下两边各管各的会话）
+            copyPackageTree(webProfile, "dsh-preset-enhance")
             // 2. patch 写入（按包名逐个补齐 insert 行——已有安装升级时旧块不动，
             //    缺失的行以新的顶层 - insert 列表追加，cordis patch 允许多个 insert 操作）
             val pluginRows = listOf(
@@ -320,6 +324,7 @@ class NodeService : Service() {
                 "dsht-prompt-template" to "dsht-plugin-prompt-template",
                 "dsht-mobile" to "dsht-plugin-mobile",
                 "dsht-memory" to "dsht-plugin-memory",
+                "preset-enhance" to "dsh-preset-enhance",
             )
             val patch = File(webProfile, "cordis.patch.yml")
             // 旧布局清理：老安装 patch 里的 dsht-rp-ui 行指向已删除的包，必须摘除（loader 会报缺包）
@@ -454,6 +459,45 @@ class NodeService : Service() {
             }
         }
         if (copied > 0) recordLine("$pkgName/$dirRel copied to profile node_modules ($copied files)")
+    }
+
+    /**
+     * 整包拷贝（幂等：逐个文件字节比对，含 package.json）。
+     * 用于「完整 npm 包形态」的第三方插件（首个实例：dsh-preset-enhance，
+     * bychv/dsh-preset-enhance，MIT）——它与 copyPackage 的单产物形态不同：
+     * 包内有多层目录（lib/ web/ agent-mode/）且 package.json 必须原样保留
+     * （含 dsh.bundle.patch / dsh.client / engines 声明，不能由本服务硬编码重写）。
+     * 反向清理：源包消失（构建期移除）时清掉 profile 里的整包目录。
+     */
+    private fun copyPackageTree(webProfile: File, pkgName: String) {
+        val srcDir = File(filesDir, "dsh-runtime/node_modules/$pkgName")
+        val dstDir = File(webProfile, "node_modules/$pkgName")
+        if (!srcDir.isDirectory) {
+            if (dstDir.exists()) { dstDir.deleteRecursively(); recordLine("$pkgName removed from profile (source gone)") }
+            return
+        }
+        var copied = 0
+        srcDir.walkTopDown().filter { it.isFile }.forEach { srcFile ->
+            val rel = srcFile.relativeTo(srcDir).path
+            val dstFile = File(dstDir, rel)
+            var needCopy = !dstFile.exists() || dstFile.length() != srcFile.length()
+            if (!needCopy) {
+                needCopy = !srcFile.readBytes().contentEquals(dstFile.readBytes())
+            }
+            if (needCopy) {
+                dstFile.parentFile?.mkdirs()
+                srcFile.copyTo(dstFile, overwrite = true)
+                copied++
+            }
+        }
+        // 源里已删除的文件在 profile 侧同步清掉（版本升级减文件时不留残）
+        if (dstDir.isDirectory) {
+            dstDir.walkTopDown().filter { it.isFile }.forEach { dstFile ->
+                val rel = dstFile.relativeTo(dstDir).path
+                if (!File(srcDir, rel).exists()) { dstFile.delete(); copied++ }
+            }
+        }
+        if (copied > 0) recordLine("$pkgName tree synced to profile node_modules ($copied changes)")
     }
 
     /** 首启解压运行时；已安装则跳过（sentinel 标记）。 */

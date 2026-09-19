@@ -11,7 +11,10 @@ param(
     # 【双架构一致性】同一批源码构建的两个 ABI 应共享**同一个** RUNTIME_SENTINEL
     #（sentinel 语义 = "runtime 内容代次"，与架构无关）。缺省 0 = 照旧自增；
     # 双架构构建时第二次传第一次的最终值，两包即一致（否则每包 +1，装哪个都对不上）。
-    [int]$SentinelV = 0
+    [int]$SentinelV = 0,
+    # bychv/dsh-preset-enhance 的版本（MIT；预设机制外移的第一个外部包，见 docs/T-88 §五）。
+    # 与 DshVersion 同参数面：升级预设插件 = 重新构建（产物内容可复现，不靠运行时拉取）。
+    [string]$PresetEnhanceVersion = '0.3.2-rc.1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -756,7 +759,8 @@ if (-not $SkipInstall) {
     [IO.File]::WriteAllText("$runtimeSrc\package.json", (@"
 {
 	"dependencies": {
-		"@deepseek-ai/dsh": "$DshVersion"
+		"@deepseek-ai/dsh": "$DshVersion",
+		"dsh-preset-enhance": "$PresetEnhanceVersion"
 	}
 }
 "@))

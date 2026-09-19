@@ -56,12 +56,19 @@ monorepo 留在 `rp-workspace/packages/src/`，每个包独立构建产物、可
 - **安装形态**：`dsh plugin --profile web add dsht-plugin-mvu@<ver>` 单包可装；另出一个 **`dsht-rp-suite` 元包**（仅 dependencies 声明全套）保留 T-87「PC 端一行装齐」的诉求。
 - **发布权限**：在适配新版 DSH、包产物稳定之后再发首个 npm 版本；之前只保证「可独立 compose」（本地 file: 安装可用）。
 
-## 五、预设机制外移（联动项，适配 DSH 新版本时执行）
+## 五、预设机制外移（联动项；**第一步已于 2026-09-19 完成**）
 
-1. runtime 升级到 ≥ 0.1.5-rc.2（`build-dsht.ps1 -DshVersion`，与 bychv 包的 engines 对齐）。
-2. DSHTavern profile compose `dsh-preset-enhance`；**关掉** dsh-plugin 的预设快照管线（`withPresetLayer`），保留世界书 / 角色卡 persona / 正则 / 状态树分支。
+> **状态更新（2026-09-19）**：bychv 证实 rc.1 → rc.2 无破坏性更新（依赖集 72=72 完全一致，
+> 已用 npm 依赖对账实证），版本阻塞解除。`dsh-preset-enhance@0.3.2-rc.1` **已接入构建与部署**：
+> `build-dsht.ps1` 的 `-PresetEnhanceVersion` 参数（Step 1 依赖声明）+
+> `NodeService.copyPackageTree`（整包幂等同步）+ patch 新增 `preset-enhance` 行。
+> **默认配置下与 RP 的 pre-step 快照管线不冲突**（它只在会话被显式启用或命中自动启用
+> 模式时编译；RP 会话走我方快照）。以下第 2-4 步待真机验证后执行。
+
+1. ~~runtime 升级到 ≥ 0.1.5-rc.2~~（已解除：rc.1/rc.2 依赖集完全一致，bychv 包已在 rc.1 接入）
+2. **待真机验证后**：DSHTavern profile 的 RP 会话**关掉** dsh-plugin 的预设快照管线（`withPresetLayer`），保留世界书 / 角色卡 persona / 正则 / 状态树分支。
 3. **必须实测的兼容面**（调研结论，2026-09-19）：
-   - 注入冲突：同一预设不得被两条管线各注一遍（关我方快照后验证）
+   - 注入冲突：同一预设不得被两条管线各注一遍（RP 会话里手动 /preset on 后的行为要实测）
    - 模式选择：RP 场景用「普通模式 + 预设注入叠加」，**不用**其独占「预设模式」（它会移除身份 prompt，角色 persona 会丢）
    - 变量划界：预设宏 `setvar` 归其 store，MVU `UpdateVariable` 归 stat_data，实测互不干扰
    - DSML 工具转换 vs 酒馆助手桥接的 tool_calls 兼容性

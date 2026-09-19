@@ -211,9 +211,11 @@ DSH RolePlay/
 
 ## 反馈与贡献
 
-**Issue：欢迎提**（这是唯一的反馈入口，请附设备型号、Android 版本、复现步骤）。
-**Pull Request：暂不直接合并**——个人业余维护，承担不起评审与合并后的责任；想合回来请提 Issue 说明改动，我会自己重新实现。
-**想当共同开发者** → 提 Issue 说明你打算做什么，由我指定后加为 collaborator（直接提交权限）。
+**Issue 与 Pull Request 都欢迎提。**
+
+- **Issue**：报 bug（请附设备型号、Android 版本、复现步骤）或讨论想法
+- **PR**：直接提即可。评审与合并由维护者负责，合并前可能请你改几轮
+- 想当共同开发者 → 提 Issue 说明你打算做什么，由我指定后加为 collaborator（直接提交权限）
 
 落在 Tier 3 范围的不兼容是预期行为，不算 bug。
 
@@ -463,9 +465,11 @@ DSH RolePlay/
 
 ## Feedback & contributing
 
-**Issues are open and welcome** (the only feedback channel; include device model, Android version, repro steps).
-**Pull Requests are not merged directly** — a spare-time solo project can't afford review and post-merge responsibility; to contribute code, open an Issue describing the change and I'll re-implement it myself.
-**Want to be a co-developer** → open an Issue describing what you plan to do; once approved I'll add you as a collaborator (direct commit access).
+**Issues and Pull Requests are both welcome.**
+
+- **Issues**: report bugs (include device model, Android version, repro steps) or discuss ideas
+- **PRs**: open them directly. Maintainers review and merge; you may be asked for a few rounds of changes
+- Want to be a co-developer → open an Issue describing what you plan to do; once approved I'll add you as a collaborator (direct commit access)
 
 Tier 3 incompatibilities are expected behavior, not bugs.
 
