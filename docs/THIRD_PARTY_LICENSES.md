@@ -10,7 +10,8 @@
 >
 > **结论：全部打包组件均为宽松许可（MIT / ISC / BSD-3-Clause / Apache-2.0 / Python-2.0 /
 > MIT+GPL 双许可选 MIT），无 copyleft 代码与我们代码链接，可再分发。**
-> 唯一的 copyleft 组件是 busybox（GPL-2.0），以**独立可执行文件**形态随包分发
+> copyleft 组件（busybox / proot / git = GPL-2.0，bash / readline = GPL-3.0，
+> libiconv = LGPL-2.1）均以**独立可执行程序及其私有运行库**形态随包分发
 > （属「聚合」而非「衍生」），其义务见 §5。
 
 ## 1. DSH 官方运行时（DeepSeek 官方程序，APK 主体）
@@ -79,6 +80,15 @@
 | **busybox** | GPL-2.0 | Termux deb | ⚠️ **独立可执行文件**，未与我们代码链接（聚合分发）——义务见 §5 |
 | **ICU**（Node 内置） | Unicode License | Node.js | 宽松 |
 | **PDF.js**（经 `dsh-client-ui-sidebar-documentpreview` 内嵌） | Apache-2.0 | DSH 官方包 | 文件头保留完整 license notice |
+| **bash** 5.3.15 | GPL-3.0 | Termux deb | ⚠️ **独立可执行程序**（P1 能力补齐包；DSH bash 工具使用）——义务见 §5 |
+| **git** 2.55.0（含 libexec/git-core） | GPL-2.0 | Termux deb | ⚠️ **独立可执行程序**（P1；工作区快照/版本操作）——义务见 §5 |
+| **readline** 8.3.3 | GPL-3.0 | Termux deb | ⚠️ bash 私有运行库（仅被 GPL 的 bash 链接，随该独立程序聚合分发）——义务见 §5 |
+| **libiconv** 1.19 | LGPL-2.1 | Termux deb | bash/git 动态链接库（LGPL 允许动态链接；deb 原样未改，来源见 §5） |
+| **ncurses** 6.5 | MIT (X11) | Termux deb | readline 依赖库 |
+| **libandroid-support** 29 | Apache-2.0 (NDK) | Termux deb | bash 依赖库（bionic 补齐） |
+| **ripgrep** 15.2.0 | MIT / Unlicense | Termux deb | ⚠️ **独立可执行程序**（P1；fs-search 真 rg） |
+| **zstd** 1.5.7 | BSD-3-Clause | Termux deb | ⚠️ **独立可执行程序**（P1；会话日志压缩） |
+| **liblzma** 5.8.4 | Public Domain | Termux deb | zstd 依赖库 |
 
 > **★ 分发层级说明（T-25b 2026-09-19）**：上表这些二进制**曾随本仓库入库**（14 个 `.so`，约 100MB），
 > 现已改为**构建期获取** —— `rp-workspace/scripts/fetch-native-libs.mjs`
@@ -88,26 +98,40 @@
 > ⇒ 下面 §5 的义务分析**依然适用**。两条分属**不同层级**（仓库 / 产物），不要混淆 ——
 > 「仓库不分发」不等于「产物不分发」。
 
-## 5. ⚠️ busybox（GPL-2.0）的合规处置
+## 5. ⚠️ copyleft 组件（busybox / proot / git / bash / readline / libiconv）的合规处置
 
-**事实**：`rp-workspace/android/**/jniLibs/*/libbusybox.so`（实为 busybox 二进制改名，
-因 SELinux 只允许从 `nativeLibraryDir` 执行）**随 APK 分发**
-（★ 该文件**不在 Git 仓库里**，构建期由 `fetch-native-libs.mjs` 从 Termux deb 提取）。
-GPL-2.0 要求随分发**提供对应源码，或提供获取源码的书面要约**。
+**事实**：以下 copyleft 组件**随 APK 分发**
+（★ 均**不在 Git 仓库里**，构建期由 `fetch-native-libs.mjs` 从 Termux 官方源 deb 提取 + SHA256 校验）：
+
+| 组件 | 许可 | 形态 |
+|---|---|---|
+| busybox | GPL-2.0 | 独立可执行文件（`jniLibs/*/libbusybox.so` 改名，SELinux 只允许从 `nativeLibraryDir` 执行） |
+| proot | GPL-2.0 | 独立可执行文件（同上，`libproot.so`） |
+| git 2.55.0 | GPL-2.0 | 独立可执行程序（`runtime/bin/git` + `runtime/git-core/`；P1 能力补齐包） |
+| bash 5.3.15 | GPL-3.0 | 独立可执行程序（`runtime/bin/bash`；P1） |
+| readline 8.3.3 | GPL-3.0 | bash 的私有运行库（`runtime/lib/`，仅被 bash 链接） |
+| libiconv 1.19 | LGPL-2.1 | bash/git 的动态链接库（`runtime/lib/`） |
+
+GPL-2.0 / GPL-3.0 要求随分发**提供对应源码，或提供获取源码的书面要约**；
+LGPL-2.1 要求允许用户替换该库（本形态为动态链接 `.so`，天然可替换）并提供源码获取方式。
 
 **我们的处置**：
 
-1. **性质认定**：busybox 是**独立可执行文件**，通过进程 `exec` 调用，与我们的
-   TypeScript/JavaScript 代码**不构成链接**，属 GPL 意义上的「聚合（aggregate）」
-   而非「衍生作品」⇒ **其 copyleft 不传染本项目自身代码**，MIT 授权不因此改变。
-2. **源码获取方式**（满足 GPL-2.0 §3）：
-   - 上游：<https://busybox.net/downloads/>
-   - 分发形态来源：**Termux** 的 `busybox` 包 —— <https://github.com/termux/termux-packages/tree/master/packages/busybox>
-   - 构建脚本与补丁同在上面的 `termux-packages` 仓库中
-3. **书面要约**：如需我们将构建 busybox 所需的完整对应源码（含 Termux 补丁）
+1. **性质认定**：busybox / proot / git / bash 均为**独立可执行程序**，通过进程 `exec`
+   调用，与我们的 TypeScript/JavaScript 代码**不构成链接**，属 GPL 意义上的
+   「聚合（aggregate）」而非「衍生作品」；readline 仅被 GPL 的 bash 链接（整体仍属该
+   独立程序）；libiconv 以动态链接方式被使用（LGPL 明确允许）。
+   ⇒ **其 copyleft 不传染本项目自身代码**，MIT 授权不因此改变。
+2. **源码获取方式**（满足 GPL-2.0 §3 / GPL-3.0 §6 / LGPL-2.1 §6）：
+   - 上游：<https://busybox.net/downloads/> · <https://www.gnu.org/software/bash/> ·
+     <https://git-scm.com/> · <https://tiswww.case.edu/php/chet/readline/rltop.html> ·
+     <https://www.gnu.org/software/libiconv/> · <https://github.com/PRootLayer/proot>（proot 上游 <https://proot.gitlab.io>）
+   - 分发形态来源：**Termux** 的对应包 —— <https://github.com/termux/termux-packages/tree/master/packages>
+     （busybox / proot / git / bash / readline / libiconv 各目录；构建脚本与补丁同在该仓库）
+3. **书面要约**：如需我们将构建上述任一组件所需的完整对应源码（含 Termux 补丁）
    一并提供，请通过 Issue 提出，我们会提供下载地址或按需打包。
 
-> **声明**：本项目不对 busybox 做任何修改；仅原样分发其二进制。
+> **声明**：本项目不对上述组件做任何修改；仅原样分发其二进制（Termux deb 提取，SHA256 校验链可追溯）。
 
 ## 6. 自研代码的格式兼容声明（非许可项，法律边界备注）
 

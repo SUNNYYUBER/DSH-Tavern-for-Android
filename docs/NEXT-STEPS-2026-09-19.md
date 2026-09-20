@@ -84,32 +84,71 @@ bychv/dsh-preset-enhance 是第一个样本（已接入），把这一过程沉�
 - [ ] **产出**：`docs/PLUGIN-COMPAT.md`（适配指南：社区插件作者/使用者在 DSHTavern 装插件时
   的注意事项与冲突速查表）+ 必要的运行时护栏（如冲突检测日志）
 
-### P1 · 能力补齐包（bionic 工具链）
+### P1 · 能力补齐包（bionic 工具链）——✅ 已完成（2026-09-20，sentinel v370）
 
-- [ ] `fetch-native-libs.mjs` 扩展四行：bash（~1MB）/ ripgrep（~1.3MB）/ git（~4.5MB）/ zstd（~0.4MB）
-      （Termux 官方源 + SHA256 门禁照旧，体积预算 +~8MB）
-- [ ] DSH bash 工具指向内置 bash（不再降级 mksh）；ripgrep 替换纯 JS 降级；
-      zstd 恢复会话日志压缩（省存储）；git 入场（工作区快照/版本操作可用）
-- [ ] 验收：8 项安卓平台限制表里对应行更新（「已补齐」标注）
+- [x] `fetch-native-libs.mjs` 扩展：bash 5.3.15 / ripgrep 15.2.0 / git 2.55.0 / zstd 1.5.7
+      （Termux 官方源 + SHA256 门禁照旧；含私有运行库 readline/ncursesw/iconv/android-support/zstd.1/lzma.5，
+      依赖闭包用 `scripts/elf-needed.mjs` 核对）
+- [x] **部署形态（模拟器 SELinux 实证钉死）**：`untrusted_app` 域对 `app_data_file` 的 execve 必拒
+      （avc denied entrypoint）⇒ 工具本体**伪装 `libdsht-*.so` 进 jniLibs**（nativeLibraryDir，
+      busybox/proot 同款），NodeService 幂等维护 `runtime/bin/<cmd>` 与 proot rootfs `/bin/<cmd>`
+      两处 symlink 林（execve 跟随 symlink 检查最终目标）；库走 runtime/lib（dlopen 不受限）。
+      **真实 app 域自测四件套 rc=0**（NodeService 启动自测写诊断面板/logcat）。
+      git 裁剪：不带 libexec/git-core（helpers 不可 exec，builtin 不需要；远程 clone 如实报错）。
+- [x] DSH bash 工具指向内置 bash（`DSHT_RUNTIME_BIN_DIR/bash`，缺席回退 mksh）；
+      ripgrep 走官方路径（纯 JS 降级保留为 rg 缺席兜底）；git 入场；
+      zstd 工具层可用——**会话日志压缩不恢复**（compression:'none' 补丁保留：
+      约束根因是 WebView 迁移管线写不了 zstd，与 CLI 无关）
+- [x] 验收：安卓平台限制表 3 行「已补齐」+ git 新增行（中英双语）；THIRD_PARTY_LICENSES §4/§5
+      copyleft 处置扩展（bash/readline GPL-3.0、git GPL-2.0、libiconv LGPL-2.1）
 
 ### P2 · 鸿蒙生态位固化
 
 - [ ] README「Alpha 限制」与「安卓化技术路线」表已写鸿蒙实测（done）；
       补测试环境细节（机型 / HarmonyOS 版本 / 卓易通版本）让别人可复现
-- [ ] 鸿蒙设备纳入发版回归矩阵（B-DEVICE-VERIFY-CHECKLIST.md 加一节）
+      —— **待用户回填**（回归矩阵已留占位行；Agent 侧无鸿蒙设备信息）
+- [x] 鸿蒙设备纳入发版回归矩阵（B-DEVICE-VERIFY-CHECKLIST.md B0 节末「发版回归矩阵」表，
+      2026-09-20；含 P1 工具自测判读口径）
 
-### P3 · bychv 预设管线切换（待真机验证）
+### P3 · bychv 预设管线切换（模拟器验证完成，切换已实施）
 
-- [ ] 真机验证清单：预设工作台出现 / 导入预设 / 普通会话注入生效 / RP 会话不双注
-- [ ] 通过后：RP 会话关 `withPresetLayer` 预设快照管线（保留世界书/角色卡/正则/状态树）；
-      预设 UI 对接其 `/preset-enhance/*` 数据面
-- [ ] 变量划界实测：预设宏 setvar（其 store） vs MVU UpdateVariable（stat_data） 互不干扰
-- [ ] DSML 工具转换 vs 酒馆助手桥接 tool_calls 兼容性实测
+- [x] **模拟器四项验证全过**（2026-09-20，脚本 `scripts/emu-preset-*.mjs`，观测点 =
+      golden-mock 落盘的真实出站 payload）：
+  1. 普通会话 bychv 注入生效：marker 恰好 1 次、system 角色、`{{user}}` 按 binding.values 渲染
+  2. 注入由绑定驱动：解绑后 0 次（对照）
+  3. RP 会话双注实证（切换前基线）：我方快照与 bychv 编译各 1 条同时在场
+  4. 变量划界：`setvar` 落 bychv store（含跨轮残留也只在 bychv state.json），MVU store 零污染；
+     DSML/MVU 兼容性——**对照实验一锤定音**：绑定/解绑下 MVU 提取行为完全一致
+     （direct 卡单轮不提取是既有行为，非 bychv 干扰）
+- [x] **切换已实施**（2026-09-20）：bychv 绑定启用的会话，我方 relative（system-prompt/assemble 段）
+      与 depth（withPresetLayer 段）两个注入点跳过（`bychvPresetOwned`，mtime 摊销）；
+      D-3 槽位 / D-6 工具修剪 / 采样落地 / 预设正则不动（非 bychv 承担面）。
+      判定纯函数 `dsht-plugin-shared/preset-ownership.ts` + 4 条单测，全套 1806 绿
+- [x] 切换后模拟器复验（2026-09-20 PASS）：绑定态我方 0 次注入/bychv 1 次；解绑态我方 1 次/bychv 0 次
+- [x] 真机验证清单已落（[B-DEVICE-VERIFY-CHECKLIST.md](B-DEVICE-VERIFY-CHECKLIST.md) B0 节：
+      模拟器六项结论表 + 真机照做 5 条；真机执行待用户设备）
 
-### P4 · npm 首发
+### P4 · npm 首发 —— ✅ 准备就绪（2026-09-20；实际发布待 npm login）
 
-- [ ] 各插件包稳定后首发 npm（版本策略：engines.dsh 统一窗口，对齐 bychv 钉法）
-- [ ] `dsht-rp-suite` 元包（仅 dependencies 声明全套）——保留「一行装齐」的 T-87 诉求
+- [x] 发布编排 `scripts/publish-plugins.mjs`：staging（6 插件包 v0.2.0）+ 发布前门禁
+      （import 闭包缺文件检查——zhipu-toolkit 案教训 / bare import 白名单 / 必备字段 /
+      files 存在性 / cordis.patch.yml 入清单）+ `npm pack --dry-run` 双确认，全绿；
+      `npm login` 后 `--publish` 一键发布
+- [x] 版本策略：engines `{ node: ">=22.19.0", dsh: ">=0.1.5-rc.1 <0.1.6" }`（对齐 bychv 钉法；
+      下沿 = 实测面 0.1.5-rc.1，上沿 <0.1.6 契约未稳）；license MIT + repository + keywords 全补
+- [x] `dsht-rp-suite` 元包（仅 dependencies 声明全套 6 包 ^0.2.0）——保留「一行装齐」的 T-87 诉求
+- [ ] 实际 `npm publish`（需用户 npm 账号 login；脚本与门禁已就绪）
+
+### P5 · 模拟器验证中暴露的既有问题（2026-09-20 新发现；当日收口）
+
+- [x] **direct（oneshot）卡 MVU 文本提取不工作** → **已修（T2.3b，详见 GOAL-PRESET-SWITCH-2026-09-20
+     W-A1）**：根因 = T2.3 扫的 batch 是 inbox.claim 增量（历史 assistant 从不在其中），
+     文本提取对两类卡从未命中（agent 卡靠 state_update 工具兜底）。修复 = surface 增量扫描
+     （direct-only）。模拟器正控 PASS（emu_dsml_probe 落 state）。
+- [x] **模拟器加速与崩溃** → **根因修正 + watchdog 收口**：AEHD 是 Intel 专用驱动，本机 AMD CPU
+     从不适用（非此前推断的「崩溃残留」）；正解 = WHPX（VBS 已启用 hypervisor），
+     emulator-dsht.ps1 已改 `-accel on`（boot ~40 秒）。偶发崩溃（qemu 0xc0000005，组合缺陷）
+     由 `scripts/emu-watchdog.ps1` 自动恢复兜底（~90 秒闭环实证）。无需重启机器。
 
 ### 明确不做
 

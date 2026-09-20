@@ -61,6 +61,24 @@
 - **处置**：(a) T-88 §五 的管线切换（RP 会话预设注入统一归 bychv 包）；(b) 切换前的过渡规则
   = 「bychv 绑定启用的会话，我方快照管线跳过」（需要我方管线读它的 bindings——跨插件
   数据读取走 DSH_HOME 的 state.json，路径已知）
+- **处置落地（2026-09-20）**：管线切换已实施并模拟器复验（GOAL-PRESET-SWITCH-2026-09-20）——
+  bychv 绑定启用的会话我方 relative+depth 注入点静默，解绑自动恢复
+
+### ②b 预设模式（st-preset）与 RP 会话互斥（2026-09-20 机制确认）
+
+- **bychv 的「预设模式」**（agent preset `st-preset`）是给**普通会话**的「预设即人格」玩法：
+  它把官方 persona 组成换成 `complete: true / includeRuntimeContext: false`，
+  且其 `presetModeHistory` 会从发给模型的消息里**过滤掉 source.plugin 为
+  `@deepseek-ai/dsh-system-prompt` 的 system 消息**
+- **RP 会话为什么不可用**：RP 的全部注入（角色卡 persona / 世界书 / MVU 状态 / 记忆 /
+  预设槽位）都经 `system-prompt/assemble` 汇进**同一条** source.plugin = dsh-system-prompt
+  的 system 消息——预设模式下**整条被过滤**，角色 persona 全丢（T-88 调研结论的机制确认）
+- **现状（安全默认）**：RP 会话的 agentPreset 是空（默认 standard），bychv 的
+  `autoEnableModes` 默认只含 `st-preset`——**默认不会误启用**；
+  风险只来自用户手动在工作台给 RP 会话选「预设模式」
+- **规则**：RP 会话 = 默认模式 + 预设绑定；预设模式只用于普通会话
+- **护栏**：我方 pre-step 检测 RP 会话 agentPreset 被切到 `st-preset` 时 logcat 出声警告
+  （不 fork bychv 包改其工作台 UI）
 
 ### ③ 路由前缀冲突
 
@@ -106,7 +124,47 @@
 
 | 插件 | 版本 | 接入方式 | 状态 |
 |---|---|---|---|
-| [dsh-preset-enhance](https://github.com/bychv/dsh-preset-enhance) | 0.3.2-rc.1 | 构建期 npm 拉取（`-PresetEnhanceVersion`）+ NodeService 整包同步 | ✅ 已随 v0.2.0-beta.3 分发；管线切换待真机验证（T-88 §五） |
+| [dsh-preset-enhance](https://github.com/bychv/dsh-preset-enhance) | 0.3.2-rc.1 | 构建期 npm 拉取（`-PresetEnhanceVersion`）+ NodeService 整包同步 | ✅ 已随 v0.2.0-beta.3 分发；管线切换已实施并模拟器复验（GOAL-PRESET-SWITCH-2026-09-20） |
+
+### 5.1 运行时安装路径实证（2026-09-20，W-C）
+
+社区插件**不重新打包 APK 也能装**（等价 `dsh plugin add`，模拟器实证）：
+
+1. npm 包解开 → `adb push` → `run-as` 解进 `files/.dsh/profiles/web/node_modules/<pkg>`
+2. `files/.dsh/profiles/web/cordis.patch.yml` 追加该包自带 `cordis.patch.yml` 的 insert 行
+3. 重启应用（loader 重读 patch 栈）
+
+注意：run-as 的 shell 不能用 heredoc（/data/local 无写权限），要 push 文件后 `cat >>`。
+**这就是未来 UI 化插件安装器的原型路径。**
+
+### 5.2 优先清单实测对账（2026-09-20，x86_64 模拟器）
+
+| 插件 | 预判 | 实测结论 | 错在哪/备注 |
+|---|---|---|---|
+| dsh-session-pin 0.7.11 | ★★★ host+client 可用 | ✅ **全功能正常**：pin/unpin 循环、pinned 面板（UNGROUPED 列出被 pin 会话）、settings 持久化；与 RpPresetSwitch **同槽位共存**（`conversation.session.header.actions`，order 50 并存不互斥） | 预判成立。探针教训：选错探测面（localStorage/类名猜错）曾误报「无持久化」——行为级证据（面板列表）才是金标准 |
+| dsh-better-stats 0.1.16 | ★★★ 可用（与 RpTokenMeter 重叠） | ✅ **激活正常**：`conversation.composer.dock` 注册成功，strip 显示 `Balance / Off-peak / Turn ¥ / Session ¥`；与 RP 会话、卡脚本（ERA 框架）共存未见异常 | 预判成立。重叠面 = 与 RpTokenMeter 费用显示双份，用户可选一，不冲突 |
+| dsh-turn-index 0.1.1 | ★★★ 纯客户端直接可用 | ⚠ **部分失效**：激活正常（root/折叠交互/样式注入），官方会话流锚点面兼容（`data-chat-anchor-key` 85 行在）；但**轮次条目恒为空**（`.dsh_ti_item`=0，RP 会话实测；数据面 `sessions.binding(current)` 或 `snap.chat` 投影未通，根因未钉死）。**更重要：官方 DSH 已内置等效功能**（会话流 turn marks，`Jump to turn N` × 19 按钮实测在） | 预判错在「功能价值」评估：官方原生已覆盖 ⇒ **建议不装**（功能重叠）。条目为空的根因留作与作者对接项 |
+| dsh-tokstat | 清单在列 | ❌ **npm 不存在**（E404） | 调研清单错误，销项 |
+| dsh-annotation | 清单在列 | ❌ **npm 不存在**（E404） | 调研清单错误，销项 |
+| dsh-outline 0.1.6 | ★★★ 纯客户端 | ⚠ **激活但 UI 不现身**（2026-09-20 实测）：client bundle 加载链完整（`dsh-outline/client.js` 在 plugins bundle）、`shell.overlay` 注册成功；但 client 执行即崩 `TypeError: snapshot.nodes is not iterable at buildOutlineItems`，DSH slot 机制隔离崩溃条目（`slot entry crashed in 'shell.overlay'`）→ 触发钮不渲染（186 按钮无「大纲面板」） | 第⑧类（数据面依赖 client face 投影形态）又一例：它读的 `snapshot.nodes` 在 DSH 0.1.5-rc.1 的投影里不是可迭代形态。数据源虽是 DOM 扫描（与 turn-index 的 chat 投影不同路径），但快照获取同样踩 client face 内部形态。**建议不装**，待作者适配；崩溃被 slot 隔离、不影响宿主 |
+| dsh-zhipu-toolkit 0.2.1 | ★★☆ LLM provider 类 | ❌ **npm 上架包不完整**（2026-09-20 实测）：`lib/index.js` 引用的 `lib/usage-stats.js` 不在 tgz 内（20 文件清单无）→ `ERR_MODULE_NOT_FOUND` → **node exit 1 crash-loop**（整机不可用）；已从模拟器 patch 摘除恢复 | 第⑨类新冲突：npm 发布缺陷（files 字段漏配）——装社区插件前应先 `npm pack` 核对 import 闭包。待作者修复后再评 |
+
+### 5.3 冲突类型学新增实测案例（2026-09-20）
+
+- **① UI 槽位共存（正例）**：session-pin 的 `conversation.session.header.actions`（order 50）与
+  RpPresetSwitch **同槽位并存**——官方 slots 机制支持同槽位多注册按 order 排列，不互斥
+- **⑦ 功能重叠新类型（turn-index 案）**：插件功能与**官方新版本内置功能**重叠时，
+  适配结论不是「装不装得上」而是「**有没有必要装**」——评估清单要先查官方更新日志
+- **⑧ 插件数据面依赖 client face 内部形态（turn-index 案 + outline 案）**：纯客户端插件读
+  `sessions.binding(id).session.getSnapshot().chat` / `snapshot.nodes` 这类 client face 投影——
+  该形态不在 cordis 契约面内，**不同 profile/版本下可能静默为空或直接抛异常**（激活正常但功能哑火；
+  outline 案是抛 `snapshot.nodes is not iterable`，被 slot 崩溃隔离机制吞掉 → UI 不现身）。
+  检查清单 §四.6 补一条：纯客户端插件也要验证**功能路径**，不能只看「页面出现」；
+  判据补一条：CDP console 抓 `slot entry crashed` 是这类哑火的**直接可见信号**
+- **⑨ npm 上架包自身缺陷（zhipu-toolkit 案）**：插件入口引用的文件不在发布 tgz 内
+  （`files` 字段漏配）→ host 侧 import 即 `ERR_MODULE_NOT_FOUND` → **cordis 插件树加载失败
+  连带 node crash-loop**（DSH 的 fail-fast 对第三方包缺陷零容忍）。检查清单 §四.1 前置一步：
+  `npm pack` 解开核对 import 闭包完整性，再进设备
 
 ## 六、生态资源（调研用）
 

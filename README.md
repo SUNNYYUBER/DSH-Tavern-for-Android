@@ -140,17 +140,18 @@ node rp-workspace/scripts/fetch-native-libs.mjs
 
 ## 安卓平台限制（改代码前必看）
 
-> **这些限制不是终点。** 我们选择 bionic 原生路线时就清楚它意味着逐项适配的工作；接下来会**尽可能在这条技术路线的基础上想办法逐项解除这些限制**（近期计划：bash / ripgrep / git / zstd 经 Termux 官方源补齐，见 [NEXT-STEPS](docs/NEXT-STEPS-2026-09-19.md) P1）。
+> **这些限制不是终点。** 我们选择 bionic 原生路线时就清楚它意味着逐项适配的工作；接下来会**尽可能在这条技术路线的基础上想办法逐项解除这些限制**。✅ 2026-09-20 P1 已落地：bash / ripgrep / git / zstd 经 Termux 官方源内置（`runtime/bin/`，见 [NEXT-STEPS](docs/NEXT-STEPS-2026-09-19.md) P1）。
 
 | 约束 | 表现 | 处置 |
 |---|---|---|
-| 无 `bash` | DSH bash 工具 spawn EACCES | 平台感知改用 `/system/bin/sh` |
+| ~~无 `bash`~~ ✅ 已补齐 | DSH bash 工具 spawn EACCES | **已内置 Termux bash 5.3.15**（伪装 `libdsht-bash.so` 进 jniLibs + `runtime/bin/bash` symlink，P1 能力包）；保留 `/system/bin/sh` 兜底 |
 | 无 `flock(2)` | 会话写锁抛错，**消息发不出去** | 单进程运行时按上游对 browser worker 的同款处置：立即成功 |
 | SELinux 禁硬链接 | 会话日志无法 `link()` 发布 | 改 `rename()` |
-| SELinux 只允许从 `nativeLibraryDir` 执行 | 应用目录的二进制无法 exec | 可执行文件改名 `.so` 放 `jniLibs` |
+| SELinux 只允许从 `nativeLibraryDir` 执行 | 应用目录的二进制无法 exec | 可执行文件改名 `.so` 放 `jniLibs`；runtime bin/ 由 NodeService 解压后补 +x |
 | phantom process killer（Android 12+） | 后台子进程超 32 个即静默 SIGKILL | 前台服务 + 电池白名单；长任务建议开发者选项开「停用子进程限制」 |
-| WebView 无 `zstd` 编码器 | 默认压缩的会话日志读不了 | 构建期补丁改明文 JSONL |
-| `ripgrep` 不可用 | linux 预编译版是 glibc | 纯 JS 降级实现 |
+| WebView 无 `zstd` 编码器 | 默认压缩的会话日志读不了 | 构建期补丁改明文 JSONL（保留：迁移管线在 WebView 侧）；✅ zstd 1.5.7 CLI 已内置（工具/agent 层可用） |
+| ~~`ripgrep` 不可用~~ ✅ 已补齐 | linux 预编译版是 glibc | **已内置 Termux ripgrep 15.2.0**（伪装 `libdsht-rg.so` + `runtime/bin/rg` symlink，P1 能力包）；纯 JS 降级保留为 rg 缺席时的兜底 |
+| ~~无 `git`~~ ✅ 已补齐 | 工作区快照/版本操作不可用 | **已内置 Termux git 2.55.0**（伪装 `libdsht-git.so` + `runtime/bin/git` symlink，P1 能力包）；本地版本操作可用，不带 git-core helpers（SELinux 下不可 exec，远程 clone 如实报错） |
 | 原生模块不可用 | `sharp` / `koffi` / `node-pty` 等 | 平台 stub 替换，调用点抛受控错误 |
 
 这些补丁集中在 `rp-workspace/scripts/apply-platform-patches.py` 与 `build-dsht.ps1`，幂等、带命中数断言。proot 路线的风险评估见 `docs/C-ANDROID-HARNESS-ASSESSMENT-2026-09-13.md`（Android 15 起 seccomp 收紧会打断它）。
@@ -258,7 +259,7 @@ DSH RolePlay/
 ## 致谢
 
 - **[DeepSeek](https://deepseek.com)** —— DSH 运行时（`@deepseek-ai/dsh`，MIT）
-- **[dsh-preset-enhance](https://github.com/bychv/dsh-preset-enhance)**（bychv，MIT）—— ST 预设的加载 / 编辑 / 注入插件，自 v0.2.0-beta.3 起随包分发。当前与 RP 自带的预设快照管线**并存**（它默认只承担被显式启用的会话；RP 会话仍走我方管线）——待真机验证后，RP 会话的预设注入将统一切换由它承担（详见 [T-88 §五](docs/T-88-PLUGIN-DECOMPOSITION.md)）
+- **[dsh-preset-enhance](https://github.com/bychv/dsh-preset-enhance)**（bychv，MIT）—— ST 预设的加载 / 编辑 / 注入插件，自 v0.2.0-beta.3 起随包分发。RP 会话的预设注入已切换由它统一承担（被其绑定启用的会话，我方预设快照管线自动静默防双份，解绑即恢复）。注意：它的「预设模式」（st-preset）是给普通会话的玩法，**RP 会话请勿使用**（该模式会过滤掉 RP 注入所在的 system 消息，角色设定会整体丢失）——RP 会话保持默认模式 + 预设绑定即可
 - **[Node.js](https://nodejs.org)**（MIT）、**[Termux](https://termux.dev)**（proot、busybox 二进制来源）、**[busybox](https://busybox.net)**（GPL-2.0，独立可执行文件聚合分发，源码获取方式见 [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md)）
 - **[SillyTavern](https://github.com/SillyTavern/SillyTavern)** 及其社区 —— 兼容目标（资产格式与交互范式的定义者）
 - **[JS-Slash-Runner（酒馆助手）](https://github.com/N0VI028/JS-Slash-Runner)**（AFPL）—— 脚本运行时 API 的兼容基准（自研复刻，不含其源码）
@@ -419,17 +420,18 @@ The script verifies per-deb SHA256; the first run needs network, later runs skip
 
 ## Android platform constraints (read before modifying)
 
-> **These constraints are not the end state.** We chose the bionic-native approach knowing it means item-by-item adaptation; next we'll **lift these constraints one by one on top of this same approach** (near-term: bash / ripgrep / git / zstd via the official Termux repo — see P1 in [NEXT-STEPS](docs/NEXT-STEPS-2026-09-19.md)).
+> **These constraints are not the end state.** We chose the bionic-native approach knowing it means item-by-item adaptation; next we'll **lift these constraints one by one on top of this same approach**. ✅ 2026-09-20 P1 landed: bash / ripgrep / git / zstd bundled from the official Termux repo (`runtime/bin/` — see P1 in [NEXT-STEPS](docs/NEXT-STEPS-2026-09-19.md)).
 
 | Constraint | Symptom | Handling |
 |---|---|---|
-| No `bash` | DSH bash tool spawn EACCES | platform-aware switch to `/system/bin/sh` |
+| ~~No `bash`~~ ✅ resolved | DSH bash tool spawn EACCES | **Termux bash 5.3.15 bundled** (disguised as `libdsht-bash.so` in jniLibs + `runtime/bin/bash` symlink, P1 capability pack); `/system/bin/sh` kept as fallback |
 | No `flock(2)` | session write-lock throws — **messages can't be sent** | single-process runtime: succeed immediately (same as upstream's browser-worker handling) |
 | SELinux forbids hard links | session logs can't be published via `link()` | use `rename()` |
-| SELinux allows exec only from `nativeLibraryDir` | binaries in the app dir can't exec | rename executables to `.so` under `jniLibs` |
+| SELinux allows exec only from `nativeLibraryDir` | binaries in the app dir can't exec | rename executables to `.so` under `jniLibs`; NodeService chmods runtime bin/ +x after extraction |
 | phantom process killer (Android 12+) | background child processes over 32 get silently SIGKILLed | foreground service + battery whitelist; for long tasks enable "Disable child process restrictions" in developer options |
-| WebView lacks a `zstd` encoder | default-compressed session logs unreadable | build-time patch to plain JSONL |
-| `ripgrep` unavailable | linux prebuilt is glibc | pure-JS fallback |
+| WebView lacks a `zstd` encoder | default-compressed session logs unreadable | build-time patch to plain JSONL (kept: migration pipeline runs WebView-side); ✅ zstd 1.5.7 CLI bundled (available to tools/agents) |
+| ~~`ripgrep` unavailable~~ ✅ resolved | linux prebuilt is glibc | **Termux ripgrep 15.2.0 bundled** (disguised as `libdsht-rg.so` + `runtime/bin/rg` symlink, P1 capability pack); pure-JS fallback kept for when rg is absent |
+| ~~No `git`~~ ✅ resolved | workspace snapshots / version ops unavailable | **Termux git 2.55.0 bundled** (disguised as `libdsht-git.so` + `runtime/bin/git` symlink, P1 capability pack); local version ops work, git-core helpers not shipped (not exec-able under SELinux; remote clone fails loudly) |
 | Native modules unavailable | `sharp` / `koffi` / `node-pty` etc. | platform stubs; call sites throw controlled errors |
 
 Patches live in `rp-workspace/scripts/apply-platform-patches.py` and `build-dsht.ps1`, idempotent with hit-count assertions. The proot route's risk assessment: `docs/C-ANDROID-HARNESS-ASSESSMENT-2026-09-13.md` (Android 15's tightened seccomp will break it).
@@ -537,7 +539,7 @@ Full policy: [CONTRIBUTING.md](CONTRIBUTING.md) (wording is kept consistent betw
 ## Acknowledgements
 
 - **[DeepSeek](https://deepseek.com)** —— the DSH runtime (`@deepseek-ai/dsh`, MIT)
-- **[dsh-preset-enhance](https://github.com/bychv/dsh-preset-enhance)** (bychv, MIT) —— SillyTavern preset loading / editing / injection plugin, shipped with the app since v0.2.0-beta.3. It currently **coexists** with our own preset snapshot pipeline (it only takes over sessions explicitly enabled; RP sessions still use ours) — after device verification, preset injection for RP sessions will be switched over to it entirely (see [T-88 §5](docs/T-88-PLUGIN-DECOMPOSITION.md))
+- **[dsh-preset-enhance](https://github.com/bychv/dsh-preset-enhance)** (bychv, MIT) —— SillyTavern preset loading / editing / injection plugin, shipped with the app since v0.2.0-beta.3. Preset injection for RP sessions is now handled by it (for sessions with its binding enabled, our own preset snapshot pipeline stays silent to avoid double injection, and resumes once unbound). Note: its "preset mode" (st-preset) is meant for plain sessions — **do not use it for RP sessions** (that mode filters out the system message carrying all RP injections, so the character definition is lost entirely); keep RP sessions on the default mode with preset binding
 - **[Node.js](https://nodejs.org)** (MIT), **[Termux](https://termux.dev)** (source of proot & busybox binaries), **[busybox](https://busybox.net)** (GPL-2.0, distributed as an independent executable; source access in [THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md))
 - **[SillyTavern](https://github.com/SillyTavern/SillyTavern)** and its community — the compat target (definer of the asset formats and interaction patterns)
 - **[JS-Slash-Runner (Tavern Helper)](https://github.com/N0VI028/JS-Slash-Runner)** (AFPL) — the script-runtime API compat reference (self-written re-implementation, no source included)
