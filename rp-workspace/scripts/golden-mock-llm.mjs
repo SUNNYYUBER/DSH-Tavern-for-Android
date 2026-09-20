@@ -6,8 +6,12 @@
 // DSHT 走 llm-pi-ai adapter 时固定 stream:true，故 SSE 是必需路径。
 import http from 'node:http';
 
-const REPLY = process.env.MOCK_REPLY
+// MOCK_REPLY_B64 优先（含 JSON/换行/尖括号的回复——PowerShell env 直传会炸引号，base64 免转义）
+const REPLY = (process.env.MOCK_REPLY_B64 ? Buffer.from(process.env.MOCK_REPLY_B64, 'base64').toString('utf8') : null)
+  || process.env.MOCK_REPLY
   || '（golden-mock）固定回复：This line exists so that the prompt-assembly hooks fire.';
+// MOCK_PORT 可覆盖监听端口（同机多实例：默认 31101 不动既有用法）
+const PORT = Number(process.env.MOCK_PORT) || 31101;
 
 function readBody(req) {
   return new Promise((resolve) => {
@@ -115,4 +119,4 @@ http.createServer(async (req, res) => {
     choices: [{ index: 0, message: { role: 'assistant', content: REPLY }, finish_reason: 'stop' }],
     usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
   }));
-}).listen(31101, '0.0.0.0', () => console.log('[mock-llm] listening http://0.0.0.0:31101 (模拟器内用 http://10.0.2.2:31101)'));
+}).listen(PORT, '0.0.0.0', () => console.log(`[mock-llm] listening http://0.0.0.0:${PORT} (模拟器内用 http://10.0.2.2:${PORT})`));

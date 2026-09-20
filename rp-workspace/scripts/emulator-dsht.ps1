@@ -1,9 +1,12 @@
-﻿# emulator-dsht.ps1 — DSHTavern 安卓模拟器自测工具（x86_64 AVD + AEHD 加速）
+﻿# emulator-dsht.ps1 — DSHTavern 安卓模拟器自测工具（x86_64 AVD）
 # 用法：
 #   .\emulator-dsht.ps1              # 完整流程：启动模拟器（带窗口）→ 装最新 x64 APK → 打开 app
 #   .\emulator-dsht.ps1 -Headless    # 无窗口模式（后台跑，adb/screencap 验证用）
 #   .\emulator-dsht.ps1 -NoInstall   # 只启动模拟器，不装 APK
-# 前置：AEHD 驱动已装（sc query aehd 应为 RUNNING）；镜像 system-images;android-35;google_apis;x86_64
+# 前置：镜像 system-images;android-35;google_apis;x86_64。
+# 加速：AEHD（sc query aehd = RUNNING）可用则用；不可用则 TCG 无加速硬撑——
+#   慢且高负载下 qemu 可能崩（崩溃丢 guest 页缓存未落盘写入，2026-09-20 实证），
+#   本脚本启动时检测并明确警告（R8：失败/降级必须出声，不许静默降级）。
 param(
     [switch]$Headless,
     [switch]$NoInstall
@@ -18,16 +21,22 @@ $avd      = 'dsht-x64'
 
 if (-not (Test-Path $emulator)) { throw "emulator 不存在：$emulator" }
 
+# 加速路径（2026-09-20 实证钉死）：本机 AMD Ryzen → AEHD（Intel 专用驱动）永不适用；
+# WHPX 可用（VBS 已启用 hypervisor，WHvGetCapability 实测 "installed and usable"）——
+# 显式 -accel on 走 WHPX（默认 auto 会优先试注册态的 AEHD 失败后落 TCG，慢 4 倍）。
+# 偶发崩溃（qemu 0xc0000005，TCG/WHPX 同签名）无法本机根治 ⇒ emu-watchdog.ps1 自动恢复兜底。
+Write-Host "[加速] -accel on（WHPX 优先；AEHD 不适用 AMD，已弃用该路径）" -ForegroundColor DarkCyan
+
 # 模拟器已在跑则复用，不重复启动
 $running = (& $adb devices) -match "emulator-\d+\s+device"
 if (-not $running) {
-    Write-Host "[1/3] 启动模拟器 $avd（$(if($Headless){'无窗口'}else{'带窗口'})，AEHD 加速）…" -ForegroundColor Cyan
+    Write-Host "[1/3] 启动模拟器 $avd（$(if($Headless){'无窗口'}else{'带窗口'})，WHPX 加速）…" -ForegroundColor Cyan
     $gpu = if ($Headless) { 'swiftshader_indirect' } else { 'auto' }
     $winArgs = if ($Headless) { @('-no-window', '-no-audio', '-no-boot-anim') } else { @() }
     if ($Headless) {
-        Start-Process -FilePath $emulator -ArgumentList (@('-avd', $avd, '-gpu', $gpu, '-no-snapshot') + $winArgs) -WindowStyle Hidden
+        Start-Process -FilePath $emulator -ArgumentList (@('-avd', $avd, '-accel', 'on', '-gpu', $gpu, '-no-snapshot') + $winArgs) -WindowStyle Hidden
     } else {
-        Start-Process -FilePath $emulator -ArgumentList (@('-avd', $avd, '-gpu', $gpu, '-no-snapshot') + $winArgs)
+        Start-Process -FilePath $emulator -ArgumentList (@('-avd', $avd, '-accel', 'on', '-gpu', $gpu, '-no-snapshot') + $winArgs)
     }
     & $adb wait-for-device
     $deadline = (Get-Date).AddMinutes(5)

@@ -1123,19 +1123,20 @@ Dsht-Patch "$nmDst\dsh-tool-fs-search\lib\index.js" 'android-fallback.mjs' `
 Dsht-Patch "$nmDst\dsh-tool-fs-search\lib\index.js" 'DSHT-ANDROID-JS-SEARCH' `
     'async function runRipgrep\(ctx, exec, toolName, argv, rawOutputMaxBytes, graceMs, stderrMaxBytes\) \{\r?\n\tif \(exec\.signal\.aborted\)' `
     ("async function runRipgrep(ctx, exec, toolName, argv, rawOutputMaxBytes, graceMs, stderrMaxBytes) {`n" +
-     "`t/* DSHT-ANDROID-JS-SEARCH: android 无 rg 二进制——glob/grep 走纯 JS 降级（lib/android-fallback.mjs） */`n" +
-     "`tif (process.platform === `"android`") return dshtAndroidJsSearch(exec, toolName, argv);`n" +
+     "`t/* DSHT-ANDROID-JS-SEARCH: android 且真 rg 缺席（DSHT_RUNTIME_BIN_DIR 未设或无文件）时 glob/grep 走纯 JS 降级（lib/android-fallback.mjs）；P1 能力包内置 rg 后走官方路径 */`n" +
+     "`tif (process.platform === `"android`" && !(process.env.DSHT_RUNTIME_BIN_DIR && existsSync(process.env.DSHT_RUNTIME_BIN_DIR + `"/rg`"))) return dshtAndroidJsSearch(exec, toolName, argv);`n" +
      "`tif (exec.signal.aborted)") `
     1 'P1-3b runRipgrep android 短路'
 
-# P1-4. dsh-terminal-bash：默认 shell / 启动参数适配 mksh
+# P1-4. dsh-terminal-bash：默认 shell / 启动参数适配——P1 能力包内置 bash 后用真 bash
+# （DSHT_RUNTIME_BIN_DIR/bash → nativeLibraryDir 伪装 .so；缺席回退 /system/bin/sh + mksh 参数）
 Dsht-Patch "$nmDst\dsh-terminal-bash\lib\index.js" 'DSHT-ANDROID-TERM-SHELL' `
     'const DEFAULT_BASH_SHELL = "/bin/bash";' `
-    'const DEFAULT_BASH_SHELL = process.platform === "android" ? "/system/bin/sh" : "/bin/bash"; /* DSHT-ANDROID-TERM-SHELL */' `
+    'const DEFAULT_BASH_SHELL = process.platform === "android" ? (process.env.DSHT_RUNTIME_BIN_DIR ? process.env.DSHT_RUNTIME_BIN_DIR + "/bash" : "/system/bin/sh") : "/bin/bash"; /* DSHT-ANDROID-TERM-SHELL */' `
     1 'P1-4a terminal-bash DEFAULT_BASH_SHELL'
 Dsht-Patch "$nmDst\dsh-terminal-bash\lib\index.js" 'DSHT-ANDROID-TERM-ARGS' `
     'const DEFAULT_BASH_ARGS = \[\r?\n\t"--noprofile",\r?\n\t"--norc",\r?\n\t"-i"\r?\n\];' `
-    ('const DEFAULT_BASH_ARGS = process.platform === "android" ? ["-i"] /* DSHT-ANDROID-TERM-ARGS */ : [' + "`n`t`"--noprofile`",`n`t`"--norc`",`n`t`"-i`"`n];") `
+    ('const DEFAULT_BASH_ARGS = (process.platform === "android" && !process.env.DSHT_RUNTIME_BIN_DIR) ? ["-i"] /* DSHT-ANDROID-TERM-ARGS */ : [' + "`n`t`"--noprofile`",`n`t`"--norc`",`n`t`"-i`"`n];") `
     1 'P1-4b terminal-bash DEFAULT_BASH_ARGS'
 
 # ---------------------------------------------------------------------------
@@ -1541,6 +1542,8 @@ if (-not (Test-Path $runtimeLib)) { throw "runtime lib 目录不存在：$runtim
 if (Test-Path "$runtimeDst\lib") { Remove-Item "$runtimeDst\lib" -Recurse -Force }
 Copy-Item $runtimeLib "$runtimeDst\lib" -Recurse -Force
 Write-Host "  runtime lib ← $runtimeLib（Arch=$Arch）"
+# P1 能力补齐包的工具本体（bash/rg/zstd/git）走 jniLibs 伪装 .so（SELinux 实证：app_data_file
+# 不可 exec）——不进 runtime.zip；runtime/lib 只带它们的私有运行库（dlopen 不受限）。
 $svc = "$android\app\src\main\java\com\dshtavern\app\NodeService.kt"
 # PS5.1 坑：Get-Content/Set-Content -Encoding UTF8 会在已有 BOM 上再叠一层 BOM，
 # 双 BOM 直接让 kotlinc 报 "Expecting a top level declaration"（踩过）。纯 .NET IO 无 BOM 读写。

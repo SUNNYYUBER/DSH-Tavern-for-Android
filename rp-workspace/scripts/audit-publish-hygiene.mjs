@@ -78,6 +78,9 @@ const DOMAIN_ALLOW = new RegExp(
     // 合规说明必须写出的公开地址（GPL-2.0 要求提供源码获取方式），
     // 性质同 jquery.com/lodash.com —— 第三方公开信息，非本机配置。
     String.raw`^busybox\.net`, String.raw`^termux\.dev`,
+    // 【2026-09-20 P1 能力包】git/bash/readline/proot 上游官网：THIRD_PARTY_LICENSES §5
+    // 的 GPL/LGPL 源码获取方式必须写出的公开地址（性质同 busybox.net）。
+    String.raw`^git-scm\.com`, String.raw`^tiswww\.case\.edu`, String.raw`^proot\.gitlab\.io`,
     String.raw`^api\.deepseek\.com`, String.raw`^deepseek\.com`, // 上游官方 API/官网（产品文档必写）
     String.raw`^(x|next|dl|host|src|assets)$`, // 正则截断产生的无 TLD 片段（噪声，非域名）
   ].join('|'),

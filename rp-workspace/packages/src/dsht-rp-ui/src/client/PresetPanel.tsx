@@ -178,6 +178,19 @@ export function PresetPanel(): JSX.Element {
       <div className="dsht-rp-section" style={{ marginBottom: 12 }}>
         <h3>🎛 RP 预设（{presets.length}）</h3>
         <p className="desc">预设 = 行为指令包（示例预设/可待这类 ST 预设的适配版即在此）。会话内可随时切换（会话头下拉）；此处管理条目开关。</p>
+        {/* 【2026-09-20 管线切换】bychv/dsh-preset-enhance 绑定启用的会话：
+            预设**内容注入**统一由预设工作台承担（llm/stream 编译，不落会话日志），
+            本面板管理的内容预设对该会话自动静默（防双份注入——模拟器双注实证）。
+            条目开关/正则/采样不受影响的说明与前往入口在此给出（R8：降级必须出声，不许用户
+            在这里开关条目却看不到不生效）。 */}
+        <p className="dsht-rp-note" style={{ margin: '6px 0 10px' }}>
+          会话在「预设工作台」绑定预设后，本面板的内容预设对该会话自动静默（防双份注入）；
+          正则、采样参数不受绑定影响。
+        </p>
+        <p style={{ margin: '0 0 10px' }}>
+          <a className="dsht-rp-btn" style={{ display: 'inline-block', height: 28, lineHeight: '28px', padding: '0 10px', fontSize: 12, textDecoration: 'none' }}
+            href="/preset-enhance" target="_blank" rel="noreferrer">打开预设工作台（绑定/编辑注入预设）</a>
+        </p>
         {/* 【2026-09-13 修复·键盘不可达（F-4）】label + 隐藏 file input 改为 button + 独立 input
             （Tab 可达、回车可点；input 在 button 之外，避免 button 内嵌交互元素）。 */}
         <button type="button" className="dsht-rp-drop" style={{ marginBottom: 10 }} disabled={importing}

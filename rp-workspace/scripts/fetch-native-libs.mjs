@@ -49,10 +49,15 @@ const CACHE = [
 ]
 
 // ---------------------------------------------------------------------------
-// 目标表：jniLibs 里的 .so ← deb（**每架构显式声明**，不给默认值 —— 上游命名不统一，
+// 目标表：部署文件名 ← deb（**每架构显式声明**，不给默认值 —— 上游命名不统一，
 //   隐式回退会静默取错架构的文件，P-45）← deb 内 relative 路径
 //   ★ 内部路径用**相对片段**匹配（递归找 basename），不锚死绝对布局 ——
 //     上游 deb 布局变化时会**报错而不是静默取错文件**（P-45）。
+// 部署面（dest）：
+//   'jni'        → jniLibs/<abi>/（默认；APK nativeLibraryDir，lib*.so 伪装名也可 exec）
+//   'runtime-lib'→ dsh-runtime-android/lib/（runtime.zip 随包；LD_LIBRARY_PATH 已含）
+//   'runtime-bin'→ dsh-runtime-android/bin/（runtime.zip 随包；PATH 已含，NodeService env）
+//   'git-core'   → dsh-runtime-android/git-core/（git 的 libexec；GIT_EXEC_PATH 指向）
 // ---------------------------------------------------------------------------
 const TARGETS = [
   { so: 'libnode.so', deb: { x86_64: 'nodejs_x86_64.deb', aarch64: 'nodejs_aarch64.deb' }, inner: 'lib/libnode.so', lic: 'MIT' },
@@ -62,10 +67,57 @@ const TARGETS = [
   { so: 'libc++_shared.so', deb: { x86_64: 'libc++_29_x86_64.deb', aarch64: 'libc++_29_aarch64.deb' }, inner: 'lib/libc++_shared.so', lic: 'Apache-2.0 WITH LLVM-exception' },
   { so: 'libffi.so', deb: { x86_64: 'libffi_x86_64.deb', aarch64: 'libffi_3.5.2_aarch64.deb' }, inner: 'lib/libffi.so', lic: 'MIT' },
   { so: 'libsqlite3.so', deb: { x86_64: 'libsqlite_x86_64.deb', aarch64: 'libsqlite_3.53.4_aarch64.deb' }, inner: 'lib/libsqlite3.so', lic: 'Public Domain' },
+
+  // ---- P1 能力补齐包（2026-09-20；Termux 官方源，依赖闭包已用 scripts/elf-needed.mjs 核对）----
+  // ★ 部署形态（2026-09-20 模拟器实证钉死）：untrusted_app 域对 app_data_file 的 execve
+  //   被 SELinux 拒（avc denied entrypoint；run-as 的 runas_app 域是 granted——不能代表
+  //   node 进程）。唯一可行路径 = **伪装 lib*.so 进 jniLibs**（nativeLibraryDir，与
+  //   busybox/proot 同款），运行时由 NodeService 在 filesDir 建 `bash → libdsht-bash.so`
+  //   symlink（execve 跟随 symlink 检查最终目标——busybox applets 同款机制，已实证）。
+  //   库文件（runtime-lib）走 dlopen，不需要 execute 权限（runtime/lib 的 libcrypto 等
+  //   一直这么工作），保持原部署面。
+  // bash（bionic 真 shell，替换 busybox mksh 降级）：本体伪装 .so + 依赖库（SONAME 部署名
+  // 与 DT_NEEDED 严格一致——libpcre2-8/libz.so.1/libcrypto.so.3 已在 runtime/lib，不重复打包）
+  { so: 'libdsht-bash.so', deb: { x86_64: 'bash_5.3.15_x86_64.deb', aarch64: 'bash_5.3.15_aarch64.deb' }, inner: 'bin/bash', lic: 'GPL-3.0' },
+  { so: 'libandroid-support.so', dest: 'runtime-lib', deb: { x86_64: 'libandroid-support_29-1_x86_64.deb', aarch64: 'libandroid-support_29-1_aarch64.deb' }, inner: 'lib/libandroid-support.so', lic: 'Apache-2.0 (NDK)' },
+  { so: 'libiconv.so', dest: 'runtime-lib', deb: { x86_64: 'libiconv_1.19_x86_64.deb', aarch64: 'libiconv_1.19_aarch64.deb' }, inner: 'lib/libiconv.so', lic: 'LGPL-2.1' },
+  { so: 'libreadline.so.8', dest: 'runtime-lib', deb: { x86_64: 'readline_8.3.3_x86_64.deb', aarch64: 'readline_8.3.3_aarch64.deb' }, inner: 'lib/libreadline.so.8.3', lic: 'GPL-3.0' },
+  { so: 'libncursesw.so.6', dest: 'runtime-lib', deb: { x86_64: 'ncurses_6.6.20260307+really6.5.20250830_x86_64.deb', aarch64: 'ncurses_6.6.20260307+really6.5.20250830_aarch64.deb' }, inner: 'lib/libncursesw.so.6.5', lic: 'MIT (X11)' },
+  // ripgrep（fs-search 真 rg，替换纯 JS 降级）
+  { so: 'libdsht-rg.so', deb: { x86_64: 'ripgrep_15.2.0_x86_64.deb', aarch64: 'ripgrep_15.2.0_aarch64.deb' }, inner: 'bin/rg', lic: 'MIT/Unlicense' },
+  // zstd（会话日志压缩恢复）：bin 伪装 .so + libzstd（同包）；liblzma 是它的依赖
+  { so: 'libdsht-zstd.so', deb: { x86_64: 'zstd_1.5.7-1_x86_64.deb', aarch64: 'zstd_1.5.7-1_aarch64.deb' }, inner: 'bin/zstd', lic: 'BSD-3-Clause' },
+  { so: 'libzstd.so.1', dest: 'runtime-lib', deb: { x86_64: 'zstd_1.5.7-1_x86_64.deb', aarch64: 'zstd_1.5.7-1_aarch64.deb' }, inner: 'lib/libzstd.so.1.5.7', lic: 'BSD-3-Clause' },
+  { so: 'liblzma.so.5', dest: 'runtime-lib', deb: { x86_64: 'liblzma_5.8.4_x86_64.deb', aarch64: 'liblzma_5.8.4_aarch64.deb' }, inner: 'lib/liblzma.so.5', lic: 'Public Domain' },
+  // git（工作区快照/版本操作）：本体伪装 .so。裁剪面：不带 libexec/git-core——helpers
+  // （remote-http 等）须在 app_data_file 下被 exec，SELinux 必拒，带了也是死重；builtin
+  // （init/add/commit/diff/log/branch/tag）由主二进制直接运行，不 exec helpers。
+  // 远程 clone 会如实报「无法加载 git-remote-https」（R8 出声）。
+  { so: 'libdsht-git.so', deb: { x86_64: 'git_2.55.0_x86_64.deb', aarch64: 'git_2.55.0_aarch64.deb' }, inner: 'bin/git', lic: 'GPL-2.0' },
 ]
 
 // deb 级 SHA256（本机缓存实算；上游换版时**必须**同步本表 —— 校验不通过即报错）
 const SHA256 = {
+  // ---- P1 能力补齐包（2026-09-20 实算；downloads/ 缓存）----
+  'bash_5.3.15_aarch64.deb': '15f8fef866dad70f675c520d5f56d718a1b1c0cffe9f14e20fff8f8249377d46',
+  'bash_5.3.15_x86_64.deb': 'cf913f774f9c485a79e935f05f07130249869f71f9464638af250a4499487920',
+  'git_2.55.0_aarch64.deb': '21b16fa06837e5bf94ad257da532c40eb049c120d21f6cb60a6411c0bcee7197',
+  'git_2.55.0_x86_64.deb': '35cf9a5bd6d3b48fa6cb314f41f90f37eb0a9f584d5b8b5b3c57f3de7e12b92e',
+  'libandroid-support_29-1_aarch64.deb': 'f2f145d6135ad4843ac9670153be3e3944dc1e6f1736d46d2306c28f2b86f517',
+  'libandroid-support_29-1_x86_64.deb': '665900760c05959ec076082a0941f05bd452f301e5a70bdfa7383fd3404d44d5',
+  'libiconv_1.19_aarch64.deb': 'fe9481b1dc101c6c3552943f25435109fd522aecc615ae49594f9fbee863bb37',
+  'libiconv_1.19_x86_64.deb': '880e9f423b448316a4951ffca3ffcd626d79538042b60ce2c3a821b9650c594c',
+  'liblzma_5.8.4_aarch64.deb': '44e95e6e60dddb3705e60a344a4f009a1085a210797342b721eaff41b44033c0',
+  'liblzma_5.8.4_x86_64.deb': '100ea7503a0b9ecffa45e1f168d035651f2eb7aedbebe71dd21fc0da4a84ef16',
+  'ncurses_6.6.20260307+really6.5.20250830_aarch64.deb': 'f44bbfdc3d42ec0217bffa978309390e59cea5a48a9a83226d4a496c42ad0b99',
+  'ncurses_6.6.20260307+really6.5.20250830_x86_64.deb': '3f30f53c6a41c8450d146d4d42611a44be6ba0a8de1e8bb4dc903109a5fc3ff1',
+  'readline_8.3.3_aarch64.deb': 'e50fb67f40753247dbb83efb17c7fbee0ac868ffcb5b5555d44d76ec8d90b4b1',
+  'readline_8.3.3_x86_64.deb': 'e69d768ba81246700c244aea31a1fd728f6cc9698ca3031b6f7b7250ea77f8dd',
+  'ripgrep_15.2.0_aarch64.deb': '38e28bc297000517b24702568a483eca7dc3323eb6bdccc9033f031776bdcc6c',
+  'ripgrep_15.2.0_x86_64.deb': '2eb50ab2e378436767975b072ce7118decf6444d6d6ed178bc89979b5f150f2a',
+  'zstd_1.5.7-1_aarch64.deb': 'e1b4a5113648da8de189620ba1fce74c48b2d0833d9043391b9a1c91fb606fd3',
+  'zstd_1.5.7-1_x86_64.deb': 'a76ba6c3d8742819bf4fff7780eb2e022269412700fc8f4471f530cc0d81833f',
+  // ---- 既有 ----
   'nodejs_aarch64.deb': 'eaf3ed8a6e4b72ebaa8c2cb3bad778c577cdf9ea87ca91761213d8a3940fc090',
   'nodejs_x86_64.deb': 'd3a0e7b8e110ba87969a56f45a8fa63730100e9faec413a6f377ebc76c5b616e',
   'proot_5.1.107.92_aarch64.deb': '1f1c983509701f6826f568482c70673ee453a9ba38c9f5fa445a472d6b7524e9',
@@ -87,11 +139,13 @@ const MIRRORS = [
   'https://mirrors.tuna.tsinghua.edu.cn/termux/apt/termux-main/pool/main',
 ]
 
-// 项目 arch 名 → { Termux arch 名, jniLibs 目录名 }
+// 项目 arch 名 → { Termux 名, jniLibs 目录名, runtime 存放根 }
 //   ★ 目录名不是 arch 名本身：arm64 的目录是 `arm64-v8a`（AGP 约定）
+//   ★ runtime 部署面（lib/bin/git-core）**按架构分存**（dsh-runtime / dsh-runtime-x64），
+//     构建期 Step 5.5 按 -Arch 把对应架构拷进 dsh-runtime-android/ 再打 runtime.zip（单源惯例）
 const ARCHES = {
-  x86_64: { termux: 'x86_64', dir: 'x86_64' },
-  arm64: { termux: 'aarch64', dir: 'arm64-v8a' },
+  x86_64: { termux: 'x86_64', dir: 'x86_64', runtimeRoot: path.join(WS, 'dsh-runtime-x64') },
+  arm64: { termux: 'aarch64', dir: 'arm64-v8a', runtimeRoot: path.join(WS, 'dsh-runtime') },
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +178,27 @@ export function parseAr (buf) {
 /** 从 deb 路径里取出版本无关的「包名」用于目录定位。 */
 export function pkgKeyOf (debFile) { return debFile.replace(/\.deb$/, '') }
 
+/** spec.dest + 架构 → 部署目录。'jni'（默认）走 jniLibs/<abi>；runtime 面按架构分存。 */
+export function destDirFor (spec, archKey) {
+  const a = ARCHES[archKey]
+  if (!a) throw new Error(`未知架构：${archKey}`)
+  switch (spec.dest ?? 'jni') {
+    case 'jni': return path.join(JNI, a.dir)
+    case 'runtime-lib': return path.join(a.runtimeRoot, 'lib')
+    case 'runtime-bin': return path.join(a.runtimeRoot, 'bin')
+    case 'git-core': return path.join(a.runtimeRoot, 'git-core')
+    default: throw new Error(`未知部署面：${spec.dest}`)
+  }
+}
+
+/** 部署产物是否已就绪（dir 型 = 目录存在且非空；文件型 = 文件存在且非空）。 */
+function destReady (spec, destDir) {
+  if (spec.dir) {
+    try { return fs.statSync(destDir).isDirectory() && fs.readdirSync(destDir).length > 0 } catch { return false }
+  }
+  try { return fs.statSync(path.join(destDir, spec.so)).size > 0 } catch { return false }
+}
+
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
@@ -144,16 +219,16 @@ if (isMain) {
   let ok = 0, skipped = 0
 
   for (const arch of arches) {
-    const { termux: termuxArch, dir: jniDir } = ARCHES[arch]
-    const dir = path.join(JNI, jniDir)
-    fs.mkdirSync(dir, { recursive: true })
+    const { termux: termuxArch } = ARCHES[arch]
     for (const spec of TARGETS) {
-      const dst = path.join(dir, spec.so)
-      if (!FORCE && fs.existsSync(dst) && fs.statSync(dst).size > 0) { skipped += 1; continue }
+      const destDir = destDirFor(spec, arch)
+      fs.mkdirSync(destDir, { recursive: true })
+      if (!FORCE && destReady(spec, destDir)) { skipped += 1; continue }
       const debFile = debNameFor(spec.deb, termuxArch)
-      if (CHECK) { missing.push(`${arch}/${spec.so} ← ${debFile}`); continue }
+      const label = `${arch}/${spec.dir ? spec.dest + '/' : spec.so}`
+      if (CHECK) { missing.push(`${label} ← ${debFile}`); continue }
       // —— 逻辑上不会走到这里（构建期用 --check + 手工补齐），保留为 fail-closed ——
-      missing.push(`${arch}/${spec.so} ← ${debFile}（需先跑不带 --check 的补齐）`)
+      missing.push(`${label} ← ${debFile}（需先跑不带 --check 的补齐）`)
     }
   }
 
@@ -218,13 +293,30 @@ if (isMain) {
     return pref ?? hits[0]
   }
 
+  /** dir 型：递归找 basename 匹配的**目录**（如 libexec/git-core）。 */
+  function findInnerDir (root, innerRel) {
+    const base = path.basename(innerRel)
+    const hits = []
+    const walk = (d) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name)
+        if (!e.isDirectory()) continue
+        if (e.name === base) hits.push(p)
+        walk(p)
+      }
+    }
+    walk(root)
+    if (hits.length === 0) throw new Error(`deb 内找不到目录 ${base}（上游布局可能变了 —— 不要静默取别的目录）`)
+    const pref = hits.find(h => h.replace(/\\/g, '/').includes('/' + innerRel))
+    return pref ?? hits[0]
+  }
+
   let fetched = 0
   for (const arch of arches) {
-    const { termux: termuxArch, dir: jniDir } = ARCHES[arch]
-    const dir = path.join(JNI, jniDir)
+    const { termux: termuxArch } = ARCHES[arch]
     for (const spec of TARGETS) {
-      const dst = path.join(dir, spec.so)
-      if (!FORCE && fs.existsSync(dst) && fs.statSync(dst).size > 0) continue
+      const destDir = destDirFor(spec, arch)
+      if (!FORCE && destReady(spec, destDir)) continue
       const debFile = debNameFor(spec.deb, termuxArch)
       const debPath = findDeb(debFile)
       if (!debPath) {
@@ -247,10 +339,20 @@ if (isMain) {
       }
       const work = path.join(WS, 'tmp', 'native-libs-work', pkgKeyOf(debFile))
       extractDeb(debPath, work)
-      const src = findInner(work, spec.inner)
-      fs.copyFileSync(src, dst)
-      const kb = Math.round(fs.statSync(dst).size / 1024)
-      console.log(`  ✓ ${arch}/${spec.so}（${kb} KB · ${spec.lic}）← ${debFile}`)
+      if (spec.dir) {
+        const srcDir = findInnerDir(work, spec.inner)
+        fs.rmSync(destDir, { recursive: true, force: true })
+        fs.cpSync(srcDir, destDir, { recursive: true })
+        const n = fs.readdirSync(destDir).length
+        console.log(`  ✓ ${arch}/${spec.dest}/（${n} 项 · ${spec.lic}）← ${debFile}`)
+      } else {
+        const src = findInner(work, spec.inner)
+        fs.mkdirSync(destDir, { recursive: true })
+        const dst = path.join(destDir, spec.so)
+        fs.copyFileSync(src, dst)
+        const kb = Math.round(fs.statSync(dst).size / 1024)
+        console.log(`  ✓ ${arch}/${spec.so}（${kb} KB · ${spec.lic}）← ${debFile}`)
+      }
       fetched += 1
     }
   }

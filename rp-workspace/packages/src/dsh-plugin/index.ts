@@ -30,6 +30,8 @@ import { sendJson } from '../dsht-plugin-shared/http.ts'
 import { normalizeAndroidPath, rpSlugFromCwd } from '../dsht-plugin-shared/rp-workspace.ts'
 // 【F5 2026-09-14】稳定短哈希单源（曾散落四处实现，含改名复制；见 hash.ts 头注）
 import { hash36 } from '../dsht-plugin-shared/hash.ts'
+// 【管线切换 2026-09-20】bychv 绑定启用集合解析（纯函数单源；消费点见 bychvPresetOwned）
+import { enabledPresetBindings } from '../dsht-plugin-shared/preset-ownership.ts'
 // 【W4 2026-09-14】官方投影读取单源（cwd / sessionId / header.agentPreset / surface.nodes
 // —— 此前本文件 12 处裸读，都在 agent/pre-step 的 try 内 ⇒ 官方改形状即整轮 RP 注入静默失效）
 import {
@@ -2624,6 +2626,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   /** T2.3：已提取状态的 assistant 消息 id（避免多 step turn 对同一消息重复提取/重复应用 delta） */
   const stateSeen = new Set<string>()
 
+  /** C-5 护栏：已警告过「RP 会话误入 st-preset 预设模式」的会话（每进程每会话一次，防刷屏） */
+  const presetModeWarned = new Set<string>()
+
   /** T2.8：三源正则合并（ST getRegexScripts 语义）——全局 + 角色（rp.json.regex）+
    * 预设（rp-presets/<id>/regex.json；会话当前 presetId，无选中则空）。disabled 项排除。 */
   const presetRegexCache = new Map<string, RegexScript[]>()
@@ -2687,6 +2692,31 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
     return resolveActiveStPresetId()
   }
 
+  // ---- 【管线切换 2026-09-20】预设内容注入的所有权判定 ----
+  // bychv/dsh-preset-enhance 绑定启用的会话：预设内容（relative + depth 条目）统一由其
+  // llm/stream 编译承担（不落会话日志、每轮现算——架构上比我方 pre-step 快照干净），
+  // 我方两个注入点（assemble relative 段 / withPresetLayer depth 段）一律跳过。
+  // 否则同一预设被两条管线各注一遍（模拟器双注实证：scripts/emu-preset-rp-verify.mjs）。
+  // 注意边界：D-3 槽位（状态/角色卡/记忆/表格）、D-6 工具修剪、采样落地、预设正则
+  // **不动**——它们不是 bychv 的承担面（bychv 没有对应物）。
+  // 判据来源 = $DSH_HOME/preset-enhance/state.json 的 bindings[sid].enabled（解析纯函数
+  // 归 dsht-plugin-shared/preset-ownership.ts，本处只做文件读取与 mtime 摊销缓存——
+  // assemble 每 step 一次，state.json 含全量预设可能上 MB）。
+  let bychvBindCache: { mtimeMs: number; enabled: ReadonlySet<string> } | null = null
+  const bychvPresetOwned = async (sessionId: string): Promise<boolean> => {
+    try {
+      const p = join(dshHome, 'preset-enhance', 'state.json')
+      const st = await stat(p)
+      if (!bychvBindCache || bychvBindCache.mtimeMs !== st.mtimeMs) {
+        const j = JSON.parse(await readFile(p, 'utf8')) as unknown
+        bychvBindCache = { mtimeMs: st.mtimeMs, enabled: enabledPresetBindings(j) }
+      }
+      return bychvBindCache.enabled.has(sessionId)
+    } catch {
+      return false // 文件不存在/坏 JSON = bychv 未启用过，我方管线照常
+    }
+  }
+
   const mergedRegex = async (rp: RpWorkspace, signal: AbortSignal, sessionId: string): Promise<RegexScript[]> => {
     const global = loadGlobalRegex(signal)
     const scoped = rp.regex ?? []
@@ -2727,7 +2757,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   }
 
   /** 会话 RP 状态（$DSH_HOME/rp/state/<sessionId>.json）：presetId + MVU 状态变量树（T2.3） */
-  interface SessionRpState { presetId?: string; state?: Record<string, unknown>; variables?: Record<string, unknown>; cursor?: number; loreTimed?: TimedEffect[] }
+  interface SessionRpState { presetId?: string; state?: Record<string, unknown>; variables?: Record<string, unknown>; cursor?: number; loreTimed?: TimedEffect[]; mvuExtractSeq?: number }
   // 形状保留键（与 dsht-plugin-mvu 的分权契约一致）；一个都没有 = 历史扁平 MVU 树。
   // E1/E11 补：sheets/sheetHistory/tablesMigrated（表格系统新键）与 tables/tableData
   // （ST 1.0 旧键，loadSheets 迁移源）都不是 MVU 变量——入保留集防被误判成扁平变量树
@@ -3801,6 +3831,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
 
       if (!resolved) return assembly
       const { slug, rp, preset, sessionId } = resolved
+      // 【管线切换 2026-09-20】bychv 绑定启用的会话：relative 条目注入跳过
+      // （预设内容统一归其 llm/stream 编译；详见 bychvPresetOwned 头注）。
+      if (sessionId && await bychvPresetOwned(sessionId)) return assembly
       const st = sessionId ? await loadSessionState(sessionId) : ({} as SessionRpState)
       const stateTree = (st.state ?? st.variables ?? {}) as Record<string, unknown>
       const parts: string[] = []
@@ -4071,6 +4104,16 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
       const traceKey = readHostSessionId(agent.session) || slug
       // I8-6：登记 live 会话（flush-all 通道的 flush 对象清单）
       registerLiveSession(traceKey, agent.session)
+      // 【C-5 护栏 2026-09-20】RP 会话被切到 bychv「预设模式」（st-preset）时出声警告：
+      // 该模式的 presetModeHistory 会过滤 source.plugin=dsh-system-prompt 的 system 消息——
+      // RP 的全部注入（角色 persona/世界书/MVU/记忆）都汇在同一条 system 消息里，会被整体
+      // 滤掉（角色 persona 全丢，机制见 PLUGIN-COMPAT §二b）。默认不可能走到这（RP 会话
+      // agentPreset 为空、autoEnableModes 只含 st-preset），只在用户手动误切时出现。
+      // 每会话每进程只报一次（防逐轮刷屏）。
+      if (readHeaderAgentPreset(agent.session) === 'st-preset' && !presetModeWarned.has(traceKey)) {
+        presetModeWarned.add(traceKey)
+        console.log(`[dsht-rp] ⚠ RP 会话正处于 bychv「预设模式」（st-preset）——该模式会把 RP 注入整体过滤（角色 persona 丢失）。请在工作台切回默认模式（预设绑定不受影响）。session=${traceKey} slug=${slug}`)
+      }
 
       // I4/I5 + R26 + R33：userName 单一事实源（persona active 优先）——EJS 生成期 ctx、
       // WI 宏上下文 macroCtx、withPresetLayer finalize 三处共用（此前各算各的：EJS 用
@@ -4178,6 +4221,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           // relative 条目由 system-prompt/assemble 瀑布注入 request.system（顶部、prompt_order
           // 保序）；这里只承担 depth 条目（jailbreak 类）——真深度 splice（ST in-chat 注入语义），
           // 签名快照形态（planShadowOps 同签名只留最新副本，防逐轮堆积）。
+          // 【管线切换 2026-09-20】bychv 绑定启用的会话：depth 条目注入跳过
+          // （预设内容统一归其 llm/stream 编译；详见 bychvPresetOwned 头注）。
+          if (await bychvPresetOwned(sid)) return finalize(d)
           const effectivePresetId = typeof st.presetId === 'string' && st.presetId
             ? st.presetId
             : await resolveActiveStPresetId()
@@ -4356,6 +4402,71 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
           await saveSessionState(stateSid, st1)
           console.log(`[dsht-rp] MVU state updated: ${Object.keys(sessionState).length} top keys (${stateSid})`)
         }
+      }
+
+      // ---- T2.3b（2026-09-20 修复）：direct 形态 assistant 文本块的 surface 增量提取 ----
+      // 根因（官方 dsh-agent-loop preStep 实证）：T2.3 扫的 batch = enter decision.messages
+      // = inbox.claim（增量输入）——历史 assistant 消息**从不在其中**（claimed 只有用户输入/
+      // 工具结果）⇒ 「assistant 文本 UpdateVariable/JSONPatch 提取」从未命中过任何消息。
+      // agent 卡靠 state_update 工具兜底所以未暴露；direct 卡无工具 ⇒ 该 ST 主路径结构性全哑
+      // （模拟器对照实验 + st-87rfra 真实 state 历来为空双实证，GOAL-PRESET-SWITCH W-A1）。
+      // 本段对 **direct 形态**（shouldStripRpTools；agent 卡走工具路径——文本块提取对它启用
+      // 会引入「文本块 + 工具调用同轮双写」的 delta 重复风险，故保守排除，GOAL 负控①）：
+      // 从 surface 事件流增量扫 assistant/message 事件提取。
+      // 游标 mvuExtractSeq 持久化在 rp/state/<sid>.json：进程重启不重扫；
+      // 首见无游标 = 锚到当前 surface 末尾（不补扫历史——delta 补扫不可控）。
+      try {
+        if (stateSid) {
+          const resolvedForMvu = await resolveAgentPreset(agent)
+          if (shouldStripRpTools(resolvedForMvu?.preset.path)) {
+            const surfaceSeqs = readSurfaceNodes(agent.session)
+            const stM = await loadSessionState(stateSid)
+            const lastSeq = typeof stM.mvuExtractSeq === 'number' ? stM.mvuExtractSeq : null
+            if (lastSeq === null) {
+              const tail = surfaceSeqs.length > 0 ? surfaceSeqs[surfaceSeqs.length - 1] : 0
+              if (tail > 0) {
+                stM.mvuExtractSeq = tail
+                await saveSessionState(stateSid, stM)
+              }
+            } else {
+              let tree = stM.state ?? {}
+              let dirty = false
+              let maxSeq = lastSeq
+              for (const seq of surfaceSeqs) {
+                if (seq <= lastSeq) continue
+                // 读取方式与 scanSurfaceHistory 同源（0.1.2 坑 #22：eventAt 优先，events 直索引兜底）
+                const ev = typeof (agent.session as unknown as { eventAt?: unknown }).eventAt === 'function'
+                  ? (agent.session as unknown as { eventAt: (q: number) => { type?: string; data?: unknown } | undefined }).eventAt(seq)
+                  : (agent.session as unknown as { events?: Record<number, { type?: string; data?: unknown }> }).events?.[seq]
+                if (ev?.type !== 'assistant/message') continue
+                const msg = (ev.data as { message?: LikeMessage } | undefined)?.message
+                // 无论可否提取都推进游标（这条消息不属于提取面，不是漏扫）
+                if (!msg || !Array.isArray(msg.content)) { maxSeq = Math.max(maxSeq, seq); continue }
+                if (msg.source?.form === 'snapshot' || msg.source?.plugin === name) { maxSeq = Math.max(maxSeq, seq); continue }
+                // 官方 assistant 消息可能无 id（DSH 事件本体 id 可选）——无 id 按内容 hash 去重
+                const mid = typeof msg.id === 'string' && msg.id ? msg.id : `h:${hash36(messageText(msg))}`
+                if (stateSeen.has(mid)) { maxSeq = Math.max(maxSeq, seq); continue }
+                const patches0 = parseUpdateVariable(messageText(msg))
+                const patches = patches0.length > 0 ? patches0 : parseJsonPatches(messageText(msg))
+                if (patches.length > 0) {
+                  tree = applyStatePatches(tree, patches)
+                  stateSeen.add(mid)
+                  dirty = true
+                }
+                maxSeq = Math.max(maxSeq, seq)
+              }
+              if (dirty || maxSeq !== lastSeq) {
+                const stM2 = await loadSessionState(stateSid)
+                if (dirty) stM2.state = tree
+                stM2.mvuExtractSeq = maxSeq
+                await saveSessionState(stateSid, stM2)
+                if (dirty) console.log(`[dsht-rp] MVU surface extract (direct): ${Object.keys(tree).length} top keys (${stateSid})`)
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.log(`[dsht-rp] MVU surface extract 失败（不阻塞主链路）：${(e as Error).message}`)
       }
 
       // ---- P0-5：per-turn 闸门 + 时间游标 ----

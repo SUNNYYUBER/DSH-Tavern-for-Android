@@ -36,12 +36,23 @@ class NodeService : Service() {
         private const val RUNTIME_DIR = "dsh-runtime"
         private const val RUNTIME_ZIP = "dsh-runtime.zip"
         /** 解压哨兵：§4.16.2 前端 dsht-rp-ui client 变更随 runtime.zip 重发布 → v97（覆盖安装强制重解压） */
-        private const val RUNTIME_SENTINEL = ".installed-v366"
+        private const val RUNTIME_SENTINEL = ".installed-v370"
         private const val DSH_PORT = 3080
         private const val OUTPUT_CAP = 200
         private const val PROOT_ROOTFS_DIR = "proot-rootfs"
         /** PRoot 真隔离（targetSdk 36：SELinux 仅允许从 nativeLibraryDir exec，busybox 实体必须是 libbusybox.so）。
          *  rootfs = 纯 symlink 林：全部指向 nativeLibraryDir/libbusybox.so（guest 内经 -b nativeLibDir 可见）。 */
+        /** 【P1 2026-09-20】能力补齐包：bash/rg/zstd/git 伪装 lib*.so 在 nativeLibraryDir（SELinux
+         *  唯一允许 untrusted_app exec 的位置——app_data_file 的 execve 必拒，模拟器 avc 实证）。
+         *  经 symlink 暴露命令名（execve 跟随 symlink 检查最终目标，busybox applets 同款机制）：
+         *   ① filesDir/dsh-runtime/bin/（node 直 spawn 用，PATH 含该目录）
+         *   ② proot rootfs /bin/（sandbox 包裹的 guest 内用） */
+        private val DSHT_TOOL_LINKS = linkedMapOf(
+            "bash" to "libdsht-bash.so",
+            "rg" to "libdsht-rg.so",
+            "zstd" to "libdsht-zstd.so",
+            "git" to "libdsht-git.so",
+        )
         private val BUSYBOX_APPLETS = listOf(
             "sh", "ls", "cat", "echo", "printf", "pwd", "cd", "mkdir", "rmdir", "rm", "cp", "mv", "ln",
             "touch", "chmod", "chown", "head", "tail", "grep", "egrep", "fgrep", "sed", "awk", "find",
@@ -189,6 +200,7 @@ class NodeService : Service() {
                     ensureRuntime()
                     ensureRpPluginPatch()
                     ensureProotRootfs()
+                    ensureToolLinks()
                     state = "EXTRACTED"
                     startNodeForever()
                 } catch (t: Throwable) {
@@ -607,6 +619,54 @@ class NodeService : Service() {
     }
 
     /**
+     * 【P1 2026-09-20】能力工具 symlink 林（幂等，每次启动都跑——覆盖安装后 nativeLibraryDir
+     * 路径哈希变化，symlink 需重指）。
+     *  ① filesDir/dsh-runtime/bin/<cmd> → nativeLibraryDir/libdsht-*.so（node 直 spawn 用，PATH 含）
+     *  ② proot rootfs /bin/<cmd> → 同上（sandbox 包裹的 guest 内用，nativeLibDir 已被 bind）
+     * 自测：bash --version 直跑一次（app 域真实 exec 验证），结果写诊断面板。
+     */
+    private fun ensureToolLinks() {
+        val nld = applicationInfo.nativeLibraryDir
+        val homes = listOf(
+            File(filesDir, "$RUNTIME_DIR/bin"),
+            File(filesDir, "$PROOT_ROOTFS_DIR/bin"),
+        )
+        var linked = 0
+        for (dir in homes) {
+            dir.mkdirs()
+            for ((cmd, so) in DSHT_TOOL_LINKS) {
+                val target = File(nld, so)
+                if (!target.exists()) continue
+                val link = File(dir, cmd)
+                var cur: String? = null
+                try { cur = Os.readlink(link.path) } catch (_: Throwable) {}
+                if (cur == target.absolutePath) { linked++; continue }
+                link.delete()
+                try { Os.symlink(target.absolutePath, link.path); linked++ } catch (_: Throwable) {}
+            }
+        }
+        // 自测（真实 app 域 exec 验证；run-as 的 runas_app 域是 granted 不能代表——SELinux 实证）
+        for (cmd in DSHT_TOOL_LINKS.keys) {
+            val bin = File(filesDir, "$RUNTIME_DIR/bin/$cmd")
+            if (!bin.exists()) { recordLine("P1 tool self-test: $cmd MISSING"); continue }
+            try {
+                val p = ProcessBuilder(bin.absolutePath, "--version")
+                    .redirectErrorStream(true).apply {
+                        // 与 node 进程同款库路径（bash 依赖 readline/ncursesw/iconv/android-support）
+                        environment()["LD_LIBRARY_PATH"] =
+                            applicationInfo.nativeLibraryDir + ":" + File(filesDir, "$RUNTIME_DIR/lib").absolutePath
+                    }.start()
+                val out = p.inputStream.bufferedReader().readText().trim().lineSequence().firstOrNull() ?: ""
+                val rc = p.waitFor()
+                recordLine("P1 tool self-test: $cmd rc=$rc ${out.take(70)}")
+            } catch (t: Throwable) {
+                recordLine("P1 tool self-test: $cmd FAILED ${t.message}")
+            }
+        }
+        recordLine("P1 tool links ready ($linked/${DSHT_TOOL_LINKS.size * homes.size})")
+    }
+
+    /**
      * 【T-67 / 心跳 62】pre-boot 静态预检的 NODE_OPTIONS 片段。
      *
      * **为什么必须放在这一层**：`dsh-workspace` 在 **`[cordis.init]` 插件树加载期**枚举会话
@@ -662,7 +722,13 @@ class NodeService : Service() {
                             // 双库路径：nativeLibraryDir（纯 .so）+ runtime lib/（带版本号 so）
                             put("LD_LIBRARY_PATH",
                                 applicationInfo.nativeLibraryDir + ":" + File(runtimeDir, "lib").absolutePath)
-                            put("PATH", applicationInfo.nativeLibraryDir + ":" + (get("PATH") ?: ""))
+                            // 【P1 2026-09-20】runtime bin/ 入 PATH：bash/rg/zstd/git 的 symlink 林
+                            // （ensureToolLinks 维护 → nativeLibraryDir 伪装 .so；dsh-subprocess-local
+                            // resolveExecutable 走 env PATH 发现命令名）
+                            put("PATH", applicationInfo.nativeLibraryDir + ":" +
+                                File(runtimeDir, "bin").absolutePath + ":" + (get("PATH") ?: ""))
+                            // 平台补丁（terminal-bash / fs-search）按此定位真工具；缺失即走各自降级
+                            put("DSHT_RUNTIME_BIN_DIR", File(runtimeDir, "bin").absolutePath)
                             // V8 老生代堆上限 2048MB：node 默认按物理内存扩堆（手机上可达数 GB），
                             // 无上限 → 后台挂机缓慢膨胀 → LMK 整进程杀（会话断）。上限 = 失败
                             // 模式选择：撞上限只是单个请求报错（可控），总比进程死好。实测锚点：
