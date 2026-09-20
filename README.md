@@ -10,8 +10,17 @@
 ## ⚠️ 先读这段
 
 - **bug 会很多**，其中一部分严重到功能不可用 / 数据异常 / 需要重装。**不要拿它当主力工具，不要用在丢不起的数据上。**
-- 只在一台模拟器 + 有限真机上验证过，其他机型大概率有问题。
 - 个人业余项目，修得慢（见文末「反馈与贡献」）。
+
+**验证面速查**（2026-09-20 起所有「已验证」标注到面；欢迎回填，见 [B-DEVICE 清单](docs/B-DEVICE-VERIFY-CHECKLIST.md)）：
+
+| 能力 | x86_64 模拟器 | 真机（小米 11 Pro） | 鸿蒙（卓易通） |
+|---|---|---|---|
+| 首启 / 会话基础 | ✅ 实测 | ✅ 实测（早期版本） | ✅ 实测（2026-09-19，HarmonyOS 6） |
+| 会话迁移（0.1.5） | ✅ 80/80 真实会话 | — 同模拟器面 | ⬜ 未实测 |
+| 预设管线（bychv 单份注入） | ✅ 实测（v368） | ⬜ 未实测（清单已备） | ⬜ 未实测 |
+| MVU direct 卡提取（T2.3b） | ✅ 实测（正控 PASS） | ⬜ 未实测 | ⬜ 未实测 |
+| P1 工具链（bash/rg/git/zstd） | ✅ 实测（v370 自测 rc=0） | ⬜ 未实测（装包后看 logcat `P1 tool self-test`） | ⬜ 未实测 |
 
 公开它是两个原因：分享「安卓上跑 DSH 运行时」的实现思路；ST 兼容面太长，一个人补不完，欢迎 fork 继续补。
 
@@ -232,6 +241,8 @@ DSH RolePlay/
 | 真机验证手册 | [B-DEVICE-VERIFY-CHECKLIST.md](docs/B-DEVICE-VERIFY-CHECKLIST.md) |
 | 插件拆包方案 | [T-88-PLUGIN-DECOMPOSITION.md](docs/T-88-PLUGIN-DECOMPOSITION.md) |
 | 社区插件适配指南 | [PLUGIN-COMPAT.md](docs/PLUGIN-COMPAT.md) |
+| 补丁上游化评审 | [PATCH-UPSTREAM-REVIEW.md](docs/PATCH-UPSTREAM-REVIEW.md) |
+| MVU 生态痛点调研 | [MVU-PAINPOINTS-2026-09-20.md](docs/MVU-PAINPOINTS-2026-09-20.md) |
 | 长期目标（单源） | [GOAL.md](docs/GOAL.md) |
 
 ## 反馈与贡献
@@ -290,8 +301,17 @@ Ready to use out of the box, fully local — nothing of yours gets uploaded.
 ## ⚠️ Read this first
 
 - **Bugs are numerous**, some severe enough to break features, corrupt data, or require reinstall. **Don't make this your daily driver; don't use it on data you can't afford to lose.**
-- Only verified on one emulator and a few real devices — other devices will likely hit problems.
 - A personal spare-time project; fixes come slowly (see "Feedback & Contributing" below).
+
+**Verification matrix** (since 2026-09-20 every "verified" claim names its surface; contributions welcome — see [B-DEVICE checklist](docs/B-DEVICE-VERIFY-CHECKLIST.md)):
+
+| Capability | x86_64 emulator | Real device (Mi 11 Pro) | HarmonyOS (EasyConnect) |
+|---|---|---|---|
+| First boot / session basics | ✅ tested | ✅ tested (earlier builds) | ✅ tested (2026-09-19, HarmonyOS 6) |
+| Session migration (0.1.5) | ✅ 80/80 real sessions | — same as emulator | ⬜ untested |
+| Preset pipeline (single injection via bychv) | ✅ tested (v368) | ⬜ untested (checklist ready) | ⬜ untested |
+| MVU direct-card extraction (T2.3b) | ✅ tested (positive control PASS) | ⬜ untested | ⬜ untested |
+| P1 toolchain (bash/rg/git/zstd) | ✅ tested (v370 self-test rc=0) | ⬜ untested (check logcat `P1 tool self-test` after install) | ⬜ untested |
 
 Why is it public? Two reasons: to share a working approach for running the DSH runtime on Android, and because ST compatibility is a long tail no single person can finish — forks are welcome to keep going.
 
@@ -512,6 +532,8 @@ DSH RolePlay/
 | Device verification | [B-DEVICE-VERIFY-CHECKLIST.md](docs/B-DEVICE-VERIFY-CHECKLIST.md) |
 | Plugin decomposition plan | [T-88-PLUGIN-DECOMPOSITION.md](docs/T-88-PLUGIN-DECOMPOSITION.md) |
 | Community plugin compat guide | [PLUGIN-COMPAT.md](docs/PLUGIN-COMPAT.md) |
+| Patch upstream review | [PATCH-UPSTREAM-REVIEW.md](docs/PATCH-UPSTREAM-REVIEW.md) |
+| MVU painpoints research | [MVU-PAINPOINTS-2026-09-20.md](docs/MVU-PAINPOINTS-2026-09-20.md) |
 | Long-term goal (single source) | [GOAL.md](docs/GOAL.md) |
 
 ## Feedback & contributing

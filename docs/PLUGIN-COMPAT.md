@@ -112,6 +112,12 @@
 
 ## 四、新插件接入检查清单（每接入一个走一遍）
 
+> **已机器化（2026-09-20，GOAL-ECO-SPRINT W-B）**：`rp-workspace/tools/dsh-plugin-lint`——
+> `npx dsh-plugin-lint <包目录|tgz>` 一条命令覆盖本清单 1/2/3 的静态面 +
+> 类型学 ⑧⑨ 嗅探（分面结论 host/android/stability，退出码可进 CI）。
+> 金标准回放（§5.2 五包人工实测结论）即其测试集。下面清单仍是**完整流程**（lint 只覆盖静态面）：
+
+0. **静态面（机器）**：`npx dsh-plugin-lint <pkg>`——fail 即止（⑨闭包/装不上）；risk 逐条过
 1. **依赖面扫描**：`package.json` 有没有运行时 dependencies？有没有原生模块（.node / node-gyp）？
    有没有 `child_process.spawn('bash'|'sh')` / `node-pty` / `ffmpeg` / `docker` 字面量？
 2. **inject 核对**：插件声明的 inject 服务在我们的 profile 是否全部存在？（缺 ⇒ 激活门静默不激活）
@@ -119,6 +125,7 @@
 4. **UI 面**：它注册哪些槽位？与 `dsht-rp-ui` 的 keyed 渲染器/overlay/sidebar 是否撞 key？
 5. **注入面**：是否挂 `llm/stream` / `agent/pre-step`？与我们的快照管线/bychv 编译的执行顺序？
 6. **实测**：装上 → 插件列表出现 → 功能路径走一遍 → 看 logcat 有无 `without inject` / EACCES
+   （CDP console 抓 `slot entry crashed` 是 ⑧ 型哑火的直接可见信号）
 
 ## 五、当前已接入的第三方插件
 

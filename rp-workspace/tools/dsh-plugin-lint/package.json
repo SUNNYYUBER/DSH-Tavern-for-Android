@@ -1,0 +1,14 @@
+{
+  "name": "dsh-plugin-lint",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Static linter for DeepSeek Harness (DSH) plugins: packaging closure, client-face dependency sniffing, Android constraint pre-check — codified from real-world compat cases",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/SUNNYYUBER/DSH-Tavern-for-Android.git", "directory": "rp-workspace/tools/dsh-plugin-lint" },
+  "keywords": ["dsh", "deepseek-harness", "dsh-plugin", "lint", "android", "plugin-quality"],
+  "bin": { "dsh-plugin-lint": "./cli.mjs" },
+  "exports": { ".": "./lint.mjs", "./rules": "./rules.mjs", "./package.json": "./package.json" },
+  "files": ["cli.mjs", "lint.mjs", "rules.mjs", "README.md"],
+  "engines": { "node": ">=22.19.0", "dsh": ">=0.1.5-rc.1 <0.1.6" },
+  "scripts": { "test": "node --test test/" }
+}

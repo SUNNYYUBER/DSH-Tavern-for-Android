@@ -39,9 +39,16 @@ const ENGINES = { node: '>=22.19.0', dsh: '>=0.1.5-rc.1 <0.1.6' }
 const REPO = { type: 'git', url: 'git+https://github.com/SUNNYYUBER/DSH-Tavern-for-Android.git' }
 
 // ---------------------------------------------------------------------------
-// 发布面（SSOT）：src = dsh-runtime-android/node_modules 下的已构建产物目录
+// 发布面（SSOT）：src = dsh-runtime-android/node_modules 下的已构建产物目录；
+// fromDir = 已是发布形态的源码目录（跳过 staging 拷贝与 package.json 重写，直接门禁+pack）
 // ---------------------------------------------------------------------------
+const TOOLS_LINT = path.join(WS, 'tools', 'dsh-plugin-lint')
 const PACKAGES = [
+  {
+    name: 'dsh-plugin-lint', fromDir: TOOLS_LINT,
+    description: 'Static linter for DSH plugins (packaging closure / client-face sniffing / Android pre-check)',
+    keywords: ['dsh', 'deepseek-harness', 'dsh-plugin', 'lint'],
+  },
   {
     name: 'dsht-rp-plugin',
     description: 'SillyTavern-style roleplay suite for DeepSeek Harness (DSH): character cards, world books/lorebooks, regex scripts, prompt presets, MVU variables, tavern-helper compat layer',
@@ -122,6 +129,11 @@ function resolveRel (fromFile, spec) {
 // ① staging：从已构建产物拷贝 + 重写 package.json
 // ---------------------------------------------------------------------------
 function stage (spec) {
+  // fromDir：已是发布形态（如 tools/dsh-plugin-lint 手写 package.json）——直接用，不重写
+  if (spec.fromDir) {
+    if (!fs.existsSync(path.join(spec.fromDir, 'package.json'))) throw new Error(`fromDir 无 package.json：${spec.fromDir}`)
+    return { dir: spec.fromDir, pkg: readJson(path.join(spec.fromDir, 'package.json')) }
+  }
   const src = path.join(NM, spec.name)
   if (!fs.existsSync(src)) throw new Error(`产物目录不存在：${src}（先跑 build-dsht.ps1 构建）`)
   const dst = path.join(STAGING, spec.name)
@@ -131,6 +143,15 @@ function stage (spec) {
   const entries = fs.readdirSync(dst, { withFileTypes: true })
   const files = entries.filter(e => e.name !== 'package.json').map(e => e.name)
   const srcPkg = readJson(path.join(src, 'package.json'))
+  // dsht-plugin-mobile 案（negative-own 负控抓到）：构建期注册靠 NodeService 写 patch 行，
+  // 产物自身无 cordis.patch.yml ⇒ 作为独立 npm 包无法 dsh plugin add。staging 补最小清单。
+  let dshField = srcPkg.dsh
+  if (!fs.existsSync(path.join(dst, 'cordis.patch.yml')) && !fs.existsSync(path.join(dst, 'dsh.plugin.json'))) {
+    const id = spec.name.replace(/^dsht-plugin-/, 'dsht-')
+    fs.writeFileSync(path.join(dst, 'cordis.patch.yml'),
+      `# ${spec.name} bundle patch（staging 生成；等价 dsh plugin add ${spec.name}）\n- insert:\n    - id: ${id}\n      name: '${spec.name}'\n`)
+    dshField = { ...(dshField ?? {}), bundle: { patch: './cordis.patch.yml' } }
+  }
   const pkg = {
     name: spec.name,
     version: VERSION,
@@ -141,8 +162,8 @@ function stage (spec) {
     keywords: spec.keywords,
     main: srcPkg.main ?? './lib/index.js',
     ...(srcPkg.exports ? { exports: srcPkg.exports } : {}),
-    ...(srcPkg.dsh ? { dsh: srcPkg.dsh } : {}),
-    files,
+    ...(dshField ? { dsh: dshField } : {}),
+    files: [...files, ...(files.includes('cordis.patch.yml') ? [] : ['cordis.patch.yml'])].filter(f => fs.existsSync(path.join(dst, f))),
     engines: ENGINES,
   }
   fs.writeFileSync(path.join(dst, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
@@ -162,7 +183,8 @@ function stageSuite () {
     repository: REPO,
     keywords: SUITE.keywords,
     files: ['package.json'],
-    dependencies: Object.fromEntries(PACKAGES.map(p => [p.name, `^${VERSION}`])),
+    // 套件 = 6 个 RP 插件（dsh-plugin-lint 是开发工具，不属于运行时套件）
+    dependencies: Object.fromEntries(PACKAGES.filter(p => !p.fromDir).map(p => [p.name, `^${VERSION}`])),
     engines: ENGINES,
   }
   fs.writeFileSync(path.join(dst, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
@@ -188,10 +210,19 @@ function gate (name, dir, pkg) {
     if (f === 'package.json') continue
     if (!fs.existsSync(path.join(dir, f))) fails.push(`files 清单项不存在：${f}`)
   }
-  // ①② import 闭包
+  // ①② import 闭包（只扫**发布面**——files 清单覆盖的文件；test/ 等不入包的内容
+  // 不该参与闭包判定，dsh-plugin-lint 自身的合成 fixtures 就是反例）
+  const jsSet = []
+  for (const f of pkg.files ?? []) {
+    if (/[*?[\]]/.test(f)) continue // glob 项跳过（npm pack 兜底）
+    const p = path.join(dir, f)
+    if (!fs.existsSync(p)) continue // S5 已报
+    if (fs.statSync(p).isDirectory()) jsSet.push(...walkJs(p))
+    else if (/\.(js|mjs|cjs)$/.test(f)) jsSet.push(p)
+  }
   const missing = []
   const bare = new Set()
-  for (const js of walkJs(dir)) {
+  for (const js of jsSet) {
     for (const spec of scanSpecifiers(js)) {
       if (spec.startsWith('.') || spec.startsWith('/')) {
         if (!resolveRel(js, spec)) missing.push(`${path.relative(dir, js)} → ${spec}`)

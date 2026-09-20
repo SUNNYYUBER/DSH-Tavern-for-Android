@@ -39,67 +39,71 @@
 - [ ] **A-1 npm 首发闭环**：用户 `npm login` 后跑
   `node scripts/publish-plugins.mjs --publish`（7 包：6 插件 + dsht-rp-suite 元包）。
   脚本与门禁已就绪，**本工作面除此无其他阻塞项**。
-- [ ] **A-2 正式版口径显式化**：README/文档所有「已验证」标注到验证面
-  （模拟器 / 真机 / 鸿蒙分列）；v0.2.0 正式版门槛已改为「npm 闭环 + 口径诚实」
+- [x] **A-2 正式版口径显式化（2026-09-20 晚 ✅）**：README 中英各加「验证面速查」表
+  （能力 × 模拟器/小米真机/鸿蒙三列，每项标注实测/未实测/判读方式）；
+  v0.2.0 正式版门槛已改为「npm 闭环 + 口径诚实」
   （NEXT-STEPS「正式版门槛」节，真机/稳定期已降级为社区众包项）。
 
-## 工作面 W-B：dsh-plugin-lint（插件生态基础设施，主攻）
+## 工作面 W-B：dsh-plugin-lint（插件生态基础设施，主攻）——✅ 完成（2026-09-20 晚）
 
 **定位**：把「DSH 插件在 Android/各 DSH 版本上能不能活」的判定从人肉实测变成
 `npx dsh-plugin-lint <pkg>` 一条命令。生态里还没人占这个位置（bychv 之外无质量工具）。
 
-**组成**（三块现成积木的泛化）：
+**产物**：`rp-workspace/tools/dsh-plugin-lint/`（cli.mjs / lint.mjs / rules.mjs SSOT /
+README），9 条规则（S1-S6 静态 + N1 嗅探⑧ + A1/A2 安卓预判），分面结论
+（host / android / stability——分面是金标准回放逼出来的：session-pin 主功能走契约面 ✅
+但增强面带防御地用了非契约投影，总档语义必须拆开才不与人工实测打架）。
 
-1. **静态面**（publish-plugins.mjs 门禁提炼）：npm pack 闭包完整性（zhipu 案）、
-   cordis.patch.yml 合法性、engines.dsh 窗口声明、files 清单存在性；
-2. **嗅探面**（冲突类型学机器化）：client face 内部形态依赖嗅探
-   （`getSnapshot().chat` / `snapshot.nodes` / `sessions.binding` 等已踩雷模式的静态扫描）、
-   UI 槽位冲突静态对账（slots.json 契约面）、原生模块/子进程依赖嗅探（Android 约束预判）；
-3. **报告面**：逐条命中 → 冲突类型学编号（⑦⑧⑨…）+ 修复指引链接（PLUGIN-COMPAT 锚点）。
+**判据（四件套）——全部落实**：
 
-**判据（四件套）**：
-
-- **正控（金标准回放）**：对已实测的 5 个社区包跑出与人工实测**一致的结论**——
-  session-pin/better-stats 通过、turn-index/outline 报「⑧ client face 依赖」风险、
-  zhipu-toolkit 报「⑨ 闭包缺文件」。**人工实测结论即测试集**，不一致即工具错；
-- **负控**：对我方 6 个自研包（publish dry-run 全绿的那批）零误报；
-- **产物核验**：lint 规则与 PLUGIN-COMPAT 类型学编号一一对账（机器校验，
-  类型学新增案例必须同步 lint 规则——防两份真相漂移）；
-- **记账**：PLUGIN-COMPAT §四检查清单注明「已机器化：dsh-plugin-lint」；
-  工具自身随 npm 首发面发布（列入 publish-plugins.mjs 包表）。
+- **正控（金标准回放）5/5**：session-pin/better-stats host+android=pass、
+  turn-index/outline 命中 N1(⑧)、zhipu host=fail 命中 S1(⑨)——与 PLUGIN-COMPAT §5.2
+  人工实测一致（`test/golden-replay.mjs`）。**回放过程抓到并修了 3 个工具缺陷**
+  （S6 误报 ESM exports 形态 / S5 不支持 glob / N1 泛匹配误伤防御性使用）——
+  金标准的价值实证；
+- **负控**：我方 6 包 staging 零误报（`test/negative-own.mjs`；顺带抓到
+  dsht-plugin-mobile 缺 cordis.patch.yml 的**真实发布缺陷**——publish staging 已补生成）；
+- **产物核验**：`cli.mjs --selftest` 规则表 ↔ PLUGIN-COMPAT §5.3 编号机器对账（⑨⑧ 一致）；
+  合成 fixtures 测试 11/11 绿（node --test）；
+- **记账**：PLUGIN-COMPAT §四加「已机器化」注 + 第 0 条机器面；工具列入
+  publish-plugins.mjs 包表（第 8 包，dry-run 全绿，pack 5 文件 / 8 KB）。
 
 **边界**：本期只做**静态 + 嗅探**，不做动态加载实测（那需要设备/模拟器环境，
 属安装器范畴——未来 UI 化插件安装器再议）。
 
-## 工作面 W-C：补丁上游化清单（降维护成本 + 上游话语权）
+## 工作面 W-C：补丁上游化清单（降维护成本 + 上游话语权）——✅ 完成（2026-09-20 晚）
 
-**产出**：`docs/PATCH-UPSTREAM-REVIEW.md`——全部构建期补丁的两栏分类与上游化论证。
+**产出**：[PATCH-UPSTREAM-REVIEW.md](PATCH-UPSTREAM-REVIEW.md)——12 组语义条目的两栏分类。
 
-- [ ] **C-1 全量盘点**：从 `apply-platform-patches.py` + `build-dsht.ps1` 提取全部补丁条目
-  （与门禁登记面逐条对账，不许漏——audit-build-path-parity 的登记面即真值）；
-- [ ] **C-2 两栏分类**：「平台无关、可提 PR 回 DSH 官方」（候选：flock 单进程直通、
-  link→rename、compression 配置化、会话标题剥协议标签……逐条论证）vs
-  「Android 特有、留在本地」（proot 包装、jniLibs 伪装、P1 symlink 林……）；
-- [ ] **C-3 PR 草案**：对每条「可上游」补丁写出 PR 文案骨架（问题 / 方案 / 兼容性），
-  实际提 PR 的时机由用户定（涉及对外沟通节奏）。
+- [x] **C-1 全量盘点**：对账口径 = `apply-platform-patches.py` `patch()` 20 处
+  （audit-patch-markers.py 机器核验 marker 幂等健全）+ P2-1b 自定义块 + composition yml；
+  build-dsht.ps1 的 14 处 Dsht-Patch 与 py 侧语义条目全重叠（两条构建路径的登记面）；
+- [x] **C-2 两栏分类**：可上游 5 组（U-1 折叠行修复 ★★★ / U-2 标题剥标签 ★★★ /
+  U-3 flock 单进程直通 ★★☆ / U-4 link→rename 回退 ★★☆ / U-5 Iterator 守卫 ★☆☆）；
+  留本地 7 组（proot 包装 / sandbox 降级 / bash argv / fs-search 兜底 / term shell /
+  compression 配置 / SIM 组），逐条带「为什么不可上游」一句论证；
+- [x] **C-3 PR 草案**：U-1~U-5 每条带标题/问题/方案/兼容性骨架；行动建议
+  （先提 U-1/U-2 零平台分支项；U-3/U-4 以能力探测/失败回退形态提）。
 
-**判据**：盘点条目数 = 门禁登记数（机器对账通过）；每条有「为什么可/不可上游」的一句话论证；
-文档落 docs/ 并登记进 README 文档索引。
+**判据**：盘点 = 门禁登记面对账 ✓；每条有论证 ✓；README 文档索引已登记（中英双行）✓。
+实际提 PR 的时机由用户定（涉及对外沟通节奏）。
 
-## 工作面 W-D：MVU 生态痛点调研（先调研后动手）
+## 工作面 W-D：MVU 生态痛点调研（先调研后动手）——✅ 完成（2026-09-20 晚）
 
-**定位**：MVU 是 RP 护城河的核心资产，但「接下来做什么」不许拍脑袋——先出调研。
+**产出**：[MVU-PAINPOINTS-2026-09-20.md](MVU-PAINPOINTS-2026-09-20.md)——三面调研，
+全部痛点带代码证据（行级引用 + grep 零命中证明）：
 
-**产出**：`docs/MVU-PAINPOINTS-2026-09-20.md`（或当日日期），三个面的现状缺口：
+1. **状态栏模板**：渲染链完整但**前端对 PUT /dsht-mvu/statusbar 零调用**——
+   模板编辑 UI 缺失，高频定制面断在「会手写 JSON」门槛 ⇒ **建议做（下轮首选）**；
+2. **变量树编辑**：RpStateView/RpTablesView 头注双只读声明，写路径只有 LLM 一条——
+   三真实场景（纠错/改设定/调卡）⇒ **建议做「变量点值编辑」**（走 LLM 同款落账管线）；
+   「回滚/快照」**缓议**（dsht-plugin-undo 取舍先评估，不重复造）；
+3. **卡内脚本调试**：MVU 通知**缺省全关**（ST 兼容语义）+ loadError 无可达 UI——
+   D8 toasts 基础设施已建只是默认黑 ⇒ **建议做「调试模式」开关**（零新管线）。
 
-1. **状态栏模板**：MVU 状态栏的定制/美化现状（用户现在怎么做，卡在哪）；
-2. **变量树编辑**：rp/state 的可视化查看已有（RpStateView/RpTablesView），
-   **编辑**面缺口（手动修变量、回滚、合并）；
-3. **卡内脚本调试**：酒馆助手脚本在 DSHT 里的调试体验（报错可见性、日志、断点替代）。
-
-**判据**：每个痛点必须有真实案例或代码证据（自己的会话数据 / 社区样例 / 代码现状引用），
-不许写「我觉得用户可能需要」；结尾产出明确的「做什么 / 不做什么」建议清单——
-**调研文档本身就是本工作面的交付物**，动代码是下一个 goal 的事。
+**判据**：每痛点有证据 ✓（无一处「我觉得」）；「做什么/不做什么」表 ✓；
+排期建议（调试模式 → 模板编辑 → 点值编辑，按基础设施已备程度从易到难）✓。
+动代码是下一个 goal 的事（本面只交付调研）。
 
 ---
 
