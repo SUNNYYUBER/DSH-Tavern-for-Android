@@ -45,6 +45,7 @@
 | **正则** | 三时机（display / prompt / permanent）、placement、depth、substituteRegex、三源作用域 |
 | **MVU** | `<UpdateVariable>` / `<JSONPatch>` 全操作符 / `<initvar>` / `_.set` 系 / stat_data 双树合并 / 状态栏 |
 | **酒馆助手（JS-Slash-Runner）** | TH API 分本地 / 桥接 / 记名拒绝三类（条数会随开发增长，以源码为准）；`tavern_events` 82 项全表；事件时序；脚本管理面板 |
+| **提示词模板（EJS）** | ST-Prompt-Template 意图级移植（与酒馆助手是两个不同的上游扩展）：EJS 子集渲染器（默认）+ 沙箱渲染器（vm 隔离、超时硬中断）、注入 store、已处理历史消息跳过（ST 同款语义） |
 | **交互闭环** | 回退 / 编辑 / 重新生成 / 变体、楼层口径（1 输入 = 1 楼）、剧情记忆、思考耗时 |
 | **渲染** | 楼层头、思考折叠、代码块美化、状态栏、台词着色、卡前端 HTML（完整文档进沙箱 iframe） |
 
@@ -323,6 +324,7 @@ Why is it public? Two reasons: to share a working approach for running the DSH r
 | **Regex** | three stages (display / prompt / permanent), placement, depth, substituteRegex, three-source scoping |
 | **MVU** | `<UpdateVariable>` / `<JSONPatch>` full operators / `<initvar>` / `_.set` family / stat_data dual-tree merge / status bar |
 | **Tavern Helper (JS-Slash-Runner)** | TH APIs split into local / bridged / named-refusal (counts grow with development — check the source); all 82 `tavern_events`; event ordering; script manager panel |
+| **Prompt template (EJS)** | Intent-level port of ST-Prompt-Template (a *different* upstream extension from Tavern Helper): EJS-subset renderer (default) + sandboxed renderer (vm isolation, hard timeout), injection store, skip already-processed history messages (ST semantics) |
 | **Interaction loop** | rollback / edit / regenerate / variants, floor numbering (1 input = 1 floor), plot memory, thinking time |
 | **Rendering** | floor headers, collapsible reasoning, pretty code blocks, status bar, quote coloring, card frontend HTML (full documents in sandboxed iframes) |
 
