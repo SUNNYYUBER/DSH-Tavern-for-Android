@@ -5,7 +5,7 @@
 把你的 SillyTavern 数据（角色卡 / 世界书 / 预设 / 正则 / 聊天记录）搬进一个安卓 App。
 装上即用，全部本地运行，不上传你的任何数据。
 
-**当前版本**：`0.2.0`（内嵌 DSH `0.1.5-rc.1`）　|　**状态**：⚠️ Alpha（早期测试版）
+**当前版本**：`0.2.0`（内嵌 DSH `0.1.5-rc.1`）　|　**状态**：v0.2.0 正式版（验证面见下表；个人业余项目，仍请视作早期软件对待）
 
 ## ⚠️ 先读这段
 
@@ -296,7 +296,7 @@ DSH RolePlay/
 Move your SillyTavern data (character cards / world books / presets / regexes / chat history) into one Android app.
 Ready to use out of the box, fully local — nothing of yours gets uploaded.
 
-**Current version**: `0.2.0` (bundles DSH `0.1.5-rc.1`)　|　**Status**: ⚠️ Alpha (early test build)
+**Current version**: `0.2.0` (bundles DSH `0.1.5-rc.1`)　|　**Status**: v0.2.0 stable (see verification matrix below; still a spare-time project — treat as early software)
 
 ## ⚠️ Read this first
 

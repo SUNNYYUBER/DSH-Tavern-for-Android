@@ -36,9 +36,14 @@
 
 ## 工作面 W-A：收眼前的尾（唯一阻塞面，等用户一个动作）
 
-- [ ] **A-1 npm 首发闭环**：用户 `npm login` 后跑
-  `node scripts/publish-plugins.mjs --publish`（7 包：6 插件 + dsht-rp-suite 元包）。
-  脚本与门禁已就绪，**本工作面除此无其他阻塞项**。
+- [x] **A-1 npm 首发闭环（2026-09-20 晚 ✅）**：8 包全部发布——
+  dsht-rp-plugin / dsht-plugin-mvu / dsht-plugin-tavern-helper / dsht-plugin-prompt-template /
+  dsht-plugin-mobile / dsht-plugin-memory / dsht-rp-suite @0.2.0 + dsh-plugin-lint
+  @0.2.1（0.2.0 首发时 bin 被 npm auto-fix 移除——新版 npm 要求 bin 不带 `./` 前缀，
+  0.2.1 修复；npm pkg fix 实证）。过程纪实：web login → 发布 403（npm 新政策
+  publish 强制 2FA/bypass token）→ Security Key 型 2FA 无 TOTP 码可走 →
+  computer-use 操作创建 Granular Access Token（勾 Bypass 2FA + publish + 90 天）→
+  写入 .npmrc → 7 包连发全过。
 - [x] **A-2 正式版口径显式化（2026-09-20 晚 ✅）**：README 中英各加「验证面速查」表
   （能力 × 模拟器/小米真机/鸿蒙三列，每项标注实测/未实测/判读方式）；
   v0.2.0 正式版门槛已改为「npm 闭环 + 口径诚实」
