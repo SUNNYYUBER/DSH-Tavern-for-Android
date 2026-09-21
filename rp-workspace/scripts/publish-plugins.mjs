@@ -34,7 +34,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const WS = path.resolve(HERE, '..')
 const NM = path.join(WS, 'dsh-runtime-android', 'node_modules')
 const STAGING = path.join(WS, 'tmp', 'publish-staging')
-const VERSION = '0.2.0'
+const VERSION = '0.2.1'
 const ENGINES = { node: '>=22.19.0', dsh: '>=0.1.5-rc.1 <0.1.6' }
 const REPO = { type: 'git', url: 'git+https://github.com/SUNNYYUBER/DSH-Tavern-for-Android.git' }
 
@@ -280,7 +280,14 @@ if (isMain) {
     process.exit(0)
   }
   for (const { dir, pkg } of staged) {
-    console.log(`[publish] npm publish ${pkg.name}@${VERSION} …`)
+    // dsh-plugin-lint 是开发工具、版本号自治（fromDir 自带 package.json）：
+    // 本轮（2026-09-21，0.2.1）它无改动且 npm 上已是 0.2.1——重发同版本号必 E409，跳过。
+    // 若 lint 有实质变更，先 bump 它自己的 package.json 再从此集合移除。
+    if (pkg.name === 'dsh-plugin-lint') {
+      console.log(`[publish] 跳过 ${pkg.name}@${pkg.version}（开发工具，无改动，npm 已是该版本）`)
+      continue
+    }
+    console.log(`[publish] npm publish ${pkg.name}@${pkg.version ?? VERSION} …`)
     execFileSync(NPM, ['publish', '--access', 'public'], { cwd: dir, stdio: 'inherit', shell: SHELL })
   }
   console.log('[publish] ✓ 全部发布完成')
