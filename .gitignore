@@ -38,6 +38,11 @@ tmp/
 .vscode/
 .idea/
 *.log
+# 门禁真值日志例外：audit-baseline-claims 的「上次构建实测」真值来源（CI 与本地
+# 必须用同一份，否则该门禁在净环境 fail-closed —— W-F 第十跑实证）。发版即刷新。
+!rp-workspace/tmp/
+rp-workspace/tmp/*
+!rp-workspace/tmp/build-truth-*.log
 Thumbs.db
 Desktop.ini
 .DS_Store

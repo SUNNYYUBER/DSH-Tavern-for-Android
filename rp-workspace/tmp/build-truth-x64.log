@@ -1,0 +1,184 @@
+
+[步骤 0] 前置检查
+[native-libs] ✓ 双架构 14 项齐备（跳过 14 项已存在）
+
+[步骤 0.7] DSH 版本一致性闸门（第 13 项常驻审计；P-40/R21 的机器化）
+  [gate] OK audit-dsh-version.mjs --selftest
+  [gate] -DshVersion=0.1.5-rc.1 与单源 dsh-version.json 一致
+[audit-dsh-version] DSH 版本与数据兼容形态审计
+
+✓ ① 单源合法
+    dsh-version.json：dshVersion=0.1.5-rc.1 · 期望字段=[op, startSeq, endSeq]
+✓ ② 产物 dsh 主包版本
+    实得 0.1.5-rc.1（与单源一致）
+✓ ③ 数据兼容形态（isReplaceOp 字段名）
+    isReplaceOp 要求 op / startSeq / endSeq —— 与单源一致
+ⓘ ④ 设备对照
+    设备不可达 / 应用未启动 / runtime 未解压 —— **测不出 ≠ 事实否定**（P-17），不冒充通过
+
+[audit-dsh-version] 3 OK / 0 FAIL / 1 SKIP
+✅ 版本与数据兼容形态一致（无 FAIL）
+  [gate] OK audit-dsh-version.mjs
+
+[步骤 0.5] 门禁前置（十三项常驻审计；任一不过即停）
+  [gate] OK audit-publish-hygiene.mjs
+  [gate] OK audit-shim-template-literal.mjs
+         [A11] OK —— 常驻探针登记完整（受检目标 9 个，无未登记的 ef-* 探针）
+  [gate] OK audit-route-contract.mjs
+         [契约读数] routes=68 violations=0
+  [gate] OK audit-method-binding.mjs
+  [gate] OK audit-impl-duplication.mjs
+  [gate] OK audit-iframe-sandbox.mjs
+  [gate] OK audit-cross-package-css.mjs
+  [gate] OK audit-body-dup-ast.mjs
+  [gate] OK audit-th-face-coverage.mjs
+         [TH 面读数] local=34 bridge=41 total=75 unsupported=81
+  [gate] OK audit-script-semantics-parity.mjs
+  [gate] OK audit-matrix-residuals.mjs
+  [gate] OK audit-build-path-parity.py --selftest
+  [gate] OK audit-build-path-parity.py
+         ps1  marker 18 个 | python marker 17 个 | 共同 17 个
+         stub 落盘项：ps1 12 个 | python 11 个 | 共同 11 个
+         Dsht-Patch 调用点 13 处 | 幂等口径不自洽 0 处
+         python patch() 调用点 20 处 | 幂等口径不自洽 0 处
+         构建侧 .ps1 的 UTF-8 BOM：自动发现 4 个 | 缺 BOM 0 个
+
+[步骤 0.55] 判据杠杆自检（判据三/四/七 的真实仓库负控；任一不过即停）
+  [gate] OK audit-marker-collision-negctl.py（有杠杆：破坏后报红 + 逐字节还原）
+  [gate] OK audit-py-patch-idem-negctl.py（有杠杆：破坏后报红 + 逐字节还原）
+  [gate] OK audit-cdp-eval-negctl.mjs（有杠杆：注入逐字复制后报红 + 删除后回绿 + 自证清理）
+  [gate] OK audit-session-integrity.mjs --selftest（18/18 + 与官方参考实现对账 91/91，含 W32 判据 ④ 的正控/负控/杠杆与 W36 的假红收口）
+  [gate] OK audit-error-layer-classify.mjs --selftest（9/9，含负控2b 逐行判定与杠杆）
+  [gate] OK audit-p47-negctl.mjs（有杠杆：注入修前形态后报红 + 删除后回绿 + 逐字节还原）
+  [gate] OK audit-p48-rollback.mjs --selftest（15/15，含『假兜底』『只 import 不接线』负控与两组杠杆）
+  [gate] OK audit-p48-negctl.mjs（有杠杆：断线兜底→报红 · 散落裸写→报红 · 删除→回绿 · 逐字节还原）
+  [gate] OK audit-open-items.mjs --selftest（12/12，含『同事实两处相反』负控与杠杆）
+  [gate] OK audit-open-items.mjs（§六 表自洽：状态三态可解析 + 未收口有锚点 + 无同事实两处相反）
+         [开放项] §六 表 142 行（其中 ⬜ 未收口 1 行）· 事实指纹 16 个
+  [gate] OK audit-open-items-negctl.mjs（有杠杆：注入矛盾→报红指向两行 · 删除→回绿 · 逐字节还原）
+  [gate] OK audit-goal-sections.mjs --selftest（40/40，含列数错位 / 跨表复用 / P 判据过期声明 / ★ W54 ⑦c 缺定义·索引外编号·切面失效·杠杆 的负控与杠杆）
+  [gate] OK audit-goal-sections.mjs（§十一 三表结构自洽：列数对表头 + ID 同表唯一 + 跨表无复用 + P 判据编号与声明一致）
+         [工作面表] §11.1 4 列 / 30 行 · §11.2 4 列 / 6 行 · §11.3 3 列 / 42 行 · §11.4 3 列 / 24 行（合计 102 行）
+         [工作面表] OK —— 三表列数自洽、ID 同表唯一、跨表无复用、项数未跌破下限
+  [gate] OK audit-goal-sections-negctl.mjs（23/23：注入坏样本→报红指向行号 · ★ W54 方法论副本注入（E1~E3）· 杠杆 E4 · 还原→回绿）
+  [gate] OK audit-selftest-claims.mjs --selftest（136/136，含声明过期 / 悬空引用 / 未接入契约负控与杠杆；W45 补：按区段语义界定扫描面 + 任意路径前缀 + 对比叙述/别的量词排除；★ W65 补：变化叙述（A → B 取右值）+ 窗口不得截断在数字中间 + ★ 第三受守面（本文件的 gate 文案）；★ W71 补：头注声明的判据条数 vs 实现条数；★ W72 补：表格行内**跨列**分数抽取（表格列边界不再切断窗口）；★ W73 补：头注「无汇总数逐条清单」vs 实现分组键；★ W74 补：闸门支持的**输入面参数**必须被其负控真的传过；★ W75 补：头注「## 退出码」段 vs 实现的 exit 实参（幽灵声明 / 未声明的码）；★ W76 补：**第二排版形态**（注释行内「退出码：0 = …」，含续行、引用编号剔除、Python 用 sys.exit/return N、括号配平）；★ W77 补：**头注用法行声明的 CLI flag vs 实现真的读它**（双向对账 + 四种读取形态 + 含反引号的行跳过 + 豁免表机器守）；★ W78 补：**读数登记的 Pattern 必须真的能匹配到值**（实跑核验 + 自调用链排除 + 只出声不报红两种边界 + 非法正则与「匹配 0 行」分家））
+  [gate] OK audit-selftest-claims.mjs（文档声明与脚本实测逐条一致，且分数行可被机器读出）
+         [自证分数] 受检闸门 38 个（接入契约 37 / 未接入 1）· 文档声明 108 条（涉 39 个脚本）
+         [头注清单] 带「无汇总数逐条清单」的闸门 5 个 · 违规 0 处
+         [退出码] 声明了「## 退出码」段的闸门 30 个 · 违规 0 处
+         [用法面] 头注用法行声明了 flag 的闸门 21 个（共 43 个 flag）· 违规 0 处
+  [gate] OK audit-selftest-claims-negctl.mjs（有杠杆：注入声明过期/悬空引用→报红指向行号 · 还原→回绿）
+  [gate] OK audit-baseline-claims.mjs --selftest（90/90，含门禁条数/ sentinel / P 判据条数 / M4 / ★ §八 验收 / ★ W57-W60 会增长的读数不得写成硬常量（四文档面：GOAL + README + V0.3-FREEZE + TASK-LIST）+ ★ W60 契约快照面读数（slots 声明数 vs contracts/*/slots.json，含快照自动发现与自洽性）+ ★ W64 豁免依据必须点名到能跑到的通路 + ★ W66 日志读数 vs 文档数字对账 的负控与杠杆；W45 补：半截日志不得当真值 + 构建期单向口径）
+  [gate] OK audit-baseline-claims.mjs（§3.1 可核对数字与实测一致：门禁条数 / sentinel / P 判据条数）
+         [基线] §3.1 声明：门禁=48 sentinel=v363 P判据=82 M4=169/0 · 真值：门禁=48 sentinel=v363 P判据=82 M4=169/0（方向：**单向**——构建期不报「声明 > 实测」，见头注 P-43/P-40③）
+         [契约] slot 数核对：声明=42 实测=42 快照=contracts\0.1.0-rc.7\slots.json 违规 0 处
+  [gate] OK audit-baseline-claims-negctl.mjs（40/40：注入过期→报红指出两值 · ★ W57-W60 会增长的读数写死（GOAL §3.2 + B10 + README + V0.3-FREEZE 四形态）+ ★ W60 契约快照面 slots 数与杠杆 + ★ W64 豁免依据（装置不在跑 ⇒ 不豁免）+ ★ W66 文档数字 < 日志读数 ⇒ 报红 + ★ W74 TASK-LIST 面（第四个受守文档，此前该输入面从未被负控传过）· 真实仓库全程未被触碰）
+  [gate] OK audit-doc-refs.mjs --selftest（83/83，含可执行引用/位置声明/并列装置位置不一致/★在版本控制内的正负控与杠杆；★ W65 补：受守面清单与 GOAL §八 E-H 单源一致性；★ W69 补：跨文档章节引用可达（点名「<文档> §x.y」而该文档无此节 ⇒ 读者必然扑空）；★ W70 补：豁免窗口紧贴（前 12/后 6）且词表不含日常高频措辞，含 4 条「豁免词在场 + 真缺陷 ⇒ 必须报红」的攻击样本控；★ W79 补：**行号式引用可达**（<文件>:<行号> 越界 / 区间写反 ⇒ 报红；非本仓目标 / 同名多处 / 自指 ⇒ 只出声，守 P-43/P-46））
+  [gate] OK audit-doc-refs.mjs（E-H 四份 + SSOT 的引用完整性：可执行引用 + scripts/docs 位置声明 + 并列装置位置一致 + ★可执行引用目标在版本控制内）
+         [文档引用] 扫描 5 份（E-H 四份 + SSOT）· 悬空/误导/控制外引用 0 处 · ⓘ 信息项 2 处（史实区已按区段语义 mask：3 份）
+  [gate] OK audit-doc-refs-negctl.mjs（38/38：七类注入→报红且理由正确 · mask 失效→报红 · ★ W65 受守面单源的两侧（改文档 / 删清单）→报红 · ★ W69 跨文档章节引用不可达（全名 / 简称两种形态）→报红 · ★ W70 豁免词在场仍须报红（窗口 + 词表两侧）→报红 · 改回→回绿 · 真实文档全程未被触碰）
+  [gate] OK audit-rule-claims.mjs --selftest（22/22，含『没点名装置』『装置不存在』『无触发路径』三类负控与杠杆 + 续行切块正控 + ★ W53 表格续行/扫描面/CLAIM_RE 收窄）
+  [gate] OK audit-rule-claims.mjs（§七 纪律 + ★ §九 P 判据索引：点名 + 存在 + ★ 触发路径可判定）
+         [纪律声明] 扫描 2 个受守区：§七 纪律 23 条（声明有机器守 3 条） · §九 P 判据索引 82 条（声明有机器守 14 条） · 违规 0 处
+  [gate] OK audit-rule-claims-negctl.mjs（有杠杆：五类注入→报红且结论正确 · 切面失效→fail-closed · 假红零控 · 改回→回绿 · 真实仓库全程未被触碰）
+
+[步骤 0.6] 官方契约事前探针（E3/P-4；仅在 SkipInstall 时于此处跑，其余见 Step 3.6）
+  [gate] OK audit-official-contract.mjs --selftest
+  [gate] OK audit-official-contract.mjs（无 BLOCK 级破坏）
+  SkipInstall：用现有 runtime（D:\DSH RolePlay\rp-workspace\dsh-runtime-android）
+  SkipInstall：Step 2/3/4 跳过（用现有 runtime）
+
+[步骤 3.5] Android shell/sandbox/rg 补丁（真机实测 4 缺陷；SkipInstall 也要跑，幂等）
+  P0-1a bash-local run/start argv：已打补丁，跳过
+  P0-1b bash-sandbox confine argv：已打补丁，跳过
+  P0-2 sandbox-local android 降级：已打补丁，跳过
+  P0-2b sandbox-local proot 真隔离包装：已打补丁，跳过
+  P1-3a fs-search 降级模块导入：已打补丁，跳过
+  P1-3b runRipgrep android 短路：已打补丁，跳过
+  P1-4a terminal-bash DEFAULT_BASH_SHELL：已打补丁，跳过
+  P1-4b terminal-bash DEFAULT_BASH_ARGS：已打补丁，跳过
+  P2-1a ChatNodeList 传入 firstSeq：已打补丁，跳过
+  P2-1b ChatNodeSeat 接收 dshtOldestSeq：已打补丁（形态匹配），跳过
+  P2-1c processWindowReady 放宽：已打补丁，跳过
+  P3-5a session-title 剥协议标签：已打补丁，跳过
+  F2 Android flock 单进程直通：已打补丁，跳过
+
+[步骤 3.6] 官方契约事前探针（E3/P-4；**在 runtime 替换之后**探测本次真产物，P-40③）
+  [gate] SkipInstall：已在 Step 0.6 探测（该模式下 runtimeDst 即本次产物）
+  P0-5 Iterator Helpers 守卫（旧 WebView 整页加载失败）：已打补丁，跳过
+
+[步骤 4.5] composition 补丁：session 持久化改明文（迁移写入前置条件）
+  composition 补丁已存在，跳过
+
+[步骤 4.7] dsht-rp-plugin 打包进 runtime node_modules（RP 世界书触发插件）
+  dsht-rp-plugin：895.3 KB 已就位（node_modules/dsht-rp-plugin）
+
+[步骤 4.72] R10 三大插件打包进 runtime node_modules（MVU / 酒馆助手 / 提示词模板）
+  dsht-plugin-mvu：68 KB 已就位（node_modules/dsht-plugin-mvu）
+  dsht-plugin-tavern-helper：157.1 KB 已就位（node_modules/dsht-plugin-tavern-helper）
+  dsht-plugin-prompt-template：77.2 KB 已就位（node_modules/dsht-plugin-prompt-template）
+  dsht-plugin-memory：108.9 KB 已就位（node_modules/dsht-plugin-memory）
+  wire 规则行数: 10 / 端点数: 12
+  slots 数: 42
+  SESSION_FORMAT_VERSION: 0
+
+[步骤 4.75] dsht-rp-ui 构建 + 并入 dsht-rp-plugin（插件合并：一个包装 host+client 双面）
+[vendor-deps] OK — 5 个构建期 vendor 包版本全部锚定命中
+dsht-rp-ui: lib/index.js (node shell) + lib/client.js (browser wire) built; th-vendor.gen.txt = 701.7KB; th-host-vendor.gen.txt = 775.3KB
+  dsht-rp-plugin 合并包：client.js 2620.1 KB 已并入（node_modules/dsht-rp-plugin）
+
+[步骤 4.77] dsht-plugin-mobile 构建 + 打包进 runtime node_modules（P2#13 宿主无关移动端适配插件）
+dsht-plugin-mobile: lib/index.js (node shell) + lib/client.js (browser wire) built
+  dsht-plugin-mobile：client.js 35.5 KB 已就位（node_modules/dsht-plugin-mobile）
+
+[步骤 4.85] DSHT-RESILIENT-LIST：坏身份/重复id会话文件不崩 runtime（boot-loop 根修）
+already patched: D:/DSH RolePlay/rp-workspace/dsh-runtime-android/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js
+
+[步骤 4.8] 平台补丁：session 发布 link()→rename()（坑 #14：Android SELinux 禁硬链接）
+  link→rename 补丁已生效（语义匹配：import 含 rename 且无裸 link 发布），跳过
+  F1-2 rename 补丁已存在，跳过
+  F1-4 generation 补丁已存在，跳过
+  F1 自检：0 处裸 link( 调用 ✔
+
+[步骤 5] 重构建导入引擎 bundle（坑 #11 铁律：改了 TS 源码必须重跑 esbuild）
+  导入引擎 app.js 重建完成：260.5 KB（插件资产）
+
+[步骤 5.4] 产物内容级新鲜度闸门（A14；任一产物与现场重编译不一致即停）
+  [gate] OK audit-artifact-freshness.mjs --selftest
+  [gate] OK audit-artifact-freshness.mjs（全部产物与现场重编译逐字节一致；★ W81 补：**权威构建脚本按语义自动发现**（含 entry 声明者）+ 双向对账；★ W82 补：**PAIRS 的路径字段真实性**（entry = packages/ 相对 · source = rp-workspace/ 相对 · builtBy 点名的装置；字段失效 ⇒ 判据静默失效 P-30），selftest 32/32）
+         [A14] 权威脚本锚点：从 build-dsht.ps1 + rebuild-plugins.ps1 实读 7 条「产物 → entry」（去重后 6 个产物）
+  [gate] OK audit-a14-anchor-negctl.mjs（锚点来自权威脚本 + 有区分力）
+
+[步骤 5.5] 打 runtime.zip + sentinel 自动提升（坑 #3 铁律）
+  runtime lib ← D:\DSH RolePlay\rp-workspace\dsh-runtime-x64\lib（Arch=x86_64）
+  RUNTIME_SENTINEL: .installed-v363 → .installed-v363（覆盖安装将重新解压）
+  runtime.zip：67.3 MB（assets）
+
+[步骤 6] APK 编译与交付（gradle + 正式签名/release 或 debug/x64）
+  APK 交付：D:\DSH RolePlay\DSH-Tavern-0.2.0-x86_64-debug.apk（190.1 MB，assembleDebug，ABI=x86_64）
+
+[步骤 6.5] APK 内嵌 runtime 版本核验（产物层；R5/R21）
+[verify-apk-runtime-version] APK 内嵌 runtime 版本核验
+
+✓ x86_64（DSH-Tavern-0.2.0-x86_64-debug.apk）
+  主包 @deepseek-ai/dsh        = 0.1.5-rc.1
+  子包 @deepseek-ai/dsh-session = 0.1.5-rc.2
+  数据兼容形态（isReplaceOp）   = op / startSeq / endSeq
+  runtime.zip                  = 67.3 MB
+
+
+✅ APK 内嵌 runtime 版本与数据兼容形态核验通过
+  [gate] OK verify-apk-runtime-version.mjs（--arch x86_64）
+
+[步骤 6.6] M4 内容级产物核验（R5/R6；169 项标记）
+--- D:\DSH RolePlay\DSH-Tavern-0.2.0-x86_64-debug.apk ---
+  => 核验 169 项，缺失 0 项
+  [gate] OK verify-apk-payload.py（M4 内容级：x86_64 包标记齐全，缺失 0）
+
+[步骤 7] 收尾提醒
+
+[完成] DSH 0.1.5-rc.1 → DSH Tavern APK（sentinel v363，versionName 0.2.0）
+后续人工动作（见 UPDATE-SOP.md §1 步骤 7）：
+  1. 引擎回归：cd rp-workspace\packages; npx vitest run
+  2. 真机验收：安装 APK → 诊断面板看「解压→启动→端口✓」→ 截图反馈
+  3. 结果回写 UPDATE-SOP.md 版本历史表
