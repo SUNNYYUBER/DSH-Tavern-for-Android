@@ -19,6 +19,12 @@ jobs:
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: '1'
     steps:
+      # 仓库里全是文本锚定类门禁（正则/exact match），CRLF 会静默改变判据行为
+      # （本地 LF vs CI 默认 autocrlf=true ⇒ 同一门禁两边分数不同——第十二跑实证 33/36 vs 38/38）
+      - name: Force LF checkout (text-anchor gates are EOL-sensitive)
+        shell: pwsh
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
