@@ -18,7 +18,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { isTrusted } from '../src/dsht-plugin-shared/http.ts'
 
-const LAN_REQ = { headers: { host: '192.168.1.8:3090' } }
+const LAN_REQ = { headers: { host: '10.0.2.2:3090' } }
 const LOOPBACK_WS = { register: () => () => {}, host: '127.0.0.1' as const }
 const LAN_WS = { register: () => () => {}, host: '0.0.0.0' as const }
 
@@ -36,13 +36,13 @@ describe('W-A DSHT_LAN_MODE ↔ 信任栅栏 lanMode 等价', () => {
 
   it('✅ 判据 3：env=1 + Origin 跨源（authority ≠ Host）⇒ 拒（LAN 不放宽跨源）', () => {
     process.env.DSHT_LAN_MODE = '1'
-    const req = { headers: { host: '192.168.1.8:3090', origin: 'http://evil.example:3090' } }
+    const req = { headers: { host: '10.0.2.2:3090', origin: 'http://evil.example:3090' } }
     expect(isTrusted(req, LOOPBACK_WS)).toBe(false)
   })
 
   it('✅ 判据 4：env=1 + Origin 同源 ⇒ 放行', () => {
     process.env.DSHT_LAN_MODE = '1'
-    const req = { headers: { host: '192.168.1.8:3090', origin: 'http://192.168.1.8:3090' } }
+    const req = { headers: { host: '10.0.2.2:3090', origin: 'http://10.0.2.2:3090' } }
     expect(isTrusted(req, LOOPBACK_WS)).toBe(true)
   })
 
