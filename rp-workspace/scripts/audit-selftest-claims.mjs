@@ -1996,7 +1996,9 @@ if (process.argv.includes('--selftest')) {
           }
         }, (f) => fs.existsSync(path.join(SCRIPTS, f)))
         t('★★真实仓库（W78）：登记表里**可实跑**的每条 Pattern 都能匹配到值（读数不会静默失效）',
-          r.problems.length === 0 && r.checked >= 8, `checked=${r.checked} bad=${r.problems.length}`)
+          r.problems.length === 0 && r.checked >= 8,
+          `checked=${r.checked} bad=${r.problems.length}`
+            + (r.problems.length > 0 ? `\n${r.problems.map(p => '  · ' + p).join('\n')}` : ''))
       }
     }
   }
