@@ -23,7 +23,10 @@ jobs:
       # （本地 LF vs CI 默认 autocrlf=true ⇒ 同一门禁两边分数不同——第十二跑实证 33/36 vs 38/38）
       - name: Force LF checkout (text-anchor gates are EOL-sensitive)
         shell: pwsh
-        run: git config --global core.autocrlf false
+        run: |
+          git config --global core.autocrlf false
+          # 中文路径在 quotepath=true（缺省）下被八进制转义 ⇒ git ls-files 类门禁判据漂移
+          git config --global core.quotepath false
 
       - uses: actions/checkout@v4
 
