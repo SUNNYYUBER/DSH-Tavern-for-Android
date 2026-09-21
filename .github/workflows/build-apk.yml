@@ -49,13 +49,14 @@ jobs:
           if (-not $env:ANDROID_HOME) { throw "ANDROID_HOME 未设" }
 
       # packages 依赖就位（Step 0.5 的 AST 类门禁要 typescript 等 devDependencies；
-      # 构建脚本内的完整安装在门禁之后——没有这一步，CI 净环境必炸在 audit-body-dup-ast）
+      # 构建脚本内的完整安装在门禁之后——没有这一步，CI 净环境必炸在 audit-body-dup-ast。
+      # 注意 rp-workspace 根**没有** pnpm-workspace.yaml，装根目录不覆盖 packages/ 的 devDeps）
       - name: Install workspace dependencies (pnpm)
         shell: pwsh
         run: |
           npx -y pnpm@10 install --frozen-lockfile
           if ($LASTEXITCODE -ne 0) { throw "pnpm install failed: $LASTEXITCODE" }
-        working-directory: rp-workspace
+        working-directory: rp-workspace/packages
 
       # 原生库就位（Termux deb + deb 级 SHA256 校验；构建脚本 Step 0.1 只做检查不自动补）
       - name: Fetch native libs (Termux debs, SHA256-verified)
