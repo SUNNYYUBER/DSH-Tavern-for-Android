@@ -34,7 +34,7 @@ $archDir    = if ($Arch -eq 'x86_64') { 'x86_64' } else { 'arm64-v8a' }
 $runtimeLib = if ($Arch -eq 'x86_64') { "$ws\dsh-runtime-x64\lib" } else { "$ws\dsh-runtime\lib" }
 $buildType  = if ($Arch -eq 'x86_64') { 'debug' } else { 'release' }
 $gradleTask = if ($Arch -eq 'x86_64') { 'assembleDebug' } else { 'assembleRelease' }
-$apkOut     = "$root\DSH-Tavern-0.2.0-$Arch-$buildType.apk"
+$apkOut     = "$root\DSH-Tavern-0.2.1-$Arch-$buildType.apk"
 $env:JAVA_HOME = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.12.8-hotspot'
 $gradle      = "$ws\downloads\gradle\gradle-8.14\bin\gradle.bat"
 
@@ -1627,7 +1627,7 @@ Write-Host "  [gate] OK verify-apk-runtime-version.mjs（--arch $Arch）"
 # ⇒ 本轮两件事：⑴ **迁到 `scripts/`**（进版本控制）；⑵ **接入构建期**（每轮自动跑）。
 #
 # ## 为什么放在 **Step 6.6**（而不是更早）
-# 它读的是**已交付的 APK**（`DSH-Tavern-0.2.0-<arch>-*.apk`）⇒ 按 **P-40③
+# 它读的是**已交付的 APK**（`DSH-Tavern-0.2.1-<arch>-*.apk`）⇒ 按 **P-40③
 # 「判据必须跑在它所判对象状态已确定之后」**，必须在 Step 6（gradle 出包）之后。
 # ★ 单架构构建时也跑：只核**本架构**那一个包（另一包可能还是上一代的）。
 #
@@ -1650,7 +1650,7 @@ Write-Host "  [gate] OK verify-apk-payload.py（M4 内容级：$Arch 包标记�
 Step 7 '收尾提醒'
 Write-Host @"
 
-[完成] DSH $DshVersion → DSH Tavern APK（sentinel v$newV，versionName 0.2.0）
+[完成] DSH $DshVersion → DSH Tavern APK（sentinel v$newV，versionName 0.2.1）
 后续人工动作（见 UPDATE-SOP.md §1 步骤 7）：
   1. 引擎回归：cd rp-workspace\packages; npx vitest run
   2. 真机验收：安装 APK → 诊断面板看「解压→启动→端口✓」→ 截图反馈

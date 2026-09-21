@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 $sdk      = "$env:USERPROFILE\.android\sdk"
 $emulator = "$sdk\emulator\emulator.exe"
 $adb      = "$sdk\platform-tools\adb.exe"
-$apk      = 'D:\DSH RolePlay\DSH-Tavern-0.2.0-x86_64-debug.apk'
+$apk      = 'D:\DSH RolePlay\DSH-Tavern-0.2.1-x86_64-debug.apk'
 $avd      = 'dsht-x64'
 
 if (-not (Test-Path $emulator)) { throw "emulator 不存在：$emulator" }

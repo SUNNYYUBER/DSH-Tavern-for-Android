@@ -9617,7 +9617,7 @@ function installHostVendor(host = globalThis) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpOverlay.tsx
-var import_react18 = require("react");
+var import_react19 = require("react");
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/rpc.ts
 var rpcSeq = 0;
@@ -10686,11 +10686,11 @@ function PresetPanel() {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/BooksPanel.tsx
-var import_react13 = require("react");
+var import_react14 = require("react");
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpNativeChat.tsx
-var import_react9 = require("react");
 var import_react10 = require("react");
+var import_react11 = require("react");
 var import_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/time-zone.ts
@@ -12474,10 +12474,54 @@ function parseVariableJson(raw) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpScriptHost.tsx
-var import_react8 = require("react");
+var import_react9 = require("react");
+
+// rp-workspace/packages/src/dsht-rp-ui/src/client/visibility.ts
+function isPageVisible() {
+  if (typeof document === "undefined") return true;
+  return document.visibilityState !== "hidden";
+}
+function pollWhileVisible(fn, intervalMs) {
+  let timer = null;
+  let stopped = false;
+  const tick = () => {
+    try {
+      void fn();
+    } catch {
+    }
+  };
+  const start = () => {
+    if (stopped || timer !== null) return;
+    timer = setInterval(tick, intervalMs);
+  };
+  const stop = () => {
+    if (timer !== null) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+  const onVisibility = () => {
+    if (stopped) return;
+    if (isPageVisible()) {
+      tick();
+      start();
+    } else stop();
+  };
+  if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+    document.addEventListener("visibilitychange", onVisibility);
+  }
+  if (isPageVisible()) start();
+  return () => {
+    stopped = true;
+    stop();
+    if (typeof document !== "undefined" && typeof document.removeEventListener === "function") {
+      document.removeEventListener("visibilitychange", onVisibility);
+    }
+  };
+}
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpStateFloat.tsx
-var import_react7 = require("react");
+var import_react8 = require("react");
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpStateView.tsx
 var import_react4 = require("react");
@@ -12565,6 +12609,10 @@ function RpStateView(props) {
   const [error, setError] = (0, import_react4.useState)("");
   const [view, setView] = (0, import_react4.useState)("table");
   const [collapsed, setCollapsed] = (0, import_react4.useState)(/* @__PURE__ */ new Set());
+  const [editingPath, setEditingPath] = (0, import_react4.useState)(null);
+  const [editText, setEditText] = (0, import_react4.useState)("");
+  const [editBusy, setEditBusy] = (0, import_react4.useState)(false);
+  const [editError, setEditError] = (0, import_react4.useState)("");
   const fetchState = (0, import_react4.useCallback)(async () => {
     if (!sessionId) return;
     try {
@@ -12581,6 +12629,43 @@ function RpStateView(props) {
   useEscapeClose(onClose);
   const rows = state === null ? [] : flattenStateTree(state, collapsed);
   const hasState = state !== null && Object.keys(state).length > 0;
+  const toPointer2 = (dotPath) => "/" + dotPath.split(".").map((seg) => seg.replace(/~/g, "~0").replace(/\//g, "~1")).join("/");
+  const parseEditValue = (raw) => {
+    const t = raw.trim();
+    if (t === "") return "";
+    try {
+      return JSON.parse(t);
+    } catch {
+      return raw;
+    }
+  };
+  const submitEdit = (0, import_react4.useCallback)(async () => {
+    if (editingPath === null || !sessionId) return;
+    setEditBusy(true);
+    setEditError("");
+    try {
+      const resp = await fetch("/dsht-mvu/variables/patch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          target: "state",
+          patches: [{ op: "replace", path: toPointer2(editingPath), value: parseEditValue(editText) }]
+        })
+      });
+      const body = await resp.json();
+      if (!resp.ok) {
+        setEditError(body.error ?? `HTTP ${resp.status}`);
+        return;
+      }
+      setEditingPath(null);
+      await fetchState();
+    } catch (e) {
+      setEditError(e.message);
+    } finally {
+      setEditBusy(false);
+    }
+  }, [editingPath, editText, sessionId, fetchState]);
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "dsht-rp-stateview-mask", role: "dialog", "aria-label": "\u72B6\u6001\u67E5\u770B", onClick: onClose, children: /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "dsht-rp-stateview", onClick: (e) => {
     e.stopPropagation();
   }, children: [
@@ -12632,11 +12717,77 @@ function RpStateView(props) {
           }
         )
       ] }),
+      editError !== "" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "sv-error", role: "status", children: [
+        "\u7F16\u8F91\u4FDD\u5B58\u5931\u8D25\uFF1A",
+        editError
+      ] }),
       !error && state === null && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "sv-empty", children: "\u52A0\u8F7D\u4E2D\u2026" }),
       !error && !hasState && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "sv-empty", children: "\uFF08\u6682\u65E0 MVU \u72B6\u6001\u2014\u2014\u8FD9\u5F20\u5361\u53EF\u80FD\u4E0D\u7528\u53D8\u91CF\uFF0C\u6216\u8FD8\u6CA1\u4EA7\u751F\u53D8\u91CF\u66F4\u65B0\uFF09" }),
       view === "table" && hasState && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "sv-table", children: rows.map((row) => row.leaf ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "sv-row", style: { paddingLeft: row.depth * 14 }, children: [
         /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "sv-key", children: row.key }),
-        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("span", { className: "sv-leaf", children: row.valueText })
+        editingPath === row.path ? /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { className: "sv-leaf", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            "input",
+            {
+              value: editText,
+              autoFocus: true,
+              disabled: editBusy,
+              onChange: (e) => setEditText(e.target.value),
+              onKeyDown: (e) => {
+                if (e.key === "Enter") void submitEdit();
+                if (e.key === "Escape") {
+                  setEditingPath(null);
+                  setEditError("");
+                }
+              },
+              style: { minWidth: 120, fontSize: 12 }
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            "button",
+            {
+              type: "button",
+              className: "sf-btn",
+              disabled: editBusy,
+              style: { minHeight: 22, marginLeft: 4 },
+              onClick: () => {
+                void submitEdit();
+              },
+              children: "\u2713"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            "button",
+            {
+              type: "button",
+              className: "sf-btn",
+              disabled: editBusy,
+              style: { minHeight: 22 },
+              onClick: () => {
+                setEditingPath(null);
+                setEditError("");
+              },
+              children: "\u2715"
+            }
+          )
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("span", { className: "sv-leaf", children: [
+          row.valueText,
+          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+            "button",
+            {
+              type: "button",
+              className: "sf-btn sv-edit-btn",
+              "aria-label": `\u7F16\u8F91 ${row.key}`,
+              style: { minHeight: 22, marginLeft: 6, opacity: 0.55 },
+              onClick: () => {
+                setEditingPath(row.path);
+                setEditText(row.valueText);
+                setEditError("");
+              },
+              children: "\u270E"
+            }
+          )
+        ] })
       ] }, row.path === "" ? "(root)" : row.path) : /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
         "button",
         {
@@ -12970,48 +13121,129 @@ function RpTablesView(props) {
   ] }) });
 }
 
-// rp-workspace/packages/src/dsht-rp-ui/src/client/visibility.ts
-function isPageVisible() {
-  if (typeof document === "undefined") return true;
-  return document.visibilityState !== "hidden";
-}
-function pollWhileVisible(fn, intervalMs) {
-  let timer = null;
-  let stopped = false;
-  const tick = () => {
-    try {
-      void fn();
-    } catch {
-    }
-  };
-  const start = () => {
-    if (stopped || timer !== null) return;
-    timer = setInterval(tick, intervalMs);
-  };
-  const stop = () => {
-    if (timer !== null) {
-      clearInterval(timer);
-      timer = null;
-    }
-  };
-  const onVisibility = () => {
-    if (stopped) return;
-    if (isPageVisible()) {
-      tick();
-      start();
-    } else stop();
-  };
-  if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
-    document.addEventListener("visibilitychange", onVisibility);
-  }
-  if (isPageVisible()) start();
-  return () => {
-    stopped = true;
-    stop();
-    if (typeof document !== "undefined" && typeof document.removeEventListener === "function") {
-      document.removeEventListener("visibilitychange", onVisibility);
-    }
-  };
+// rp-workspace/packages/src/dsht-rp-ui/src/client/RpStatusbarEditor.tsx
+var import_react7 = require("react");
+var import_jsx_runtime6 = require("react/jsx-runtime");
+var TEMPLATE_KEYS = ["template", "content", "text"];
+function RpStatusbarEditor(props) {
+  const { sessionId, onClose } = props;
+  const [loading, setLoading] = (0, import_react7.useState)(true);
+  const [error, setError] = (0, import_react7.useState)("");
+  const [config, setConfig] = (0, import_react7.useState)({});
+  const [templateKey, setTemplateKey] = (0, import_react7.useState)("template");
+  const [text2, setText] = (0, import_react7.useState)("");
+  const [previewHtml, setPreviewHtml] = (0, import_react7.useState)(null);
+  const [previewNote, setPreviewNote] = (0, import_react7.useState)("");
+  const [busy, setBusy] = (0, import_react7.useState)(false);
+  const [savedFlash, setSavedFlash] = (0, import_react7.useState)(false);
+  useEscapeClose(onClose);
+  (0, import_react7.useEffect)(() => {
+    let alive = true;
+    fetch("/dsht-mvu/statusbar").then((r) => r.json()).then((b) => {
+      if (!alive) return;
+      const cfg = b.config ?? {};
+      setConfig(cfg);
+      const key = TEMPLATE_KEYS.find((k) => typeof cfg[k] === "string" && String(cfg[k]).trim().length > 0) ?? "template";
+      setTemplateKey(key);
+      setText(typeof cfg[key] === "string" ? String(cfg[key]) : "");
+      setLoading(false);
+    }).catch((e) => {
+      if (alive) {
+        setError(e.message);
+        setLoading(false);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const save = (0, import_react7.useCallback)(() => {
+    setBusy(true);
+    setError("");
+    const next = { ...config, [templateKey]: text2 };
+    fetch("/dsht-mvu/statusbar", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ config: next })
+    }).then(async (r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setConfig(next);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1500);
+    }).catch((e) => setError(e.message)).finally(() => setBusy(false));
+  }, [config, templateKey, text2]);
+  const preview = (0, import_react7.useCallback)(() => {
+    setBusy(true);
+    setError("");
+    setPreviewNote("");
+    const qs = `sessionId=${encodeURIComponent(sessionId)}&template=${encodeURIComponent(text2)}`;
+    fetch(`/dsht-mvu/statusbar-render?${qs}`).then((r) => r.json()).then((b) => {
+      const safe = typeof b.html === "string" ? sanitizeDisplayHtml(b.html) : null;
+      if (safe) {
+        setPreviewHtml(safe);
+        if (b.note) setPreviewNote(b.note);
+      } else {
+        setPreviewHtml(null);
+        setPreviewNote(b.note ?? "\u6A21\u677F\u6E32\u67D3\u7ED3\u679C\u672A\u8FC7\u767D\u540D\u5355\uFF08\u542B\u4E0D\u5141\u8BB8\u7684\u6807\u7B7E/\u5C5E\u6027\uFF09");
+      }
+    }).catch((e) => setError(e.message)).finally(() => setBusy(false));
+  }, [sessionId, text2]);
+  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "dsht-rp-overlay", role: "dialog", "aria-label": "\u72B6\u6001\u680F\u6A21\u677F\u7F16\u8F91", "data-testid": "dsht-rp-statusbar-editor", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "sf-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { children: "\u{1F4CA} \u72B6\u6001\u680F\u6A21\u677F\uFF08MVU\uFF09" }),
+      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("span", { className: "sf-head-actions", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", className: "sf-btn", disabled: busy, onClick: preview, children: "\u9884\u89C8" }),
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", className: "sf-btn", disabled: busy, onClick: save, children: savedFlash ? "\u5DF2\u4FDD\u5B58 \u2713" : "\u4FDD\u5B58" }),
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", className: "sf-btn", "aria-label": "\u5173\u95ED\u72B6\u6001\u680F\u6A21\u677F\u7F16\u8F91", onClick: onClose, children: "\u2715" })
+      ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "sf-body", children: [
+      loading && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "sv-empty", children: "\u8BFB\u53D6\u914D\u7F6E\u4E2D\u2026" }),
+      error !== "" && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "sf-error", role: "status", children: [
+        "\u64CD\u4F5C\u5931\u8D25\uFF1A",
+        error
+      ] }),
+      !loading && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "sv-hint", children: [
+          "\u6A21\u677F\u652F\u6301 ",
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("code", { children: "{{getvar::\u8DEF\u5F84}}" }),
+          " \u5B8F\u4E0E\u88F8 ",
+          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("code", { children: "{{\u8DEF\u5F84}}" }),
+          " \u53D8\u91CF\u5F15\u7528 \uFF08\u670D\u52A1\u7AEF\u5B8F\u5F15\u64CE\u6E32\u67D3\uFF0CHTML \u8F6C\u4E49\u5B89\u5168\u8F93\u51FA\uFF09\u3002\u4FDD\u5B58\u5373\u5BF9\u6240\u6709\u65B0\u6E32\u67D3\u7684\u72B6\u6001\u680F\u751F\u6548\u3002"
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+          "textarea",
+          {
+            value: text2,
+            onChange: (e) => setText(e.target.value),
+            spellCheck: false,
+            placeholder: "\u4F8B\uFF1A\u65F6\u95F4: {{getvar::time}} | \u5730\u70B9: {{getvar::location}} | \u597D\u611F\u5EA6: {{getvar::stat_data.\u597D\u611F\u5EA6}}",
+            style: {
+              width: "100%",
+              minHeight: 140,
+              resize: "vertical",
+              background: "var(--dsw-alias-bg-secondary, rgba(255,255,255,.04))",
+              color: "var(--dsw-alias-label-primary)",
+              border: "1px solid var(--dsw-alias-border-l1)",
+              borderRadius: 6,
+              padding: "6px 8px",
+              fontSize: 12,
+              fontFamily: "monospace"
+            }
+          }
+        ),
+        previewNote !== "" && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "sv-hint", role: "status", children: previewNote }),
+        previewHtml !== null && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+          "div",
+          {
+            className: "dsht-rp-mvu-statusbar",
+            style: { marginTop: 8 },
+            dangerouslySetInnerHTML: { __html: previewHtml }
+          }
+        )
+      ] })
+    ] })
+  ] });
 }
 
 // rp-workspace/packages/src/dsht-plugin-shared/deep-merge.ts
@@ -13165,7 +13397,7 @@ function readFinalTiming(data) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpStateFloat.tsx
-var import_jsx_runtime6 = require("react/jsx-runtime");
+var import_jsx_runtime7 = require("react/jsx-runtime");
 var POS_KEY = "dsht.rp.statefloat.pos.v1";
 var POS_KEY_GLOBAL = "dsht-float-global";
 function posKeyOf(sessionId) {
@@ -13187,9 +13419,9 @@ function fetchSessionCwd(sessionId) {
   return p;
 }
 function useRpSlug(cwdFromProps, sessionId) {
-  const [cwd, setCwd] = (0, import_react7.useState)(cwdFromProps ?? null);
-  const [resolved, setResolved] = (0, import_react7.useState)(cwdFromProps !== void 0 && cwdFromProps !== "");
-  (0, import_react7.useEffect)(() => {
+  const [cwd, setCwd] = (0, import_react8.useState)(cwdFromProps ?? null);
+  const [resolved, setResolved] = (0, import_react8.useState)(cwdFromProps !== void 0 && cwdFromProps !== "");
+  (0, import_react8.useEffect)(() => {
     if (cwdFromProps) {
       setCwd(cwdFromProps);
       setResolved(true);
@@ -13258,13 +13490,13 @@ function savePos(key, pos) {
 }
 function StateTree({ value, depth }) {
   if (value === null || typeof value !== "object") {
-    return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "sf-leaf", children: String(value ?? "") });
+    return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "sf-leaf", children: String(value ?? "") });
   }
   const entries2 = Array.isArray(value) ? value.map((v, i) => [String(i), v]) : Object.entries(value);
-  if (entries2.length === 0) return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "sf-leaf sf-empty", children: "\uFF08\u7A7A\uFF09" });
-  return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "sf-level", style: { paddingLeft: depth > 0 ? 12 : 0 }, children: entries2.map(([k, v]) => /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "sf-row", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "sf-key", children: k }),
-    v !== null && typeof v === "object" ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(StateTree, { value: v, depth: depth + 1 }) : /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { className: "sf-leaf", children: String(v) })
+  if (entries2.length === 0) return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "sf-leaf sf-empty", children: "\uFF08\u7A7A\uFF09" });
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "sf-level", style: { paddingLeft: depth > 0 ? 12 : 0 }, children: entries2.map(([k, v]) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "sf-row", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "sf-key", children: k }),
+    v !== null && typeof v === "object" ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(StateTree, { value: v, depth: depth + 1 }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "sf-leaf", children: String(v) })
   ] }, k)) });
 }
 function RpStateFloat(props) {
@@ -13272,16 +13504,17 @@ function RpStateFloat(props) {
   const cwd = readSessionCwd(props.session);
   const { slug } = useRpSlug(cwd, sessionId);
   const blank = readSessionBlank(props.session);
-  const [pos, setPos] = (0, import_react7.useState)(() => loadPos(posKeyOf(sessionId)));
-  const [open, setOpen] = (0, import_react7.useState)(false);
-  const [state, setState] = (0, import_react7.useState)(null);
-  const [error, setError] = (0, import_react7.useState)("");
-  const [viewOpen, setViewOpen] = (0, import_react7.useState)(false);
-  const [searchOpen, setSearchOpen] = (0, import_react7.useState)(false);
-  const [tablesOpen, setTablesOpen] = (0, import_react7.useState)(false);
-  const dragRef = (0, import_react7.useRef)(null);
-  const clickHandledRef = (0, import_react7.useRef)(false);
-  (0, import_react7.useEffect)(() => {
+  const [pos, setPos] = (0, import_react8.useState)(() => loadPos(posKeyOf(sessionId)));
+  const [open, setOpen] = (0, import_react8.useState)(false);
+  const [state, setState] = (0, import_react8.useState)(null);
+  const [error, setError] = (0, import_react8.useState)("");
+  const [viewOpen, setViewOpen] = (0, import_react8.useState)(false);
+  const [searchOpen, setSearchOpen] = (0, import_react8.useState)(false);
+  const [tablesOpen, setTablesOpen] = (0, import_react8.useState)(false);
+  const [statusbarOpen, setStatusbarOpen] = (0, import_react8.useState)(false);
+  const dragRef = (0, import_react8.useRef)(null);
+  const clickHandledRef = (0, import_react8.useRef)(false);
+  (0, import_react8.useEffect)(() => {
     if (!open || !sessionId) return;
     let alive = true;
     const fetchState = async () => {
@@ -13303,7 +13536,7 @@ function RpStateFloat(props) {
       stop();
     };
   }, [open, sessionId]);
-  (0, import_react7.useEffect)(() => {
+  (0, import_react8.useEffect)(() => {
     const onResize = () => {
       setPos((p) => clampPos(p));
     };
@@ -13361,8 +13594,8 @@ function RpStateFloat(props) {
     }
     setOpen((o) => !o);
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)(import_jsx_runtime6.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(import_jsx_runtime7.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
       "button",
       {
         type: "button",
@@ -13380,53 +13613,65 @@ function RpStateFloat(props) {
         children: "\u{1F30C}"
       }
     ),
-    open && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "dsht-rp-statefloat-panel", role: "dialog", "aria-label": "\u5F53\u524D\u72B6\u6001", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "sf-head", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("span", { children: "\u{1F30C} \u5F53\u524D\u72B6\u6001" }),
-        /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("span", { className: "sf-head-actions", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", className: "sf-btn", onClick: () => {
+    open && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "dsht-rp-statefloat-panel", role: "dialog", "aria-label": "\u5F53\u524D\u72B6\u6001", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "sf-head", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { children: "\u{1F30C} \u5F53\u524D\u72B6\u6001" }),
+        /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "sf-head-actions", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("button", { type: "button", className: "sf-btn", onClick: () => {
             setViewOpen(true);
             setSearchOpen(false);
             setTablesOpen(false);
+            setStatusbarOpen(false);
           }, children: "\u67E5\u770B\u72B6\u6001" }),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", className: "sf-btn", onClick: () => {
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("button", { type: "button", className: "sf-btn", onClick: () => {
             setSearchOpen(true);
             setViewOpen(false);
             setTablesOpen(false);
+            setStatusbarOpen(false);
           }, children: "\u{1F50D} \u641C\u7D22" }),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", className: "sf-btn", "aria-label": "\u5237\u65B0\u72B6\u6001", onClick: () => {
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("button", { type: "button", className: "sf-btn", onClick: () => {
+            setStatusbarOpen(true);
+            setViewOpen(false);
+            setSearchOpen(false);
+            setTablesOpen(false);
+          }, children: "\u72B6\u6001\u680F" }),
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("button", { type: "button", className: "sf-btn", "aria-label": "\u5237\u65B0\u72B6\u6001", onClick: () => {
             setState(null);
             void rpApi("state", { sessionId }).then((r) => {
               setState(r.state ?? {});
               setError("");
             }).catch((e) => setError(e.message));
           }, children: "\u5237\u65B0" }),
-          /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("button", { type: "button", className: "sf-btn", "aria-label": "\u5173\u95ED\u72B6\u6001\u9762\u677F", onClick: () => {
+          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("button", { type: "button", className: "sf-btn", "aria-label": "\u5173\u95ED\u72B6\u6001\u9762\u677F", onClick: () => {
             setOpen(false);
             setViewOpen(false);
             setSearchOpen(false);
             setTablesOpen(false);
+            setStatusbarOpen(false);
           }, children: "\u2715" })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "sf-body", children: [
-        error && /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "sf-error", role: "status", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "sf-body", children: [
+        error && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "sf-error", role: "status", children: [
           "\u72B6\u6001\u62C9\u53D6\u5931\u8D25\uFF1A",
           error
         ] }),
-        state === null && !error && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "sf-empty", children: "\u52A0\u8F7D\u4E2D\u2026" }),
-        state !== null && Object.keys(state).length === 0 && !error && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "sf-empty", children: "\uFF08\u6682\u65E0 MVU \u72B6\u6001\u2014\u2014\u8FD9\u5F20\u5361\u53EF\u80FD\u4E0D\u7528\u53D8\u91CF\uFF0C\u6216\u8FD8\u6CA1\u4EA7\u751F\u53D8\u91CF\u66F4\u65B0\uFF09" }),
-        state !== null && Object.keys(state).length > 0 && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(StateTree, { value: state, depth: 0 })
+        state === null && !error && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "sf-empty", children: "\u52A0\u8F7D\u4E2D\u2026" }),
+        state !== null && Object.keys(state).length === 0 && !error && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "sf-empty", children: "\uFF08\u6682\u65E0 MVU \u72B6\u6001\u2014\u2014\u8FD9\u5F20\u5361\u53EF\u80FD\u4E0D\u7528\u53D8\u91CF\uFF0C\u6216\u8FD8\u6CA1\u4EA7\u751F\u53D8\u91CF\u66F4\u65B0\uFF09" }),
+        state !== null && Object.keys(state).length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(StateTree, { value: state, depth: 0 })
       ] })
     ] }),
-    open && viewOpen && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(RpStateView, { sessionId, onClose: () => {
+    open && viewOpen && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RpStateView, { sessionId, onClose: () => {
       setViewOpen(false);
     } }),
-    open && searchOpen && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(RpSearchPanel, { sessionId, onClose: () => {
+    open && searchOpen && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RpSearchPanel, { sessionId, onClose: () => {
       setSearchOpen(false);
     } }),
-    open && tablesOpen && /* @__PURE__ */ (0, import_jsx_runtime6.jsx)(RpTablesView, { sessionId, onClose: () => {
+    open && tablesOpen && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RpTablesView, { sessionId, onClose: () => {
       setTablesOpen(false);
+    } }),
+    open && statusbarOpen && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(RpStatusbarEditor, { sessionId, onClose: () => {
+      setStatusbarOpen(false);
     } })
   ] });
 }
@@ -17185,7 +17430,7 @@ async function handleBridgeCall(deps, scriptId, api, args) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpScriptHost.tsx
-var import_jsx_runtime7 = require("react/jsx-runtime");
+var import_jsx_runtime8 = require("react/jsx-runtime");
 var TH_DISPLAY_MUTATION_APIS = /* @__PURE__ */ new Set([
   "regexes:replace",
   "preset:put",
@@ -17367,6 +17612,8 @@ var SessionRuntime = class {
   consoleNotifyTimer = 0;
   /** D8：MVU 通知开关（GET /dsht-mvu/settings 懒加载缓存；null = 未加载） */
   notifySwitches = null;
+  /** 【MVU-1】MVU 调试模式（面板 toggle 写入；true 时通知全放行 + 提取打点进 toasts） */
+  debugMode = null;
   constructor(sessionId, slug) {
     this.sessionId = sessionId;
     this.slug = slug;
@@ -17515,9 +17762,11 @@ var SessionRuntime = class {
     this.uiListeners.clear();
   }
   // ---- D8：MVU 通知（开关裁决 + DOM toast + 面板最近提示） ----
-  /** rp/mvu-settings.json 的通知开关（mvu_notification_failure / mvu_notification_success 类键；缺省全关） */
+  /** rp/mvu-settings.json 的通知开关（mvu_notification_failure / mvu_notification_success 类键；缺省全关）。
+   *  【MVU-1 2026-09-21】调试模式（dsht_mvu_debug=true）= 全放行，绕过开关检查。 */
   async notifySwitchesLoaded() {
     if (this.notifySwitches) return this.notifySwitches;
+    if (this.debugMode === true) return { failure: true, success: true };
     let sw = { failure: false, success: false };
     try {
       const resp = await fetch("/dsht-mvu/settings");
@@ -17543,6 +17792,12 @@ var SessionRuntime = class {
       showDomToast2(lv, message);
       this.notify();
     });
+  }
+  /** 【MVU-1】调试 toast（直推，不走通知开关——调试面自身的声音；命中/未中提示走这里） */
+  pushDebugToast(message) {
+    this.toasts.push({ ts: Date.now(), level: "success", message, scriptId: "dsht-mvu-debug" });
+    if (this.toasts.length > 50) this.toasts.shift();
+    this.notify();
   }
   // ---- iframe 挂载 ----
   ensureContainer() {
@@ -18255,13 +18510,13 @@ var PANEL_POS = { right: "10px", top: "calc(env(safe-area-inset-top, 0px) + 106p
 function RpScriptHost(props) {
   const sessionId = readSessionId(props.session);
   const { slug, resolved } = useRpSlug(readSessionCwd(props.session), sessionId);
-  const [, forceTick] = (0, import_react8.useState)(0);
-  const [open, setOpen] = (0, import_react8.useState)(false);
-  const [tab, setTab] = (0, import_react8.useState)("none");
-  const [varsText, setVarsText] = (0, import_react8.useState)("");
-  const [varsLoading, setVarsLoading] = (0, import_react8.useState)(false);
-  const rtRef = (0, import_react8.useRef)(null);
-  (0, import_react8.useEffect)(() => {
+  const [, forceTick] = (0, import_react9.useState)(0);
+  const [open, setOpen] = (0, import_react9.useState)(false);
+  const [tab, setTab] = (0, import_react9.useState)("none");
+  const [varsText, setVarsText] = (0, import_react9.useState)("");
+  const [varsLoading, setVarsLoading] = (0, import_react9.useState)(false);
+  const rtRef = (0, import_react9.useRef)(null);
+  (0, import_react9.useEffect)(() => {
     if (!sessionId) {
       destroyAllRuntimes();
       return;
@@ -18277,10 +18532,49 @@ function RpScriptHost(props) {
     rt2.start();
     return rt2.subscribe(() => forceTick((t) => t + 1));
   }, [sessionId, slug, resolved]);
-  (0, import_react8.useEffect)(() => {
+  (0, import_react9.useEffect)(() => {
     rtRef.current?.advance(props.session);
   });
-  (0, import_react8.useEffect)(() => {
+  const [mvuDebug, setMvuDebug] = (0, import_react9.useState)(false);
+  const lastExtractTsRef = (0, import_react9.useRef)(0);
+  (0, import_react9.useEffect)(() => {
+    let alive = true;
+    fetch("/dsht-mvu/settings").then((r) => r.json()).then((b) => {
+      if (!alive) return;
+      const v = b.settings?.["dsht_mvu_debug"] === true;
+      setMvuDebug(v);
+      if (rtRef.current) rtRef.current.debugMode = v;
+    }).catch(() => {
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const toggleMvuDebug = () => {
+    const next = !mvuDebug;
+    setMvuDebug(next);
+    if (rtRef.current) rtRef.current.debugMode = next;
+    void fetch("/dsht-mvu/settings").then((r) => r.json()).then((b) => fetch("/dsht-mvu/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ settings: { ...b.settings ?? {}, dsht_mvu_debug: next } })
+    })).catch(() => {
+    });
+  };
+  (0, import_react9.useEffect)(() => {
+    if (!mvuDebug || !sessionId) return;
+    return pollWhileVisible(() => {
+      fetch(`/dsht-mvu/last-extract?sessionId=${encodeURIComponent(sessionId)}`).then((r) => r.json()).then((b) => {
+        const le = b.lastExtract;
+        if (le && typeof le.ts === "number" && le.ts > lastExtractTsRef.current) {
+          lastExtractTsRef.current = le.ts;
+          rtRef.current?.pushDebugToast(le.applied ? `MVU \u63D0\u53D6\u547D\u4E2D\uFF1A${le.patches ?? 0} \u6761\u8865\u4E01\uFF08\u626B\u63CF ${le.scanned ?? 0} \u6761 assistant\uFF09` : `MVU \u63D0\u53D6\u672A\u547D\u4E2D\uFF08\u626B\u63CF ${le.scanned ?? 0} \u6761 assistant\uFF09`);
+        }
+      }).catch(() => {
+      });
+    }, 8e3);
+  }, [mvuDebug, sessionId]);
+  (0, import_react9.useEffect)(() => {
     if (tab !== "vars" || !sessionId) return;
     let alive = true;
     setVarsLoading(true);
@@ -18305,8 +18599,8 @@ function RpScriptHost(props) {
   const allButtons = scripts.flatMap(
     (sc) => (rt.statuses.get(sc.id)?.buttons ?? []).filter((b) => b.visible && (sc.buttonEnabled || rt.statuses.get(sc.id)?.phase === "running")).map((b) => ({ scriptId: sc.id, scriptName: sc.name, name: b.name }))
   );
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(import_jsx_runtime7.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
       "button",
       {
         type: "button",
@@ -18318,11 +18612,11 @@ function RpScriptHost(props) {
         children: "\u{1F9E9}"
       }
     ),
-    open && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "dsht-rp-script-panel", role: "dialog", "aria-label": "\u9152\u9986\u52A9\u624B\u811A\u672C", style: PANEL_POS, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "sf-head", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { children: "\u{1F9E9} \u9152\u9986\u52A9\u624B\u811A\u672C" }),
-        /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { className: "sf-head-actions", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+    open && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "dsht-rp-script-panel", role: "dialog", "aria-label": "\u9152\u9986\u52A9\u624B\u811A\u672C", style: PANEL_POS, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "sf-head", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { children: "\u{1F9E9} \u9152\u9986\u52A9\u624B\u811A\u672C" }),
+        /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("span", { className: "sf-head-actions", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
             "button",
             {
               type: "button",
@@ -18332,7 +18626,7 @@ function RpScriptHost(props) {
               children: "\u65E5\u5FD7"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
             "button",
             {
               type: "button",
@@ -18342,20 +18636,31 @@ function RpScriptHost(props) {
               children: "\u53D8\u91CF"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("button", { type: "button", className: "sf-btn", onClick: () => {
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+            "button",
+            {
+              type: "button",
+              className: "sf-btn",
+              style: mvuDebug ? { opacity: 1, fontWeight: 700 } : void 0,
+              title: "MVU \u8C03\u8BD5\u6A21\u5F0F\uFF1A\u901A\u77E5\u5168\u653E\u884C + \u63D0\u53D6\u547D\u4E2D/\u672A\u4E2D\u63D0\u793A\uFF08\u6301\u4E45\u5316\u5230 mvu-settings.json \u7684 dsht_mvu_debug\uFF09",
+              onClick: toggleMvuDebug,
+              children: "\u8C03\u8BD5"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("button", { type: "button", className: "sf-btn", onClick: () => {
             rt.reloadAll();
           }, children: "\u91CD\u8F7D" }),
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("button", { type: "button", className: "sf-btn", onClick: () => {
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("button", { type: "button", className: "sf-btn", onClick: () => {
             setOpen(false);
             setTab("none");
           }, children: "\u2715" })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "sf-body", children: [
-        rt.loadError !== "" && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "sf-error", role: "status", "data-testid": "dsht-th-scripts-loaderr", style: { marginBottom: 8 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "sf-body", children: [
+        rt.loadError !== "" && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "sf-error", role: "status", "data-testid": "dsht-th-scripts-loaderr", style: { marginBottom: 8 }, children: [
           "\u26A0 \u811A\u672C\u6E05\u5355\u52A0\u8F7D\u5931\u8D25\uFF1A",
           rt.loadError,
-          /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
             "button",
             {
               type: "button",
@@ -18368,7 +18673,7 @@ function RpScriptHost(props) {
             }
           )
         ] }),
-        allButtons.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "th-buttons", children: allButtons.map((b) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+        allButtons.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "th-buttons", children: allButtons.map((b) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
           "button",
           {
             type: "button",
@@ -18383,32 +18688,32 @@ function RpScriptHost(props) {
         )) }),
         scripts.map((sc) => {
           const st = rt.statuses.get(sc.id);
-          return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "th-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: `th-badge th-${st?.phase ?? "loading"}`, children: st?.phase === "running" ? "\u8FD0\u884C\u4E2D" : st?.phase === "failed" ? "\u5931\u8D25" : "\u52A0\u8F7D\u4E2D" }),
-            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "sf-key", children: sc.name }),
-            /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("span", { className: "th-src", children: sc.source === "preset" ? "\u9884\u8BBE" : "\u5361" }),
-            st?.error && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "sf-error th-detail", children: [
+          return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "th-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: `th-badge th-${st?.phase ?? "loading"}`, children: st?.phase === "running" ? "\u8FD0\u884C\u4E2D" : st?.phase === "failed" ? "\u5931\u8D25" : "\u52A0\u8F7D\u4E2D" }),
+            /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "sf-key", children: sc.name }),
+            /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "th-src", children: sc.source === "preset" ? "\u9884\u8BBE" : "\u5361" }),
+            st?.error && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "sf-error th-detail", children: [
               "\u9519\u8BEF\uFF1A",
               st.error
             ] }),
-            st !== void 0 && st.missing.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "th-detail th-missing", children: [
+            st !== void 0 && st.missing.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "th-detail th-missing", children: [
               "\u7F3A API\uFF1A",
               st.missing.join("\u3001")
             ] }),
-            st?.hasUi === true && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "th-detail", children: "\uFF08\u811A\u672C\u81EA\u6709 UI \u5DF2\u6309\u5185\u5BB9\u533A\u57DF\u663E\u793A\uFF0C\u53EF\u76F4\u63A5\u70B9\u6309\uFF09" })
+            st?.hasUi === true && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "th-detail", children: "\uFF08\u811A\u672C\u81EA\u6709 UI \u5DF2\u6309\u5185\u5BB9\u533A\u57DF\u663E\u793A\uFF0C\u53EF\u76F4\u63A5\u70B9\u6309\uFF09" })
           ] }, sc.id);
         }),
-        rt.toasts.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "th-detail th-toasts", children: [
+        rt.toasts.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "th-detail th-toasts", children: [
           "\u6700\u8FD1\u63D0\u793A\uFF1A",
           rt.toasts[rt.toasts.length - 1]?.message
         ] }),
-        tab === "logs" && /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+        tab === "logs" && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
           "div",
           {
             className: "th-toolbox",
             style: { maxHeight: 240, overflowY: "auto", marginTop: 6, borderTop: "1px solid rgba(255,255,255,.12)", paddingTop: 6 },
-            children: rt.logs.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "th-detail", children: "\uFF08\u6682\u65E0\u811A\u672C\u65E5\u5FD7\uFF1B\u811A\u672C console \u8F93\u51FA\u5B9E\u65F6\u6C47\u5165\uFF0C\u6700\u591A\u4FDD\u7559 200 \u6761\uFF09" }) : rt.logs.slice().reverse().map((l, i) => /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "th-detail", style: { whiteSpace: "pre-wrap", wordBreak: "break-all" }, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("span", { style: { opacity: 0.6 }, children: [
+            children: rt.logs.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "th-detail", children: "\uFF08\u6682\u65E0\u811A\u672C\u65E5\u5FD7\uFF1B\u811A\u672C console \u8F93\u51FA\u5B9E\u65F6\u6C47\u5165\uFF0C\u6700\u591A\u4FDD\u7559 200 \u6761\uFF09" }) : rt.logs.slice().reverse().map((l, i) => /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "th-detail", style: { whiteSpace: "pre-wrap", wordBreak: "break-all" }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("span", { style: { opacity: 0.6 }, children: [
                 "[",
                 new Date(l.ts).toLocaleTimeString(),
                 "] ",
@@ -18421,14 +18726,14 @@ function RpScriptHost(props) {
             ] }, i))
           }
         ),
-        tab === "vars" && /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)(
+        tab === "vars" && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
           "div",
           {
             className: "th-toolbox",
             style: { maxHeight: 300, overflowY: "auto", marginTop: 6, borderTop: "1px solid rgba(255,255,255,.12)", paddingTop: 6 },
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "th-detail", children: "MVU \u53D8\u91CF\u6811\uFF08/dsht-mvu/variables\uFF0C\u53EA\u8BFB\uFF09" }),
-              /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("pre", { style: { margin: "4px 0 0", fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-all" }, children: varsLoading ? "\u8BFB\u53D6\u4E2D\u2026" : varsText || "\uFF08\u7A7A\uFF09" })
+              /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "th-detail", children: "MVU \u53D8\u91CF\u6811\uFF08/dsht-mvu/variables\uFF0C\u53EA\u8BFB\uFF09" }),
+              /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("pre", { style: { margin: "4px 0 0", fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-all" }, children: varsLoading ? "\u8BFB\u53D6\u4E2D\u2026" : varsText || "\uFF08\u7A7A\uFF09" })
             ]
           }
         )
@@ -18439,9 +18744,9 @@ function RpScriptHost(props) {
 function RpScriptButtonsBar(props) {
   const sessionId = readSessionId(props.session);
   const { slug, resolved } = useRpSlug(readSessionCwd(props.session), sessionId);
-  const [, forceTick] = (0, import_react8.useState)(0);
-  const rtRef = (0, import_react8.useRef)(null);
-  (0, import_react8.useEffect)(() => {
+  const [, forceTick] = (0, import_react9.useState)(0);
+  const rtRef = (0, import_react9.useRef)(null);
+  (0, import_react9.useEffect)(() => {
     if (!sessionId || !slug) {
       rtRef.current = null;
       forceTick((t) => t + 1);
@@ -18458,7 +18763,7 @@ function RpScriptButtonsBar(props) {
     (sc) => (rt.statuses.get(sc.id)?.buttons ?? []).filter((b) => b.visible && (sc.buttonEnabled || rt.statuses.get(sc.id)?.phase === "running")).map((b) => ({ scriptId: sc.id, scriptName: sc.name, name: b.name }))
   );
   if (allButtons.length === 0) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("div", { className: "dsht-rp-script-pillbar", role: "toolbar", "aria-label": "\u9152\u9986\u52A9\u624B\u811A\u672C\u6309\u94AE", children: allButtons.map((b) => /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "dsht-rp-script-pillbar", role: "toolbar", "aria-label": "\u9152\u9986\u52A9\u624B\u811A\u672C\u6309\u94AE", children: allButtons.map((b) => /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
     "button",
     {
       type: "button",
@@ -18555,7 +18860,7 @@ function wrapStQuotes(root) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpNativeChat.tsx
-var import_jsx_runtime8 = require("react/jsx-runtime");
+var import_jsx_runtime9 = require("react/jsx-runtime");
 var wsCache = null;
 function invalidateWsCache() {
   wsCache = null;
@@ -18571,7 +18876,7 @@ function notifyDisplayMutation() {
   for (const l of displayEpochListeners) l();
 }
 function useDisplayEpoch() {
-  return (0, import_react9.useSyncExternalStore)(
+  return (0, import_react10.useSyncExternalStore)(
     (cb) => {
       displayEpochListeners.add(cb);
       return () => displayEpochListeners.delete(cb);
@@ -18590,9 +18895,9 @@ function fetchWorkspaces() {
   return wsCache;
 }
 function useOutputProtocol(cwd) {
-  const [proto, setProto] = (0, import_react9.useState)(null);
+  const [proto, setProto] = (0, import_react10.useState)(null);
   const slug = slugFromCwd(cwd);
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     let alive = true;
     if (slug === null) {
       setProto(null);
@@ -18624,9 +18929,9 @@ function fetchDisplayRegexes(slug, sessionId) {
   return p;
 }
 function useDisplayRegexes(slug, sessionId) {
-  const [scripts, setScripts] = (0, import_react9.useState)([]);
+  const [scripts, setScripts] = (0, import_react10.useState)([]);
   const epoch = useDisplayEpoch();
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     let alive = true;
     if (slug === null || !sessionId) {
       setScripts([]);
@@ -18644,9 +18949,9 @@ function useDisplayRegexes(slug, sessionId) {
 var EMPTY_PIPELINE_ENTRIES = { before: "", after: "" };
 var PIPELINE_UNLOADED = { ctx: null, entries: EMPTY_PIPELINE_ENTRIES, ejs: null, th: null };
 function useDisplayPipeline(slug, sessionId) {
-  const [data, setData] = (0, import_react9.useState)(PIPELINE_UNLOADED);
+  const [data, setData] = (0, import_react10.useState)(PIPELINE_UNLOADED);
   const epoch = useDisplayEpoch();
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     let alive = true;
     void Promise.all([
       slug !== null && sessionId !== "" ? loadDisplayRenderCtx(slug, sessionId) : Promise.resolve(null),
@@ -18663,18 +18968,18 @@ function useDisplayPipeline(slug, sessionId) {
   return data;
 }
 function useMessageWindowing(sessionKey, nodeKey, forced) {
-  const shellRef = (0, import_react9.useRef)(null);
-  (0, import_react9.useLayoutEffect)(() => {
+  const shellRef = (0, import_react10.useRef)(null);
+  (0, import_react10.useLayoutEffect)(() => {
     const el = shellRef.current;
     if (el === null) return;
     return registerMessageWindowing({ sessionKey, nodeKey, el, forced });
   }, [sessionKey, nodeKey, forced]);
-  const windowed = (0, import_react9.useSyncExternalStore)(
+  const windowed = (0, import_react10.useSyncExternalStore)(
     subscribeWindowing,
     () => isMessageWindowed(sessionKey, nodeKey)
   );
-  const prevWindowed = (0, import_react9.useRef)(null);
-  (0, import_react9.useLayoutEffect)(() => {
+  const prevWindowed = (0, import_react10.useRef)(null);
+  (0, import_react10.useLayoutEffect)(() => {
     const prev = prevWindowed.current;
     prevWindowed.current = windowed;
     if (prev !== null && prev !== windowed) reportWindowCommit();
@@ -18788,7 +19093,7 @@ async function refreshRollbackMask(sessionId) {
   }
 }
 function useRollbackMaskState(sessionId) {
-  const subscribe = (0, import_react9.useCallback)((cb) => {
+  const subscribe = (0, import_react10.useCallback)((cb) => {
     if (sessionId === void 0) return () => void 0;
     let set = maskListeners.get(sessionId);
     if (set === void 0) {
@@ -18801,11 +19106,11 @@ function useRollbackMaskState(sessionId) {
       set.delete(cb);
     };
   }, [sessionId]);
-  const getSnapshot = (0, import_react9.useCallback)(
+  const getSnapshot = (0, import_react10.useCallback)(
     () => sessionId !== void 0 ? maskCache.get(sessionId) ?? EMPTY_MASK : EMPTY_MASK,
     [sessionId]
   );
-  return (0, import_react9.useSyncExternalStore)(subscribe, getSnapshot, () => EMPTY_MASK);
+  return (0, import_react10.useSyncExternalStore)(subscribe, getSnapshot, () => EMPTY_MASK);
 }
 function isSeqHidden(mask, seq) {
   if (seq === void 0) return false;
@@ -18827,8 +19132,8 @@ function fetchFloorBadgePref() {
   return chatPrefsCache;
 }
 function useFloorBadgePref() {
-  const [on, setOn] = (0, import_react9.useState)(true);
-  (0, import_react9.useEffect)(() => {
+  const [on, setOn] = (0, import_react10.useState)(true);
+  (0, import_react10.useEffect)(() => {
     let alive = true;
     void fetchFloorBadgePref().then((v) => {
       if (alive) setOn(v);
@@ -18877,7 +19182,7 @@ function nodeTimeMs(node) {
 }
 var rpActiveFloors = 0;
 function useRpActiveMarker() {
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     rpActiveFloors += 1;
     document.body.setAttribute("data-dsht-rp-active", "1");
     return () => {
@@ -18890,8 +19195,8 @@ var charNameCache = /* @__PURE__ */ new Map();
 var charNameInflight = /* @__PURE__ */ new Map();
 var charNameSubs = null;
 function useCharName(slug) {
-  const [, tick] = (0, import_react9.useState)(0);
-  (0, import_react9.useEffect)(() => {
+  const [, tick] = (0, import_react10.useState)(0);
+  (0, import_react10.useEffect)(() => {
     if (charNameSubs === null) charNameSubs = /* @__PURE__ */ new Set();
     const fn = () => tick((t) => t + 1);
     charNameSubs.add(fn);
@@ -18919,7 +19224,7 @@ function useCharName(slug) {
   }
   return null;
 }
-var RpFloorHeader = (0, import_react9.memo)(function RpFloorHeader2({ useChat, nodeKey, side, sessionId, slug, timeMs }) {
+var RpFloorHeader = (0, import_react10.memo)(function RpFloorHeader2({ useChat, nodeKey, side, sessionId, slug, timeMs }) {
   const showFloor = useFloorBadgePref();
   const maskState = useRollbackMaskState(sessionId);
   const index = useChat === void 0 ? void 0 : useChat((snapshot) => floorIndexFromChat(snapshot, maskState));
@@ -18938,8 +19243,8 @@ var RpFloorHeader = (0, import_react9.memo)(function RpFloorHeader2({ useChat, n
     if (typeof timeMs === "number" && timeMs > 0) meta.push(formatFloorTime(timeMs));
   }
   const st = side === "assistant" && typeof timeMs === "number" && timeMs > 0 ? formatFloorTimeSt(timeMs) : null;
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: `dsht-rp-floor-head dsht-rp-floor-head-${side}`, "data-testid": "dsht-rp-floor", children: [
-    side === "assistant" && slug !== null && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: `dsht-rp-floor-head dsht-rp-floor-head-${side}`, "data-testid": "dsht-rp-floor", children: [
+    side === "assistant" && slug !== null && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
       "img",
       {
         className: "dsht-rp-avatar",
@@ -18950,24 +19255,24 @@ var RpFloorHeader = (0, import_react9.memo)(function RpFloorHeader2({ useChat, n
         }
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "dsht-rp-floor-meta", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "dsht-rp-floor-name", children: name }),
-      meta.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "dsht-rp-floor-sub", children: meta.join(" \xB7 ") }),
-      st !== null && st.date !== "" && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "dsht-rp-floor-sub", children: st.date }),
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "dsht-rp-floor-sub", children: st.time })
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "dsht-rp-floor-meta", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "dsht-rp-floor-name", children: name }),
+      meta.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "dsht-rp-floor-sub", children: meta.join(" \xB7 ") }),
+      st !== null && st.date !== "" && /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(import_jsx_runtime9.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "dsht-rp-floor-sub", children: st.date }),
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "dsht-rp-floor-sub", children: st.time })
       ] })
     ] })
   ] });
 });
-var StatusBarCard = (0, import_react9.memo)(function StatusBarCard2({ content }) {
-  const rows = (0, import_react9.useMemo)(() => parseStatusBarRows(content), [content]);
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "dsht-rp-statusbar", "data-testid": "dsht-rp-statusbar", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "sb-title", children: "\u25C6 STATUS" }),
-    rows.length > 0 ? rows.map(([k, v], i) => /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "sb-row", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "sb-k", children: k }),
-      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "sb-v", children: v })
-    ] }, i)) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "sb-row", children: content.trim().slice(0, 600) })
+var StatusBarCard = (0, import_react10.memo)(function StatusBarCard2({ content }) {
+  const rows = (0, import_react10.useMemo)(() => parseStatusBarRows(content), [content]);
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "dsht-rp-statusbar", "data-testid": "dsht-rp-statusbar", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "sb-title", children: "\u25C6 STATUS" }),
+    rows.length > 0 ? rows.map(([k, v], i) => /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "sb-row", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "sb-k", children: k }),
+      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "sb-v", children: v })
+    ] }, i)) : /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "sb-row", children: content.trim().slice(0, 600) })
   ] });
 });
 var statusbarRenderCache = /* @__PURE__ */ new Map();
@@ -18983,9 +19288,9 @@ function fetchStatusbarRender(sessionId) {
   statusbarRenderCache.set(sessionId, { at: now, html: html2 });
   return html2;
 }
-var MvuStatusbar = (0, import_react9.memo)(function MvuStatusbar2({ sessionId }) {
-  const [html2, setHtml] = (0, import_react9.useState)(null);
-  (0, import_react9.useEffect)(() => {
+var MvuStatusbar = (0, import_react10.memo)(function MvuStatusbar2({ sessionId }) {
+  const [html2, setHtml] = (0, import_react10.useState)(null);
+  (0, import_react10.useEffect)(() => {
     let alive = true;
     if (sessionId === void 0) return;
     void fetchStatusbarRender(sessionId).then((h) => {
@@ -18996,9 +19301,9 @@ var MvuStatusbar = (0, import_react9.memo)(function MvuStatusbar2({ sessionId })
     };
   }, [sessionId]);
   if (html2 === null) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "dsht-rp-mvu-statusbar", "data-testid": "dsht-rp-statusbar", dangerouslySetInnerHTML: { __html: html2 } });
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "dsht-rp-mvu-statusbar", "data-testid": "dsht-rp-statusbar", dangerouslySetInnerHTML: { __html: html2 } });
 });
-var TurnErrorNodeView = (0, import_react9.memo)(function TurnErrorNodeView2({ node, sessionId }) {
+var TurnErrorNodeView = (0, import_react10.memo)(function TurnErrorNodeView2({ node, sessionId }) {
   const mask = useRollbackMaskState(sessionId);
   const data = readNodeData(node);
   const raw = typeof data.message === "string" ? data.message : String(data.message ?? "");
@@ -19006,26 +19311,26 @@ var TurnErrorNodeView = (0, import_react9.memo)(function TurnErrorNodeView2({ no
   if (isSeqHidden(mask, readNodeAnchorSeq(node) ?? readNodeSeq(data))) return null;
   const friendly = humanizeError(Object.assign(new Error(raw), { code }));
   const leaked = friendly !== raw;
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "dsht-rp-turn-error", role: "status", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "te-dot", "aria-hidden": "true", children: "\u25CF" }),
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "te-copy", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "te-title", children: "\u672C\u8F6E\u8FD0\u884C\u5931\u8D25" }),
-      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "te-message", children: friendly }),
-      leaked && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("details", { className: "te-detail", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("summary", { children: "\u6280\u672F\u8BE6\u60C5" }),
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("pre", { className: "te-raw", children: raw })
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "dsht-rp-turn-error", role: "status", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "te-dot", "aria-hidden": "true", children: "\u25CF" }),
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "te-copy", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "te-title", children: "\u672C\u8F6E\u8FD0\u884C\u5931\u8D25" }),
+      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "te-message", children: friendly }),
+      leaked && /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("details", { className: "te-detail", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("summary", { children: "\u6280\u672F\u8BE6\u60C5" }),
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("pre", { className: "te-raw", children: raw })
       ] })
     ] }),
-    code !== "" && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("code", { className: "te-code", children: code })
+    code !== "" && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("code", { className: "te-code", children: code })
   ] });
 });
 var RpTurnErrorView = TurnErrorNodeView;
-var HarnessRow = (0, import_react9.memo)(function HarnessRow2({ icon, title, meta, body, testId }) {
-  const [open, setOpen] = (0, import_react9.useState)(false);
-  const onToggle = (0, import_react9.useCallback)(() => {
+var HarnessRow = (0, import_react10.memo)(function HarnessRow2({ icon, title, meta, body, testId }) {
+  const [open, setOpen] = (0, import_react10.useState)(false);
+  const onToggle = (0, import_react10.useCallback)(() => {
     setOpen((v) => !v);
   }, []);
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
     import_dsh_client_ui_primitives.DisclosureRow,
     {
       className: "dsht-rp-harness-row",
@@ -19036,32 +19341,32 @@ var HarnessRow = (0, import_react9.memo)(function HarnessRow2({ icon, title, met
       expandOnRowClick: true,
       onToggle,
       ...meta === void 0 || meta === "" ? {} : {
-        collapsedContent: /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "hr-sep", "aria-hidden": "true" }),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "hr-meta", children: meta })
+        collapsedContent: /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(import_jsx_runtime9.Fragment, { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "hr-sep", "aria-hidden": "true" }),
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "hr-meta", children: meta })
         ] })
       },
-      children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "hr-body", "data-testid": testId, children: body })
+      children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "hr-body", "data-testid": testId, children: body })
     }
   );
 });
-var RpSystemPromptNodeView = (0, import_react9.memo)(function RpSystemPromptNodeView2({ node, sessionId }) {
+var RpSystemPromptNodeView = (0, import_react10.memo)(function RpSystemPromptNodeView2({ node, sessionId }) {
   const mask = useRollbackMaskState(sessionId);
   const data = readNodeData(node);
   const text2 = typeof data.text === "string" ? data.text : "";
   if (isSeqHidden(mask, readNodeAnchorSeq(node))) return null;
   if (text2 === "") return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
     HarnessRow,
     {
-      icon: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_dsh_client_ui_primitives.IconBrowseOutline16, { size: 14 }),
+      icon: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(import_dsh_client_ui_primitives.IconBrowseOutline16, { size: 14 }),
       title: "\u7CFB\u7EDF\u63D0\u793A\u8BCD",
       testId: "dsht-rp-system-prompt",
-      body: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("pre", { className: "hr-pre", children: text2 })
+      body: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("pre", { className: "hr-pre", children: text2 })
     }
   );
 });
-var RpContextNodeView = (0, import_react9.memo)(function RpContextNodeView2({ node, sessionId }) {
+var RpContextNodeView = (0, import_react10.memo)(function RpContextNodeView2({ node, sessionId }) {
   const mask = useRollbackMaskState(sessionId);
   const data = readNodeData(node);
   const blocks = readBlocks(data);
@@ -19073,14 +19378,14 @@ var RpContextNodeView = (0, import_react9.memo)(function RpContextNodeView2({ no
   const role = provObj?.role === "recall" ? "recall" : "inject";
   const label = typeof provObj?.label === "string" ? provObj.label : "";
   const title = role === "recall" ? "\u8DE8\u4F1A\u8BDD\u53EC\u56DE" : "\u4E0A\u4E0B\u6587\u6CE8\u5165";
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
     HarnessRow,
     {
-      icon: role === "recall" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { "data-context-recall-icon": "true", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_dsh_client_ui_primitives.ReferenceIcon, { kind: "session" }) }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_dsh_client_ui_primitives.IconContextInjectionOutline16, { size: 14 }),
+      icon: role === "recall" ? /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { "data-context-recall-icon": "true", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(import_dsh_client_ui_primitives.ReferenceIcon, { kind: "session" }) }) : /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(import_dsh_client_ui_primitives.IconContextInjectionOutline16, { size: 14 }),
       title,
       meta: label === "" ? void 0 : label,
       testId: "dsht-rp-context-injection",
-      body: body === "" ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "hr-empty", children: "\uFF08\u65E0\u6587\u672C\u5185\u5BB9\uFF09" }) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("pre", { className: "hr-pre", children: body })
+      body: body === "" ? /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "hr-empty", children: "\uFF08\u65E0\u6587\u672C\u5185\u5BB9\uFF09" }) : /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("pre", { className: "hr-pre", children: body })
     }
   );
 });
@@ -19153,19 +19458,19 @@ function parkMessageFrame(key, entry) {
   frameParkContainerOf().appendChild(entry.el);
   evictParkedFrames();
 }
-var RpMessageFrame = (0, import_react9.memo)(function RpMessageFrame2({ html: html2, useBlobUrl = false, sessionId, slug, thShim }) {
-  const mountRef = (0, import_react9.useRef)(null);
-  const frameRef = (0, import_react9.useRef)(null);
-  const tokenRef = (0, import_react9.useRef)("");
-  const [height, setHeight] = (0, import_react9.useState)(80);
-  const [mounted, setMounted] = (0, import_react9.useState)(false);
-  const guestRef = (0, import_react9.useRef)(null);
-  const shimBlobRef = (0, import_react9.useRef)(null);
-  const blobRef = (0, import_react9.useRef)(null);
+var RpMessageFrame = (0, import_react10.memo)(function RpMessageFrame2({ html: html2, useBlobUrl = false, sessionId, slug, thShim }) {
+  const mountRef = (0, import_react10.useRef)(null);
+  const frameRef = (0, import_react10.useRef)(null);
+  const tokenRef = (0, import_react10.useRef)("");
+  const [height, setHeight] = (0, import_react10.useState)(80);
+  const [mounted, setMounted] = (0, import_react10.useState)(false);
+  const guestRef = (0, import_react10.useRef)(null);
+  const shimBlobRef = (0, import_react10.useRef)(null);
+  const blobRef = (0, import_react10.useRef)(null);
   const needsShim = /getAllVariables|getVariables\s*\(|TavernHelper|Mvu\.|eventOn\s*\(|insertOrAssignVariables|replaceVariables|getChatMessages/.test(html2);
   const shimOn = thShim === true && sessionId !== void 0 && slug !== void 0 && needsShim;
-  const [frameVars, setFrameVars] = (0, import_react9.useState)(null);
-  (0, import_react9.useEffect)(() => {
+  const [frameVars, setFrameVars] = (0, import_react10.useState)(null);
+  (0, import_react10.useEffect)(() => {
     if (!shimOn || sessionId === void 0 || slug === void 0) return;
     let alive = true;
     void fetchFrameVars(sessionId, slug).then((v) => {
@@ -19178,7 +19483,7 @@ var RpMessageFrame = (0, import_react9.memo)(function RpMessageFrame2({ html: ht
   }, [shimOn, sessionId, slug]);
   const docReady = !shimOn || frameVars !== null;
   const frameKey = `${frameHash8(html2)}|${sessionId !== void 0 ? `${sessionId}::${slug ?? ""}` : "plain"}|${shimOn ? "th" : "plain"}|${useBlobUrl ? "b" : "s"}`;
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     if (!docReady) return;
     const mount = mountRef.current;
     if (mount === null) return;
@@ -19277,7 +19582,7 @@ var RpMessageFrame = (0, import_react9.memo)(function RpMessageFrame2({ html: ht
       if (frameRef.current === el) frameRef.current = null;
     };
   }, [docReady, frameKey]);
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     const receive = (event) => {
       const frame = frameRef.current;
       const data = event.data;
@@ -19294,7 +19599,7 @@ var RpMessageFrame = (0, import_react9.memo)(function RpMessageFrame2({ html: ht
     };
   }, []);
   if (!docReady) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
     "div",
     {
       ref: mountRef,
@@ -19315,70 +19620,70 @@ function parseReasoningDuration(text2) {
   const ms = Number(m[1]);
   return Number.isFinite(ms) && ms > 0 ? { text: text2.slice(m[0].length), durationMs: ms } : { text: text2.slice(m[0].length) };
 }
-var ReasoningRow = (0, import_react9.memo)(function ReasoningRow2({ text: text2, running, durationMs, turnTotalMs }) {
+var ReasoningRow = (0, import_react10.memo)(function ReasoningRow2({ text: text2, running, durationMs, turnTotalMs }) {
   const summary = running ? "\u601D\u8003\u4E2D\u2026" : durationMs === void 0 ? turnTotalMs === void 0 ? "\u601D\u8003\u4E86\u4E00\u4F1A" : `\u4EFB\u52A1\u8017\u65F6 ${formatDuration(turnTotalMs)}` : turnTotalMs === void 0 ? `\u601D\u8003\u4E86 ${formatDuration(durationMs)}` : `\u601D\u8003\u4E86 ${formatDuration(durationMs)} \xB7 \u4EFB\u52A1\u8017\u65F6 ${formatDuration(turnTotalMs)}`;
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("details", { className: "dsht-rp-reasoning", "data-running": running || void 0, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("summary", { children: summary }),
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "rp-reasoning-body", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(CompiledBody, { text: text2 }) })
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("details", { className: "dsht-rp-reasoning", "data-running": running || void 0, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("summary", { children: summary }),
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "rp-reasoning-body", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(CompiledBody, { text: text2 }) })
   ] });
 });
-var CompiledBody = (0, import_react9.memo)(function CompiledBody2({ text: text2 }) {
+var CompiledBody = (0, import_react10.memo)(function CompiledBody2({ text: text2 }) {
   const markdownLabels = { code: { copyLabel: "\u590D\u5236", copiedLabel: "\u5DF2\u590D\u5236" }, footnotes: "\u811A\u6CE8" };
-  const segs = (0, import_react9.useMemo)(() => compileDisplaySegments(unwrapForeignTags(text2)), [text2]);
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_jsx_runtime8.Fragment, { children: segs.map((dseg, i) => {
+  const segs = (0, import_react10.useMemo)(() => compileDisplaySegments(unwrapForeignTags(text2)), [text2]);
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(import_jsx_runtime9.Fragment, { children: segs.map((dseg, i) => {
     if (dseg.kind === "markdown") {
-      return dseg.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_dsh_client_ui_primitives.MarkdownText, { text: dseg.text, labels: markdownLabels }, i) : null;
+      return dseg.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(import_dsh_client_ui_primitives.MarkdownText, { text: dseg.text, labels: markdownLabels }, i) : null;
     }
     if (dseg.kind === "html") {
-      return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(RpMessageFrame, { html: dseg.source, thShim: false }, i);
+      return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(RpMessageFrame, { html: dseg.source, thShim: false }, i);
     }
     const clean = sanitizeDisplayHtml(dseg.source);
-    return clean !== null ? /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "dsht-rp-html", dangerouslySetInnerHTML: { __html: clean } }, i) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(RpMessageFrame, { html: dseg.source, thShim: false }, i);
+    return clean !== null ? /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "dsht-rp-html", dangerouslySetInnerHTML: { __html: clean } }, i) : /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(RpMessageFrame, { html: dseg.source, thShim: false }, i);
   }) });
 });
-var CollapsibleBlock = (0, import_react9.memo)(function CollapsibleBlock2({ title, content }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("details", { className: "dsht-rp-collapsible", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("summary", { children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "cl-title", children: title }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "cl-body", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(CompiledBody, { text: content }) })
+var CollapsibleBlock = (0, import_react10.memo)(function CollapsibleBlock2({ title, content }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("details", { className: "dsht-rp-collapsible", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("summary", { children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "cl-title", children: title }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "cl-body", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(CompiledBody, { text: content }) })
   ] });
 });
-var VariableUpdateBlock = (0, import_react9.memo)(function VariableUpdateBlock2({ raw }) {
-  const parsed = (0, import_react9.useMemo)(() => parseVariableJson(raw), [raw]);
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("details", { className: "dsht-rp-state-update dsht-rp-var-update", "data-testid": "dsht-rp-var-update", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("summary", { children: [
+var VariableUpdateBlock = (0, import_react10.memo)(function VariableUpdateBlock2({ raw }) {
+  const parsed = (0, import_react10.useMemo)(() => parseVariableJson(raw), [raw]);
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("details", { className: "dsht-rp-state-update dsht-rp-var-update", "data-testid": "dsht-rp-var-update", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("summary", { children: [
       "\u2699 \u53D8\u91CF\u66F4\u65B0",
       parsed !== null ? ` \xB7 ${parsed.keys} \u952E` : ""
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "su-body", children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("pre", { className: "su-raw", children: parsed !== null ? parsed.pretty : raw }) })
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "su-body", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("pre", { className: "su-raw", children: parsed !== null ? parsed.pretty : raw }) })
   ] });
 });
-var StateUpdateBlock = (0, import_react9.memo)(function StateUpdateBlock2({ analysis, patches }) {
-  const patchRows = (0, import_react9.useMemo)(() => patches === null ? null : parseJsonPatches(patches), [patches]);
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("details", { className: "dsht-rp-state-update", "data-testid": "dsht-rp-state-update", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("summary", { children: "\u2699 \u72B6\u6001\u66F4\u65B0" }),
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "su-body", children: [
-      analysis !== null && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("details", { className: "dsht-rp-reasoning", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("summary", { children: "\u5206\u6790" }),
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "rp-reasoning-body", children: analysis })
+var StateUpdateBlock = (0, import_react10.memo)(function StateUpdateBlock2({ analysis, patches }) {
+  const patchRows = (0, import_react10.useMemo)(() => patches === null ? null : parseJsonPatches(patches), [patches]);
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("details", { className: "dsht-rp-state-update", "data-testid": "dsht-rp-state-update", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("summary", { children: "\u2699 \u72B6\u6001\u66F4\u65B0" }),
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "su-body", children: [
+      analysis !== null && /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("details", { className: "dsht-rp-reasoning", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("summary", { children: "\u5206\u6790" }),
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "rp-reasoning-body", children: analysis })
       ] }),
-      patchRows !== null && patchRows.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("table", { className: "su-patch-table", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("tr", { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("th", { children: "\u64CD\u4F5C" }),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("th", { children: "\u8DEF\u5F84" }),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("th", { children: "\u503C" })
+      patchRows !== null && patchRows.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("table", { className: "su-patch-table", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("tr", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("th", { children: "\u64CD\u4F5C" }),
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("th", { children: "\u8DEF\u5F84" }),
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("th", { children: "\u503C" })
         ] }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("tbody", { children: patchRows.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("tr", { children: [
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("td", { className: "su-op", children: p.op }),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("td", { className: "su-path", children: p.path }),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("td", { children: p.value ?? "\u2014" })
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("tbody", { children: patchRows.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("tr", { children: [
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("td", { className: "su-op", children: p.op }),
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("td", { className: "su-path", children: p.path }),
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("td", { children: p.value ?? "\u2014" })
         ] }, i)) })
       ] }),
-      patchRows === null && patches !== null && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("pre", { className: "su-raw", children: patches })
+      patchRows === null && patches !== null && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("pre", { className: "su-raw", children: patches })
     ] })
   ] });
 });
-var ForeshadowingPanel = (0, import_react9.memo)(function ForeshadowingPanel2({ content }) {
-  const items = (0, import_react9.useMemo)(() => {
+var ForeshadowingPanel = (0, import_react10.memo)(function ForeshadowingPanel2({ content }) {
+  const items = (0, import_react10.useMemo)(() => {
     const out = [];
     const re = /<details>([\s\S]*?)<\/details>/gi;
     let m;
@@ -19391,15 +19696,15 @@ var ForeshadowingPanel = (0, import_react9.memo)(function ForeshadowingPanel2({ 
     }
     return out;
   }, [content]);
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("details", { className: "dsht-rp-foreshadowing", "data-testid": "dsht-rp-foreshadowing", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("summary", { children: "\u{1F9ED} \u4F0F\u7B14\u767B\u8BB0\u518C" }),
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "fs-body", children: items.length > 0 ? items.map((it, i) => /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("details", { className: "dsht-rp-collapsible", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("summary", { children: /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "cl-title", children: it.title }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "cl-body", children: it.content })
-    ] }, i)) : /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "cl-body", children: content }) })
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("details", { className: "dsht-rp-foreshadowing", "data-testid": "dsht-rp-foreshadowing", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("summary", { children: "\u{1F9ED} \u4F0F\u7B14\u767B\u8BB0\u518C" }),
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "fs-body", children: items.length > 0 ? items.map((it, i) => /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("details", { className: "dsht-rp-collapsible", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("summary", { children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "cl-title", children: it.title }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "cl-body", children: it.content })
+    ] }, i)) : /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "cl-body", children: content }) })
   ] });
 });
-var RpAssistantNodeView = (0, import_react9.memo)(function RpAssistantNodeView2({
+var RpAssistantNodeView = (0, import_react10.memo)(function RpAssistantNodeView2({
   node,
   cwd,
   renderMessageImages,
@@ -19420,26 +19725,26 @@ var RpAssistantNodeView = (0, import_react9.memo)(function RpAssistantNodeView2(
   const blocks = readBlocks(data);
   const mySeq = readFinalSeq(data);
   const receivedSeq = mySeq;
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     if (sessionId === void 0 || !isFreshMessage(data) || streaming) return;
     dispatchThEvent(sessionId, "message_received", { nodeKey, seq: receivedSeq });
   }, []);
-  const prevStreaming = (0, import_react9.useRef)(streaming);
-  (0, import_react9.useEffect)(() => {
+  const prevStreaming = (0, import_react10.useRef)(streaming);
+  (0, import_react10.useEffect)(() => {
     if (prevStreaming.current && !streaming && sessionId !== void 0) {
       dispatchThEvent(sessionId, "message_received", { nodeKey, seq: receivedSeq });
     }
     prevStreaming.current = streaming;
   }, [streaming, sessionId, nodeKey, receivedSeq]);
   const streamText = streaming ? blocks.filter((b) => b.kind === "text").map((b) => String(b.text ?? "")).join("") : "";
-  const lastStreamLen = (0, import_react9.useRef)(0);
-  (0, import_react9.useEffect)(() => {
+  const lastStreamLen = (0, import_react10.useRef)(0);
+  (0, import_react10.useEffect)(() => {
     if (!streaming || sessionId === void 0) return;
     if (streamText.length <= lastStreamLen.current) return;
     lastStreamLen.current = streamText.length;
     dispatchThEvent(sessionId, "stream_token_received", { args: [streamText] });
   });
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     if (!streaming) lastStreamLen.current = 0;
   }, [streaming]);
   const sessionKey = sessionId ?? cwd ?? "rp-chat";
@@ -19456,7 +19761,7 @@ var RpAssistantNodeView = (0, import_react9.memo)(function RpAssistantNodeView2(
     });
     return newer;
   });
-  const variantOverride = (0, import_react9.useMemo)(() => {
+  const variantOverride = (0, import_react10.useMemo)(() => {
     const seq = mySeq;
     if (seq === void 0 || streaming || groups.length === 0) return void 0;
     const g = groupOf(groups, seq);
@@ -19478,8 +19783,8 @@ var RpAssistantNodeView = (0, import_react9.memo)(function RpAssistantNodeView2(
     });
     return hidden;
   });
-  const bodyRef = (0, import_react9.useRef)(null);
-  (0, import_react9.useLayoutEffect)(() => {
+  const bodyRef = (0, import_react10.useRef)(null);
+  (0, import_react10.useLayoutEffect)(() => {
     if (messageDepth !== 0) return;
     const shell = shellRef.current;
     if (shell === null) return;
@@ -19490,7 +19795,7 @@ var RpAssistantNodeView = (0, import_react9.memo)(function RpAssistantNodeView2(
       container.scrollTop = container.scrollHeight;
     });
   }, [node.key]);
-  const processed = (0, import_react9.useMemo)(() => {
+  const processed = (0, import_react10.useMemo)(() => {
     const units = [];
     const actions = [];
     const thRenderOn = pipeline.th === null ? true : pipeline.th.enabled;
@@ -19569,11 +19874,11 @@ var RpAssistantNodeView = (0, import_react9.memo)(function RpAssistantNodeView2(
     const permanent = proto !== null && !streaming && pureTextMessage && sessionId !== void 0 && variantOverride === void 0 && pipeline.ejs !== null && pipeline.ejs.enabled && pipeline.ejs.permanentEvaluation && pipeline.ctx !== null && mySeq !== void 0 && expandedJoined !== rawJoined ? { sessionId, seq: mySeq, text: expandedJoined } : void 0;
     return { actions, units, permanent };
   }, [blocks, proto, streaming, variantOverride, displayScripts, messageDepth, hiddenNewerCount, pipeline, mySeq, sessionId]);
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     const p = processed.permanent;
     if (p !== void 0) reportPermanentRender(p.sessionId, p.seq, p.text);
   }, [processed.permanent]);
-  (0, import_react9.useLayoutEffect)(() => {
+  (0, import_react10.useLayoutEffect)(() => {
     const el = bodyRef.current;
     if (el === null || streaming) return;
     const th = pipeline.th;
@@ -19582,12 +19887,12 @@ var RpAssistantNodeView = (0, import_react9.memo)(function RpAssistantNodeView2(
     if (!depthOk) return;
     enhancePreBlocks(el, { collapse: th.collapseCodeBlock !== "none", hljs: th.optimizeHljs });
   }, [pipeline.th, streaming, processed, messageDepth, hiddenNewerCount, windowed]);
-  (0, import_react9.useLayoutEffect)(() => {
+  (0, import_react10.useLayoutEffect)(() => {
     const el = bodyRef.current;
     if (el === null || streaming) return;
     wrapStQuotes(el);
   }, [streaming, processed, windowed]);
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     const el = bodyRef.current;
     if (el === null || streaming) return;
     let scheduled = false;
@@ -19610,7 +19915,7 @@ var RpAssistantNodeView = (0, import_react9.memo)(function RpAssistantNodeView2(
       }
     };
   }, [streaming, windowed]);
-  const sendAction = (0, import_react9.useCallback)((text2) => {
+  const sendAction = (0, import_react10.useCallback)((text2) => {
     inputActions?.setDraft(text2);
     inputActions?.submit();
   }, [inputActions]);
@@ -19623,53 +19928,53 @@ var RpAssistantNodeView = (0, import_react9.memo)(function RpAssistantNodeView2(
     const k = processed.units[i].kind;
     if (k === "reasoning" || k === "protocol" && processed.units[i].seg.kind === "reasoning") lastReasoningIdx = i;
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
     "div",
     {
       ref: shellRef,
       className: "dsht-rp-assistant",
       "data-windowed": windowed || void 0,
       style: windowed ? { height: `${placeholderHeight}px` } : void 0,
-      children: !windowed && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(RpFloorHeader, { useChat, nodeKey: node.key, side: "assistant", sessionId, slug, timeMs: nodeTimeMs(node) }),
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "dsht-rp-assistant-body", ref: bodyRef, children: [
+      children: !windowed && /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(import_jsx_runtime9.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(RpFloorHeader, { useChat, nodeKey: node.key, side: "assistant", sessionId, slug, timeMs: nodeTimeMs(node) }),
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "dsht-rp-assistant-body", ref: bodyRef, children: [
           processed.units.map((u, i) => {
             if (u.kind === "text") {
-              return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_dsh_client_ui_primitives.MarkdownText, { text: u.text, streaming: streaming && i === processed.units.length - 1, labels: markdownLabels }, i);
+              return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(import_dsh_client_ui_primitives.MarkdownText, { text: u.text, streaming: streaming && i === processed.units.length - 1, labels: markdownLabels }, i);
             }
             if (u.kind === "html") {
-              return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "dsht-rp-html", dangerouslySetInnerHTML: { __html: u.html } }, i);
+              return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "dsht-rp-html", dangerouslySetInnerHTML: { __html: u.html } }, i);
             }
             if (u.kind === "frame") {
-              return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(RpMessageFrame, { html: u.html, useBlobUrl: pipeline.th?.useBlobUrl === true, sessionId, slug: slug ?? void 0, thShim: pipeline.th === null || pipeline.th.enabled === true }, i);
+              return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(RpMessageFrame, { html: u.html, useBlobUrl: pipeline.th?.useBlobUrl === true, sessionId, slug: slug ?? void 0, thShim: pipeline.th === null || pipeline.th.enabled === true }, i);
             }
             if (u.kind === "statusbar") {
-              return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(StatusBarCard, { content: u.text }, i);
+              return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(StatusBarCard, { content: u.text }, i);
             }
             if (u.kind === "reasoning") {
               const last = i === lastReasoningIdx;
               const ms = u.durationMs ?? (last ? stepDurationMs : void 0);
               const total = last ? turnTotalMs : void 0;
-              return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(ReasoningRow, { text: u.text, running: streaming, ...ms !== void 0 || total !== void 0 ? { durationMs: ms, ...total !== void 0 ? { turnTotalMs: total } : {} } : {} }, i);
+              return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(ReasoningRow, { text: u.text, running: streaming, ...ms !== void 0 || total !== void 0 ? { durationMs: ms, ...total !== void 0 ? { turnTotalMs: total } : {} } : {} }, i);
             }
             if (u.kind === "protocol") {
               const seg = u.seg;
-              if (seg.kind === "status") return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(StatusBarCard, { content: seg.content }, i);
-              if (seg.kind === "collapsible") return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(CollapsibleBlock, { title: seg.title, content: seg.content }, i);
-              if (seg.kind === "state-update") return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(StateUpdateBlock, { analysis: seg.analysis, patches: seg.patches }, i);
-              if (seg.kind === "foreshadowing") return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(ForeshadowingPanel, { content: seg.content }, i);
+              if (seg.kind === "status") return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(StatusBarCard, { content: seg.content }, i);
+              if (seg.kind === "collapsible") return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(CollapsibleBlock, { title: seg.title, content: seg.content }, i);
+              if (seg.kind === "state-update") return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(StateUpdateBlock, { analysis: seg.analysis, patches: seg.patches }, i);
+              if (seg.kind === "foreshadowing") return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(ForeshadowingPanel, { content: seg.content }, i);
               if (seg.kind === "reasoning") {
                 const last = i === lastReasoningIdx;
-                return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(ReasoningRow, { text: seg.content, running: false, ...last ? { durationMs: stepDurationMs, turnTotalMs } : {} }, i);
+                return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(ReasoningRow, { text: seg.content, running: false, ...last ? { durationMs: stepDurationMs, turnTotalMs } : {} }, i);
               }
-              if (seg.kind === "statusbar-placeholder") return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(MvuStatusbar, { sessionId }, i);
+              if (seg.kind === "statusbar-placeholder") return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(MvuStatusbar, { sessionId }, i);
               return null;
             }
-            return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(import_react10.Fragment, { children: renderMessageImages({ images: u.images ?? [], align: "start" }) }, i);
+            return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(import_react11.Fragment, { children: renderMessageImages({ images: u.images ?? [], align: "start" }) }, i);
           }),
-          interrupted && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "dsht-rp-stopped", children: "\u5DF2\u505C\u6B62" })
+          interrupted && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "dsht-rp-stopped", children: "\u5DF2\u505C\u6B62" })
         ] }),
-        processed.actions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "dsht-rp-actions", "data-testid": "dsht-rp-actions", children: processed.actions.map((a, i) => /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(
+        processed.actions.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "dsht-rp-actions", "data-testid": "dsht-rp-actions", children: processed.actions.map((a, i) => /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(
           "button",
           {
             type: "button",
@@ -19679,8 +19984,8 @@ var RpAssistantNodeView = (0, import_react9.memo)(function RpAssistantNodeView2(
               sendAction(a.label);
             },
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "tag", children: "\u25B8" }),
-              /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { style: a.color !== void 0 ? { color: a.color } : void 0, children: a.label })
+              /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "tag", children: "\u25B8" }),
+              /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { style: a.color !== void 0 ? { color: a.color } : void 0, children: a.label })
             ]
           },
           i
@@ -19705,9 +20010,9 @@ async function refreshVariantGroups(sessionId) {
   for (const fn of groupsListeners.get(sessionId) ?? []) fn();
 }
 function useVariantGroups(sessionId, nodeCount) {
-  const [version, setVersion] = (0, import_react9.useState)(0);
-  const prevCountRef = (0, import_react9.useRef)(-1);
-  (0, import_react9.useEffect)(() => {
+  const [version, setVersion] = (0, import_react10.useState)(0);
+  const prevCountRef = (0, import_react10.useRef)(-1);
+  (0, import_react10.useEffect)(() => {
     const bump = () => {
       setVersion((v) => v + 1);
     };
@@ -19738,10 +20043,10 @@ function RpVariantActions({ messageId, useChat, sessionId }) {
   const seq = useChat((snapshot) => seqOfMessage(snapshot, messageId));
   const nodeCount = useChat((snapshot) => readChat(snapshot).order.length);
   const groups = useVariantGroups(sessionId, nodeCount);
-  const [switching, setSwitching] = (0, import_react9.useState)(false);
+  const [switching, setSwitching] = (0, import_react10.useState)(false);
   const group = seq === void 0 ? void 0 : groupOf(groups, seq);
   const idx = group ? group.members.findIndex((m) => m.seq === group.activeSeq) : -1;
-  const switchTo = (0, import_react9.useCallback)(async (targetSeq) => {
+  const switchTo = (0, import_react10.useCallback)(async (targetSeq) => {
     if (switching) return;
     setSwitching(true);
     try {
@@ -19758,8 +20063,8 @@ function RpVariantActions({ messageId, useChat, sessionId }) {
   if (group === void 0 || group.members.length < 2 || idx < 0) return null;
   const atLeft = idx === 0;
   const atRight = idx === group.members.length - 1;
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("span", { className: "dsht-rp-variant-bar", "data-testid": "dsht-rp-variant-bar", title: "\u5386\u53F2\u53D8\u4F53\uFF08\u91CD roll / swipe\uFF09", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("span", { className: "dsht-rp-variant-bar", "data-testid": "dsht-rp-variant-bar", title: "\u5386\u53F2\u53D8\u4F53\uFF08\u91CD roll / swipe\uFF09", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
       "button",
       {
         type: "button",
@@ -19772,12 +20077,12 @@ function RpVariantActions({ messageId, useChat, sessionId }) {
         children: "\u2039"
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("span", { className: "vb-count", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("span", { className: "vb-count", children: [
       idx + 1,
       "/",
       group.members.length
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
       "button",
       {
         type: "button",
@@ -19820,16 +20125,16 @@ function fetchRpSessionMap() {
   }
   return rpSessionCache;
 }
-var RpRegenerateAction = (0, import_react9.memo)(function RpRegenerateAction2({
+var RpRegenerateAction = (0, import_react10.memo)(function RpRegenerateAction2({
   messageId,
   useSession,
   useChat,
   sessionId,
   regenerate
 }) {
-  const [busy, setBusy] = (0, import_react9.useState)(false);
-  const [isRp, setIsRp] = (0, import_react9.useState)(false);
-  (0, import_react9.useEffect)(() => {
+  const [busy, setBusy] = (0, import_react10.useState)(false);
+  const [isRp, setIsRp] = (0, import_react10.useState)(false);
+  (0, import_react10.useEffect)(() => {
     let alive = true;
     void fetchRpSessionMap().then((m) => {
       if (alive) setIsRp(m.get(sessionId) === true);
@@ -19853,7 +20158,7 @@ var RpRegenerateAction = (0, import_react9.memo)(function RpRegenerateAction2({
     return lastId !== void 0 && lastId === messageId;
   });
   const running = useSession((snapshot) => readSessionRunning(snapshot));
-  const onClick = (0, import_react9.useCallback)(async () => {
+  const onClick = (0, import_react10.useCallback)(async () => {
     if (busy || regenerate === void 0) return;
     if (!await showDomConfirm("\u91CD\u65B0\u751F\u6210\u6700\u540E\u4E00\u6761\u56DE\u590D\uFF1F\uFF08\u5F53\u524D\u56DE\u590D\u4F1A\u88AB\u79FB\u9664\uFF09", { okText: "\u91CD\u65B0\u751F\u6210" })) return;
     setBusy(true);
@@ -19867,7 +20172,7 @@ var RpRegenerateAction = (0, import_react9.memo)(function RpRegenerateAction2({
     }
   }, [busy, regenerate, sessionId]);
   if (!isRp || !isLastAssistant || running || regenerate === void 0) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
     "button",
     {
       type: "button",
@@ -19882,7 +20187,7 @@ var RpRegenerateAction = (0, import_react9.memo)(function RpRegenerateAction2({
     }
   );
 });
-var RpUserNodeView = (0, import_react9.memo)(function RpUserNodeView2({
+var RpUserNodeView = (0, import_react10.memo)(function RpUserNodeView2({
   node,
   cwd,
   renderMessageImages,
@@ -19893,20 +20198,20 @@ var RpUserNodeView = (0, import_react9.memo)(function RpUserNodeView2({
 }) {
   const data = readNodeData(node);
   const nodeKey = readNodeKey(node);
-  const [busy, setBusy] = (0, import_react9.useState)(false);
-  const [editing, setEditing] = (0, import_react9.useState)(false);
-  const [draft, setDraft] = (0, import_react9.useState)("");
+  const [busy, setBusy] = (0, import_react10.useState)(false);
+  const [editing, setEditing] = (0, import_react10.useState)(false);
+  const [draft, setDraft] = (0, import_react10.useState)("");
   const seq = readNodeSeq(data);
   const blocks = readBlocks(data);
   const running = useSession === void 0 ? false : useSession((snapshot) => readSessionRunning(snapshot));
   const mask = useRollbackMaskState(sessionId);
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     if (sessionId === void 0 || sessionId === null || !isFreshMessage(data)) return;
     dispatchThEvent(sessionId, "message_sent", { nodeKey, seq });
   }, []);
   const sessionKey = sessionId ?? cwd ?? "rp-chat";
   const { shellRef, windowed, placeholderHeight } = useMessageWindowing(sessionKey, nodeKey, false);
-  const parts = (0, import_react9.useMemo)(() => {
+  const parts = (0, import_react10.useMemo)(() => {
     const texts = [];
     const images = [];
     for (const b of blocks) {
@@ -19916,7 +20221,7 @@ var RpUserNodeView = (0, import_react9.memo)(function RpUserNodeView2({
     }
     return { text: texts.join(""), images };
   }, [blocks]);
-  const rollback = (0, import_react9.useCallback)(async () => {
+  const rollback = (0, import_react10.useCallback)(async () => {
     if (busy || running || seq === void 0 || !sessionId) return;
     if (!await showDomConfirm("\u56DE\u9000\u5230\u8FD9\u6761\u6D88\u606F\uFF1F\u8BE5\u6D88\u606F\u4E0E\u5176\u540E\u7684\u5BF9\u8BDD\u5C06\u4ECE\u4E0A\u4E0B\u6587\u79FB\u9664\uFF0C\u539F\u6587\u653E\u56DE\u8F93\u5165\u6846\uFF08\u4E8B\u4EF6\u4ECD\u4FDD\u7559\u5728\u65E5\u5FD7\uFF1B\u72B6\u6001/\u53D8\u91CF\u4E00\u5E76\u56DE\u6EDA\uFF09\u3002", { okText: "\u56DE\u9000" })) return;
     setBusy(true);
@@ -19937,7 +20242,7 @@ var RpUserNodeView = (0, import_react9.memo)(function RpUserNodeView2({
       setBusy(false);
     }
   }, [busy, running, seq, sessionId, inputActions, parts.text]);
-  const saveEdit = (0, import_react9.useCallback)(async () => {
+  const saveEdit = (0, import_react10.useCallback)(async () => {
     if (busy || running || seq === void 0 || !sessionId) return;
     const text2 = draft.trim();
     if (!text2) return;
@@ -19991,20 +20296,20 @@ var RpUserNodeView = (0, import_react9.memo)(function RpUserNodeView2({
   }, [busy, running, draft, seq, sessionId, nodeKey]);
   const hiddenByRollback = isSeqHidden(mask, seq);
   if (hiddenByRollback) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
     "div",
     {
       ref: shellRef,
       className: "dsht-rp-user-row",
       "data-windowed": windowed || void 0,
       style: windowed ? { height: `${placeholderHeight}px` } : void 0,
-      children: !windowed && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(RpFloorHeader, { useChat, nodeKey: node.key, side: "user", sessionId, slug: null, timeMs: nodeTimeMs(node) }),
-        /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "dsht-rp-user-stack", children: [
+      children: !windowed && /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(import_jsx_runtime9.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(RpFloorHeader, { useChat, nodeKey: node.key, side: "user", sessionId, slug: null, timeMs: nodeTimeMs(node) }),
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "dsht-rp-user-stack", children: [
           parts.images.length > 0 && renderMessageImages({ images: parts.images, align: "end" }),
-          parts.text !== "" && !editing && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("div", { className: "dsht-rp-user-bubble", children: parts.text }),
-          editing && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "dsht-rp-edit-box", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+          parts.text !== "" && !editing && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "dsht-rp-user-bubble", children: parts.text }),
+          editing && /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "dsht-rp-edit-box", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
               "textarea",
               {
                 className: "dsht-rp-edit-area",
@@ -20016,8 +20321,8 @@ var RpUserNodeView = (0, import_react9.memo)(function RpUserNodeView2({
                 }
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "dsht-rp-edit-actions", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "dsht-rp-edit-actions", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                 "button",
                 {
                   type: "button",
@@ -20030,7 +20335,7 @@ var RpUserNodeView = (0, import_react9.memo)(function RpUserNodeView2({
                   children: "\u53D6\u6D88"
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
                 "button",
                 {
                   type: "button",
@@ -20047,10 +20352,10 @@ var RpUserNodeView = (0, import_react9.memo)(function RpUserNodeView2({
             ] })
           ] })
         ] }),
-        seq !== void 0 && sessionId !== void 0 && !editing && /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)(import_jsx_runtime8.Fragment, { children: [
-          busy && /* @__PURE__ */ (0, import_jsx_runtime8.jsx)("span", { className: "dsht-rp-note", children: "\u56DE\u9000\u5B8C\u6210\uFF0C\u6B63\u5728\u5237\u65B0\u4F1A\u8BDD\u2026" }),
-          /* @__PURE__ */ (0, import_jsx_runtime8.jsxs)("div", { className: "dsht-rp-user-actions", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+        seq !== void 0 && sessionId !== void 0 && !editing && /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)(import_jsx_runtime9.Fragment, { children: [
+          busy && /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("span", { className: "dsht-rp-note", children: "\u56DE\u9000\u5B8C\u6210\uFF0C\u6B63\u5728\u5237\u65B0\u4F1A\u8BDD\u2026" }),
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "dsht-rp-user-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
               "button",
               {
                 type: "button",
@@ -20064,7 +20369,7 @@ var RpUserNodeView = (0, import_react9.memo)(function RpUserNodeView2({
                 children: busy ? "\u56DE\u9000\u4E2D\u2026" : "\u21A9 \u56DE\u9000\u5230\u6B64\u5904"
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime8.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
               "button",
               {
                 type: "button",
@@ -20087,17 +20392,17 @@ var RpUserNodeView = (0, import_react9.memo)(function RpUserNodeView2({
 });
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpLorePanel.tsx
-var import_react12 = require("react");
+var import_react13 = require("react");
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/CodeTextarea.tsx
-var import_react11 = require("react");
-var import_jsx_runtime9 = require("react/jsx-runtime");
+var import_react12 = require("react");
+var import_jsx_runtime10 = require("react/jsx-runtime");
 function CodeTextarea(props) {
   const { value, onChange, rows = 8, placeholder, ariaLabel } = props;
-  const taRef = (0, import_react11.useRef)(null);
-  const gutterRef = (0, import_react11.useRef)(null);
-  const lines = (0, import_react11.useMemo)(() => value.split("\n"), [value]);
-  const ejsLines = (0, import_react11.useMemo)(() => {
+  const taRef = (0, import_react12.useRef)(null);
+  const gutterRef = (0, import_react12.useRef)(null);
+  const lines = (0, import_react12.useMemo)(() => value.split("\n"), [value]);
+  const ejsLines = (0, import_react12.useMemo)(() => {
     const marked = /* @__PURE__ */ new Set();
     lines.forEach((line, i) => {
       if (line.includes("<%") || line.includes("%>")) marked.add(i + 1);
@@ -20122,11 +20427,11 @@ function CodeTextarea(props) {
       taRef.current.selectionEnd = selectionStart + 2;
     });
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "dsht-code-ta", "data-testid": "dsht-code-textarea", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "dct-note", children: "\u8F7B\u91CF\u7F16\u8F91\u5668\uFF08Monaco \u5728\u79FB\u52A8\u7AEF\u4E0D\u9002\u7528\uFF09" }),
-    /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "dct-body", style: { height: `${rows * 20 + 12}px` }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "dct-gutter", ref: gutterRef, "aria-hidden": "true", children: Array.from({ length: lineCount }, (_, i) => /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "dct-ln" + (ejsLines.has(i + 1) ? " dct-ln-ejs" : ""), children: i + 1 }, i)) }),
-      /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "dsht-code-ta", "data-testid": "dsht-code-textarea", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "dct-note", children: "\u8F7B\u91CF\u7F16\u8F91\u5668\uFF08Monaco \u5728\u79FB\u52A8\u7AEF\u4E0D\u9002\u7528\uFF09" }),
+    /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "dct-body", style: { height: `${rows * 20 + 12}px` }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "dct-gutter", ref: gutterRef, "aria-hidden": "true", children: Array.from({ length: lineCount }, (_, i) => /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "dct-ln" + (ejsLines.has(i + 1) ? " dct-ln-ejs" : ""), children: i + 1 }, i)) }),
+      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
         "textarea",
         {
           ref: taRef,
@@ -20172,19 +20477,19 @@ function filterLoreEntries(entries2, query) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpLorePanel.tsx
-var import_jsx_runtime10 = require("react/jsx-runtime");
+var import_jsx_runtime11 = require("react/jsx-runtime");
 function RpLorePanel(props) {
   const { onBack, onChanged } = props;
-  const [books, setBooks] = (0, import_react12.useState)([]);
-  const [selected, setSelected] = (0, import_react12.useState)(null);
-  const [entries2, setEntries] = (0, import_react12.useState)([]);
-  const [query, setQuery] = (0, import_react12.useState)("");
-  const [expandedUid, setExpandedUid] = (0, import_react12.useState)(null);
-  const [draft, setDraft] = (0, import_react12.useState)(null);
-  const [status, setStatus] = (0, import_react12.useState)("");
-  const [busy, setBusy] = (0, import_react12.useState)(false);
-  const [codeEditor, setCodeEditor] = (0, import_react12.useState)(false);
-  (0, import_react12.useEffect)(() => {
+  const [books, setBooks] = (0, import_react13.useState)([]);
+  const [selected, setSelected] = (0, import_react13.useState)(null);
+  const [entries2, setEntries] = (0, import_react13.useState)([]);
+  const [query, setQuery] = (0, import_react13.useState)("");
+  const [expandedUid, setExpandedUid] = (0, import_react13.useState)(null);
+  const [draft, setDraft] = (0, import_react13.useState)(null);
+  const [status, setStatus] = (0, import_react13.useState)("");
+  const [busy, setBusy] = (0, import_react13.useState)(false);
+  const [codeEditor, setCodeEditor] = (0, import_react13.useState)(false);
+  (0, import_react13.useEffect)(() => {
     let alive = true;
     void loadEjsDisplaySettings().then((s) => {
       if (alive && s !== null) setCodeEditor(s.codeEditor);
@@ -20193,7 +20498,7 @@ function RpLorePanel(props) {
       alive = false;
     };
   }, []);
-  (0, import_react12.useEffect)(() => {
+  (0, import_react13.useEffect)(() => {
     thApi("worldbook/list", {}).then((r) => setBooks(r.books ?? [])).catch((e) => setStatus(`\u4E66\u5217\u8868\u52A0\u8F7D\u5931\u8D25\uFF1A${e.message}`));
   }, []);
   const loadEntries = (name) => {
@@ -20243,9 +20548,9 @@ function RpLorePanel(props) {
   };
   const visible = filterLoreEntries(entries2, query);
   const inBook = selected !== null;
-  return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "dsht-rp-lore", children: [
-    (onBack !== void 0 || inBook) && /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "lore-toolbar", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "dsht-rp-lore", children: [
+    (onBack !== void 0 || inBook) && /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "lore-toolbar", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
         "button",
         {
           type: "button",
@@ -20261,8 +20566,8 @@ function RpLorePanel(props) {
           children: inBook ? "\u2039 \u4E66\u5217\u8868" : "\u2039 \u8FD4\u56DE\u4E66\u603B\u89C8"
         }
       ),
-      inBook && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("strong", { className: "lore-title", children: selected }),
-      inBook && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+      inBook && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("strong", { className: "lore-title", children: selected }),
+      inBook && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
         "input",
         {
           className: "dsht-rp-field lore-search",
@@ -20274,19 +20579,19 @@ function RpLorePanel(props) {
         }
       )
     ] }),
-    !inBook && /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(import_jsx_runtime10.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("p", { className: "dsht-rp-note", style: { margin: "0 0 12px" }, children: "\u9009\u62E9\u4E00\u672C\u4E16\u754C\u4E66\u7F16\u8F91\u5B83\u7684\u6761\u76EE\uFF08\u6807\u9898 / \u5185\u5BB9 / \u5173\u952E\u8BCD\u3001\u542F\u505C\u5F00\u5173\uFF09\u3002\u6539\u52A8\u76F4\u63A5\u5199\u56DE lore.json\uFF0C\u4E0B\u4E00\u8F6E\u5BF9\u8BDD\u751F\u6548\u3002" }),
-      books.length === 0 && status === "" && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "dsht-rp-empty", children: "\u4E66\u5E93\u4E3A\u7A7A\u2014\u2014\u5148\u5728\u300C\u5BFC\u5165\u300D\u9875\u5BFC\u5165\u4E16\u754C\u4E66\uFF08\u6216\u6574\u5305\u8FC1\u79FB ST \u6570\u636E\uFF09\u3002" }),
-      books.map((b) => /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("button", { type: "button", className: "wb-row", onClick: () => {
+    !inBook && /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)(import_jsx_runtime11.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("p", { className: "dsht-rp-note", style: { margin: "0 0 12px" }, children: "\u9009\u62E9\u4E00\u672C\u4E16\u754C\u4E66\u7F16\u8F91\u5B83\u7684\u6761\u76EE\uFF08\u6807\u9898 / \u5185\u5BB9 / \u5173\u952E\u8BCD\u3001\u542F\u505C\u5F00\u5173\uFF09\u3002\u6539\u52A8\u76F4\u63A5\u5199\u56DE lore.json\uFF0C\u4E0B\u4E00\u8F6E\u5BF9\u8BDD\u751F\u6548\u3002" }),
+      books.length === 0 && status === "" && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("div", { className: "dsht-rp-empty", children: "\u4E66\u5E93\u4E3A\u7A7A\u2014\u2014\u5148\u5728\u300C\u5BFC\u5165\u300D\u9875\u5BFC\u5165\u4E16\u754C\u4E66\uFF08\u6216\u6574\u5305\u8FC1\u79FB ST \u6570\u636E\uFF09\u3002" }),
+      books.map((b) => /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("button", { type: "button", className: "wb-row", onClick: () => {
         openBook(b.name);
       }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "wb-name", children: b.name }),
-        b.lorePath && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { className: "wb-meta", children: b.lorePath })
+        /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "wb-name", children: b.name }),
+        b.lorePath && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "wb-meta", children: b.lorePath })
       ] }, b.lorePath ?? b.name))
     ] }),
-    inBook && /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(import_jsx_runtime10.Fragment, { children: [
-      entries2.length === 0 && status === "" && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "dsht-rp-empty", children: "\u8FD9\u672C\u4E66\u6CA1\u6709\u6761\u76EE\u3002" }),
-      entries2.length > 0 && visible.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "dsht-rp-empty", children: [
+    inBook && /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)(import_jsx_runtime11.Fragment, { children: [
+      entries2.length === 0 && status === "" && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("div", { className: "dsht-rp-empty", children: "\u8FD9\u672C\u4E66\u6CA1\u6709\u6761\u76EE\u3002" }),
+      entries2.length > 0 && visible.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "dsht-rp-empty", children: [
         "\u6CA1\u6709\u5339\u914D\u300C",
         query,
         "\u300D\u7684\u6761\u76EE\u3002"
@@ -20295,10 +20600,10 @@ function RpLorePanel(props) {
         const open = expandedUid === entry.uid;
         const enabled = entryEnabled(entry);
         const keyText = entryKeys(entry.key).join("\u3001");
-        return /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "lore-entry", "data-disabled": !enabled || void 0, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "lore-entry-head", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("label", { className: "rx-toggle", title: enabled ? "\u70B9\u51FB\u505C\u7528" : "\u70B9\u51FB\u542F\u7528", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+        return /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "lore-entry", "data-disabled": !enabled || void 0, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "lore-entry-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("label", { className: "rx-toggle", title: enabled ? "\u70B9\u51FB\u505C\u7528" : "\u70B9\u51FB\u542F\u7528", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
                 "input",
                 {
                   type: "checkbox",
@@ -20309,9 +20614,9 @@ function RpLorePanel(props) {
                   }
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", {})
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", {})
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
               "button",
               {
                 type: "button",
@@ -20323,15 +20628,15 @@ function RpLorePanel(props) {
                 children: String(entry.comment ?? "") !== "" ? String(entry.comment) : `#${entry.uid}\uFF08\u65E0\u6807\u9898\uFF09`
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("span", { className: "wb-meta", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("span", { className: "wb-meta", children: [
               keyText !== "" ? `\u{1F511} ${keyText}` : "",
               entry.constant === true ? " \xB7 \u5E38\u9A7B" : ""
             ] })
           ] }),
-          open && draft !== null && /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "lore-editor", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("label", { className: "pe-field", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { children: "\u6807\u9898\uFF08comment\uFF09" }),
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+          open && draft !== null && /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "lore-editor", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("label", { className: "pe-field", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { children: "\u6807\u9898\uFF08comment\uFF09" }),
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
                 "input",
                 {
                   className: "dsht-rp-field",
@@ -20342,9 +20647,9 @@ function RpLorePanel(props) {
                 }
               )
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("label", { className: "pe-field", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { children: "\u4E3B\u5173\u952E\u8BCD\uFF08\u9017\u53F7\u5206\u9694\uFF09" }),
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("label", { className: "pe-field", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { children: "\u4E3B\u5173\u952E\u8BCD\uFF08\u9017\u53F7\u5206\u9694\uFF09" }),
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
                 "input",
                 {
                   className: "dsht-rp-field",
@@ -20355,9 +20660,9 @@ function RpLorePanel(props) {
                 }
               )
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("label", { className: "pe-field", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { children: "\u6B21\u5173\u952E\u8BCD\uFF08\u53EF\u9009\uFF0C\u9017\u53F7\u5206\u9694\uFF09" }),
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("label", { className: "pe-field", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { children: "\u6B21\u5173\u952E\u8BCD\uFF08\u53EF\u9009\uFF0C\u9017\u53F7\u5206\u9694\uFF09" }),
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
                 "input",
                 {
                   className: "dsht-rp-field",
@@ -20368,9 +20673,9 @@ function RpLorePanel(props) {
                 }
               )
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("label", { className: "pe-field", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { children: "\u5185\u5BB9\uFF08content\uFF09" }),
-              codeEditor ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("label", { className: "pe-field", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { children: "\u5185\u5BB9\uFF08content\uFF09" }),
+              codeEditor ? /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
                 CodeTextarea,
                 {
                   value: draft.content,
@@ -20380,7 +20685,7 @@ function RpLorePanel(props) {
                   rows: Math.max(10, Math.min(24, draft.content.split("\n").length + 1)),
                   ariaLabel: "\u4E16\u754C\u4E66\u6761\u76EE\u5185\u5BB9"
                 }
-              ) : /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+              ) : /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
                 "textarea",
                 {
                   className: "dsht-rp-field lore-content",
@@ -20392,8 +20697,8 @@ function RpLorePanel(props) {
                 }
               )
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { style: { display: "flex", gap: 8 }, children: [
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { style: { display: "flex", gap: 8 }, children: [
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
                 "button",
                 {
                   type: "button",
@@ -20413,7 +20718,7 @@ function RpLorePanel(props) {
                   children: "\u4FDD\u5B58\u6761\u76EE"
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
                 "button",
                 {
                   type: "button",
@@ -20428,21 +20733,21 @@ function RpLorePanel(props) {
         ] }, entry.uid);
       })
     ] }),
-    status && /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 10 }, children: status })
+    status && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 10 }, children: status })
   ] });
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/BooksPanel.tsx
-var import_jsx_runtime11 = require("react/jsx-runtime");
+var import_jsx_runtime12 = require("react/jsx-runtime");
 function BooksPanel({ workspaces, onChanged }) {
-  const [library, setLibrary] = (0, import_react13.useState)([]);
-  const [globalBooks, setGlobalBooks] = (0, import_react13.useState)([]);
-  const [loadError, setLoadError] = (0, import_react13.useState)("");
-  const [expanded, setExpanded] = (0, import_react13.useState)(null);
-  const [status, setStatus] = (0, import_react13.useState)("");
-  const [busy, setBusy] = (0, import_react13.useState)(false);
-  const [loreOpen, setLoreOpen] = (0, import_react13.useState)(false);
-  (0, import_react13.useEffect)(() => {
+  const [library, setLibrary] = (0, import_react14.useState)([]);
+  const [globalBooks, setGlobalBooks] = (0, import_react14.useState)([]);
+  const [loadError, setLoadError] = (0, import_react14.useState)("");
+  const [expanded, setExpanded] = (0, import_react14.useState)(null);
+  const [status, setStatus] = (0, import_react14.useState)("");
+  const [busy, setBusy] = (0, import_react14.useState)(false);
+  const [loreOpen, setLoreOpen] = (0, import_react14.useState)(false);
+  (0, import_react14.useEffect)(() => {
     rpApi("rp/books").then((r) => {
       setLibrary(r.books ?? []);
       setGlobalBooks(r.global ?? []);
@@ -20472,12 +20777,12 @@ function BooksPanel({ workspaces, onChanged }) {
   const boundCardsOf = (lorePath) => workspaces.filter((ws) => ws.books.some((b) => b.lorePath === lorePath));
   const unboundCardsOf = (lorePath) => workspaces.filter((ws) => !ws.books.some((b) => b.lorePath === lorePath));
   if (loreOpen) {
-    return /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(RpLorePanel, { onBack: () => {
+    return /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(RpLorePanel, { onBack: () => {
       setLoreOpen(false);
     }, onChanged });
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "dsht-rp-books", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: 8 }, children: /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "dsht-rp-books", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { style: { display: "flex", justifyContent: "flex-end", marginBottom: 8 }, children: /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
       "button",
       {
         type: "button",
@@ -20489,19 +20794,19 @@ function BooksPanel({ workspaces, onChanged }) {
         children: "\u{1F4D6} \u6761\u76EE\u7F16\u8F91"
       }
     ) }),
-    /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("p", { className: "dsht-rp-note", style: { margin: "0 0 12px" }, children: "\u8FD9\u91CC\u7BA1\u7406\u300C\u54EA\u5F20\u89D2\u8272\u5361\u53EF\u4EE5\u7528\u54EA\u4E9B\u4E16\u754C\u4E66\u300D\u3002\u7ED1\u5B9A\u7684\u4E66\u4F1A\u5728\u804A\u5929\u91CC\u6309\u5173\u952E\u8BCD\u81EA\u52A8\u89E6\u53D1\uFF1B\u6539\u52A8\u4E0B\u4E00\u8F6E\u5BF9\u8BDD\u751F\u6548\u3002" }),
-    globalBooks.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "dsht-rp-section", style: { marginBottom: 12 }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("h3", { children: "\u5168\u5C40\u751F\u6548" }),
-      /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("div", { className: "desc", children: "\u4EE5\u4E0B\u4E16\u754C\u4E66\u5BF9\u6240\u6709\u89D2\u8272\u5361\u751F\u6548\uFF08\u6765\u81EA ST \u5168\u5C40\u4E66\u5355\uFF1B\u6682\u4E3A\u53EA\u8BFB\u5C55\u793A\uFF09\u3002" }),
-      /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("div", { className: "wb-chips", children: globalBooks.map((b) => /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "wb-chip wb-chip-global", children: b.name }, b.lorePath)) })
+    /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("p", { className: "dsht-rp-note", style: { margin: "0 0 12px" }, children: "\u8FD9\u91CC\u7BA1\u7406\u300C\u54EA\u5F20\u89D2\u8272\u5361\u53EF\u4EE5\u7528\u54EA\u4E9B\u4E16\u754C\u4E66\u300D\u3002\u7ED1\u5B9A\u7684\u4E66\u4F1A\u5728\u804A\u5929\u91CC\u6309\u5173\u952E\u8BCD\u81EA\u52A8\u89E6\u53D1\uFF1B\u6539\u52A8\u4E0B\u4E00\u8F6E\u5BF9\u8BDD\u751F\u6548\u3002" }),
+    globalBooks.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "dsht-rp-section", style: { marginBottom: 12 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("h3", { children: "\u5168\u5C40\u751F\u6548" }),
+      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "desc", children: "\u4EE5\u4E0B\u4E16\u754C\u4E66\u5BF9\u6240\u6709\u89D2\u8272\u5361\u751F\u6548\uFF08\u6765\u81EA ST \u5168\u5C40\u4E66\u5355\uFF1B\u6682\u4E3A\u53EA\u8BFB\u5C55\u793A\uFF09\u3002" }),
+      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "wb-chips", children: globalBooks.map((b) => /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "wb-chip wb-chip-global", children: b.name }, b.lorePath)) })
     ] }),
-    loadError && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("p", { className: "dsht-rp-note", role: "status", children: loadError }),
-    !loadError && library.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("div", { className: "dsht-rp-empty", children: "\u4E66\u5E93\u4E3A\u7A7A\u2014\u2014\u5148\u5728\u300C\u5BFC\u5165\u300D\u9875\u5BFC\u5165\u4E16\u754C\u4E66\uFF08\u6216\u6574\u5305\u8FC1\u79FB ST \u6570\u636E\uFF09\u3002" }),
+    loadError && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("p", { className: "dsht-rp-note", role: "status", children: loadError }),
+    !loadError && library.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "dsht-rp-empty", children: "\u4E66\u5E93\u4E3A\u7A7A\u2014\u2014\u5148\u5728\u300C\u5BFC\u5165\u300D\u9875\u5BFC\u5165\u4E16\u754C\u4E66\uFF08\u6216\u6574\u5305\u8FC1\u79FB ST \u6570\u636E\uFF09\u3002" }),
     library.map((book) => {
       const bound = boundCardsOf(book.lorePath);
       const open = expanded === book.lorePath;
-      return /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "dsht-rp-section wb-book", "data-open": open || void 0, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)(
+      return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "dsht-rp-section wb-book", "data-open": open || void 0, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
           "button",
           {
             type: "button",
@@ -20511,19 +20816,19 @@ function BooksPanel({ workspaces, onChanged }) {
               setExpanded(open ? null : book.lorePath);
             },
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "wb-name", children: book.name }),
-              /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("span", { className: "wb-meta", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "wb-name", children: book.name }),
+              /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "wb-meta", children: [
                 typeof book.entryCount === "number" ? `${book.entryCount} \u6761\u76EE` : "",
                 bound.length > 0 ? ` \xB7 \u5DF2\u7ED1 ${bound.length} \u5F20\u5361` : " \xB7 \u672A\u7ED1\u5B9A"
               ] })
             ]
           }
         ),
-        open && /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "wb-detail", children: [
-          workspaces.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("p", { className: "dsht-rp-note", children: "\u8FD8\u6CA1\u6709\u89D2\u8272\u5361\u2014\u2014\u5148\u5230\u300C\u5BFC\u5165\u300D\u9875\u5BFC\u5165\u3002" }),
-          bound.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)(import_jsx_runtime11.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("p", { className: "dsht-rp-note", children: "\u5DF2\u7ED1\u5B9A\uFF08\u70B9 \u2715 \u89E3\u7ED1\uFF09\uFF1A" }),
-            /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("div", { className: "wb-chips", children: bound.map((ws) => /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)(
+        open && /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "wb-detail", children: [
+          workspaces.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("p", { className: "dsht-rp-note", children: "\u8FD8\u6CA1\u6709\u89D2\u8272\u5361\u2014\u2014\u5148\u5230\u300C\u5BFC\u5165\u300D\u9875\u5BFC\u5165\u3002" }),
+          bound.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(import_jsx_runtime12.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("p", { className: "dsht-rp-note", children: "\u5DF2\u7ED1\u5B9A\uFF08\u70B9 \u2715 \u89E3\u7ED1\uFF09\uFF1A" }),
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "wb-chips", children: bound.map((ws) => /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
               "button",
               {
                 type: "button",
@@ -20542,9 +20847,9 @@ function BooksPanel({ workspaces, onChanged }) {
               ws.slug
             )) })
           ] }),
-          unboundCardsOf(book.lorePath).length > 0 && /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)(import_jsx_runtime11.Fragment, { children: [
-            /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("p", { className: "dsht-rp-note", style: { marginTop: 8 }, children: "\u53EF\u7ED1\u5B9A\uFF08\u70B9 \uFF0B \u7ED1\u5B9A\u5230\u8BE5\u5361\uFF09\uFF1A" }),
-            /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("div", { className: "wb-chips", children: unboundCardsOf(book.lorePath).map((ws) => /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)(
+          unboundCardsOf(book.lorePath).length > 0 && /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(import_jsx_runtime12.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("p", { className: "dsht-rp-note", style: { marginTop: 8 }, children: "\u53EF\u7ED1\u5B9A\uFF08\u70B9 \uFF0B \u7ED1\u5B9A\u5230\u8BE5\u5361\uFF09\uFF1A" }),
+            /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("div", { className: "wb-chips", children: unboundCardsOf(book.lorePath).map((ws) => /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
               "button",
               {
                 type: "button",
@@ -20566,12 +20871,12 @@ function BooksPanel({ workspaces, onChanged }) {
         ] })
       ] }, book.slug);
     }),
-    status && /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 10 }, children: status })
+    status && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 10 }, children: status })
   ] });
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/MigrationStatusPanel.tsx
-var import_react14 = require("react");
+var import_react15 = require("react");
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/probes.ts
 async function postJson2(url, body) {
@@ -20647,16 +20952,16 @@ var PROBES = [
 ];
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/MigrationStatusPanel.tsx
-var import_jsx_runtime12 = require("react/jsx-runtime");
+var import_jsx_runtime13 = require("react/jsx-runtime");
 function MigrationStatusPanel() {
-  const [batch, setBatch] = (0, import_react14.useState)(null);
-  const [api, setApi] = (0, import_react14.useState)(null);
-  const [probeResults, setProbeResults] = (0, import_react14.useState)(null);
-  const [buildInfo, setBuildInfo] = (0, import_react14.useState)(null);
-  const [buildInfoError, setBuildInfoError] = (0, import_react14.useState)("");
-  const [loadError, setLoadError] = (0, import_react14.useState)("");
-  const [loading, setLoading] = (0, import_react14.useState)(false);
-  const refresh = (0, import_react14.useCallback)(async () => {
+  const [batch, setBatch] = (0, import_react15.useState)(null);
+  const [api, setApi] = (0, import_react15.useState)(null);
+  const [probeResults, setProbeResults] = (0, import_react15.useState)(null);
+  const [buildInfo, setBuildInfo] = (0, import_react15.useState)(null);
+  const [buildInfoError, setBuildInfoError] = (0, import_react15.useState)("");
+  const [loadError, setLoadError] = (0, import_react15.useState)("");
+  const [loading, setLoading] = (0, import_react15.useState)(false);
+  const refresh = (0, import_react15.useCallback)(async () => {
     setLoading(true);
     setLoadError("");
     try {
@@ -20684,7 +20989,7 @@ function MigrationStatusPanel() {
     setProbeResults(results);
     setLoading(false);
   }, []);
-  (0, import_react14.useEffect)(() => {
+  (0, import_react15.useEffect)(() => {
     void refresh();
   }, [refresh]);
   const m = batch?.manifest ?? null;
@@ -20701,9 +21006,9 @@ function MigrationStatusPanel() {
   summaryBits.push(api === null ? "API \u672A\u914D\u7F6E" : `API \u2713`);
   if (buildInfo?.sentinel) summaryBits.push(buildInfo.sentinel.replace(".installed-", "\u6784\u5EFA "));
   if (probeResults !== null) summaryBits.push(`\u63D2\u4EF6 ${okCount}/${PROBES.length} \u6B63\u5E38${badCount !== null && badCount > 0 ? `\uFF08${badCount} \u9879\u5F02\u5E38\uFF09` : ""}`);
-  const [expanded, setExpanded] = (0, import_react14.useState)(false);
-  return /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "dsht-rp-section dsht-rp-verification dsht-rp-fold", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)(
+  const [expanded, setExpanded] = (0, import_react15.useState)(false);
+  return /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-section dsht-rp-verification dsht-rp-fold", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
       "div",
       {
         className: "dsht-rp-fold-summary-row",
@@ -20711,10 +21016,10 @@ function MigrationStatusPanel() {
           setExpanded((v) => !v);
         }),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "dsht-rp-fold-arrow" + (expanded ? " open" : ""), children: "\u25B8" }),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "dsht-rp-fold-title", children: "\u5BFC\u5165\u4E0E\u8FD0\u884C\u72B6\u6001" }),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "dsht-rp-fold-summary", children: summaryBits.join(" \xB7 ") }),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "dsht-rp-fold-arrow" + (expanded ? " open" : ""), children: "\u25B8" }),
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "dsht-rp-fold-title", children: "\u5BFC\u5165\u4E0E\u8FD0\u884C\u72B6\u6001" }),
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "dsht-rp-fold-summary", children: summaryBits.join(" \xB7 ") }),
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
             "button",
             {
               type: "button",
@@ -20732,20 +21037,20 @@ function MigrationStatusPanel() {
         ]
       }
     ),
-    expanded && /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "dsht-rp-fold-body", children: [
-      loadError && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 8 }, children: loadError }),
-      buildInfoError !== "" && /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 8 }, children: buildInfoError }),
-      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "dsht-rp-kv", style: { marginTop: 8 }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "k", children: "\u6570\u636E\u6E90\u6279\u6B21" }),
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "v", children: batch === null ? "\u8FD8\u6CA1\u6709\u5BFC\u5165\u8FC7\u6570\u636E\u5305" : `\u6700\u8FD1\u4E00\u6279\u300C${batch.name}\u300D${manifestBits.length > 0 ? `\uFF1A${manifestBits.join(" \xB7 ")}` : ""}` })
+    expanded && /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-fold-body", children: [
+      loadError && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 8 }, children: loadError }),
+      buildInfoError !== "" && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 8 }, children: buildInfoError }),
+      /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-kv", style: { marginTop: 8 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "k", children: "\u6570\u636E\u6E90\u6279\u6B21" }),
+        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "v", children: batch === null ? "\u8FD8\u6CA1\u6709\u5BFC\u5165\u8FC7\u6570\u636E\u5305" : `\u6700\u8FD1\u4E00\u6279\u300C${batch.name}\u300D${manifestBits.length > 0 ? `\uFF1A${manifestBits.join(" \xB7 ")}` : ""}` })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "dsht-rp-kv", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "k", children: "\u8FC1\u79FB\u7ED3\u679C" }),
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "v", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-kv", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "k", children: "\u8FC1\u79FB\u7ED3\u679C" }),
+        /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "v", children: [
           batch === null && "\u2014",
           batch !== null && !batch.hasReport && "\u8FC1\u79FB\u62A5\u544A\u8FD8\u6CA1\u751F\u6210\uFF08\u9002\u914D\u5B8C\u6210\u540E\u4F1A\u51FA\u73B0\u5728\u8FD9\u91CC\uFF09",
           batch !== null && batch.hasReport && (batch.report ?? []).length === 0 && "\u8FC1\u79FB\u62A5\u544A\u5DF2\u751F\u6210",
-          batch !== null && (batch.report ?? []).map((r) => /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { children: [
+          batch !== null && (batch.report ?? []).map((r) => /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { children: [
             r.fail > 0 ? "\u26A0\uFE0F" : "\u2705",
             " ",
             r.category,
@@ -20758,51 +21063,51 @@ function MigrationStatusPanel() {
           ] }, r.category))
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "dsht-rp-kv", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "k", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-kv", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "k", children: [
           "\u9884\u9002\u914D\u63D2\u4EF6",
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("br", {}),
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "dsht-rp-note", children: "\uFF08SillyTavern \u7684 Extensions / \u6269\u5C55\uFF09" })
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("br", {}),
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "dsht-rp-note", children: "\uFF08SillyTavern \u7684 Extensions / \u6269\u5C55\uFF09" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "v", children: PROBES.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "v", children: PROBES.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { children: [
           probeResults === null ? "\u2026" : { ok: "\u2705 \u529F\u80FD\u6B63\u5E38", degraded: "\u26A0\uFE0F \u5728\u7EBF\u4F46\u529F\u80FD\u5F02\u5E38", down: "\u274C \u672A\u54CD\u5E94" }[probeResults[i] ?? "down"],
           "\u3000",
           p.label,
-          /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("span", { className: "dsht-rp-note", style: { marginLeft: 6 }, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "dsht-rp-note", style: { marginLeft: 6 }, children: [
             "\uFF08\u63D2\u4EF6\u5217\u8868\u91CC\u53EB ",
             p.listName,
             "\uFF09"
           ] })
         ] }, p.listName)) })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime12.jsxs)("div", { className: "dsht-rp-kv", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "k", children: "API \u8FDE\u63A5" }),
-        /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("span", { className: "v", children: api === null ? "\u274C \u672A\u914D\u7F6E\u2014\u2014\u5230\u300C\u9884\u8BBE\u300D\u9875\u68C0\u67E5\uFF0C\u6216\u91CD\u65B0\u5BFC\u5165 ST API \u914D\u7F6E" : `\u2705 \u5DF2\u8FDE\u63A5 ${api.provider}\uFF08${api.model}\uFF09` })
+      /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-kv", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "k", children: "API \u8FDE\u63A5" }),
+        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "v", children: api === null ? "\u274C \u672A\u914D\u7F6E\u2014\u2014\u5230\u300C\u9884\u8BBE\u300D\u9875\u68C0\u67E5\uFF0C\u6216\u91CD\u65B0\u5BFC\u5165 ST API \u914D\u7F6E" : `\u2705 \u5DF2\u8FDE\u63A5 ${api.provider}\uFF08${api.model}\uFF09` })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime12.jsx)("p", { className: "dsht-rp-note", style: { marginTop: 10 }, children: "\u63D0\u793A\uFF1A\u7CFB\u7EDF\u300C\u8BBE\u7F6E \u2192 \u63D2\u4EF6\u300D\u7684\u5168\u90E8\u63D2\u4EF6\u5217\u8868\u91CC\u6709 170+ \u4E2A\u63D2\u4EF6\uFF0C\u641C\u7D22 dsht \u5373\u53EF\u627E\u5230\u4E0A\u9762\u4E09\u4E2A\uFF1B \u5B83\u4EEC\u968F\u5E94\u7528\u81EA\u52A8\u8FD0\u884C\uFF0C\u4E0D\u9700\u8981\u624B\u52A8\u914D\u7F6E\u3002" })
+      /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("p", { className: "dsht-rp-note", style: { marginTop: 10 }, children: "\u63D0\u793A\uFF1A\u7CFB\u7EDF\u300C\u8BBE\u7F6E \u2192 \u63D2\u4EF6\u300D\u7684\u5168\u90E8\u63D2\u4EF6\u5217\u8868\u91CC\u6709 170+ \u4E2A\u63D2\u4EF6\uFF0C\u641C\u7D22 dsht \u5373\u53EF\u627E\u5230\u4E0A\u9762\u4E09\u4E2A\uFF1B \u5B83\u4EEC\u968F\u5E94\u7528\u81EA\u52A8\u8FD0\u884C\uFF0C\u4E0D\u9700\u8981\u624B\u52A8\u914D\u7F6E\u3002" })
     ] })
   ] });
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/UpdatePanel.tsx
-var import_react15 = require("react");
-var import_jsx_runtime13 = require("react/jsx-runtime");
+var import_react16 = require("react");
+var import_jsx_runtime14 = require("react/jsx-runtime");
 var fmtSize = (n) => {
   if (n === null || !Number.isFinite(n)) return "";
   return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)}MB` : `${Math.round(n / 1024)}KB`;
 };
 function UpdatePanel() {
-  const [info, setInfo] = (0, import_react15.useState)(null);
-  const [infoError, setInfoError] = (0, import_react15.useState)("");
-  const [source, setSource] = (0, import_react15.useState)("");
-  const [sourceDirty, setSourceDirty] = (0, import_react15.useState)(false);
-  const [configError, setConfigError] = (0, import_react15.useState)("");
-  const [saving, setSaving] = (0, import_react15.useState)(false);
-  const [saveNote, setSaveNote] = (0, import_react15.useState)("");
-  const [checking, setChecking] = (0, import_react15.useState)(false);
-  const [result, setResult] = (0, import_react15.useState)(null);
-  const [expanded, setExpanded] = (0, import_react15.useState)(false);
-  const loadInfo = (0, import_react15.useCallback)(async () => {
+  const [info, setInfo] = (0, import_react16.useState)(null);
+  const [infoError, setInfoError] = (0, import_react16.useState)("");
+  const [source, setSource] = (0, import_react16.useState)("");
+  const [sourceDirty, setSourceDirty] = (0, import_react16.useState)(false);
+  const [configError, setConfigError] = (0, import_react16.useState)("");
+  const [saving, setSaving] = (0, import_react16.useState)(false);
+  const [saveNote, setSaveNote] = (0, import_react16.useState)("");
+  const [checking, setChecking] = (0, import_react16.useState)(false);
+  const [result, setResult] = (0, import_react16.useState)(null);
+  const [expanded, setExpanded] = (0, import_react16.useState)(false);
+  const loadInfo = (0, import_react16.useCallback)(async () => {
     try {
       const b = await rpApi("rp/build-info");
       setInfo(b);
@@ -20812,7 +21117,7 @@ function UpdatePanel() {
       setInfoError(`\u8BFB\u4E0D\u5230\u6784\u5EFA\u4FE1\u606F\uFF1A${e.message}`);
     }
   }, []);
-  const loadConfig = (0, import_react15.useCallback)(async () => {
+  const loadConfig = (0, import_react16.useCallback)(async () => {
     try {
       const c = await rpApi("rp/update-config");
       setSource(c.source ?? "");
@@ -20822,11 +21127,11 @@ function UpdatePanel() {
       setConfigError(e?.message || "\u66F4\u65B0\u6E90\u914D\u7F6E\u8BFB\u53D6\u5931\u8D25");
     }
   }, []);
-  (0, import_react15.useEffect)(() => {
+  (0, import_react16.useEffect)(() => {
     void loadInfo();
     void loadConfig();
   }, [loadInfo, loadConfig]);
-  const saveSource = (0, import_react15.useCallback)(async () => {
+  const saveSource = (0, import_react16.useCallback)(async () => {
     setSaving(true);
     setSaveNote("");
     try {
@@ -20838,7 +21143,7 @@ function UpdatePanel() {
     }
     setSaving(false);
   }, [source]);
-  const doCheck = (0, import_react15.useCallback)(async () => {
+  const doCheck = (0, import_react16.useCallback)(async () => {
     setChecking(true);
     setResult(null);
     try {
@@ -20853,8 +21158,8 @@ function UpdatePanel() {
   summaryBits.push(info === null ? "\u7248\u672C\u8BFB\u53D6\u5931\u8D25" : `\u672C\u673A ${info.appVersion ?? "\u672A\u77E5"}`);
   if (info?.dshVersion) summaryBits.push(`\u8FD0\u884C\u65F6 ${info.dshVersion}`);
   if (info?.sentinel) summaryBits.push(info.sentinel.replace(".installed-", "\u6784\u5EFA "));
-  return /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-section dsht-rp-fold", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-section dsht-rp-fold", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
       "div",
       {
         className: "dsht-rp-fold-summary-row",
@@ -20862,36 +21167,36 @@ function UpdatePanel() {
           setExpanded((v) => !v);
         }),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "dsht-rp-fold-arrow" + (expanded ? " open" : ""), children: "\u25B8" }),
-          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "dsht-rp-fold-title", children: "\u7248\u672C\u4E0E\u66F4\u65B0" }),
-          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "dsht-rp-fold-summary", children: summaryBits.join(" \xB7 ") })
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "dsht-rp-fold-arrow" + (expanded ? " open" : ""), children: "\u25B8" }),
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "dsht-rp-fold-title", children: "\u7248\u672C\u4E0E\u66F4\u65B0" }),
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "dsht-rp-fold-summary", children: summaryBits.join(" \xB7 ") })
         ]
       }
     ),
-    expanded && /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-fold-body", children: [
-      infoError !== "" && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("p", { className: "dsht-rp-note", style: { marginTop: 8 }, children: infoError }),
-      /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-kv", style: { marginTop: 8 }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "k", children: "\u672C\u673A\u7248\u672C" }),
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "v", children: [
+    expanded && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-fold-body", children: [
+      infoError !== "" && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("p", { className: "dsht-rp-note", style: { marginTop: 8 }, children: infoError }),
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-kv", style: { marginTop: 8 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "k", children: "\u672C\u673A\u7248\u672C" }),
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { className: "v", children: [
           info === null ? "\u2014" : info.appVersion ?? "\u672A\u77E5\uFF08PC \u9A8C\u8BC1\u73AF\u5883\u8BFB\u4E0D\u5230\uFF09",
           info?.appVersionCode !== null && info?.appVersionCode !== void 0 ? `\uFF08${info.appVersionCode}\uFF09` : "",
           info?.appAbi ? `\u3000${info.appAbi}` : ""
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-kv", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "k", children: "DSH \u8FD0\u884C\u65F6" }),
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "v", children: info?.dshVersion ?? "\u2014" })
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-kv", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "k", children: "DSH \u8FD0\u884C\u65F6" }),
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "v", children: info?.dshVersion ?? "\u2014" })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-kv", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "k", children: "\u6784\u5EFA\u6807\u8BB0" }),
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "v", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-kv", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "k", children: "\u6784\u5EFA\u6807\u8BB0" }),
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { className: "v", children: [
           info?.sentinel ?? "\u2014",
-          /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "dsht-rp-note", style: { marginLeft: 6 }, children: "\uFF08\u6570\u5B57\u8D8A\u5927\u8D8A\u65B0\uFF09" })
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "dsht-rp-note", style: { marginLeft: 6 }, children: "\uFF08\u6570\u5B57\u8D8A\u5927\u8D8A\u65B0\uFF09" })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-kv", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "k", children: "\u66F4\u65B0\u6E90" }),
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "v", children: /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-kv", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "k", children: "\u66F4\u65B0\u6E90" }),
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "v", children: /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
           "input",
           {
             className: "dsht-rp-field",
@@ -20906,7 +21211,7 @@ function UpdatePanel() {
           }
         ) })
       ] }),
-      configError !== "" && /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)(
+      configError !== "" && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
         "p",
         {
           className: "dsht-rp-note",
@@ -20916,7 +21221,7 @@ function UpdatePanel() {
           children: [
             "\u26A0 \u66F4\u65B0\u6E90\u914D\u7F6E\u8BFB\u53D6\u5931\u8D25\uFF1A",
             configError,
-            /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
               "button",
               {
                 type: "button",
@@ -20931,8 +21236,8 @@ function UpdatePanel() {
           ]
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-actions", style: { marginTop: 6 }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-actions", style: { marginTop: 6 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
           "button",
           {
             type: "button",
@@ -20944,7 +21249,7 @@ function UpdatePanel() {
             children: saving ? "\u4FDD\u5B58\u4E2D\u2026" : "\u4FDD\u5B58\u66F4\u65B0\u6E90"
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
           "button",
           {
             type: "button",
@@ -20957,59 +21262,59 @@ function UpdatePanel() {
           }
         )
       ] }),
-      saveNote !== "" && /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("p", { className: "dsht-rp-note", children: saveNote }),
-      result !== null && /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-kv", style: { marginTop: 8 }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("span", { className: "k", children: "\u68C0\u67E5\u7ED3\u679C" }),
-        /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("span", { className: "v", children: [
-          result.ok === false && /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { children: [
+      saveNote !== "" && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("p", { className: "dsht-rp-note", children: saveNote }),
+      result !== null && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-kv", style: { marginTop: 8 }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "k", children: "\u68C0\u67E5\u7ED3\u679C" }),
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("span", { className: "v", children: [
+          result.ok === false && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { children: [
             "\u274C ",
             result.reason === "unconfigured" ? "\u8FD8\u6CA1\u914D\u7F6E\u66F4\u65B0\u6E90" : "\u68C0\u67E5\u5931\u8D25",
             "\uFF1A",
             result.message ?? "\u672A\u77E5\u539F\u56E0"
           ] }),
-          result.ok === true && result.hasUpdate === true && /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { children: [
+          result.ok === true && result.hasUpdate === true && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { children: [
             "\u{1F514} \u6709\u65B0\u7248\u672C ",
-            /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("strong", { children: result.latest?.version }),
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("strong", { children: result.latest?.version }),
             "\uFF08\u672C\u673A ",
             result.current,
             "\uFF09",
-            /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { className: "dsht-rp-note", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-note", children: [
               "\u5F53\u524D\u5B89\u88C5\u9762 ",
               (result.apkCount ?? 0) > 1 ? `\u6709 ${result.apkCount} \u4E2A\u5305\uFF0C` : "",
               "\u6309\u672C\u673A\u67B6\u6784\u6311\u9009\u4E0B\u8F7D\u9879"
             ] }),
-            result.downloadUrl ? /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("a", { href: result.downloadUrl, target: "_blank", rel: "noreferrer", children: [
+            result.downloadUrl ? /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { children: /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("a", { href: result.downloadUrl, target: "_blank", rel: "noreferrer", children: [
               "\u524D\u5F80\u4E0B\u8F7D",
               result.asset ? `\uFF08${result.asset.name}${result.asset.size !== null ? `\uFF0C${fmtSize(result.asset.size)}` : ""}\uFF09` : ""
-            ] }) }) : /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { className: "dsht-rp-note", children: "\u66F4\u65B0\u6E90\u6CA1\u7ED9\u51FA\u4E0B\u8F7D\u5730\u5740" })
+            ] }) }) : /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "dsht-rp-note", children: "\u66F4\u65B0\u6E90\u6CA1\u7ED9\u51FA\u4E0B\u8F7D\u5730\u5740" })
           ] }),
-          result.ok === true && result.hasUpdate === false && result.relation === "same" && /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { children: [
+          result.ok === true && result.hasUpdate === false && result.relation === "same" && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { children: [
             "\u2705 \u5DF2\u662F\u6700\u65B0\u7248\u672C\uFF08",
             result.current,
             "\uFF09"
           ] }),
-          result.ok === true && result.hasUpdate === false && result.relation === "older" && /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { children: [
+          result.ok === true && result.hasUpdate === false && result.relation === "older" && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { children: [
             "\u672C\u673A\u7248\u672C\uFF08",
             result.current,
             "\uFF09\u6BD4\u66F4\u65B0\u6E90\u4E0A\u7684\uFF08",
             result.latest?.version,
             "\uFF09\u8FD8\u65B0\u2014\u2014\u53EF\u80FD\u586B\u9519\u4E86\u66F4\u65B0\u6E90"
           ] }),
-          result.ok === true && result.relation === "invalid" && /* @__PURE__ */ (0, import_jsx_runtime13.jsxs)("div", { children: [
+          result.ok === true && result.relation === "invalid" && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { children: [
             "\u26A0\uFE0F \u66F4\u65B0\u6E90\u91CC\u7684\u7248\u672C\u53F7\u300C",
             result.latest?.version,
             '\u300D\u770B\u4E0D\u61C2\uFF0C\u65E0\u6CD5\u6BD4\u8F83\uFF08\u672A\u6309"\u5DF2\u662F\u6700\u65B0"\u5904\u7406\uFF09'
           ] })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("p", { className: "dsht-rp-note", style: { marginTop: 10 }, children: "\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u53EA\u505A\u68C0\u67E5\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u4E0B\u8F7D\u5B89\u88C5\u3002\u53D1\u5E03\u6E20\u9053\uFF08GitHub Releases \u6216\u81EA\u5EFA\u9759\u6001 JSON\uFF09\u786E\u5B9A\u540E\u586B\u5165\u4E0A\u9762\u7684\u66F4\u65B0\u6E90\u5373\u53EF\u3002" })
+      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("p", { className: "dsht-rp-note", style: { marginTop: 10 }, children: "\u300C\u68C0\u67E5\u66F4\u65B0\u300D\u53EA\u505A\u68C0\u67E5\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u4E0B\u8F7D\u5B89\u88C5\u3002\u53D1\u5E03\u6E20\u9053\uFF08GitHub Releases \u6216\u81EA\u5EFA\u9759\u6001 JSON\uFF09\u786E\u5B9A\u540E\u586B\u5165\u4E0A\u9762\u7684\u66F4\u65B0\u6E90\u5373\u53EF\u3002" })
     ] })
   ] });
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/PersonaPanel.tsx
-var import_react16 = require("react");
-var import_jsx_runtime14 = require("react/jsx-runtime");
+var import_react17 = require("react");
+var import_jsx_runtime15 = require("react/jsx-runtime");
 var EMPTY = { schemaVersion: 1, active: null, list: [] };
 async function loadPersona() {
   try {
@@ -21027,14 +21332,14 @@ async function savePersona(file) {
   }
 }
 function PersonaPanel() {
-  const [file, setFile] = (0, import_react16.useState)(EMPTY);
-  const [loaded, setLoaded] = (0, import_react16.useState)(false);
-  const [loadError, setLoadError] = (0, import_react16.useState)("");
-  const [reloadSeq, setReloadSeq] = (0, import_react16.useState)(0);
-  const [status, setStatus] = (0, import_react16.useState)("");
-  const [expanded, setExpanded] = (0, import_react16.useState)(null);
-  const [saving, setSaving] = (0, import_react16.useState)(false);
-  (0, import_react16.useEffect)(() => {
+  const [file, setFile] = (0, import_react17.useState)(EMPTY);
+  const [loaded, setLoaded] = (0, import_react17.useState)(false);
+  const [loadError, setLoadError] = (0, import_react17.useState)("");
+  const [reloadSeq, setReloadSeq] = (0, import_react17.useState)(0);
+  const [status, setStatus] = (0, import_react17.useState)("");
+  const [expanded, setExpanded] = (0, import_react17.useState)(null);
+  const [saving, setSaving] = (0, import_react17.useState)(false);
+  (0, import_react17.useEffect)(() => {
     let cur = true;
     setLoadError("");
     setLoaded(false);
@@ -21073,7 +21378,7 @@ function PersonaPanel() {
     });
     setExpanded(null);
   };
-  const save = (0, import_react16.useCallback)(async () => {
+  const save = (0, import_react17.useCallback)(async () => {
     if (saving) return;
     setSaving(true);
     setStatus("\u4FDD\u5B58\u4E2D\u2026");
@@ -21086,18 +21391,18 @@ function PersonaPanel() {
       setSaving(false);
     }
   }, [file, saving]);
-  return /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { className: "dsht-rp-preset", children: /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-section", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("h3", { children: "\u{1F464} \u6211\u7684\u8BBE\u5B9A\uFF08persona\uFF09" }),
-    /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("p", { className: "desc", children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("div", { className: "dsht-rp-preset", children: /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "dsht-rp-section", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("h3", { children: "\u{1F464} \u6211\u7684\u8BBE\u5B9A\uFF08persona\uFF09" }),
+    /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("p", { className: "desc", children: [
       "\u4F60\u5728\u89D2\u8272\u626E\u6F14\u91CC\u7684\u8EAB\u4EFD\uFF08",
-      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("b", { children: "SillyTavern \u91CC\u53EB\u300CUser Persona / \u7528\u6237\u8BBE\u5B9A\u300D" }),
+      /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("b", { children: "SillyTavern \u91CC\u53EB\u300CUser Persona / \u7528\u6237\u8BBE\u5B9A\u300D" }),
       "\uFF09\uFF1A \u9ED8\u8BA4\u4EBA\u8BBE\u7684\u540D\u5B57\u586B\u8FDB ",
       "{{user}}",
       "\uFF0C\u63CF\u8FF0\u586B\u8FDB ",
       "{{persona}}",
       "\u3002 \u8FC1\u79FB\u6765\u7684 SillyTavern \u4EBA\u8BBE\u4F1A\u51FA\u73B0\u5728\u4E0B\u9762\u7684\u5217\u8868\u91CC\u3002"
     ] }),
-    loadError !== "" && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
+    loadError !== "" && /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
       "p",
       {
         className: "dsht-rp-note",
@@ -21107,7 +21412,7 @@ function PersonaPanel() {
         children: [
           "\u26A0 \u4EBA\u8BBE\u8BFB\u53D6\u5931\u8D25\uFF1A",
           loadError,
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
             "button",
             {
               type: "button",
@@ -21119,16 +21424,16 @@ function PersonaPanel() {
               children: "\u91CD\u8BD5"
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { style: { marginLeft: 8, opacity: 0.8 }, children: "\uFF08\u5DF2\u7981\u7528\u4FDD\u5B58\uFF0C\u4EE5\u514D\u628A\u73B0\u6709\u4EBA\u8BBE\u8986\u76D6\u4E3A\u7A7A\uFF09" })
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { style: { marginLeft: 8, opacity: 0.8 }, children: "\uFF08\u5DF2\u7981\u7528\u4FDD\u5B58\uFF0C\u4EE5\u514D\u628A\u73B0\u6709\u4EBA\u8BBE\u8986\u76D6\u4E3A\u7A7A\uFF09" })
         ]
       }
     ),
-    loadError === "" && !loaded && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("p", { className: "dsht-rp-note", children: "\u8BFB\u53D6\u4E2D\u2026" }),
-    loadError === "" && loaded && file.list.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("p", { className: "dsht-rp-note", children: "\u8FD8\u6CA1\u6709\u4EBA\u8BBE\u2014\u2014\u70B9\u4E0B\u65B9\u300C\uFF0B \u65B0\u589E\u4EBA\u8BBE\u300D\u521B\u5EFA\u4E00\u4E2A\uFF0C\u6216\u5148\u505A\u6570\u636E\u8FC1\u79FB\u3002" }),
-    file.list.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "dsht-rp-persona-row", "data-open": expanded === i || void 0, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "pr-head", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("label", { className: "rx-check", title: "\u8BBE\u4E3A\u9ED8\u8BA4\u4EBA\u8BBE", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+    loadError === "" && !loaded && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { className: "dsht-rp-note", children: "\u8BFB\u53D6\u4E2D\u2026" }),
+    loadError === "" && loaded && file.list.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { className: "dsht-rp-note", children: "\u8FD8\u6CA1\u6709\u4EBA\u8BBE\u2014\u2014\u70B9\u4E0B\u65B9\u300C\uFF0B \u65B0\u589E\u4EBA\u8BBE\u300D\u521B\u5EFA\u4E00\u4E2A\uFF0C\u6216\u5148\u505A\u6570\u636E\u8FC1\u79FB\u3002" }),
+    file.list.map((p, i) => /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "dsht-rp-persona-row", "data-open": expanded === i || void 0, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "pr-head", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("label", { className: "rx-check", title: "\u8BBE\u4E3A\u9ED8\u8BA4\u4EBA\u8BBE", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
             "input",
             {
               type: "radio",
@@ -21139,10 +21444,10 @@ function PersonaPanel() {
               }
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { style: { color: "var(--dsw-alias-label-primary)", fontSize: 13 }, children: p.name || "\uFF08\u672A\u547D\u540D\uFF09" })
+          /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { style: { color: "var(--dsw-alias-label-primary)", fontSize: 13 }, children: p.name || "\uFF08\u672A\u547D\u540D\uFF09" })
         ] }),
-        file.active === p.name && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "rx-badge rx-timing", children: "\u9ED8\u8BA4" }),
-        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+        file.active === p.name && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "rx-badge rx-timing", children: "\u9ED8\u8BA4" }),
+        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
           "button",
           {
             type: "button",
@@ -21155,8 +21460,8 @@ function PersonaPanel() {
           }
         )
       ] }),
-      expanded === i && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "pr-edit", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+      expanded === i && /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "pr-edit", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
           "input",
           {
             className: "dsht-rp-field",
@@ -21167,7 +21472,7 @@ function PersonaPanel() {
             }
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
           "textarea",
           {
             className: "dsht-rp-field",
@@ -21179,7 +21484,7 @@ function PersonaPanel() {
             }
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
           "button",
           {
             type: "button",
@@ -21193,8 +21498,8 @@ function PersonaPanel() {
         )
       ] })
     ] }, i)),
-    /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { style: { display: "flex", gap: 8, marginTop: 12 }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { style: { display: "flex", gap: 8, marginTop: 12 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
         "button",
         {
           type: "button",
@@ -21206,17 +21511,17 @@ function PersonaPanel() {
           children: "\uFF0B \u65B0\u589E\u4EBA\u8BBE"
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: !loaded || saving, onClick: () => {
+      /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: !loaded || saving, onClick: () => {
         void save();
       }, children: saving ? "\u4FDD\u5B58\u4E2D\u2026" : "\u4FDD\u5B58" })
     ] }),
-    status && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 8 }, children: status })
+    status && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 8 }, children: status })
   ] }) });
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/SessionsPanel.tsx
-var import_react17 = require("react");
-var import_jsx_runtime15 = require("react/jsx-runtime");
+var import_react18 = require("react");
+var import_jsx_runtime16 = require("react/jsx-runtime");
 var KIND_LABEL = {
   "branch-parent": "\u5206\u53C9\u6B8B\u7559\uFF08\u65E7\u4F1A\u8BDD\uFF09",
   forked: "\u5206\u53C9\u4EA7\u7269\uFF08\u5728\u7528\uFF09",
@@ -21230,11 +21535,11 @@ function fmtTime(t) {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 function SessionsPanel(props) {
-  const [sessions, setSessions] = (0, import_react17.useState)(null);
-  const [busy, setBusy] = (0, import_react17.useState)(false);
-  const [refreshing, setRefreshing] = (0, import_react17.useState)(false);
-  const [note, setNote] = (0, import_react17.useState)("");
-  const load = (0, import_react17.useCallback)(async () => {
+  const [sessions, setSessions] = (0, import_react18.useState)(null);
+  const [busy, setBusy] = (0, import_react18.useState)(false);
+  const [refreshing, setRefreshing] = (0, import_react18.useState)(false);
+  const [note, setNote] = (0, import_react18.useState)("");
+  const load = (0, import_react18.useCallback)(async () => {
     setRefreshing(true);
     try {
       const r = await rpApi("rp/sessions-audit");
@@ -21248,10 +21553,10 @@ function SessionsPanel(props) {
       setRefreshing(false);
     }
   }, []);
-  (0, import_react17.useEffect)(() => {
+  (0, import_react18.useEffect)(() => {
     void load();
   }, [load]);
-  const archive = (0, import_react17.useCallback)(async (ids, label) => {
+  const archive = (0, import_react18.useCallback)(async (ids, label) => {
     if (ids.length === 0) {
       setNote("\u6CA1\u6709\u5339\u914D\u7684\u4F1A\u8BDD");
       return;
@@ -21271,7 +21576,7 @@ function SessionsPanel(props) {
       setBusy(false);
     }
   }, [load, props.archiveSession]);
-  const autoclean = (0, import_react17.useCallback)(async (mode) => {
+  const autoclean = (0, import_react18.useCallback)(async (mode) => {
     setBusy(true);
     setNote("");
     try {
@@ -21306,11 +21611,11 @@ ${targets.slice(0, 8).map((t) => `\xB7 ${t.workspace ?? t.sessionId.slice(0, 18)
   }, [load, props.archiveSession]);
   const forkedCount = sessions?.filter((s) => s.kind === "branch-parent").length ?? 0;
   const emptyCount = sessions?.filter((s) => s.kind === "empty").length ?? 0;
-  return /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "dsht-rp-import", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("h3", { children: "\u4F1A\u8BDD\u7BA1\u7406" }),
-    /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { className: "pc-dim", style: { margin: "4px 0" }, children: "\u4FA7\u8FB9\u680F\u88AB\u591A\u4F59\u4F1A\u8BDD\u5237\u5C4F\u65F6\u7684\u5B9A\u4F4D\u4E0E\u6E05\u7406\u3002\u5F52\u6863 = \u5B98\u65B9\u673A\u5236\uFF1A\u4FA7\u8FB9\u680F\u9690\u85CF\u3001\u6570\u636E\u4FDD\u7559\u3001\u53EF\u6062\u590D\uFF1B \u6211\u4EEC\u7684\u56DE\u9000\uFF08\u539F\u5730 replace\uFF09\u4ECE\u4E0D\u4EA7\u751F\u65B0\u4F1A\u8BDD\u2014\u2014\u51FA\u73B0\u300C\u5206\u53C9\u6B8B\u7559\u300D\u662F branch/fork\uFF08\u5B98\u65B9\u5206\u53C9 \u529F\u80FD\uFF09\u7684\u4EA7\u7269\u3002" }),
-    /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "dsht-rp-import-actions", style: { display: "flex", gap: 8, flexWrap: "wrap", margin: "8px 0" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-import", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("h3", { children: "\u4F1A\u8BDD\u7BA1\u7406" }),
+    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("p", { className: "pc-dim", style: { margin: "4px 0" }, children: "\u4FA7\u8FB9\u680F\u88AB\u591A\u4F59\u4F1A\u8BDD\u5237\u5C4F\u65F6\u7684\u5B9A\u4F4D\u4E0E\u6E05\u7406\u3002\u5F52\u6863 = \u5B98\u65B9\u673A\u5236\uFF1A\u4FA7\u8FB9\u680F\u9690\u85CF\u3001\u6570\u636E\u4FDD\u7559\u3001\u53EF\u6062\u590D\uFF1B \u6211\u4EEC\u7684\u56DE\u9000\uFF08\u539F\u5730 replace\uFF09\u4ECE\u4E0D\u4EA7\u751F\u65B0\u4F1A\u8BDD\u2014\u2014\u51FA\u73B0\u300C\u5206\u53C9\u6B8B\u7559\u300D\u662F branch/fork\uFF08\u5B98\u65B9\u5206\u53C9 \u529F\u80FD\uFF09\u7684\u4EA7\u7269\u3002" }),
+    /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-import-actions", style: { display: "flex", gap: 8, flexWrap: "wrap", margin: "8px 0" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
         "button",
         {
           type: "button",
@@ -21326,7 +21631,7 @@ ${targets.slice(0, 8).map((t) => `\xB7 ${t.workspace ?? t.sessionId.slice(0, 18)
           ]
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)(
+      /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
         "button",
         {
           type: "button",
@@ -21342,14 +21647,14 @@ ${targets.slice(0, 8).map((t) => `\xB7 ${t.workspace ?? t.sessionId.slice(0, 18)
           ]
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy || refreshing, onClick: () => {
+      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy || refreshing, onClick: () => {
         void load();
       }, children: refreshing ? "\u27F3 \u5BA1\u8BA1\u4E2D\u2026" : "\u27F3 \u91CD\u65B0\u5BA1\u8BA1" })
     ] }),
-    note !== "" && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { style: { margin: "6px 0", color: "var(--dsw-alias-label-secondary, #9ab)" }, children: note }),
-    refreshing && sessions !== null && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { className: "pc-dim", style: { margin: "6px 0" }, children: "\u5237\u65B0\u4E2D\u2026\uFF08\u4E0B\u9762\u663E\u793A\u7684\u662F**\u4E0A\u4E00\u6B21**\u5BA1\u8BA1\u7ED3\u679C\uFF0C\u672A\u6E05\u96F6\uFF09" }),
-    sessions === null ? /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { style: { margin: "8px 0" }, children: "\u5BA1\u8BA1\u4E2D\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { style: { display: "flex", flexDirection: "column", gap: 6 }, children: [
-      sessions.map((s) => /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { style: {
+    note !== "" && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("p", { style: { margin: "6px 0", color: "var(--dsw-alias-label-secondary, #9ab)" }, children: note }),
+    refreshing && sessions !== null && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("p", { className: "pc-dim", style: { margin: "6px 0" }, children: "\u5237\u65B0\u4E2D\u2026\uFF08\u4E0B\u9762\u663E\u793A\u7684\u662F**\u4E0A\u4E00\u6B21**\u5BA1\u8BA1\u7ED3\u679C\uFF0C\u672A\u6E05\u96F6\uFF09" }),
+    sessions === null ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("p", { style: { margin: "8px 0" }, children: "\u5BA1\u8BA1\u4E2D\u2026" }) : /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { style: { display: "flex", flexDirection: "column", gap: 6 }, children: [
+      sessions.map((s) => /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { style: {
         display: "flex",
         alignItems: "center",
         gap: 8,
@@ -21357,8 +21662,8 @@ ${targets.slice(0, 8).map((t) => `\xB7 ${t.workspace ?? t.sessionId.slice(0, 18)
         border: "1px solid var(--dsw-alias-border-l2, #333)",
         borderRadius: 10
       }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: `dsht-rp-kind dsht-rp-kind-${s.kind}`, children: KIND_LABEL[s.kind] }),
-        /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { className: `dsht-rp-kind dsht-rp-kind-${s.kind}`, children: KIND_LABEL[s.kind] }),
+        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: [
           s.workspace ?? s.projectKey.slice(0, 14),
           " \xB7 ",
           s.sessionId.slice(0, 20),
@@ -21367,7 +21672,7 @@ ${targets.slice(0, 8).map((t) => `\xB7 ${t.workspace ?? t.sessionId.slice(0, 18)
           " \u4E8B\u4EF6 \xB7 ",
           fmtTime(s.lastTime)
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
           "button",
           {
             type: "button",
@@ -21381,13 +21686,13 @@ ${targets.slice(0, 8).map((t) => `\xB7 ${t.workspace ?? t.sessionId.slice(0, 18)
           }
         )
       ] }, `${s.projectKey}/${s.sessionId}`)),
-      sessions.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("p", { style: { margin: "8px 0" }, children: "\u672A\u53D1\u73B0\u4EFB\u4F55\u4F1A\u8BDD\u6587\u4EF6\u3002" })
+      sessions.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("p", { style: { margin: "8px 0" }, children: "\u672A\u53D1\u73B0\u4EFB\u4F55\u4F1A\u8BDD\u6587\u4EF6\u3002" })
     ] })
   ] });
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpOverlay.tsx
-var import_jsx_runtime16 = require("react/jsx-runtime");
+var import_jsx_runtime17 = require("react/jsx-runtime");
 var RP_OPEN_EVENT = "dsht-rp-ui:open";
 function rpSlugOf(path) {
   const m = path.replace(/\\/g, "/").match(/\/rp\/([^/]+)\/?$/);
@@ -21395,8 +21700,8 @@ function rpSlugOf(path) {
 }
 function AlternateGreetingsBlock({ ws, openSession, onClose }) {
   const greetings = (ws.alternateGreetings ?? []).filter((g) => g.trim() !== "");
-  const [busyIdx, setBusyIdx] = (0, import_react18.useState)(null);
-  const [status, setStatus] = (0, import_react18.useState)("");
+  const [busyIdx, setBusyIdx] = (0, import_react19.useState)(null);
+  const [status, setStatus] = (0, import_react19.useState)("");
   if (greetings.length === 0) return null;
   const restart = async (greeting, idx) => {
     if (busyIdx !== null) return;
@@ -21415,15 +21720,15 @@ function AlternateGreetingsBlock({ ws, openSession, onClose }) {
       setBusyIdx(null);
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { style: { marginBottom: 12 }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("p", { className: "dsht-rp-note", style: { marginBottom: 6 }, children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { style: { marginBottom: 12 }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("p", { className: "dsht-rp-note", style: { marginBottom: 6 }, children: [
       "\u5907\u9009\u5F00\u573A\u767D\uFF08",
       greetings.length,
       " \u6761\uFF09\u2014\u2014\u9009\u4E00\u6761\u4EE5\u6B64\u5F00\u573A\u91CD\u65B0\u5F00\u59CB\uFF08\u65B0\u4F1A\u8BDD\uFF0C\u4E0D\u5F71\u54CD\u73B0\u6709\u804A\u5929\uFF09\uFF1A"
     ] }),
-    greetings.map((g, i) => /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-altgreet", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "ag-text", children: g }),
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+    greetings.map((g, i) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "dsht-rp-altgreet", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "ag-text", children: g }),
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
         "button",
         {
           type: "button",
@@ -21437,15 +21742,15 @@ function AlternateGreetingsBlock({ ws, openSession, onClose }) {
         }
       )
     ] }, i)),
-    status && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 6 }, children: status })
+    status && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 6 }, children: status })
   ] });
 }
 function CardDetailDrawer({ ws, openSession, onClose, onSaved }) {
-  const [library, setLibrary] = (0, import_react18.useState)([]);
-  const [bound, setBound] = (0, import_react18.useState)(new Set(ws.books.map((b) => b.lorePath)));
-  const [status, setStatus] = (0, import_react18.useState)("");
-  const [libError, setLibError] = (0, import_react18.useState)("");
-  (0, import_react18.useEffect)(() => {
+  const [library, setLibrary] = (0, import_react19.useState)([]);
+  const [bound, setBound] = (0, import_react19.useState)(new Set(ws.books.map((b) => b.lorePath)));
+  const [status, setStatus] = (0, import_react19.useState)("");
+  const [libError, setLibError] = (0, import_react19.useState)("");
+  (0, import_react19.useEffect)(() => {
     let cur = true;
     setLibError("");
     void rpApi("rp/books").then((r) => {
@@ -21475,20 +21780,20 @@ function CardDetailDrawer({ ws, openSession, onClose, onSaved }) {
       setStatus(`\u4FDD\u5B58\u5931\u8D25\uFF1A${e.message}`);
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "dsht-rp-drawer-mask", role: "dialog", "aria-label": `${ws.name} \u8BE6\u60C5`, children: /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-drawer", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-drawer-head", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { style: { fontSize: 15, fontWeight: 600 }, children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "dsht-rp-drawer-mask", role: "dialog", "aria-label": `${ws.name} \u8BE6\u60C5`, children: /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "dsht-rp-drawer", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "dsht-rp-drawer-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { style: { fontSize: 15, fontWeight: 600 }, children: [
         ws.name,
         " \xB7 \u4E16\u754C\u4E66\u7ED1\u5B9A"
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", className: "dsht-rp-back", "aria-label": "\u5173\u95ED", onClick: () => {
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { type: "button", className: "dsht-rp-back", "aria-label": "\u5173\u95ED", onClick: () => {
         onClose();
       }, children: "\u2715" })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-drawer-body", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(AlternateGreetingsBlock, { ws, openSession, onClose }),
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("p", { className: "dsht-rp-note", style: { marginBottom: 10 }, children: "\u52FE\u9009\u8BE5\u89D2\u8272\u5BF9\u8BDD\u4E2D\u6FC0\u6D3B\u7684\u4E16\u754C\u4E66\uFF08ST\u300C\u540E\u671F\u6362\u4E66\u300D\u8BED\u4E49\uFF1B\u5173\u952E\u8BCD\u81EA\u52A8\u89E6\u53D1\uFF09\u3002" }),
-      libError !== "" ? /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "dsht-rp-drawer-body", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(AlternateGreetingsBlock, { ws, openSession, onClose }),
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("p", { className: "dsht-rp-note", style: { marginBottom: 10 }, children: "\u52FE\u9009\u8BE5\u89D2\u8272\u5BF9\u8BDD\u4E2D\u6FC0\u6D3B\u7684\u4E16\u754C\u4E66\uFF08ST\u300C\u540E\u671F\u6362\u4E66\u300D\u8BED\u4E49\uFF1B\u5173\u952E\u8BCD\u81EA\u52A8\u89E6\u53D1\uFF09\u3002" }),
+      libError !== "" ? /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
         "p",
         {
           className: "dsht-rp-note",
@@ -21498,12 +21803,12 @@ function CardDetailDrawer({ ws, openSession, onClose, onSaved }) {
           children: [
             "\u26A0 \u4E66\u5E93\u52A0\u8F7D\u5931\u8D25\uFF1A",
             libError,
-            /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { style: { marginLeft: 8, opacity: 0.8 }, children: "\uFF08\u5DF2\u7981\u7528\u4FDD\u5B58\u7ED1\u5B9A\uFF0C\u4EE5\u514D\u8986\u76D6\u6E05\u7A7A\u73B0\u6709\u7ED1\u5B9A\uFF09" })
+            /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { style: { marginLeft: 8, opacity: 0.8 }, children: "\uFF08\u5DF2\u7981\u7528\u4FDD\u5B58\u7ED1\u5B9A\uFF0C\u4EE5\u514D\u8986\u76D6\u6E05\u7A7A\u73B0\u6709\u7ED1\u5B9A\uFF09" })
           ]
         }
-      ) : library.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("p", { className: "dsht-rp-note", children: "\u4E66\u5E93\u4E3A\u7A7A\u2014\u2014\u5148\u5728\u300C\u5BFC\u5165\u300D\u9875\u5BFC\u5165\u4E16\u754C\u4E66\u3002" }),
-      library.map((b) => /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("label", { className: "rx-check", style: { display: "flex", padding: "7px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)" }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("input", { type: "checkbox", checked: bound.has(b.lorePath), onChange: () => {
+      ) : library.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("p", { className: "dsht-rp-note", children: "\u4E66\u5E93\u4E3A\u7A7A\u2014\u2014\u5148\u5728\u300C\u5BFC\u5165\u300D\u9875\u5BFC\u5165\u4E16\u754C\u4E66\u3002" }),
+      library.map((b) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("label", { className: "rx-check", style: { display: "flex", padding: "7px 0", borderBottom: "1px solid var(--dsw-alias-border-l1)" }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("input", { type: "checkbox", checked: bound.has(b.lorePath), onChange: () => {
           setBound((prev) => {
             const next = new Set(prev);
             if (next.has(b.lorePath)) next.delete(b.lorePath);
@@ -21511,13 +21816,13 @@ function CardDetailDrawer({ ws, openSession, onClose, onSaved }) {
             return next;
           });
         } }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("span", { style: { fontSize: 13, color: "var(--dsw-alias-label-primary)" }, children: b.name })
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { style: { fontSize: 13, color: "var(--dsw-alias-label-primary)" }, children: b.name })
       ] }, b.slug)),
-      status && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 8 }, children: status })
+      status && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 8 }, children: status })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-drawer-foot", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(CardExportBlock, { ws }),
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "dsht-rp-drawer-foot", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(CardExportBlock, { ws }),
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
         "button",
         {
           type: "button",
@@ -21554,8 +21859,8 @@ function downloadBase64(filename, base64) {
   }
 }
 function CardExportBlock({ ws }) {
-  const [status, setStatus] = (0, import_react18.useState)("");
-  const [busy, setBusy] = (0, import_react18.useState)(false);
+  const [status, setStatus] = (0, import_react19.useState)("");
+  const [busy, setBusy] = (0, import_react19.useState)(false);
   const doExportPng = async () => {
     setBusy(true);
     setStatus("\u6253\u5305 ST PNG \u5361\u2026");
@@ -21588,27 +21893,27 @@ function CardExportBlock({ ws }) {
       setBusy(false);
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { style: { padding: "10px 0" }, children: [
-    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("p", { className: "dsht-rp-note", style: { marginBottom: 8 }, children: "\u5BFC\u51FA\u8BE5\u89D2\u8272\u7684\u5361\u5305\uFF08ST \u517C\u5BB9 PNG \u5361\u53EF\u5BFC\u5165 SillyTavern\uFF1B\u5361\u5305\u76EE\u5F55=\u672C\u9879\u76EE\u539F\u751F\u683C\u5F0F\uFF09\u3002" }),
-    /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy, onClick: () => {
+  return /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { style: { padding: "10px 0" }, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("p", { className: "dsht-rp-note", style: { marginBottom: 8 }, children: "\u5BFC\u51FA\u8BE5\u89D2\u8272\u7684\u5361\u5305\uFF08ST \u517C\u5BB9 PNG \u5361\u53EF\u5BFC\u5165 SillyTavern\uFF1B\u5361\u5305\u76EE\u5F55=\u672C\u9879\u76EE\u539F\u751F\u683C\u5F0F\uFF09\u3002" }),
+    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy, onClick: () => {
         void doExportPng();
       }, children: "\u5BFC\u51FA ST PNG \u5361" }),
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy, onClick: () => {
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy, onClick: () => {
         void doExportBundle();
       }, children: "\u5BFC\u51FA\u5361\u5305\u76EE\u5F55" })
     ] }),
-    status && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 8, color: "var(--dsw-alias-label-primary)" }, children: status })
+    status && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("p", { className: "dsht-rp-note", role: "status", style: { marginTop: 8, color: "var(--dsw-alias-label-primary)" }, children: status })
   ] });
 }
 function RpOverlay(props) {
-  const [open, setOpen] = (0, import_react18.useState)(false);
-  const [tab, setTab] = (0, import_react18.useState)("chars");
-  const [workspaces, setWorkspaces] = (0, import_react18.useState)([]);
-  const [opening, setOpening] = (0, import_react18.useState)(null);
-  const [error, setError] = (0, import_react18.useState)(null);
-  const [detail, setDetail] = (0, import_react18.useState)(null);
-  const loadWorkspaces = (0, import_react18.useCallback)(async () => {
+  const [open, setOpen] = (0, import_react19.useState)(false);
+  const [tab, setTab] = (0, import_react19.useState)("chars");
+  const [workspaces, setWorkspaces] = (0, import_react19.useState)([]);
+  const [opening, setOpening] = (0, import_react19.useState)(null);
+  const [error, setError] = (0, import_react19.useState)(null);
+  const [detail, setDetail] = (0, import_react19.useState)(null);
+  const loadWorkspaces = (0, import_react19.useCallback)(async () => {
     setError(null);
     try {
       invalidateWsCache();
@@ -21663,7 +21968,7 @@ function RpOverlay(props) {
       setError(`\u89D2\u8272\u5217\u8868\u52A0\u8F7D\u5931\u8D25\uFF1A${e.message}`);
     }
   }, [props]);
-  (0, import_react18.useEffect)(() => {
+  (0, import_react19.useEffect)(() => {
     const onOpen = (ev) => {
       const detail2 = ev.detail;
       if (detail2?.tab) setTab(detail2.tab);
@@ -21674,10 +21979,10 @@ function RpOverlay(props) {
       window.removeEventListener(RP_OPEN_EVENT, onOpen);
     };
   }, []);
-  (0, import_react18.useEffect)(() => {
+  (0, import_react19.useEffect)(() => {
     if (open) void loadWorkspaces();
   }, [open, loadWorkspaces]);
-  const launchChar = (0, import_react18.useCallback)(async (ws, fresh) => {
+  const launchChar = (0, import_react19.useCallback)(async (ws, fresh) => {
     if (opening) return;
     setOpening(ws.slug);
     setError(null);
@@ -21705,14 +22010,14 @@ function RpOverlay(props) {
       setOpening(null);
     }
   }, [opening, props]);
-  const refreshAfterImport = (0, import_react18.useCallback)(async (workspaces2) => {
+  const refreshAfterImport = (0, import_react19.useCallback)(async (workspaces2) => {
     try {
       if (props.refreshSidebar) await props.refreshSidebar(workspaces2);
     } catch {
     }
     await loadWorkspaces();
   }, [props, loadWorkspaces]);
-  const jumpToAdapter = (0, import_react18.useCallback)(async (sessionId) => {
+  const jumpToAdapter = (0, import_react19.useCallback)(async (sessionId) => {
     if (!sessionId) return;
     try {
       await props.openSession(sessionId);
@@ -21722,43 +22027,43 @@ function RpOverlay(props) {
     }
   }, [props]);
   if (!open) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-overlay", role: "dialog", "aria-label": "DSHTavern \u89D2\u8272\u626E\u6F14", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-topbar", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", className: "dsht-rp-back", "aria-label": "\u5173\u95ED RP \u542F\u52A8\u5668", onClick: () => {
+  return /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "dsht-rp-overlay", role: "dialog", "aria-label": "DSHTavern \u89D2\u8272\u626E\u6F14", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "dsht-rp-topbar", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { type: "button", className: "dsht-rp-back", "aria-label": "\u5173\u95ED RP \u542F\u52A8\u5668", onClick: () => {
         setOpen(false);
       }, children: "\u2039" }),
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { style: { fontSize: 15, fontWeight: 600 }, children: "\u{1F3AD} \u89D2\u8272\u626E\u6F14" }),
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-tabs", role: "tablist", "aria-label": "\u89D2\u8272\u626E\u6F14\u529F\u80FD\u5206\u533A", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "chars", className: `dsht-rp-tab${tab === "chars" ? " active" : ""}`, onClick: () => {
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { style: { fontSize: 15, fontWeight: 600 }, children: "\u{1F3AD} \u89D2\u8272\u626E\u6F14" }),
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "dsht-rp-tabs", role: "tablist", "aria-label": "\u89D2\u8272\u626E\u6F14\u529F\u80FD\u5206\u533A", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "chars", className: `dsht-rp-tab${tab === "chars" ? " active" : ""}`, onClick: () => {
           setTab("chars");
           void loadWorkspaces();
         }, children: "\u89D2\u8272" }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "persona", title: "\u6211\u7684 = SillyTavern \u7684 User Persona / \u7528\u6237\u8BBE\u5B9A", className: `dsht-rp-tab${tab === "persona" ? " active" : ""}`, onClick: () => {
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "persona", title: "\u6211\u7684 = SillyTavern \u7684 User Persona / \u7528\u6237\u8BBE\u5B9A", className: `dsht-rp-tab${tab === "persona" ? " active" : ""}`, onClick: () => {
           setTab("persona");
         }, children: "\u6211\u7684" }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "import", className: `dsht-rp-tab${tab === "import" ? " active" : ""}`, onClick: () => {
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "import", className: `dsht-rp-tab${tab === "import" ? " active" : ""}`, onClick: () => {
           setTab("import");
         }, children: "\u5BFC\u5165" }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "books", className: `dsht-rp-tab${tab === "books" ? " active" : ""}`, onClick: () => {
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "books", className: `dsht-rp-tab${tab === "books" ? " active" : ""}`, onClick: () => {
           setTab("books");
           void loadWorkspaces();
         }, children: "\u4E16\u754C\u4E66" }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "regex", className: `dsht-rp-tab${tab === "regex" ? " active" : ""}`, onClick: () => {
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "regex", className: `dsht-rp-tab${tab === "regex" ? " active" : ""}`, onClick: () => {
           setTab("regex");
           void loadWorkspaces();
         }, children: "\u6B63\u5219" }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "preset", className: `dsht-rp-tab${tab === "preset" ? " active" : ""}`, onClick: () => {
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "preset", className: `dsht-rp-tab${tab === "preset" ? " active" : ""}`, onClick: () => {
           setTab("preset");
         }, children: "\u9884\u8BBE" }),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "sessions", title: "\u4F1A\u8BDD = SillyTavern \u7684 Chat / \u804A\u5929\u8BB0\u5F55", className: `dsht-rp-tab${tab === "sessions" ? " active" : ""}`, onClick: () => {
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("button", { type: "button", role: "tab", "aria-selected": tab === "sessions", title: "\u4F1A\u8BDD = SillyTavern \u7684 Chat / \u804A\u5929\u8BB0\u5F55", className: `dsht-rp-tab${tab === "sessions" ? " active" : ""}`, onClick: () => {
           setTab("sessions");
         }, children: "\u4F1A\u8BDD" })
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "dsht-rp-main", children: tab === "chars" ? /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-grid", children: [
-      workspaces.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "dsht-rp-empty", children: "\u8FD8\u6CA1\u6709\u89D2\u8272\u3002\u5207\u5230\u300C\u5BFC\u5165\u300D\u9875\u5BFC\u5165\u89D2\u8272\u5361\uFF0C\u6216\u7528 SillyTavern \u6570\u636E\u6574\u5305\u8FC1\u79FB\u3002" }),
-      workspaces.map((ws) => /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-card-wrap", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)(
+    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "dsht-rp-main", children: tab === "chars" ? /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "dsht-rp-grid", children: [
+      workspaces.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "dsht-rp-empty", children: "\u8FD8\u6CA1\u6709\u89D2\u8272\u3002\u5207\u5230\u300C\u5BFC\u5165\u300D\u9875\u5BFC\u5165\u89D2\u8272\u5361\uFF0C\u6216\u7528 SillyTavern \u6570\u636E\u6574\u5305\u8FC1\u79FB\u3002" }),
+      workspaces.map((ws) => /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "dsht-rp-card-wrap", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
           "button",
           {
             type: "button",
@@ -21768,12 +22073,12 @@ function RpOverlay(props) {
               void launchChar(ws, false);
             },
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "name", children: ws.name }),
-              /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "meta", children: opening === ws.slug ? "\u6253\u5F00\u4E2D\u2026" : `\u4E16\u754C\u4E66 ${ws.bookCount} \u672C` })
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "name", children: ws.name }),
+              /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "meta", children: opening === ws.slug ? "\u6253\u5F00\u4E2D\u2026" : `\u4E16\u754C\u4E66 ${ws.bookCount} \u672C` })
             ]
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
           "button",
           {
             type: "button",
@@ -21788,7 +22093,7 @@ function RpOverlay(props) {
             children: "\uFF0B"
           }
         ),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
           "button",
           {
             type: "button",
@@ -21802,15 +22107,15 @@ function RpOverlay(props) {
           }
         )
       ] }, ws.slug)),
-      error && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)("div", { className: "dsht-rp-empty", children: error })
-    ] }) : tab === "books" ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(BooksPanel, { workspaces, onChanged: () => {
+      error && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("div", { className: "dsht-rp-empty", children: error })
+    ] }) : tab === "books" ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(BooksPanel, { workspaces, onChanged: () => {
       void loadWorkspaces();
-    } }) : tab === "regex" ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(RegexPanel, { workspaces }) : tab === "preset" ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(PresetPanel, {}) : tab === "persona" ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(PersonaPanel, {}) : tab === "sessions" ? /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(SessionsPanel, { archiveSession: props.archiveSession }) : (
+    } }) : tab === "regex" ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(RegexPanel, { workspaces }) : tab === "preset" ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(PresetPanel, {}) : tab === "persona" ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(PersonaPanel, {}) : tab === "sessions" ? /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(SessionsPanel, { archiveSession: props.archiveSession }) : (
       /* 任务 C1：导入 tab = 顶部迁移验收面板（大白话状态）+ 下面导入中心 iframe */
-      /* @__PURE__ */ (0, import_jsx_runtime16.jsxs)("div", { className: "dsht-rp-import-wrap", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(MigrationStatusPanel, {}),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(UpdatePanel, {}),
-        /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(ImportFrame, { onClose: () => {
+      /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("div", { className: "dsht-rp-import-wrap", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(MigrationStatusPanel, {}),
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(UpdatePanel, {}),
+        /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(ImportFrame, { onClose: () => {
           setOpen(false);
         }, onImported: (ws) => {
           void refreshAfterImport(ws);
@@ -21819,7 +22124,7 @@ function RpOverlay(props) {
         } })
       ] })
     ) }),
-    detail !== null && /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(CardDetailDrawer, { ws: detail, openSession: props.openSession, onClose: () => {
+    detail !== null && /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(CardDetailDrawer, { ws: detail, openSession: props.openSession, onClose: () => {
       setDetail(null);
     }, onSaved: () => {
       void loadWorkspaces();
@@ -21827,7 +22132,7 @@ function RpOverlay(props) {
   ] });
 }
 function ImportFrame({ onClose, onImported, onKickoff }) {
-  (0, import_react18.useEffect)(() => {
+  (0, import_react19.useEffect)(() => {
     const onMsg = (ev) => {
       const t = ev.data?.type;
       if (t === "dsht-rp-ui:import-close") onClose();
@@ -21839,7 +22144,7 @@ function ImportFrame({ onClose, onImported, onKickoff }) {
       window.removeEventListener("message", onMsg);
     };
   }, [onClose, onImported, onKickoff]);
-  return /* @__PURE__ */ (0, import_jsx_runtime16.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime17.jsx)(
     "iframe",
     {
       title: "\u6570\u636E\u8FC1\u79FB",
@@ -21851,13 +22156,13 @@ function ImportFrame({ onClose, onImported, onKickoff }) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpPresetSwitch.tsx
-var import_react19 = require("react");
-var import_jsx_runtime17 = require("react/jsx-runtime");
+var import_react20 = require("react");
+var import_jsx_runtime18 = require("react/jsx-runtime");
 function RpPresetSwitch({ useSession, sessionId }) {
-  const [presets, setPresets] = (0, import_react19.useState)([]);
-  const [current, setCurrent] = (0, import_react19.useState)("");
-  const [switching, setSwitching] = (0, import_react19.useState)(false);
-  (0, import_react19.useEffect)(() => {
+  const [presets, setPresets] = (0, import_react20.useState)([]);
+  const [current, setCurrent] = (0, import_react20.useState)("");
+  const [switching, setSwitching] = (0, import_react20.useState)(false);
+  (0, import_react20.useEffect)(() => {
     let alive = true;
     void (async () => {
       try {
@@ -21900,9 +22205,9 @@ function RpPresetSwitch({ useSession, sessionId }) {
     }
   };
   if (presets.length === 0) return null;
-  return /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)("label", { className: "dsht-rp-preset-switch", title: "RP \u9884\u8BBE\uFF08\u5207\u6362\u5373\u65F6\u751F\u6548\u4E8E\u4E0B\u4E00\u8F6E\uFF09", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("span", { className: "ps-ico", children: "\u{1F39B}" }),
-    /* @__PURE__ */ (0, import_jsx_runtime17.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)("label", { className: "dsht-rp-preset-switch", title: "RP \u9884\u8BBE\uFF08\u5207\u6362\u5373\u65F6\u751F\u6548\u4E8E\u4E0B\u4E00\u8F6E\uFF09", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("span", { className: "ps-ico", children: "\u{1F39B}" }),
+    /* @__PURE__ */ (0, import_jsx_runtime18.jsxs)(
       "select",
       {
         className: "ps-select",
@@ -21915,8 +22220,8 @@ function RpPresetSwitch({ useSession, sessionId }) {
           void select(e.target.value);
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("option", { value: "", children: "RP \u9884\u8BBE\uFF1A\u672A\u542F\u7528" }),
-          presets.map((p) => /* @__PURE__ */ (0, import_jsx_runtime17.jsx)("option", { value: p.id, children: p.displayName }, p.id))
+          /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("option", { value: "", children: "RP \u9884\u8BBE\uFF1A\u672A\u542F\u7528" }),
+          presets.map((p) => /* @__PURE__ */ (0, import_jsx_runtime18.jsx)("option", { value: p.id, children: p.displayName }, p.id))
         ]
       }
     )
@@ -21924,9 +22229,9 @@ function RpPresetSwitch({ useSession, sessionId }) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpImportDock.tsx
-var import_jsx_runtime18 = require("react/jsx-runtime");
+var import_jsx_runtime19 = require("react/jsx-runtime");
 function RpImportDockEntry(_props) {
-  return /* @__PURE__ */ (0, import_jsx_runtime18.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime19.jsx)(
     "button",
     {
       type: "button",
@@ -21942,12 +22247,12 @@ function RpImportDockEntry(_props) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpGreetingDock.tsx
-var import_react20 = require("react");
-var import_jsx_runtime19 = require("react/jsx-runtime");
+var import_react21 = require("react");
+var import_jsx_runtime20 = require("react/jsx-runtime");
 var dismissed = /* @__PURE__ */ new Set();
 function RpGreetingDock(props) {
-  const [busy, setBusy] = (0, import_react20.useState)(false);
-  const [done, setDone] = (0, import_react20.useState)(false);
+  const [busy, setBusy] = (0, import_react21.useState)(false);
+  const [done, setDone] = (0, import_react21.useState)(false);
   const sessionId = readSessionId(props.session);
   const cwd = readSessionCwd(props.session);
   const { slug } = useRpSlug(cwd, sessionId);
@@ -21964,16 +22269,16 @@ function RpGreetingDock(props) {
       setBusy(false);
     }
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("div", { className: "dsht-rp-greeting-dock", role: "note", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsxs)("span", { className: "txt", children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "dsht-rp-greeting-dock", role: "note", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "txt", children: [
       "\u8FD9\u662F\u300C",
       slug,
       "\u300D\u7684\u7A7A\u767D\u4F1A\u8BDD\u2014\u2014"
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy, onClick: () => {
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy, onClick: () => {
       void withGreeting();
     }, children: busy ? "\u6CE8\u5165\u4E2D\u2026" : "\u{1F4AC} \u5E26\u5F00\u573A\u767D\u5F00\u59CB" }),
-    /* @__PURE__ */ (0, import_jsx_runtime19.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy, onClick: () => {
+    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("button", { type: "button", className: "dsht-rp-btn", disabled: busy, onClick: () => {
       dismissed.add(sessionId);
       setDone(true);
     }, children: "\u7559\u7A7A\uFF08\u81EA\u5B9A\u4E49\u7528\u9014\uFF09" })
@@ -22118,11 +22423,11 @@ function ensureWebviewApiGuard(g = globalThis) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpTokenMeter.tsx
-var import_react22 = require("react");
+var import_react23 = require("react");
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpContextPanel.tsx
-var import_react21 = require("react");
-var import_jsx_runtime20 = require("react/jsx-runtime");
+var import_react22 = require("react");
+var import_jsx_runtime21 = require("react/jsx-runtime");
 var FLOOR_MIN = 0;
 var FLOOR_MAX = 500;
 var FLOOR_STEP = 5;
@@ -22131,13 +22436,13 @@ var BUDGET_MAX = 3e5;
 var BUDGET_STEP = 5e3;
 var clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 function RpContextPanel({ sessionId, onClose }) {
-  const [st, setSt] = (0, import_react21.useState)(null);
-  const [floors, setFloors] = (0, import_react21.useState)("");
-  const [budget, setBudget] = (0, import_react21.useState)("");
-  const [busy, setBusy] = (0, import_react21.useState)(false);
-  const [err, setErr] = (0, import_react21.useState)("");
-  const [note, setNote] = (0, import_react21.useState)("");
-  const load = (0, import_react21.useCallback)(async () => {
+  const [st, setSt] = (0, import_react22.useState)(null);
+  const [floors, setFloors] = (0, import_react22.useState)("");
+  const [budget, setBudget] = (0, import_react22.useState)("");
+  const [busy, setBusy] = (0, import_react22.useState)(false);
+  const [err, setErr] = (0, import_react22.useState)("");
+  const [note, setNote] = (0, import_react22.useState)("");
+  const load = (0, import_react22.useCallback)(async () => {
     try {
       const r = await memGet("status", `sessionId=${encodeURIComponent(sessionId)}`);
       setSt(r);
@@ -22148,11 +22453,11 @@ function RpContextPanel({ sessionId, onClose }) {
       setErr(e.message);
     }
   }, [sessionId]);
-  (0, import_react21.useEffect)(() => {
+  (0, import_react22.useEffect)(() => {
     void load();
   }, [load]);
   useEscapeClose(onClose);
-  const commit = (0, import_react21.useCallback)(async (patch) => {
+  const commit = (0, import_react22.useCallback)(async (patch) => {
     setBusy(true);
     setErr("");
     try {
@@ -22167,17 +22472,17 @@ function RpContextPanel({ sessionId, onClose }) {
       setBusy(false);
     }
   }, [floors, budget]);
-  const commitFloors = (0, import_react21.useCallback)((raw) => {
+  const commitFloors = (0, import_react22.useCallback)((raw) => {
     const n = clamp(Math.floor(Number(raw) || 0), FLOOR_MIN, FLOOR_MAX);
     setFloors(String(n));
     if (st && n !== st.keepNearFloors) void commit({ \u4FDD\u7559\u8FD1M\u697C\u539F\u6587: n });
   }, [commit, st]);
-  const commitBudget = (0, import_react21.useCallback)((raw) => {
+  const commitBudget = (0, import_react22.useCallback)((raw) => {
     const n = clamp(Math.floor(Number(raw) || 0), BUDGET_MIN, BUDGET_MAX);
     setBudget(String(n));
     if (st && n !== st.charBudget) void commit({ \u8FD1\u7A97\u5B57\u7B26\u9884\u7B97: n });
   }, [commit, st]);
-  const expand = (0, import_react21.useCallback)(async () => {
+  const expand = (0, import_react22.useCallback)(async () => {
     setBusy(true);
     setErr("");
     setNote("");
@@ -22193,14 +22498,14 @@ function RpContextPanel({ sessionId, onClose }) {
   const cursor = st?.cursor ?? 0;
   const folded = st?.foldedUpTo ?? 0;
   const visible = Math.max(0, cursor - folded);
-  return /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)(import_jsx_runtime20.Fragment, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "dsht-rp-ctx-backdrop", onClick: onClose }),
-    /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "dsht-rp-ctx-panel", "data-testid": "dsht-rp-ctx-panel", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "cp-head", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "cp-title", children: "\u4E0A\u4E0B\u6587\u4E0E\u8BB0\u5FC6" }),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("button", { type: "button", className: "cp-close", onClick: onClose, "aria-label": "\u5173\u95ED", children: "\xD7" })
+  return /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)(import_jsx_runtime21.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "dsht-rp-ctx-backdrop", onClick: onClose }),
+    /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "dsht-rp-ctx-panel", "data-testid": "dsht-rp-ctx-panel", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "cp-head", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "cp-title", children: "\u4E0A\u4E0B\u6587\u4E0E\u8BB0\u5FC6" }),
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { type: "button", className: "cp-close", onClick: onClose, "aria-label": "\u5173\u95ED", children: "\xD7" })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "cp-row cp-status", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "cp-row cp-status", children: [
         "\u6E38\u6807 \u7B2C ",
         cursor,
         " \u697C \xB7 \u6298\u53E0\u81F3 \u7B2C ",
@@ -22210,11 +22515,11 @@ function RpContextPanel({ sessionId, onClose }) {
         " \u697C\u539F\u6587",
         folded > 0 ? `\uFF08+\u8BB0\u5FC6\u5FEB\u7167\u8986\u76D6 \u7B2C 1-${folded} \u697C\uFF09` : ""
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "cp-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "cp-label", children: "AI \u53EF\u89C1\u697C\u5C42\u6570" }),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "cp-stepper", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("button", { type: "button", disabled: busy, onClick: () => commitFloors(String(clamp((Number(floors) || 0) - FLOOR_STEP, FLOOR_MIN, FLOOR_MAX))), children: "\u2212" }),
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "cp-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "cp-label", children: "AI \u53EF\u89C1\u697C\u5C42\u6570" }),
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "cp-stepper", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { type: "button", disabled: busy, onClick: () => commitFloors(String(clamp((Number(floors) || 0) - FLOOR_STEP, FLOOR_MIN, FLOOR_MAX))), children: "\u2212" }),
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
             "input",
             {
               value: floors,
@@ -22227,14 +22532,14 @@ function RpContextPanel({ sessionId, onClose }) {
               }
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("button", { type: "button", disabled: busy, onClick: () => commitFloors(String(clamp((Number(floors) || 0) + FLOOR_STEP, FLOOR_MIN, FLOOR_MAX))), children: "+" })
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { type: "button", disabled: busy, onClick: () => commitFloors(String(clamp((Number(floors) || 0) + FLOOR_STEP, FLOOR_MIN, FLOOR_MAX))), children: "+" })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "cp-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("span", { className: "cp-label", children: "\u8FD1\u7A97\u5B57\u7B26\u9884\u7B97" }),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "cp-stepper", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("button", { type: "button", disabled: busy, onClick: () => commitBudget(String(clamp((Number(budget) || 0) - BUDGET_STEP, BUDGET_MIN, BUDGET_MAX))), children: "\u2212" }),
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "cp-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("span", { className: "cp-label", children: "\u8FD1\u7A97\u5B57\u7B26\u9884\u7B97" }),
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "cp-stepper", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { type: "button", disabled: busy, onClick: () => commitBudget(String(clamp((Number(budget) || 0) - BUDGET_STEP, BUDGET_MIN, BUDGET_MAX))), children: "\u2212" }),
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(
             "input",
             {
               value: budget,
@@ -22247,22 +22552,22 @@ function RpContextPanel({ sessionId, onClose }) {
               }
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("button", { type: "button", disabled: busy, onClick: () => commitBudget(String(clamp((Number(budget) || 0) + BUDGET_STEP, BUDGET_MIN, BUDGET_MAX))), children: "+" })
+          /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { type: "button", disabled: busy, onClick: () => commitBudget(String(clamp((Number(budget) || 0) + BUDGET_STEP, BUDGET_MIN, BUDGET_MAX))), children: "+" })
         ] })
       ] }),
-      folded > 0 ? /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("div", { className: "cp-row cp-expand", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsxs)("span", { className: "cp-label", children: [
+      folded > 0 ? /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "cp-row cp-expand", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("span", { className: "cp-label", children: [
           "\u6298\u53E0\u533A\u95F4 \u7B2C 1-",
           folded,
           " \u697C"
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("button", { type: "button", className: "cp-expand-btn", disabled: busy, onClick: () => {
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("button", { type: "button", className: "cp-expand-btn", disabled: busy, onClick: () => {
           void expand();
         }, children: "\u5C55\u5F00\u7ED9 AI\uFF08\u5355\u6B21\uFF09" }),
-        /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "cp-hint", children: "\u4E0B\u4E00\u8F6E\u8BF7\u6C42\u6CE8\u5165\u533A\u95F4\u539F\u6587\uFF1B\u518D\u4E0B\u4E00\u8F6E\u81EA\u52A8\u6536\u56DE\u3002\u754C\u9762\u56DE\u770B\u4E0D\u53D7\u6298\u53E0\u5F71\u54CD\u3002" })
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "cp-row cp-hint", children: "\u8BE5\u4F1A\u8BDD\u6682\u65E0\u6298\u53E0\u533A\u95F4\uFF08\u4E0A\u4E0B\u6587\u8F83\u7626\uFF0C\u65E0\u9700\u5C55\u5F00\uFF09\u3002" }),
-      note !== "" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "cp-row cp-note", role: "status", children: note }),
-      err !== "" && /* @__PURE__ */ (0, import_jsx_runtime20.jsx)("div", { className: "cp-row cp-err", role: "status", children: err })
+        /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "cp-hint", children: "\u4E0B\u4E00\u8F6E\u8BF7\u6C42\u6CE8\u5165\u533A\u95F4\u539F\u6587\uFF1B\u518D\u4E0B\u4E00\u8F6E\u81EA\u52A8\u6536\u56DE\u3002\u754C\u9762\u56DE\u770B\u4E0D\u53D7\u6298\u53E0\u5F71\u54CD\u3002" })
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "cp-row cp-hint", children: "\u8BE5\u4F1A\u8BDD\u6682\u65E0\u6298\u53E0\u533A\u95F4\uFF08\u4E0A\u4E0B\u6587\u8F83\u7626\uFF0C\u65E0\u9700\u5C55\u5F00\uFF09\u3002" }),
+      note !== "" && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "cp-row cp-note", role: "status", children: note }),
+      err !== "" && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "cp-row cp-err", role: "status", children: err })
     ] })
   ] });
 }
@@ -22348,7 +22653,7 @@ function originLabel(o) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/RpTokenMeter.tsx
-var import_jsx_runtime21 = require("react/jsx-runtime");
+var import_jsx_runtime22 = require("react/jsx-runtime");
 function lastRequestTokens(_session) {
   return null;
 }
@@ -22386,12 +22691,12 @@ function RpTokenMeter(props) {
   const cwd = readSessionCwd(props.session);
   const { slug } = useRpSlug(cwd, sessionId);
   const blank = readSessionBlank(props.session);
-  const [chars, setChars] = (0, import_react22.useState)(0);
-  const [budgetInfo, setBudgetInfo] = (0, import_react22.useState)({ value: DEFAULT_MAX_CONTEXT, origin: "unknown" });
-  const [panelOpen, setPanelOpen] = (0, import_react22.useState)(false);
+  const [chars, setChars] = (0, import_react23.useState)(0);
+  const [budgetInfo, setBudgetInfo] = (0, import_react23.useState)({ value: DEFAULT_MAX_CONTEXT, origin: "unknown" });
+  const [panelOpen, setPanelOpen] = (0, import_react23.useState)(false);
   const mask = useRollbackMaskState(sessionId);
-  const hiddenRef = (0, import_react22.useRef)(mask.hidden);
-  (0, import_react22.useEffect)(() => {
+  const hiddenRef = (0, import_react23.useRef)(mask.hidden);
+  (0, import_react23.useEffect)(() => {
     if (!slug || !sessionId || blank) return;
     let alive = true;
     void fetchBudget(sessionId).then((b) => {
@@ -22413,7 +22718,7 @@ function RpTokenMeter(props) {
       stop();
     };
   }, [slug, sessionId, blank]);
-  (0, import_react22.useEffect)(() => {
+  (0, import_react23.useEffect)(() => {
     hiddenRef.current = mask.hidden;
     if (!slug || !sessionId || blank) return;
     let alive = true;
@@ -22428,7 +22733,7 @@ function RpTokenMeter(props) {
       alive = false;
     };
   }, [mask, slug, sessionId, blank]);
-  const reading = (0, import_react22.useMemo)(() => buildMeterReading({
+  const reading = (0, import_react23.useMemo)(() => buildMeterReading({
     providerTokens: lastRequestTokens(props.session) ?? void 0,
     estimatedTokens: estimateTokens(chars),
     modelContextWindow: budgetInfo.origin === "model-catalog" ? budgetInfo.value : void 0,
@@ -22446,7 +22751,7 @@ function RpTokenMeter(props) {
     // ② M5/M7 设备判据据此判定「回退是否在计量上可见」——此前只能比百分比，
     //    在饱和（1.5M/1M）时恒 100% ⇒ 判据**零分辨率**。
     // 这是纯增量的观测面，不改任何既有契约（B10）。
-    /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)(
+    /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)(
       "div",
       {
         className: "dsht-rp-tokenmeter",
@@ -22458,7 +22763,7 @@ function RpTokenMeter(props) {
         "data-budget-origin": reading.budgetOrigin,
         "data-pct": pct.toFixed(4),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)(
             "button",
             {
               type: "button",
@@ -22466,16 +22771,16 @@ function RpTokenMeter(props) {
               title: `\u2248 \u4E0A\u4E0B\u6587\u5360\u7528\uFF08\u5360\u7528\u53E3\u5F84\uFF1A${originLabel(reading.tokensOrigin)}\uFF1B\u9884\u7B97\u53E3\u5F84\uFF1A${originLabel(reading.budgetOrigin)}${budgetExact ? "" : "\u2014\u2014\u9884\u7B97\u672A\u77E5\uFF0C\u5F53\u524D\u4E3A\u5360\u4F4D\u503C\uFF0C\u5B9E\u9645\u6A21\u578B\u4E0A\u9650\u53EF\u80FD\u4E0D\u540C"}\uFF1B\u70B9\u51FB\u8C03\u8282 AI \u53EF\u89C1\u697C\u5C42\u6570 / \u5C55\u5F00\u6298\u53E0\u533A\u95F4\uFF09`,
               onClick: () => setPanelOpen((v) => !v),
               children: [
-                /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "tm-bar", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": Math.round(pct), children: /* @__PURE__ */ (0, import_jsx_runtime21.jsx)("div", { className: "tm-fill", style: { width: `${pct}%` } }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("div", { className: "tm-label", children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("span", { className: "tm-num", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "tm-bar", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": Math.round(pct), children: /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "tm-fill", style: { width: `${pct}%` } }) }),
+                /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "tm-label", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("span", { className: "tm-num", children: [
                     "\u2248 ",
                     formatTokens(reading.tokens),
                     " / ",
                     budgetExact ? formatTokens(reading.budget) : `${formatTokens(reading.budget)}?`,
                     " tokens"
                   ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime21.jsxs)("span", { className: "tm-tag", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("span", { className: "tm-tag", children: [
                     exact ? "\u771F\u5B9E\u503C" : "\u4F30\u7B97\u503C",
                     budgetExact ? "" : "\xB7\u9884\u7B97\u672A\u77E5"
                   ] })
@@ -22483,7 +22788,7 @@ function RpTokenMeter(props) {
               ]
             }
           ),
-          panelOpen && /* @__PURE__ */ (0, import_jsx_runtime21.jsx)(RpContextPanel, { sessionId, onClose: () => setPanelOpen(false) })
+          panelOpen && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(RpContextPanel, { sessionId, onClose: () => setPanelOpen(false) })
         ]
       }
     )
@@ -22491,8 +22796,8 @@ function RpTokenMeter(props) {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/PluginCards.tsx
-var import_react23 = require("react");
-var import_jsx_runtime22 = require("react/jsx-runtime");
+var import_react24 = require("react");
+var import_jsx_runtime23 = require("react/jsx-runtime");
 function thApi3(path, payload) {
   return fetch(`/dsht-tavern-helper/${path}`, {
     method: payload === void 0 ? "GET" : "PUT",
@@ -22515,13 +22820,13 @@ function mvuApi(path, payload) {
   }).then(async (r) => ({ ...await r.json(), __status: r.status }));
 }
 function ToggleRow(props) {
-  return /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "dsht-npc-row", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("span", { className: "dsht-npc-rowLabel", children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("div", { className: "dsht-npc-row", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("span", { className: "dsht-npc-rowLabel", children: [
       props.label,
-      props.hint !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "dsht-npc-hint", children: props.hint }),
-      props.na !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "dsht-npc-na", children: props.na })
+      props.hint !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("div", { className: "dsht-npc-hint", children: props.hint }),
+      props.na !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("div", { className: "dsht-npc-na", children: props.na })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       "button",
       {
         type: "button",
@@ -22529,30 +22834,30 @@ function ToggleRow(props) {
         "aria-checked": props.value,
         className: "dsht-npc-switch" + (props.value ? " dsht-npc-switchOn" : ""),
         onClick: () => props.onChange(!props.value),
-        children: /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("span", { className: "dsht-npc-thumb" })
+        children: /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("span", { className: "dsht-npc-thumb" })
       }
     )
   ] });
 }
 function SelectRow(props) {
-  return /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "dsht-npc-row", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("span", { className: "dsht-npc-rowLabel", children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("div", { className: "dsht-npc-row", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("span", { className: "dsht-npc-rowLabel", children: [
       props.label,
-      props.hint !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "dsht-npc-hint", children: props.hint }),
-      props.na !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "dsht-npc-na", children: props.na })
+      props.hint !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("div", { className: "dsht-npc-hint", children: props.hint }),
+      props.na !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("div", { className: "dsht-npc-na", children: props.na })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("select", { className: "dsht-npc-select", value: props.value, onChange: (e) => props.onChange(e.target.value), children: props.options.map(([v, text2]) => /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("option", { value: v, children: text2 }, v)) })
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("select", { className: "dsht-npc-select", value: props.value, onChange: (e) => props.onChange(e.target.value), children: props.options.map(([v, text2]) => /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("option", { value: v, children: text2 }, v)) })
   ] });
 }
 function SliderRow(props) {
-  return /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "dsht-npc-row", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("span", { className: "dsht-npc-rowLabel", children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("div", { className: "dsht-npc-row", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("span", { className: "dsht-npc-rowLabel", children: [
       props.label,
-      props.hint !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "dsht-npc-hint", children: props.hint }),
-      props.na !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "dsht-npc-na", children: props.na })
+      props.hint !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("div", { className: "dsht-npc-hint", children: props.hint }),
+      props.na !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("div", { className: "dsht-npc-na", children: props.na })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [
-      /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("span", { style: { display: "flex", alignItems: "center", gap: 8 }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
         "input",
         {
           type: "range",
@@ -22564,7 +22869,7 @@ function SliderRow(props) {
           onChange: (e) => props.onChange(Number(e.target.value))
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+      /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
         "input",
         {
           type: "number",
@@ -22580,13 +22885,13 @@ function SliderRow(props) {
   ] });
 }
 function TextRow(props) {
-  return /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "dsht-npc-row", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("span", { className: "dsht-npc-rowLabel", children: [
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("div", { className: "dsht-npc-row", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("span", { className: "dsht-npc-rowLabel", children: [
       props.label,
-      props.hint !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "dsht-npc-hint", children: props.hint }),
-      props.na !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "dsht-npc-na", children: props.na })
+      props.hint !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("div", { className: "dsht-npc-hint", children: props.hint }),
+      props.na !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("div", { className: "dsht-npc-na", children: props.na })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       "input",
       {
         type: "text",
@@ -22598,17 +22903,17 @@ function TextRow(props) {
   ] });
 }
 function GroupTitle(props) {
-  return /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "dsht-npc-groupTitle", children: props.title });
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("div", { className: "dsht-npc-groupTitle", children: props.title });
 }
 function NoteRow(props) {
-  return /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("p", { className: "dsht-npc-rowNote", children: props.text });
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("p", { className: "dsht-npc-rowNote", children: props.text });
 }
 function usePluginSettings(api, alive) {
-  const [cfg, setCfg] = (0, import_react23.useState)(null);
-  const [draft, setDraftState] = (0, import_react23.useState)(null);
-  const [saving, setSaving] = (0, import_react23.useState)(false);
-  const [failed, setFailed] = (0, import_react23.useState)(false);
-  (0, import_react23.useEffect)(() => {
+  const [cfg, setCfg] = (0, import_react24.useState)(null);
+  const [draft, setDraftState] = (0, import_react24.useState)(null);
+  const [saving, setSaving] = (0, import_react24.useState)(false);
+  const [failed, setFailed] = (0, import_react24.useState)(false);
+  (0, import_react24.useEffect)(() => {
     if (alive === false) return;
     let cur = true;
     api.get().then((d) => {
@@ -22626,9 +22931,9 @@ function usePluginSettings(api, alive) {
       cur = false;
     };
   }, [alive]);
-  const dirty = (0, import_react23.useMemo)(() => cfg !== null && draft !== null && JSON.stringify(draft) !== JSON.stringify(cfg), [cfg, draft]);
-  const setDraft = (0, import_react23.useCallback)((next) => setDraftState(next), []);
-  const save = (0, import_react23.useCallback)(async () => {
+  const dirty = (0, import_react24.useMemo)(() => cfg !== null && draft !== null && JSON.stringify(draft) !== JSON.stringify(cfg), [cfg, draft]);
+  const setDraft = (0, import_react24.useCallback)((next) => setDraftState(next), []);
+  const save = (0, import_react24.useCallback)(async () => {
     if (draft === null || saving) return;
     setSaving(true);
     setFailed(false);
@@ -22643,18 +22948,18 @@ function usePluginSettings(api, alive) {
       setSaving(false);
     }
   }, [draft, saving]);
-  const discard = (0, import_react23.useCallback)(() => {
+  const discard = (0, import_react24.useCallback)(() => {
     if (cfg !== null) setDraftState(cfg);
   }, [cfg]);
   return { cfg, draft, setDraft, dirty, saving, failed, save, discard, alive };
 }
 function NativePluginCard(props) {
-  const [open, setOpen] = (0, import_react23.useState)(false);
+  const [open, setOpen] = (0, import_react24.useState)(false);
   const { st } = props;
   const blocked = !st.dirty || st.saving;
   const unavailable = st.alive === false;
-  return /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("li", { className: "dsht-npc-card" + (open ? " dsht-npc-cardOpen" : ""), children: [
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("li", { className: "dsht-npc-card" + (open ? " dsht-npc-cardOpen" : ""), children: [
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)(
       "button",
       {
         type: "button",
@@ -22662,22 +22967,22 @@ function NativePluginCard(props) {
         "aria-expanded": open,
         onClick: () => setOpen((v) => !v),
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("span", { className: "dsht-npc-headText", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("span", { className: "dsht-npc-name", children: props.name }),
-            /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("span", { className: "dsht-npc-description", children: props.description })
+          /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("span", { className: "dsht-npc-headText", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("span", { className: "dsht-npc-name", children: props.name }),
+            /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("span", { className: "dsht-npc-description", children: props.description })
           ] }),
-          st.dirty && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("span", { className: "dsht-npc-description", style: { color: "var(--dsw-alias-label-secondary)", whiteSpace: "nowrap" }, children: "\u672A\u4FDD\u5B58" }),
-          /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("span", { className: "dsht-npc-chevron" + (open ? " dsht-npc-chevronOpen" : ""), "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("path", { d: "M3.5 5.25L7 8.75L10.5 5.25", stroke: "currentColor", strokeWidth: "1.3", strokeLinecap: "round", strokeLinejoin: "round" }) }) })
+          st.dirty && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("span", { className: "dsht-npc-description", style: { color: "var(--dsw-alias-label-secondary)", whiteSpace: "nowrap" }, children: "\u672A\u4FDD\u5B58" }),
+          /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("span", { className: "dsht-npc-chevron" + (open ? " dsht-npc-chevronOpen" : ""), "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("svg", { width: "14", height: "14", viewBox: "0 0 14 14", fill: "none", children: /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("path", { d: "M3.5 5.25L7 8.75L10.5 5.25", stroke: "currentColor", strokeWidth: "1.3", strokeLinecap: "round", strokeLinejoin: "round" }) }) })
         ]
       }
     ),
-    open && /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "dsht-npc-body", children: [
-      unavailable && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("p", { className: "dsht-npc-readonly", role: "status", children: "\u63D2\u4EF6\u6570\u636E\u9762\u672A\u54CD\u5E94\u2014\u2014\u91CD\u542F\u5E94\u7528\u540E\u4ECD\u5982\u6B64\u8BF7\u53CD\u9988\u3002\u4E0B\u65B9\u8BBE\u7F6E\u53EF\u80FD\u4E0D\u53EF\u4FDD\u5B58\u3002" }),
-      st.cfg === null || st.draft === null ? /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("p", { className: "dsht-npc-readonly", role: "status", children: unavailable ? "\u8BFB\u53D6\u5931\u8D25\u3002" : "\u8BFB\u53D6\u4E2D\u2026" }) : props.form(st.draft, st.setDraft),
-      /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "dsht-npc-footer", children: [
-        st.failed && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("p", { className: "dsht-npc-failed", role: "status", children: "\u4FDD\u5B58\u5931\u8D25\u2014\u2014\u8BF7\u91CD\u8BD5\u3002" }),
-        /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("button", { type: "button", className: "dsht-npc-discard", disabled: !st.dirty || st.saving, onClick: st.discard, children: "\u653E\u5F03" }),
-        /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("button", { type: "button", className: "dsht-npc-save", disabled: blocked, onClick: () => {
+    open && /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("div", { className: "dsht-npc-body", children: [
+      unavailable && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("p", { className: "dsht-npc-readonly", role: "status", children: "\u63D2\u4EF6\u6570\u636E\u9762\u672A\u54CD\u5E94\u2014\u2014\u91CD\u542F\u5E94\u7528\u540E\u4ECD\u5982\u6B64\u8BF7\u53CD\u9988\u3002\u4E0B\u65B9\u8BBE\u7F6E\u53EF\u80FD\u4E0D\u53EF\u4FDD\u5B58\u3002" }),
+      st.cfg === null || st.draft === null ? /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("p", { className: "dsht-npc-readonly", role: "status", children: unavailable ? "\u8BFB\u53D6\u5931\u8D25\u3002" : "\u8BFB\u53D6\u4E2D\u2026" }) : props.form(st.draft, st.setDraft),
+      /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("div", { className: "dsht-npc-footer", children: [
+        st.failed && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("p", { className: "dsht-npc-failed", role: "status", children: "\u4FDD\u5B58\u5931\u8D25\u2014\u2014\u8BF7\u91CD\u8BD5\u3002" }),
+        /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("button", { type: "button", className: "dsht-npc-discard", disabled: !st.dirty || st.saving, onClick: st.discard, children: "\u653E\u5F03" }),
+        /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("button", { type: "button", className: "dsht-npc-save", disabled: blocked, onClick: () => {
           void st.save();
         }, children: st.saving ? "\u4FDD\u5B58\u4E2D\u2026" : "\u4FDD\u5B58" })
       ] })
@@ -22687,8 +22992,8 @@ function NativePluginCard(props) {
 function makeNativeSettingsCard(listName, name, description, api, form) {
   const probe = PROBES.find((p) => p.listName === listName);
   return function Card() {
-    const [alive, setAlive] = (0, import_react23.useState)(null);
-    (0, import_react23.useEffect)(() => {
+    const [alive, setAlive] = (0, import_react24.useState)(null);
+    (0, import_react24.useEffect)(() => {
       let cur = true;
       (probe?.ping ?? (() => Promise.resolve(false)))().then((ok) => {
         if (cur) setAlive(ok);
@@ -22700,7 +23005,7 @@ function makeNativeSettingsCard(listName, name, description, api, form) {
       };
     }, []);
     const st = usePluginSettings(api, alive);
-    return /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(NativePluginCard, { name, description, alive, st, form });
+    return /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(NativePluginCard, { name, description, alive, st, form });
   };
 }
 var TH_API = {
@@ -22718,9 +23023,9 @@ function TavernHelperForm(draft, set) {
   const setO = (k, v) => set({ ...draft, optimize: { ...optimize, [k]: v } });
   const setL = (k, v) => set({ ...draft, listener: { ...listener, [k]: v } });
   const b = (v) => v === true;
-  return /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "dsht-npc-rows", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(GroupTitle, { title: "\u811A\u672C" }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("div", { className: "dsht-npc-rows", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(GroupTitle, { title: "\u811A\u672C" }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u6267\u884C\u811A\u672C\uFF08\u603B\u5F00\u5173\uFF09",
@@ -22729,7 +23034,7 @@ function TavernHelperForm(draft, set) {
         onChange: (v) => set({ ...draft, scriptEnabled: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u5B8F\u66FF\u6362",
@@ -22738,8 +23043,8 @@ function TavernHelperForm(draft, set) {
         onChange: (v) => set({ ...draft, macroEnabled: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(GroupTitle, { title: "\u6E32\u67D3" }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(GroupTitle, { title: "\u6E32\u67D3" }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u542F\u7528\u6E32\u67D3",
@@ -22748,7 +23053,7 @@ function TavernHelperForm(draft, set) {
         onChange: (v) => setR("enabled", v)
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       SelectRow,
       {
         label: "\u6298\u53E0\u4EE3\u7801\u5757",
@@ -22758,7 +23063,7 @@ function TavernHelperForm(draft, set) {
         onChange: (v) => setR("collapseCodeBlock", v)
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u5141\u8BB8\u6D41\u5F0F\u6E32\u67D3",
@@ -22767,7 +23072,7 @@ function TavernHelperForm(draft, set) {
         onChange: (v) => setR("allowStreaming", v)
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "Blob URL \u6E32\u67D3",
@@ -22776,7 +23081,7 @@ function TavernHelperForm(draft, set) {
         onChange: (v) => setR("useBlobUrl", v)
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u4F18\u5316\u4EE3\u7801\u9AD8\u4EAE",
@@ -22785,7 +23090,7 @@ function TavernHelperForm(draft, set) {
         onChange: (v) => setR("optimizeHljs", v)
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       SliderRow,
       {
         label: "\u6E32\u67D3\u6DF1\u5EA6",
@@ -22797,7 +23102,7 @@ function TavernHelperForm(draft, set) {
         onChange: (v) => setR("depth", v)
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u5FFD\u7565\u9690\u85CF\u697C\u5C42",
@@ -22806,20 +23111,20 @@ function TavernHelperForm(draft, set) {
         onChange: (v) => setR("depthIgnoreHidden", v)
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(NoteRow, { text: "\u6E32\u67D3\u7EC4\u5DF2\u63A5\u5165\u663E\u793A\u671F\u7BA1\u7EBF\uFF08C3\uFF09\uFF1A\u542F\u7528/\u6DF1\u5EA6/\u5FFD\u7565\u9690\u85CF/\u6298\u53E0\u4EE3\u7801\u5757/\u5141\u8BB8\u6D41\u5F0F/Blob URL/\u4EE3\u7801\u9AD8\u4EAE\u5168\u90E8\u5373\u65F6\u751F\u6548\u2014\u2014\u6DF1\u5EA6\u95E8\u53EA\u7BA1\u524D\u7AEF HTML \u4E0E\u72B6\u6001\u5305\u88F9\uFF08display \u6B63\u5219/\u5B8F\u5404\u6709\u72EC\u7ACB\u6DF1\u5EA6\u9762\uFF09\u3002" }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(GroupTitle, { title: "\u4F18\u5316\uFF08ST \u4E16\u754C\u4E66/\u89D2\u8272\u5361\u7BA1\u7EBF\uFF09" }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u7981\u7528\u4E0D\u517C\u5BB9\u9009\u9879", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.disableIncompatibleOption), onChange: (v) => setO("disableIncompatibleOption", v) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u66F4\u597D\u7684\u6D88\u606F\u52A0\u8F7D", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.betterMessageToLoad), onChange: (v) => setO("betterMessageToLoad", v) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u66F4\u597D\u7684\u89D2\u8272\u5361\u66F4\u65B0", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.betterCharacterUpdate), onChange: (v) => setO("betterCharacterUpdate", v) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u66F4\u597D\u7684\u89D2\u8272\u5361\u5BFC\u51FA", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.betterCharacterExport), onChange: (v) => setO("betterCharacterExport", v) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u66F4\u597D\u7684\u89D2\u8272\u5361\u5220\u9664", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.betterCharacterDeletion), onChange: (v) => setO("betterCharacterDeletion", v) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u5F3A\u5236\u63A8\u8350\u4E16\u754C\u4E66\u5168\u5C40\u8BBE\u7F6E", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.forceRecommendedWorldbookGlobalSettings), onChange: (v) => setO("forceRecommendedWorldbookGlobalSettings", v) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u4FDD\u5B58\u9884\u8BBE\u65F6\u4FDD\u5B58\u9884\u8BBE\u6761\u76EE", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.savePresetWhenSavingPresetEntries), onChange: (v) => setO("savePresetWhenSavingPresetEntries", v) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u6700\u5927\u5316\u9884\u8BBE\u4E0A\u4E0B\u6587\u957F\u5EA6", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.maximizePresetContextLength), onChange: (v) => setO("maximizePresetContextLength", v) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(GroupTitle, { title: "\u5916\u90E8\u4E8B\u4EF6\u76D1\u542C\uFF08PC \u684C\u9762\u8054\u52A8\uFF09" }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u542F\u7528\u76D1\u542C\u5668", na: "PC \u8054\u52A8\u7279\u6027\u2014\u2014\u79FB\u52A8\u7AEF\u4E0D\u9002\u7528\uFF0C\u4EC5\u5B58\u76D8", value: b(listener.enabled), onChange: (v) => setL("enabled", v) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u56DE\u58F0\u6A21\u5F0F", na: "PC \u8054\u52A8\u7279\u6027\u2014\u2014\u79FB\u52A8\u7AEF\u4E0D\u9002\u7528\uFF0C\u4EC5\u5B58\u76D8", value: b(listener.enableEcho), onChange: (v) => setL("enableEcho", v) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(NoteRow, { text: "\u6E32\u67D3\u7EC4\u5DF2\u63A5\u5165\u663E\u793A\u671F\u7BA1\u7EBF\uFF08C3\uFF09\uFF1A\u542F\u7528/\u6DF1\u5EA6/\u5FFD\u7565\u9690\u85CF/\u6298\u53E0\u4EE3\u7801\u5757/\u5141\u8BB8\u6D41\u5F0F/Blob URL/\u4EE3\u7801\u9AD8\u4EAE\u5168\u90E8\u5373\u65F6\u751F\u6548\u2014\u2014\u6DF1\u5EA6\u95E8\u53EA\u7BA1\u524D\u7AEF HTML \u4E0E\u72B6\u6001\u5305\u88F9\uFF08display \u6B63\u5219/\u5B8F\u5404\u6709\u72EC\u7ACB\u6DF1\u5EA6\u9762\uFF09\u3002" }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(GroupTitle, { title: "\u4F18\u5316\uFF08ST \u4E16\u754C\u4E66/\u89D2\u8272\u5361\u7BA1\u7EBF\uFF09" }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u7981\u7528\u4E0D\u517C\u5BB9\u9009\u9879", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.disableIncompatibleOption), onChange: (v) => setO("disableIncompatibleOption", v) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u66F4\u597D\u7684\u6D88\u606F\u52A0\u8F7D", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.betterMessageToLoad), onChange: (v) => setO("betterMessageToLoad", v) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u66F4\u597D\u7684\u89D2\u8272\u5361\u66F4\u65B0", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.betterCharacterUpdate), onChange: (v) => setO("betterCharacterUpdate", v) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u66F4\u597D\u7684\u89D2\u8272\u5361\u5BFC\u51FA", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.betterCharacterExport), onChange: (v) => setO("betterCharacterExport", v) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u66F4\u597D\u7684\u89D2\u8272\u5361\u5220\u9664", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.betterCharacterDeletion), onChange: (v) => setO("betterCharacterDeletion", v) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u5F3A\u5236\u63A8\u8350\u4E16\u754C\u4E66\u5168\u5C40\u8BBE\u7F6E", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.forceRecommendedWorldbookGlobalSettings), onChange: (v) => setO("forceRecommendedWorldbookGlobalSettings", v) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u4FDD\u5B58\u9884\u8BBE\u65F6\u4FDD\u5B58\u9884\u8BBE\u6761\u76EE", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.savePresetWhenSavingPresetEntries), onChange: (v) => setO("savePresetWhenSavingPresetEntries", v) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u6700\u5927\u5316\u9884\u8BBE\u4E0A\u4E0B\u6587\u957F\u5EA6", na: "\u6682\u65E0\u5BF9\u5E94\u7BA1\u7EBF\u2014\u2014\u5B58\u76D8\u4E0D\u751F\u6548", value: b(optimize.maximizePresetContextLength), onChange: (v) => setO("maximizePresetContextLength", v) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(GroupTitle, { title: "\u5916\u90E8\u4E8B\u4EF6\u76D1\u542C\uFF08PC \u684C\u9762\u8054\u52A8\uFF09" }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u542F\u7528\u76D1\u542C\u5668", na: "PC \u8054\u52A8\u7279\u6027\u2014\u2014\u79FB\u52A8\u7AEF\u4E0D\u9002\u7528\uFF0C\u4EC5\u5B58\u76D8", value: b(listener.enabled), onChange: (v) => setL("enabled", v) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u56DE\u58F0\u6A21\u5F0F", na: "PC \u8054\u52A8\u7279\u6027\u2014\u2014\u79FB\u52A8\u7AEF\u4E0D\u9002\u7528\uFF0C\u4EC5\u5B58\u76D8", value: b(listener.enableEcho), onChange: (v) => setL("enableEcho", v) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       TextRow,
       {
         label: "\u76D1\u542C\u5730\u5740",
@@ -22828,7 +23133,7 @@ function TavernHelperForm(draft, set) {
         onChange: (v) => setL("url", v)
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       SliderRow,
       {
         label: "\u8F6E\u8BE2\u95F4\u9694 (ms)",
@@ -22852,11 +23157,11 @@ function EjsForm(draft, set) {
   const b = (k, dflt = true) => draft[k] === void 0 ? dflt : draft[k] === true;
   const n = (k, dflt) => typeof draft[k] === "number" ? draft[k] : dflt;
   const s = (k, dflt) => typeof draft[k] === "string" ? draft[k] : dflt;
-  return /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "dsht-npc-rows", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(GroupTitle, { title: "\u603B\u5F00\u5173" }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u542F\u7528\u6269\u5C55", value: b("enabled"), onChange: (v) => set({ ...draft, enabled: v }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(GroupTitle, { title: "\u751F\u6210" }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("div", { className: "dsht-npc-rows", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(GroupTitle, { title: "\u603B\u5F00\u5173" }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u542F\u7528\u6269\u5C55", value: b("enabled"), onChange: (v) => set({ ...draft, enabled: v }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(GroupTitle, { title: "\u751F\u6210" }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u751F\u6210\u5904\u7406\uFF08\u751F\u6210\u671F\u6A21\u677F\u6C42\u503C\uFF09",
@@ -22865,7 +23170,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, generateEnabled: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u542F\u7528 [GENERATE] \u7279\u6027",
@@ -22874,7 +23179,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, generateLoaderEnabled: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u542F\u7528 @INJECT \u7279\u6027",
@@ -22883,7 +23188,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, injectLoaderEnabled: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u751F\u6210\u65F6\u5FFD\u7565\u697C\u5C42\u6A21\u677F\u8BED\u53E5",
@@ -22892,9 +23197,9 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, filterChatMessage: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(GroupTitle, { title: "\u697C\u5C42\u6D88\u606F" }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label: "\u697C\u5C42\u6D88\u606F\u5904\u7406\uFF08\u6E32\u67D3\u671F\u6C42\u503C\uFF09", value: b("renderEnabled"), onChange: (v) => set({ ...draft, renderEnabled: v }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(GroupTitle, { title: "\u697C\u5C42\u6D88\u606F" }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label: "\u697C\u5C42\u6D88\u606F\u5904\u7406\uFF08\u6E32\u67D3\u671F\u6C42\u503C\uFF09", value: b("renderEnabled"), onChange: (v) => set({ ...draft, renderEnabled: v }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u542F\u7528 [RENDER] \u7279\u6027",
@@ -22903,7 +23208,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, renderLoaderEnabled: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u5904\u7406 <pre> \u4EE3\u7801\u5757",
@@ -22912,7 +23217,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, codeBlocks: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u5904\u7406\u539F\u59CB\u6D88\u606F\u5185\u5BB9",
@@ -22921,7 +23226,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, permanentEvaluation: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       SliderRow,
       {
         label: "\u697C\u5C42\u5904\u7406\u6700\u5927\u6DF1\u5EA6",
@@ -22933,7 +23238,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, chatDepth: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u81EA\u52A8\u4FDD\u5B58\u804A\u5929",
@@ -22942,8 +23247,8 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, autosaveEnabled: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(GroupTitle, { title: "\u5F15\u64CE" }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(GroupTitle, { title: "\u5F15\u64CE" }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u73AF\u5883\u9694\u79BB\uFF08vm \u6C99\u7BB1\u5F15\u64CE\uFF09",
@@ -22952,7 +23257,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, sandbox: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u7981\u7528 with \u8BED\u53E5\u5757",
@@ -22961,7 +23266,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, withContextDisabled: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u63A7\u5236\u53F0\u8BE6\u7EC6\u65E5\u5FD7",
@@ -22970,7 +23275,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, debugEnabled: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "Web Worker \u7F16\u8BD1",
@@ -22979,7 +23284,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, compileWorkers: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u4E16\u754C\u4E66\u4EE3\u7801\u7F16\u8F91\u5668",
@@ -22988,7 +23293,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, codeEditor: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u65E7\u7279\u6027\u517C\u5BB9\uFF08\u6761\u76EE\u7981\u7528\u89C6\u4E3A\u542F\u7528\uFF09",
@@ -22997,8 +23302,8 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, invertEnabled: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(GroupTitle, { title: "\u7F13\u5B58\uFF08\u5B9E\u9A8C\u6027\uFF09" }),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(GroupTitle, { title: "\u7F13\u5B58\uFF08\u5B9E\u9A8C\u6027\uFF09" }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       SelectRow,
       {
         label: "\u6A21\u677F\u7F16\u8BD1\u7F13\u5B58",
@@ -23008,7 +23313,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, cacheEnabled: Number(v) })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       SliderRow,
       {
         label: "\u7F13\u5B58\u5927\u5C0F\u4E0A\u9650",
@@ -23020,7 +23325,7 @@ function EjsForm(draft, set) {
         onChange: (v) => set({ ...draft, cacheSize: v })
       }
     ),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       SelectRow,
       {
         label: "\u7F13\u5B58 Hash \u51FD\u6570",
@@ -23038,14 +23343,14 @@ var MVU_API = {
   pick: (d) => d.settings ?? d
 };
 function MvuForm(draft, set) {
-  const entries2 = (0, import_react23.useMemo)(
+  const entries2 = (0, import_react24.useMemo)(
     () => Object.entries(draft).filter(([, v]) => typeof v !== "object").map(([k, v]) => [k, String(v)]),
     [draft]
   );
-  return /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "dsht-npc-rows", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(NoteRow, { text: "ST mvu_settings \u7684\u8FC1\u79FB\u843D\u70B9\uFF08\u9876\u5C42\u6807\u91CF\u952E\u503C\uFF1B\u5BF9\u8C61/\u6570\u7EC4\u952E\u8BF7\u76F4\u63A5\u6539\u6587\u4EF6\uFF09\u3002\u6539\u52A8\u4FDD\u5B58\u5373\u751F\u6548\u2014\u2014MVU \u53D8\u91CF\u66F4\u65B0\u7BA1\u7EBF\u5373\u65F6\u8BFB\u53D6\u3002" }),
-    entries2.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(NoteRow, { text: "\uFF08\u6682\u65E0\u9876\u5C42\u952E\u503C\uFF09" }),
-    entries2.map(([k, v]) => /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("div", { className: "dsht-npc-rows", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(NoteRow, { text: "ST mvu_settings \u7684\u8FC1\u79FB\u843D\u70B9\uFF08\u9876\u5C42\u6807\u91CF\u952E\u503C\uFF1B\u5BF9\u8C61/\u6570\u7EC4\u952E\u8BF7\u76F4\u63A5\u6539\u6587\u4EF6\uFF09\u3002\u6539\u52A8\u4FDD\u5B58\u5373\u751F\u6548\u2014\u2014MVU \u53D8\u91CF\u66F4\u65B0\u7BA1\u7EBF\u5373\u65F6\u8BFB\u53D6\u3002" }),
+    entries2.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(NoteRow, { text: "\uFF08\u6682\u65E0\u9876\u5C42\u952E\u503C\uFF09" }),
+    entries2.map(([k, v]) => /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       TextRow,
       {
         label: k,
@@ -23058,7 +23363,7 @@ function MvuForm(draft, set) {
       },
       k
     )),
-    /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
       ToggleRow,
       {
         label: "\u72B6\u6001\u680F\u6E32\u67D3\uFF08MVU \u6B63\u5219\u9762\uFF09",
@@ -23090,7 +23395,7 @@ var MEM_API = {
   })
 };
 function MemoryForm(draft, set) {
-  const num = (k, label, min) => /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(
+  const num = (k, label, min) => /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(
     SliderRow,
     {
       label,
@@ -23101,8 +23406,8 @@ function MemoryForm(draft, set) {
       onChange: (v) => set({ ...draft, [k]: v })
     }
   );
-  const chk = (k, label, hint) => /* @__PURE__ */ (0, import_jsx_runtime22.jsx)(ToggleRow, { label, hint, value: draft[k] === true, onChange: (v) => set({ ...draft, [k]: v }) });
-  return /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("div", { className: "dsht-npc-rows", children: [
+  const chk = (k, label, hint) => /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(ToggleRow, { label, hint, value: draft[k] === true, onChange: (v) => set({ ...draft, [k]: v }) });
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("div", { className: "dsht-npc-rows", children: [
     chk("enabled", "\u603B\u5F00\u5173", "\u5173\u95ED\u540E\u4E0D\u518D\u81EA\u52A8\u603B\u7ED3"),
     num("everyN", "\u6BCF N \u697C\u603B\u7ED3", 2),
     num("keepNearFloors", "\u4FDD\u7559\u8FD1 M \u697C\u539F\u6587", 0),
@@ -23143,7 +23448,7 @@ var CARDS = {
 };
 function makePluginCard(listName) {
   return CARDS[listName] ?? (function Fallback() {
-    return /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("li", { className: "dsht-npc-card", children: /* @__PURE__ */ (0, import_jsx_runtime22.jsx)("div", { className: "dsht-npc-body", children: /* @__PURE__ */ (0, import_jsx_runtime22.jsxs)("p", { className: "dsht-npc-readonly", children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("li", { className: "dsht-npc-card", children: /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("div", { className: "dsht-npc-body", children: /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("p", { className: "dsht-npc-readonly", children: [
       "\u672A\u77E5\u63D2\u4EF6\uFF1A",
       listName
     ] }) }) });
@@ -23191,9 +23496,9 @@ function installComposerEnterFix() {
 }
 
 // rp-workspace/packages/src/dsht-rp-ui/src/client/index.tsx
-var import_jsx_runtime23 = require("react/jsx-runtime");
+var import_jsx_runtime24 = require("react/jsx-runtime");
 function RpSidebarButton({ wide }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime24.jsxs)(
     "button",
     {
       type: "button",
@@ -23203,8 +23508,8 @@ function RpSidebarButton({ wide }) {
         window.dispatchEvent(new CustomEvent(RP_OPEN_EVENT, { detail: { tab: "chars" } }));
       },
       children: [
-        /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("span", { className: "ico", children: "\u{1F3AD}" }),
-        wide === true && /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("span", { children: "\u89D2\u8272\u626E\u6F14" })
+        /* @__PURE__ */ (0, import_jsx_runtime24.jsx)("span", { className: "ico", children: "\u{1F3AD}" }),
+        wide === true && /* @__PURE__ */ (0, import_jsx_runtime24.jsx)("span", { children: "\u89D2\u8272\u626E\u6F14" })
       ]
     }
   );

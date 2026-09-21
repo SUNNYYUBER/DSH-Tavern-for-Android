@@ -37,10 +37,10 @@ build_one() {
   local GRADLE_TASK BUILD_TYPE ABI_PROP APK_ARTIFACT APK_OUT LIB_SRC
   if [ "$ARCH" = "x86_64" ]; then
     GRADLE_TASK=assembleDebug; BUILD_TYPE=debug; ABI_PROP="-PtargetAbi=x86_64"
-    APK_OUT="$ROOT/DSH-Tavern-0.2.0-x86_64-debug.apk"; LIB_SRC="$WS/dsh-runtime-x64/lib"
+    APK_OUT="$ROOT/DSH-Tavern-0.2.1-x86_64-debug.apk"; LIB_SRC="$WS/dsh-runtime-x64/lib"
   else
     GRADLE_TASK=assembleRelease; BUILD_TYPE=release; ABI_PROP=""
-    APK_OUT="$ROOT/DSH-Tavern-0.2.0-arm64-release.apk"; LIB_SRC="$WS/dsh-runtime/lib"
+    APK_OUT="$ROOT/DSH-Tavern-0.2.1-arm64-release.apk"; LIB_SRC="$WS/dsh-runtime/lib"
   fi
   local APK_ARTIFACT="$ANDROID/app/build/outputs/apk/$BUILD_TYPE/app-$BUILD_TYPE.apk"
 

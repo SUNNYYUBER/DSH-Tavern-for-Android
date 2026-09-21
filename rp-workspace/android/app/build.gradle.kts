@@ -19,8 +19,8 @@ android {
         applicationId = "com.dshtavern.app"
         minSdk = 28
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.2.1"
         // ABI 由 -PtargetAbi 控制：arm64-v8a（真机，默认）/ x86_64（PC 模拟器自测）
         // termux node 两种架构都有官方构建（downloads\aarch64 + downloads\x86_64）
         ndk {
