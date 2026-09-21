@@ -31,6 +31,7 @@
  *   （rp/mvu-settings.json 的 mvu_notification_failure/success 类键，缺省静默）。
  */
 import { useEffect, useRef, useState, type JSX } from 'react'
+import { pollWhileVisible } from './visibility.ts'
 import { rpApi } from './rpc.ts'
 import { useRpSlug, readSessionCwd } from './RpStateFloat.tsx'
 import { readSessionId, readSessionChat, readSessionRunning, forEachChatNode, readNodeKey, readNodeKind, readNodeData, readNodeStatus, readBlocks } from './host-projection.ts'
@@ -303,6 +304,8 @@ class SessionRuntime {
   private consoleNotifyTimer = 0
   /** D8：MVU 通知开关（GET /dsht-mvu/settings 懒加载缓存；null = 未加载） */
   private notifySwitches: { failure: boolean; success: boolean } | null = null
+  /** 【MVU-1】MVU 调试模式（面板 toggle 写入；true 时通知全放行 + 提取打点进 toasts） */
+  debugMode: boolean | null = null
 
   constructor(sessionId: string, slug: string) {
     this.sessionId = sessionId
@@ -463,9 +466,11 @@ class SessionRuntime {
 
   // ---- D8：MVU 通知（开关裁决 + DOM toast + 面板最近提示） ----
 
-  /** rp/mvu-settings.json 的通知开关（mvu_notification_failure / mvu_notification_success 类键；缺省全关） */
+  /** rp/mvu-settings.json 的通知开关（mvu_notification_failure / mvu_notification_success 类键；缺省全关）。
+   *  【MVU-1 2026-09-21】调试模式（dsht_mvu_debug=true）= 全放行，绕过开关检查。 */
   private async notifySwitchesLoaded(): Promise<{ failure: boolean; success: boolean }> {
     if (this.notifySwitches) return this.notifySwitches
+    if (this.debugMode === true) return { failure: true, success: true }
     let sw = { failure: false, success: false }
     try {
       const resp = await fetch('/dsht-mvu/settings')
@@ -491,6 +496,13 @@ class SessionRuntime {
       showDomToast(lv, message)
       this.notify()
     })
+  }
+
+  /** 【MVU-1】调试 toast（直推，不走通知开关——调试面自身的声音；命中/未中提示走这里） */
+  pushDebugToast(message: string): void {
+    this.toasts.push({ ts: Date.now(), level: 'success', message, scriptId: 'dsht-mvu-debug' })
+    if (this.toasts.length > 50) this.toasts.shift()
+    this.notify()
   }
 
   // ---- iframe 挂载 ----
@@ -1361,6 +1373,57 @@ export function RpScriptHost(props: DockProps): JSX.Element | null {
     rtRef.current?.advance(props.session)
   })
 
+  // 【MVU-1 2026-09-21】MVU 调试模式（调研面三）：开关存 rp/mvu-settings.json 的
+  // dsht_mvu_debug 键。开 = ① notifyUser 全放行（runtime.debugMode 短路开关检查）+
+  // ② 轮询 /dsht-mvu/last-extract，提取命中/未中各出一条进 toasts（T2.3b 打点）。
+  const [mvuDebug, setMvuDebug] = useState(false)
+  const lastExtractTsRef = useRef(0)
+  useEffect(() => {
+    let alive = true
+    fetch('/dsht-mvu/settings')
+      .then(r => r.json() as Promise<{ settings?: Record<string, unknown> }>)
+      .then(b => {
+        if (!alive) return
+        const v = b.settings?.['dsht_mvu_debug'] === true
+        setMvuDebug(v)
+        if (rtRef.current) rtRef.current.debugMode = v
+      })
+      .catch(() => { /* 读取失败 = 关（默认静默） */ })
+    return () => { alive = false }
+  }, [])
+  const toggleMvuDebug = () => {
+    const next = !mvuDebug
+    setMvuDebug(next)
+    if (rtRef.current) rtRef.current.debugMode = next
+    // read-modify-write（PUT /settings 是整树替换，先合并再写——否则会清掉 statusbar 等键）
+    void fetch('/dsht-mvu/settings')
+      .then(r => r.json() as Promise<{ settings?: Record<string, unknown> }>)
+      .then(b => fetch('/dsht-mvu/settings', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ settings: { ...(b.settings ?? {}), dsht_mvu_debug: next } }),
+      }))
+      .catch(() => { /* 写失败只影响持久化，本次会话内开关仍生效 */ })
+  }
+  useEffect(() => {
+    if (!mvuDebug || !sessionId) return
+    // L3 护栏：轮询必须走可见性门控（页面不可见时停表，visibility.ts）
+    return pollWhileVisible(() => {
+      fetch(`/dsht-mvu/last-extract?sessionId=${encodeURIComponent(sessionId)}`)
+        .then(r => r.json() as Promise<{ lastExtract?: { ts?: number; scanned?: number; patches?: number; applied?: boolean } | null }>)
+        .then(b => {
+          const le = b.lastExtract
+          if (le && typeof le.ts === 'number' && le.ts > lastExtractTsRef.current) {
+            lastExtractTsRef.current = le.ts
+            rtRef.current?.pushDebugToast(le.applied
+              ? `MVU 提取命中：${le.patches ?? 0} 条补丁（扫描 ${le.scanned ?? 0} 条 assistant）`
+              : `MVU 提取未命中（扫描 ${le.scanned ?? 0} 条 assistant）`)
+          }
+        })
+        .catch(() => { /* 轮询失败静默（下轮再试） */ })
+    }, 8000)
+  }, [mvuDebug, sessionId])
+
   // C15 变量查看器：切到「变量」tab 时拉一次 MVU 变量树（GET /dsht-mvu/variables，只读）
   useEffect(() => {
     if (tab !== 'vars' || !sessionId) return
@@ -1423,6 +1486,13 @@ export function RpScriptHost(props: DockProps): JSX.Element | null {
                 style={tab === 'vars' ? { opacity: 1, fontWeight: 700 } : undefined}
                 onClick={() => setTab(t => (t === 'vars' ? 'none' : 'vars'))}
               >变量</button>
+              <button
+                type="button"
+                className="sf-btn"
+                style={mvuDebug ? { opacity: 1, fontWeight: 700 } : undefined}
+                title="MVU 调试模式：通知全放行 + 提取命中/未中提示（持久化到 mvu-settings.json 的 dsht_mvu_debug）"
+                onClick={toggleMvuDebug}
+              >调试</button>
               <button type="button" className="sf-btn" onClick={() => { rt.reloadAll() }}>重载</button>
               <button type="button" className="sf-btn" onClick={() => { setOpen(false); setTab('none') }}>✕</button>
             </span>

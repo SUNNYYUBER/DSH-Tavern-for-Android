@@ -147,6 +147,8 @@ export async function loadEjsSettings(dshHomeDir: string): Promise<Record<string
 interface LikeMessage {
   role: string
   content: Array<{ type: string; text?: string }>
+  /** 官方 assistant 消息可能带 id（可选；T2.3b 无 id 时按内容 hash 去重） */
+  id?: string
   /**
    * 【心跳 47 扩声明】source 是官方**闭集白名单**（`assertReleasedV0Keys`，多一键即拒整会话）。
    * plugin 源唯一能带结构化文本的形态是 `form:'snapshot'` + `sections`——本文件多处注入
@@ -2757,7 +2759,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   }
 
   /** 会话 RP 状态（$DSH_HOME/rp/state/<sessionId>.json）：presetId + MVU 状态变量树（T2.3） */
-  interface SessionRpState { presetId?: string; state?: Record<string, unknown>; variables?: Record<string, unknown>; cursor?: number; loreTimed?: TimedEffect[]; mvuExtractSeq?: number }
+  interface SessionRpState { presetId?: string; state?: Record<string, unknown>; variables?: Record<string, unknown>; cursor?: number; loreTimed?: TimedEffect[]; mvuExtractSeq?: number; lastExtract?: { ts: number; scanned: number; patches: number; applied: boolean } }
   // 形状保留键（与 dsht-plugin-mvu 的分权契约一致）；一个都没有 = 历史扁平 MVU 树。
   // E1/E11 补：sheets/sheetHistory/tablesMigrated（表格系统新键）与 tables/tableData
   // （ST 1.0 旧键，loadSheets 迁移源）都不是 MVU 变量——入保留集防被误判成扁平变量树
@@ -4432,6 +4434,10 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
               let tree = stM.state ?? {}
               let dirty = false
               let maxSeq = lastSeq
+              // 【MVU-1 调试面 2026-09-21】提取打点：扫描/命中计数落 state.lastExtract，
+              // client 调试模式轮询 /dsht-mvu/last-extract 进 toasts（命中/未中各一条）
+              let scanned = 0
+              let patchCount = 0
               for (const seq of surfaceSeqs) {
                 if (seq <= lastSeq) continue
                 // 读取方式与 scanSurfaceHistory 同源（0.1.2 坑 #22：eventAt 优先，events 直索引兜底）
@@ -4446,11 +4452,13 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 // 官方 assistant 消息可能无 id（DSH 事件本体 id 可选）——无 id 按内容 hash 去重
                 const mid = typeof msg.id === 'string' && msg.id ? msg.id : `h:${hash36(messageText(msg))}`
                 if (stateSeen.has(mid)) { maxSeq = Math.max(maxSeq, seq); continue }
+                scanned += 1
                 const patches0 = parseUpdateVariable(messageText(msg))
                 const patches = patches0.length > 0 ? patches0 : parseJsonPatches(messageText(msg))
                 if (patches.length > 0) {
                   tree = applyStatePatches(tree, patches)
                   stateSeen.add(mid)
+                  patchCount += patches.length
                   dirty = true
                 }
                 maxSeq = Math.max(maxSeq, seq)
@@ -4459,6 +4467,7 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 const stM2 = await loadSessionState(stateSid)
                 if (dirty) stM2.state = tree
                 stM2.mvuExtractSeq = maxSeq
+                if (scanned > 0 || dirty) stM2.lastExtract = { ts: Date.now(), scanned, patches: patchCount, applied: dirty }
                 await saveSessionState(stateSid, stM2)
                 if (dirty) console.log(`[dsht-rp] MVU surface extract (direct): ${Object.keys(tree).length} top keys (${stateSid})`)
               }

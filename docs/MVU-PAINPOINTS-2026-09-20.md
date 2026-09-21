@@ -91,3 +91,16 @@ MVU 生态里状态栏模板是卡作者与玩家的**高频定制面**（ST 生
 **排期建议**：三个「做」共享一个主题——「MVU 的人机直接操作面」，
 适合打包成下一个 goal（估各自独立可交付，顺序：调试模式 → 模板编辑 → 点值编辑，
 按「基础设施已备程度」从易到难）。
+
+---
+
+## 交付记录（2026-09-21，三个「做」全部落地 ✅）
+
+| 项 | 状态 | 实现位置 |
+|---|---|---|
+| MVU 调试模式 + 提取打点 | ✅ | dsh-plugin `lastExtract` 打点（T2.3b 落盘 rp/state/<sid>.json）；`GET /dsht-mvu/last-extract` 端点；[RpScriptHost.tsx](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/RpScriptHost.tsx) 「调试」toggle（read-modify-write 持久化 `dsht_mvu_debug`，开后通知全放行 + `pollWhileVisible` 8s 轮询推「提取命中/未中」toast，直推不走开关） |
+| 状态栏模板编辑 UI | ✅ | [RpStatusbarEditor.tsx](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/RpStatusbarEditor.tsx) 新建（GET/PUT `/dsht-mvu/statusbar` read-modify-write；预览走 `statusbar-render?template=<override>` **不落盘**，`sanitizeDisplayHtml` 白名单）；端点侧 `statusbar-render` 加 template override；挂 [RpStateFloat.tsx](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/RpStateFloat.tsx) 头部「状态栏」按钮（互斥面板族第五个） |
+| 变量点值编辑 | ✅ | `/dsht-mvu/variables/patch` 加 `target:'state'`（关键：读侧深合并 state 赢，写 variables 会被旧值遮蔽；schema 校验改走合并视图）；[RpStateView.tsx](file:///d:/DSH%20RolePlay/rp-workspace/packages/src/dsht-rp-ui/src/client/RpStateView.tsx) 叶子行 ✎ 编辑（JSONPointer 转义 + JSON 智能解析 + Enter/Esc）；端点测试 [mvu-patch-target-state.spec.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/tests/mvu-patch-target-state.spec.ts)（5 条：落 state/不遮蔽/缺省回归/合并视图 422 不落盘/未知 target 容错） |
+| 变量回滚/快照 | 缓议（维持） | dsht-plugin-undo 取舍评估未做，不在本期 |
+
+验证：typecheck 全绿；vitest 84 文件 1811 通过（含新增 5 条）。

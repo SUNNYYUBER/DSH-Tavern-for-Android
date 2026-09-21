@@ -219,6 +219,17 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
       return sendJson(res, 405, { error: 'GET/PUT only' })
     }
 
+    // ---- MVU-1 调试面：最近一次提取打点（dsh-plugin T2.3b 写 rp/state/<sid>.json 的
+    //   lastExtract 键；本插件只读——分权契约：该键归 dsh-plugin 写，与 state 键同侧）----
+    if (sub === '/last-extract') {
+      if (method !== 'GET') return sendJson(res, 405, { error: 'GET only' })
+      const sessionId = new URL(req.url ?? '/', 'http://localhost').searchParams.get('sessionId') ?? ''
+      if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) return sendJson(res, 400, { error: 'valid sessionId required' })
+      const file = await loadStateFile(sessionId)
+      const le = (file as { lastExtract?: unknown }).lastExtract
+      return sendJson(res, 200, { lastExtract: le && typeof le === 'object' ? le : null })
+    }
+
     // ---- 状态栏渲染配置（settings.statusbar 键）----
     if (sub === '/statusbar') {
       if (method === 'GET') {
@@ -252,9 +263,14 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
       if (!sessionId) return sendJson(res, 400, { error: 'sessionId required' })
       const settings = await loadSettings()
       const config = (settings.statusbar && typeof settings.statusbar === 'object' ? settings.statusbar : {}) as Record<string, unknown>
-      const template = ['template', 'content', 'text']
-        .map(k => config[k])
-        .find((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      // 【MVU-2 2026-09-21】可选 template override（编辑器「预览不保存」）：
+      // query 带 template 参数时用它渲染，不落盘、不影响已保存配置
+      const override = queryOf(req.url).get('template')
+      const template = (typeof override === 'string' && override.trim().length > 0)
+        ? override
+        : ['template', 'content', 'text']
+          .map(k => config[k])
+          .find((v): v is string => typeof v === 'string' && v.trim().length > 0)
       const file = await loadStateFile(sessionId)
       const root = file as Record<string, unknown>
       // 运行期优先：state（UpdateVariable 落点）→ variables（initvar 落点）→ 文件根
@@ -320,6 +336,9 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
     }
 
     // ---- 变量 JSONPatch 增量（复用 state/mvu.ts applyStatePatches 引擎）----
+    // 【MVU-3 2026-09-21】target 选项：'variables'（缺省，initvar 落点，TH shim 语义）|
+    // 'state'（LLM UpdateVariable 同落点——手动编辑必须走它：读侧合并视图 state 赢，
+    // 写 variables 会被 state 旧值遮蔽，编辑「看起来没生效」）。
     if (sub === '/variables/patch') {
       if (!writeLike) return sendJson(res, 405, { error: 'POST only' })
       const body = await readJsonBody(req)
@@ -328,13 +347,18 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
       if (!sessionId) return sendJson(res, 400, { error: 'sessionId required' })
       const patches = Array.isArray(body.patches) ? body.patches as StatePatch[] : []
       if (patches.length === 0) return sendJson(res, 400, { error: 'patches required' })
+      const toState = body.target === 'state'
       const file = await loadStateFile(sessionId)
-      const before = file.variables ?? {}
+      const before = (toState ? file.state : file.variables) ?? {}
       // 先在内存应用补丁，D7 schema 校验通过才记 undo/快照/写盘（422 {error, issues} 不落盘）
-      file.variables = applyStatePatches(before, patches)
+      const after = applyStatePatches(before, patches)
+      if (toState) file.state = after
+      else file.variables = after
       const schema = body.variableSchema !== undefined ? body.variableSchema : file.variableSchema
       if (schema != null) {
-        const issues = validateSchemaSubset(file.variables, schema)
+        // 校验合并视图（与读侧同形：variables 叠 state，state 赢）
+        const merged = deepMerge((file.variables ?? {}) as Record<string, unknown>, (file.state ?? {}) as Record<string, unknown>)
+        const issues = validateSchemaSubset(merged, schema)
         if (issues.length > 0) {
           console.warn(`[dsht-mvu] variables/patch schema 校验失败: session=${sessionId} issues=${issues.length}`)
           return sendJson(res, 422, { error: 'variableSchema 校验失败', issues })
@@ -344,7 +368,7 @@ export function apply(ctx: LikePluginContext, _config: unknown): void {
       await appendUndoEntries(dshHome, sessionId, patches.map(p => makeUndoEntry('chat', '', p.path, before)))
       await snapshotStateFile(sessionId) // 任务 1：文件级 before 快照
       await saveStateFile(sessionId, file)
-      console.log(`[dsht-mvu] variables patched: session=${sessionId} patches=${patches.length}`)
+      console.log(`[dsht-mvu] variables patched: session=${sessionId} patches=${patches.length} target=${toState ? 'state' : 'variables'}`)
       return sendJson(res, 200, { ok: true })
     }
 

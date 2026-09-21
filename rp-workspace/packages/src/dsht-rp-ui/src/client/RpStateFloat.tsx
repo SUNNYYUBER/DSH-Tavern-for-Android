@@ -16,6 +16,7 @@ import { slugFromCwd } from './output-protocol.ts'
 import { RpStateView } from './RpStateView.tsx'
 import { RpSearchPanel } from './RpSearchPanel.tsx'
 import { RpTablesView } from './RpTablesView.tsx'
+import { RpStatusbarEditor } from './RpStatusbarEditor.tsx'
 import { pollWhileVisible } from './visibility.ts'
 // 【E2/P-1 W4 收口】官方投影读取一律走单源（见 host-projection.ts 头注）
 import { readSessionBlank, readSessionCwd, readSessionId } from './host-projection.ts'
@@ -197,6 +198,8 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
   const [searchOpen, setSearchOpen] = useState(false)
   // E6：「剧情表格」只读面板由本面板头部按钮拉起（与「查看状态」同款式）
   const [tablesOpen, setTablesOpen] = useState(false)
+  // MVU-2：「状态栏模板」编辑面板由本面板头部按钮拉起（同款式互斥）
+  const [statusbarOpen, setStatusbarOpen] = useState(false)
   const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number; moved: boolean } | null>(null)
   const clickHandledRef = useRef(false)
 
@@ -333,11 +336,14 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
                   （后开的盖住先开的，✕ 只关浮球面板 ⇒ 下面的大面板成了关不掉的残留）。
                   现改为互斥：开一个即关其它两个。 */}
               <button type="button" className="sf-btn" onClick={() => {
-                setViewOpen(true); setSearchOpen(false); setTablesOpen(false)
+                setViewOpen(true); setSearchOpen(false); setTablesOpen(false); setStatusbarOpen(false)
               }}>查看状态</button>
               <button type="button" className="sf-btn" onClick={() => {
-                setSearchOpen(true); setViewOpen(false); setTablesOpen(false)
+                setSearchOpen(true); setViewOpen(false); setTablesOpen(false); setStatusbarOpen(false)
               }}>🔍 搜索</button>
+              <button type="button" className="sf-btn" onClick={() => {
+                setStatusbarOpen(true); setViewOpen(false); setSearchOpen(false); setTablesOpen(false)
+              }}>状态栏</button>
               <button type="button" className="sf-btn" aria-label="刷新状态" onClick={() => {
                 setState(null)
                 void rpApi<{ state: Record<string, unknown> }>('state', { sessionId })
@@ -346,7 +352,7 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
               }}>刷新</button>
               {/* 关闭浮球面板时一并收起三个大面板（否则它们留在屏上且无入口关闭） */}
               <button type="button" className="sf-btn" aria-label="关闭状态面板" onClick={() => {
-                setOpen(false); setViewOpen(false); setSearchOpen(false); setTablesOpen(false)
+                setOpen(false); setViewOpen(false); setSearchOpen(false); setTablesOpen(false); setStatusbarOpen(false)
               }}>✕</button>
             </span>
           </div>
@@ -367,6 +373,8 @@ export function RpStateFloat(props: DockProps): JSX.Element | null {
       {open && searchOpen && <RpSearchPanel sessionId={sessionId} onClose={() => { setSearchOpen(false) }} />}
       {/* E6：剧情表格只读面板（GET /dsht-memory/tables?sessionId=；每表顶部折叠行） */}
       {open && tablesOpen && <RpTablesView sessionId={sessionId} onClose={() => { setTablesOpen(false) }} />}
+      {/* MVU-2：状态栏模板编辑面板（GET/PUT /dsht-mvu/statusbar + 预览不落盘） */}
+      {open && statusbarOpen && <RpStatusbarEditor sessionId={sessionId} onClose={() => { setStatusbarOpen(false) }} />}
     </>
   )
 }
