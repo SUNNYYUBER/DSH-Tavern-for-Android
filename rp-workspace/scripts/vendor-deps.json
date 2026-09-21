@@ -28,6 +28,14 @@
     "lodash": {
       "version": "4.18.1",
       "why": "真 TH 宿主全局 _（predefine 合并面）；脚本可能直接取 window._。"
+    },
+    "handlebars": {
+      "version": "4.7.9",
+      "why": "ext-template-render.ts 的模板编译基准（ST 模板渲染复刻）；v4 是稳定主线，API 面 = compile。"
+    },
+    "dompurify": {
+      "version": "3.4.15",
+      "why": "ext-template-render.ts 的渲染消毒基准（DOMPurify.sanitize）；v3 主线，API 面与 v2 相同。"
     }
   }
 }
