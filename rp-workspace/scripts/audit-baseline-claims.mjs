@@ -65,6 +65,9 @@ const WS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const ROOT = path.resolve(WS, '..')
 const GOAL = path.join(ROOT, 'docs', 'GOAL.md')
 const TMP = path.join(WS, 'tmp')
+// 【W-F 2026-09-21】真值日志的**入库位**（git 跟踪；tmp/ 仍被 gitignore，把真值放那里
+// 会让「tmp/ 被忽略」这一负控前提失效——doc-refs 判据⑤ 实证）。两个目录都读并合并。
+const TRUTH_LOG_DIR = path.join(WS, 'truth-logs')
 
 /**
  * 从 §3.1 文本里抽声明（**纯函数**，便于 selftest 用合成样本）。
@@ -1141,13 +1144,13 @@ if (isMain) {
   //     「上次失败」+「本次正在写入」的日志（只有 30/31 条 gate）⇒ **假红**。
   //     修法两道：⑴ **只认已跑完的日志**（`[完成] DSH …` 收尾标志）；
   //              ⑵ **按 mtime 排序**（不按文件名字典序 —— 名字的排序与时间无关）。
-  const allLogs = fs.existsSync(TMP)
-    ? fs.readdirSync(TMP).filter(f => /build.*\.log$/i.test(f))
+  const allLogs = [TRUTH_LOG_DIR, TMP]
+    .filter(d => fs.existsSync(d))
+    .flatMap(d => fs.readdirSync(d).filter(f => /build.*\.log$/i.test(f))
         .map(f => {
-          const p = path.join(TMP, f)
+          const p = path.join(d, f)
           return { name: f, text: fs.readFileSync(p, 'utf8'), mtime: fs.statSync(p).mtimeMs }
-        })
-    : []
+        }))
   const picked = pickTruthLogs(allLogs)
   if (picked.length === 0) {
     console.error('✗ 找不到任何「已跑完」的构建日志（tmp/*build*.log 里需含 `[完成] DSH …`）'

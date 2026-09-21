@@ -38,11 +38,9 @@ tmp/
 .vscode/
 .idea/
 *.log
-# 门禁真值日志例外：audit-baseline-claims 的「上次构建实测」真值来源（CI 与本地
-# 必须用同一份，否则该门禁在净环境 fail-closed —— W-F 第十跑实证）。发版即刷新。
-!rp-workspace/tmp/
-rp-workspace/tmp/*
-!rp-workspace/tmp/build-truth-*.log
+# 门禁真值日志例外（独立目录，不动 tmp/ 的忽略规则——doc-refs 判据⑤ 的负控前提）：
+# audit-baseline-claims 的「上次构建实测」真值来源（CI 与本地必须用同一份）。发版即刷新。
+!rp-workspace/truth-logs/*.log
 Thumbs.db
 Desktop.ini
 .DS_Store
