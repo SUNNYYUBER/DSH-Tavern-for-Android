@@ -41,7 +41,11 @@ export function resolveDshHome(): string {
 export function isTrusted(req: LikeRequest, webServer: LikeWebServer | undefined): boolean {
   const host = String(req.headers.host ?? '').toLowerCase()
   const hostname = host.replace(/:\d+$/, '').replace(/^\[/, '').replace(/\]$/, '')
-  const lanMode = webServer?.host === '0.0.0.0'
+  // 【W-A 2026-09-21】DSHT_LAN_MODE=1（NodeService 在 LAN 开关开启时注入 node env）
+  // 等价 lanMode：Android 侧 LAN 的实际形态是原生 TCP 反代（0.0.0.0:port+10 →
+  // 127.0.0.1:port），webServer 本体仍绑 loopback——但经代理进来的请求 Host 是
+  // LAN 地址，没有这条会被误判成 DNS rebinding 而 403。
+  const lanMode = webServer?.host === '0.0.0.0' || process.env.DSHT_LAN_MODE === '1'
   if (!lanMode && !['127.0.0.1', 'localhost', '::1'].includes(hostname)) return false
   const origin = req.headers.origin
   if (typeof origin === 'string' && origin !== 'null' && !origin.endsWith(host)) {

@@ -33,6 +33,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
+import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import org.json.JSONArray
 import org.json.JSONObject
@@ -54,9 +55,38 @@ class MainActivity : AppCompatActivity() {
             "var list=signals||[];for(var i=0;i<list.length;i++){if(list[i]&&list[i].aborted)" +
             "{try{c.abort(list[i].reason)}catch(e){c.abort()}return c.signal}if(list[i])list[i].addEventListener('abort',onAbort)}" +
             "return c.signal};}"
+        /**
+         * 【W-G 2026-09-21】旧 WebView polyfill 补齐（对齐 DSHA 公开清单形态）：
+         *  · AbortSignal.timeout（DSH 前端超时的第二个消费点；与 any 同源族）
+         *  · crypto.randomUUID —— **局域网 HTTP（非 secure context）必需**：
+         *    WebView 经 http://<lan-ip> 访问时 window.crypto.randomUUID 不存在
+         *    （secure context 才暴露），DSH 前端与部分社区插件直接调用它。
+         *    用 crypto.getRandomValues（非 secure context 也在）实现 RFC4122 v4。
+         * 只补缺失键（已有实现不覆盖）；注入时机 = onPageStarted（页面 JS 执行前）。
+         */
+        private const val EXTRA_POLYFILLS =
+            "if(window.AbortSignal&&!AbortSignal.timeout){AbortSignal.timeout=function(ms){" +
+            "var c=new AbortController();setTimeout(function(){try{c.abort(new DOMException('TimeoutError','TimeoutError'))}catch(e){c.abort()}},ms);" +
+            "return c.signal};}" +
+            "if(window.crypto&&!crypto.randomUUID&&crypto.getRandomValues){crypto.randomUUID=function(){" +
+            "var b=new Uint8Array(16);crypto.getRandomValues(b);b[6]=(b[6]&15)|64;b[8]=(b[8]&63)|128;" +
+            "var h=[];for(var i=0;i<16;i++)h.push(b[i].toString(16).padStart(2,'0'));" +
+            "return h[0]+h[1]+h[2]+h[3]+'-'+h[4]+h[5]+'-'+h[6]+h[7]+'-'+h[8]+h[9]+'-'+h[10]+h[11]+h[12]+h[13]+h[14]+h[15]};}"
 
         /** SAF 目录授权 requestCode（1001=文件选择 / 1002=通知权限已占用） */
         private const val REQ_TREE = 1003
+        /** 【W-B 2026-09-21】备份：SAF 创建文档（导出 zip 的目标位置） */
+        private const val REQ_BACKUP_CREATE = 1010
+        /** 【W-B】恢复：SAF 选择备份 zip */
+        private const val REQ_RESTORE_PICK = 1011
+        /** 【W-B】备份包内清单文件名（恢复体检时优先读它做预览） */
+        private const val BACKUP_MANIFEST = "dsht-backup.json"
+        /**
+         * 【W-B】备份排除清单（$DSH_HOME 根下的文件名）：本机凭据与运行时令牌。
+         * 凭据不进备份（备份经 SAF 落在用户自选位置，不该带走这台机器的钥匙）——
+         * 恢复后需重新填 API key，这是刻意的安全取舍（DSHA 同款口径）。
+         */
+        private val BACKUP_EXCLUDE = setOf(".credentials.yaml", "dsht-token")
 
         /** §4.16.2 深链派发重试上限：前端 rp-ui 未就绪时 400ms × 25 ≈ 10s 内等监听注册 */
         private const val LOCATE_RETRY_MAX = 25
@@ -153,7 +183,14 @@ class MainActivity : AppCompatActivity() {
                     "FAILED" -> "启动失败：$err"
                     else -> state
                 })
-                sb.append("\n端口 3080：").append(if (port) "已开放 ✓" else "未监听")
+                sb.append("\n端口 ").append(NodeService.activePort).append("：").append(if (port) "已开放 ✓" else "未监听")
+                // 【W-A 2026-09-21】LAN 地址可见（token 不印在等待屏——防肩窥；复制走设置面板）
+                if (o.optBoolean("lanEnabled", false)) {
+                    sb.append("\n局域网访问：已开启（地址与复制在右下角 ⚙ 设置面板）")
+                }
+                if (o.optBoolean("maintenanceMode", false)) {
+                    sb.append("\n维护模式：备份/恢复进行中，node 已暂停…")
+                }
                 // 【L4 2026-09-14 R8 出声】上次进程级被杀归因（此前只赋值不显示，
                 // docs/B-DEVICE-VERIFY-CHECKLIST.md 却声称已显示 —— 文档与代码不一致）
                 if (o.optBoolean("lastAbnormalExit", false)) {
@@ -216,7 +253,7 @@ class MainActivity : AppCompatActivity() {
                         dshLoaded = true
                         reloadNeeded = false
                         reloadAttempts = 0
-                        bootUrl = "http://127.0.0.1:3080/?token=$tok"
+                        bootUrl = "http://127.0.0.1:${NodeService.activePort}/?token=$tok"
                         lastLoadAt = System.currentTimeMillis()
                         hideBoot()
                         webView.loadUrl(bootUrl!!)
@@ -239,7 +276,7 @@ class MainActivity : AppCompatActivity() {
                         dshLoaded = true
                         reloadNeeded = false
                         lastTokenAttempt = ""
-                        bootUrl = "http://127.0.0.1:3080"
+                        bootUrl = "http://127.0.0.1:${NodeService.activePort}"
                         lastLoadAt = System.currentTimeMillis()
                         hideBoot()
                         webView.loadUrl(bootUrl!!)
@@ -948,6 +985,9 @@ class MainActivity : AppCompatActivity() {
                 // Android WebView 部分版本缺 AbortSignal.any（DSH 工作区/会话渲染用到，
                 // 用户实测选择工作区报错）——在页面 JS 执行前注入 polyfill（最早时机）
                 view.evaluateJavascript(ABORT_SIGNAL_ANY_POLYFILL, null)
+                // 【W-G 2026-09-21】AbortSignal.timeout + crypto.randomUUID（后者是 LAN
+                // HTTP 非 secure context 的必需面）——同最早时机注入，只补缺失键
+                view.evaluateJavascript(EXTRA_POLYFILLS, null)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -1127,6 +1167,24 @@ class MainActivity : AppCompatActivity() {
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
             ),
         )
+        // 【W-A/B/D 2026-09-21】悬浮设置入口（NoActionBar 主题没有菜单面——
+        // 设置面板承载：局域网访问 / 备份恢复 / 自检修补 / 重装运行时 / 关于）。
+        // 半透明圆底，常驻右下；不挡 DSH 侧边栏（其在左侧）。
+        addContentView(
+            TextView(this).apply {
+                text = "⚙"
+                textSize = 20f
+                setTextColor(Color.parseColor("#CFD8E3"))
+                setPadding(28, 16, 28, 16)
+                setBackgroundColor(Color.parseColor("#660F1B2D"))
+                setOnClickListener { showSettingsDialog() }
+            },
+            android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.BOTTOM or android.view.Gravity.END,
+            ).apply { setMargins(0, 0, 12, 96) },
+        )
 
         // 【L2 2026-09-14 安全区修复】系统栏避让。
         //
@@ -1280,6 +1338,348 @@ class MainActivity : AppCompatActivity() {
         // node 运行时可直读直写 /sdcard）。仅提示一次（用户拒绝后不打扰——应用内设置/
         // JS 桥 requestAllFilesAccess 随时可再拉起）。
         maybePromptAllFilesAccess()
+    }
+
+    // ---------------------------------------------------------------------------
+    // 设置面板（W-A 局域网访问 / W-B 备份恢复 / W-D 自检修补，2026-09-21）
+    // ---------------------------------------------------------------------------
+
+    private fun showSettingsDialog() {
+        val lanOn = prefs.getBoolean("lan_enabled", false)
+        val items = mutableListOf<String>()
+        val actions = mutableListOf<() -> Unit>()
+        items += "局域网访问：${if (lanOn) "已开启" else "已关闭"}"
+        actions += { toggleLanAccess() }
+        if (lanOn) {
+            val urls = NodeService.lanUrls
+            if (urls.isEmpty()) {
+                items += "　局域网地址：（运行时重启后可见）"
+                actions += { }
+            } else {
+                for (u in urls) {
+                    items += "　复制地址：$u"
+                    actions += { copyToClipboard("局域网地址", u) }
+                }
+            }
+        }
+        items += "备份数据（导出 zip，凭据不进包）…"
+        actions += { startBackup() }
+        items += "恢复数据（从备份 zip 还原）…"
+        actions += { startRestorePick() }
+        items += "自检与一键修补…"
+        actions += { showSelfCheckDialog() }
+        items += "关于（版本信息）"
+        actions += { showAboutDialog() }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("设置")
+            .setItems(items.toTypedArray()) { _, which -> actions[which].invoke() }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
+    /** W-A：LAN 开关（需重启运行时生效——启动参数面：--trusted-host / DSHT_LAN_MODE 都在 node 启动时注入） */
+    private fun toggleLanAccess() {
+        val next = !prefs.getBoolean("lan_enabled", false)
+        val warn = if (next) {
+            "开启后，同一局域网的电脑/平板可用浏览器访问本机的 DSH（地址在设置面板复制）。\n\n" +
+                "安全口径：访问必须持有 web 令牌（无令牌一律 401）；请不要把带令牌的地址发给不可信的人。\n\n" +
+                "需要重启运行时生效（约几秒钟）。"
+        } else {
+            "关闭后局域网代理停止，DSH 回到仅本机访问。\n\n需要重启运行时生效（约几秒钟）。"
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(if (next) "开启局域网访问？" else "关闭局域网访问？")
+            .setMessage(warn)
+            .setPositiveButton("开启并重启" .let { if (next) it else "关闭并重启" }) { _, _ ->
+                prefs.edit().putBoolean("lan_enabled", next).apply()
+                startForegroundService(Intent(this, NodeService::class.java).setAction(NodeService.ACTION_RESTART_NODE))
+                Toast.makeText(this, "运行时重启中…", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun copyToClipboard(label: String, text: String) {
+        val cm = getSystemService(android.content.ClipboardManager::class.java)
+        cm.setPrimaryClip(android.content.ClipData.newPlainText(label, text))
+        Toast.makeText(this, "已复制：$text（完整地址含令牌请从运行日志或重开面板获取）", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showAboutDialog() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("关于")
+            .setMessage(
+                "DSHTavern v${BuildConfig.VERSION_NAME}（versionCode ${BuildConfig.VERSION_CODE}）\n" +
+                    "运行时端口：${NodeService.activePort}\n" +
+                    "局域网访问：${if (prefs.getBoolean("lan_enabled", false)) "开" else "关"}\n" +
+                    "ABI：${Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown"}",
+            )
+            .setPositiveButton("好", null)
+            .show()
+    }
+
+    // ---- W-B 备份 ----
+
+    private fun startBackup() {
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US)
+            .format(java.util.Date())
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/zip"
+            putExtra(Intent.EXTRA_TITLE, "dsht-backup-$stamp.zip")
+        }
+        try {
+            startActivityForResult(intent, REQ_BACKUP_CREATE)
+        } catch (e: android.content.ActivityNotFoundException) {
+            Toast.makeText(this, "系统文件管理器不可用", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * 导出：停 node（维护模式，防活备份带半行残尾）→ zip $DSH_HOME（排除凭据/令牌）
+     * → 恢复 node。失败原因写 toast + 记录（不静默）。
+     */
+    private fun exportBackup(uri: Uri) {
+        Toast.makeText(this, "备份中：node 暂停片刻…", Toast.LENGTH_SHORT).show()
+        Thread {
+            var msg: String
+            NodeService.enterMaintenance()
+            try {
+                val home = File(filesDir, ".dsh")
+                var entries = 0
+                var bytes = 0L
+                var sessions = 0
+                contentResolver.openOutputStream(uri, "wt")!!.use { raw ->
+                    java.util.zip.ZipOutputStream(raw.buffered()).use { zip ->
+                        home.walkTopDown().filter { it.isFile }.forEach { f ->
+                            val rel = f.relativeTo(home).path.replace(File.separatorChar, '/')
+                            if (BACKUP_EXCLUDE.contains(rel)) return@forEach
+                            zip.putNextEntry(java.util.zip.ZipEntry(rel))
+                            f.inputStream().use { it.copyTo(zip) }
+                            zip.closeEntry()
+                            entries++
+                            bytes += f.length()
+                            if (rel.endsWith(".jsonl")) sessions++
+                        }
+                        // 清单（恢复体检的预览数据源）
+                        val manifest = JSONObject()
+                            .put("createdAt", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", java.util.Locale.US).format(java.util.Date()))
+                            .put("appVersion", BuildConfig.VERSION_NAME)
+                            .put("abi", Build.SUPPORTED_ABIS.firstOrNull() ?: "")
+                            .put("entries", entries)
+                            .put("uncompressedBytes", bytes)
+                            .put("sessionLogs", sessions)
+                            .toString()
+                        zip.putNextEntry(java.util.zip.ZipEntry(BACKUP_MANIFEST))
+                        zip.write(manifest.toByteArray(Charsets.UTF_8))
+                        zip.closeEntry()
+                    }
+                }
+                msg = "备份完成：$entries 个文件 / ${bytes / (1024 * 1024)}MB（会话日志 $sessions 份）"
+            } catch (t: Throwable) {
+                msg = "备份失败：${t.message}"
+                android.util.Log.e("DSHTavern", "backup failed", t)
+            } finally {
+                NodeService.exitMaintenance()
+            }
+            val finalMsg = msg
+            handler.post { Toast.makeText(this, finalMsg, Toast.LENGTH_LONG).show() }
+        }.start()
+    }
+
+    // ---- W-B 恢复 ----
+
+    private fun startRestorePick() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/zip"
+        }
+        try {
+            startActivityForResult(intent, REQ_RESTORE_PICK)
+        } catch (e: android.content.ActivityNotFoundException) {
+            Toast.makeText(this, "系统文件管理器不可用", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * 恢复前体检（只读）：整个包过一遍 ZipInputStream（CRC 错直接抛）+
+     * 读清单/统计预览。返回预览 JSON；坏包抛异常（原因给弹窗）。
+     */
+    private fun inspectBackup(uri: Uri): JSONObject {
+        var entries = 0
+        var bytes = 0L
+        var sessions = 0
+        var manifest: JSONObject? = null
+        contentResolver.openInputStream(uri)!!.use { raw ->
+            java.util.zip.ZipInputStream(raw.buffered()).use { zip ->
+                var entry = zip.nextEntry
+                val buf = ByteArray(1 shl 16)
+                while (entry != null) {
+                    if (entry.name == BACKUP_MANIFEST) {
+                        manifest = try { JSONObject(zip.readBytes().toString(Charsets.UTF_8)) } catch (_: Throwable) { null }
+                    } else if (!entry.isDirectory) {
+                        var n = zip.read(buf)
+                        while (n >= 0) { n = zip.read(buf) } // 读空 = CRC 校验顺带完成
+                        entries++
+                        bytes += entry.size.coerceAtLeast(0)
+                        if (entry.name.endsWith(".jsonl")) sessions++
+                    }
+                    zip.closeEntry()
+                    entry = zip.nextEntry
+                }
+            }
+        }
+        if (entries == 0) throw IllegalStateException("备份包是空的（0 个数据文件）")
+        return JSONObject()
+            .put("entries", entries)
+            .put("bytes", bytes)
+            .put("sessionLogs", sessions)
+            .put("manifest", manifest ?: JSONObject.NULL)
+    }
+
+    /** 恢复：体检预览 → 用户确认 → 停 node → 清 .dsh → 解压 → 拉起（sentinel 机制不管 .dsh） */
+    private fun startRestore(uri: Uri) {
+        Toast.makeText(this, "体检备份包…", Toast.LENGTH_SHORT).show()
+        Thread {
+            try {
+                val info = inspectBackup(uri)
+                val m = info.optJSONObject("manifest")
+                val preview = buildString {
+                    append("文件 ${info.getInt("entries")} 个，约 ${info.getLong("bytes") / (1024 * 1024)}MB")
+                    append("\n会话日志 ${info.getInt("sessionLogs")} 份")
+                    if (m != null) {
+                        append("\n备份时间：${m.optString("createdAt", "未知")}")
+                        append("\n来自版本：v${m.optString("appVersion", "未知")}")
+                    } else {
+                        append("\n（无清单文件——可能是手工打包，仍可恢复）")
+                    }
+                    append("\n\n⚠️ 现有数据将被整体替换，API key 需恢复后重新填写。确定恢复？")
+                }
+                handler.post {
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("恢复确认")
+                        .setMessage(preview)
+                        .setPositiveButton("恢复") { _, _ -> doRestore(uri) }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
+            } catch (t: Throwable) {
+                val msg = t.message ?: t.javaClass.simpleName
+                handler.post {
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("备份包体检未通过")
+                        .setMessage("这个包不能用于恢复：\n$msg")
+                        .setPositiveButton("好", null)
+                        .show()
+                }
+            }
+        }.start()
+    }
+
+    private fun doRestore(uri: Uri) {
+        Toast.makeText(this, "恢复中：node 暂停…", Toast.LENGTH_SHORT).show()
+        Thread {
+            var msg: String
+            NodeService.enterMaintenance()
+            try {
+                val home = File(filesDir, ".dsh")
+                home.deleteRecursively()
+                home.mkdirs()
+                var entries = 0
+                contentResolver.openInputStream(uri)!!.use { raw ->
+                    java.util.zip.ZipInputStream(raw.buffered()).use { zip ->
+                        var entry = zip.nextEntry
+                        val buf = ByteArray(1 shl 16)
+                        while (entry != null) {
+                            // 路径穿越防护：只接受规范相对路径（防恶意 zip 写出 .dsh 外）
+                            val name = entry.name
+                            val safe = !name.startsWith("/") && !name.startsWith("\\") &&
+                                !name.split('/').any { it == ".." }
+                            if (safe && name != BACKUP_MANIFEST) {
+                                val out = File(home, name)
+                                if (entry.isDirectory) {
+                                    out.mkdirs()
+                                } else {
+                                    out.parentFile?.mkdirs()
+                                    FileOutputStream(out).use { fos ->
+                                        var n = zip.read(buf)
+                                        while (n >= 0) { fos.write(buf, 0, n); n = zip.read(buf) }
+                                    }
+                                    entries++
+                                }
+                            }
+                            zip.closeEntry()
+                            entry = zip.nextEntry
+                        }
+                    }
+                }
+                msg = "恢复完成：$entries 个文件已还原。运行时重启后请重新填写 API key。"
+            } catch (t: Throwable) {
+                msg = "恢复失败：${t.message}（数据目录可能处于中间态，建议再恢复一次或重装）"
+                android.util.Log.e("DSHTavern", "restore failed", t)
+            } finally {
+                NodeService.exitMaintenance()
+            }
+            val finalMsg = msg
+            handler.post { Toast.makeText(this, finalMsg, Toast.LENGTH_LONG).show() }
+        }.start()
+    }
+
+    // ---- W-D 自检面板 ----
+
+    private fun formatSelfCheck(json: String): Pair<String, Boolean> {
+        val o = JSONObject(json)
+        val arr = o.optJSONArray("checks") ?: return "自检数据不可用" to false
+        val sb = StringBuilder()
+        var anyRepairable = false
+        for (i in 0 until arr.length()) {
+            val c = arr.getJSONObject(i)
+            sb.append(if (c.optBoolean("ok")) "✓ " else "✗ ")
+                .append(c.optString("name"))
+                .append("：")
+                .append(c.optString("detail"))
+                .append('\n')
+            if (!c.optBoolean("ok") && c.optBoolean("repairable")) anyRepairable = true
+        }
+        return sb.toString().trim() to anyRepairable
+    }
+
+    private fun showSelfCheckDialog() {
+        Thread {
+            val (text, anyRepairable) = formatSelfCheck(NodeService.selfCheckJson())
+            handler.post {
+                val b = android.app.AlertDialog.Builder(this)
+                    .setTitle("自检")
+                    .setMessage(text)
+                    .setNegativeButton("关闭", null)
+                if (anyRepairable) {
+                    b.setPositiveButton("一键修补") { _, _ ->
+                        Thread {
+                            val (t2, _) = formatSelfCheck(NodeService.repairAndRecheck())
+                            handler.post {
+                                android.app.AlertDialog.Builder(this)
+                                    .setTitle("修补后复检")
+                                    .setMessage(t2)
+                                    .setPositiveButton("好", null)
+                                    .show()
+                            }
+                        }.start()
+                    }
+                }
+                b.setNeutralButton("重装运行时…") { _, _ ->
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("重装运行时？")
+                        .setMessage("删除运行时哨兵并重新解压约 2.4 万个文件（几分钟）。会话/设置等用户数据不受影响。")
+                        .setPositiveButton("重装") { _, _ ->
+                            NodeService.reinstallRuntime()
+                            Toast.makeText(this, "运行时重装中（见等待屏进度）…", Toast.LENGTH_LONG).show()
+                        }
+                        .setNegativeButton("取消", null)
+                        .show()
+                }
+                b.show()
+            }
+        }.start()
     }
 
     /** 「所有文件访问」系统设置页（MANAGE_EXTERNAL_STORAGE 的专用入口） */
@@ -1505,6 +1905,17 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             dispatchShareChanged(openImportTab = false)
+            return
+        }
+        // 【W-B 2026-09-21】备份目标已选 → 导出；恢复包已选 → 体检+确认+还原
+        if (requestCode == REQ_BACKUP_CREATE) {
+            val uri = data?.data
+            if (resultCode == RESULT_OK && uri != null) exportBackup(uri)
+            return
+        }
+        if (requestCode == REQ_RESTORE_PICK) {
+            val uri = data?.data
+            if (resultCode == RESULT_OK && uri != null) startRestore(uri)
             return
         }
         super.onActivityResult(requestCode, resultCode, data)

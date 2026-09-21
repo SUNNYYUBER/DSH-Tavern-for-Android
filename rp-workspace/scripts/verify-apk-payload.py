@@ -510,7 +510,7 @@ REGEX_MARKS = {
     'L1 双指不误判拖拽': rb'touches\.length\s*>\s*1',
 }
 
-APKS = ['DSH-Tavern-0.2.1-x86_64-debug.apk', 'DSH-Tavern-0.2.1-arm64-release.apk']
+APKS = ['DSH-Tavern-0.2.2-x86_64-debug.apk', 'DSH-Tavern-0.2.2-arm64-release.apk']
 
 # ★ W47：`--apk-root <目录>` —— 显式指定 APK 所在目录（默认 = 当前工作目录）。
 #   为什么需要：APK 交付在**仓库根**，而构建脚本的 cwd 是 `rp-workspace/`

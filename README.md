@@ -5,7 +5,7 @@
 把你的 SillyTavern 数据（角色卡 / 世界书 / 预设 / 正则 / 聊天记录）搬进一个安卓 App。
 装上即用，全部本地运行，不上传你的任何数据。
 
-**当前版本**：`0.2.1`（内嵌 DSH `0.1.5-rc.1`）　|　**状态**：v0.2.1 正式版（验证面见下表；个人业余项目，仍请视作早期软件对待）
+**当前版本**：`0.2.2`（内嵌 DSH `0.1.5-rc.1`）　|　**状态**：v0.2.2 正式版（验证面见下表；个人业余项目，仍请视作早期软件对待）
 
 ## ⚠️ 先读这段
 
@@ -125,10 +125,18 @@
 |---|---|---|
 | 运行方式 | Termux 编译的 Node 直接跑在 Android 的 bionic libc 上，少量二进制经 proot 包装 | 完整 Ubuntu 24.04 rootfs（glibc）装进容器，经 proot / proroot 运行 |
 | 运行时形态 | 单个 Node 进程 + 少量子进程 | Ubuntu 完整进程树 |
-| 包体 | 约 122 MB（14 个 `.so`，构建期从 Termux 官方源获取并校验 SHA256） | 约 370 MB（完整 rootfs） |
+| 包体 | 约 135 MB（14 个 `.so`，构建期从 Termux 官方源获取并校验 SHA256） | 约 177 MB 标准版 / 253 MB 兼容版（内置 Gecko 内核；完整 rootfs） |
 | 工具链 | bionic libc 的 API 覆盖小于 glibc：bash / ripgrep / 原生模块等需逐项适配（见「安卓平台限制」表） | 容器内是完整 glibc 环境，上游工具链直接可用 |
 | phantom process killer（Android 12+，全系统后台子进程限 32 个） | 单进程形态天然在限值内 | 完整进程树需用户开启「停用子进程限制」类选项 |
-| 鸿蒙 / 卓易通 | 已实测完整跑通（HarmonyOS 6 + 卓易通，实测日期 2026-09-19） | 官方标注「未验证」（截至 2026-09-19） |
+| 鸿蒙 / 卓易通 | 已实测完整跑通（HarmonyOS 6 + 卓易通，实测日期 2026-09-19） | 官方标注「未验证」（截至 2026-09-21） |
+| 架构覆盖 | arm64（真机）+ x86_64（模拟器 debug 包，CDP 可调，全部自动化建立在它上面） | 仅 arm64 |
+| 内置终端（PTY） | ❌ 不可用（node-pty 为受控 stub；打通方案已定案见 [PTY-RESEARCH](docs/PTY-RESEARCH-2026-09-21.md)） | ✅ 交互式多终端 |
+| 局域网访问 | ✅ 开关式（原生 TCP 反代到 0.0.0.0，token 鉴权 fail-closed；2026-09-21 起） | ✅（token + SameSite cookie 防泄漏） |
+| 备份 / 恢复 | ✅ 应用内导出/恢复（停服备份、凭据不进包、恢复前体检；2026-09-21 起） | ✅（分范围备份、轮换、恢复体检） |
+| 自检 / 修补 | ✅ 自检面板 + 一键修补 + 重装运行时（2026-09-21 起） | ✅（23 项自检 + 一键修补） |
+| 数据驻地 | 私有目录 + 备份通道（不迁公共目录，判据见 [DATA-DIR-EVAL](docs/DATA-DIR-EVAL-2026-09-21.md)） | 公共目录 Documents/dshdata（卸载保留） |
+| 设备控制通道 | ❌ 不做（战略外：ADB / Shizuku / OCR / 悬浮条） | ✅ ADB 无线直连 / Shizuku / OCR 技能 / 悬浮条 |
+| 工程体系 | 48 项常驻门禁（含负控杠杆自证）+ M4 169 项 APK 内容核验 + deb 级 SHA256 | CI Fast checks（约 300 条纯逻辑断言）+ 离线验签脚本热更新 |
 | 定位 | RP 特化平台（装 APK 即用；底层同样是通用 DSH 安卓化 harness） | 通用 DSH 安卓化平台（含设备控制通道） |
 
 两条路线**不是竞争关系**：
@@ -296,7 +304,7 @@ DSH RolePlay/
 Move your SillyTavern data (character cards / world books / presets / regexes / chat history) into one Android app.
 Ready to use out of the box, fully local — nothing of yours gets uploaded.
 
-**Current version**: `0.2.1` (bundles DSH `0.1.5-rc.1`)　|　**Status**: v0.2.1 stable (see verification matrix below; still a spare-time project — treat as early software)
+**Current version**: `0.2.2` (bundles DSH `0.1.5-rc.1`)　|　**Status**: v0.2.2 stable (see verification matrix below; still a spare-time project — treat as early software)
 
 ## ⚠️ Read this first
 
@@ -416,10 +424,18 @@ Two public approaches exist for running the DSH runtime on Android. This project
 |---|---|---|
 | How it runs | Termux-compiled Node runs directly on Android's bionic libc; a few binaries wrapped via proot | A full Ubuntu 24.04 rootfs (glibc) in a container, run via proot / proroot |
 | Runtime shape | A single Node process + a few child processes | A full Ubuntu process tree |
-| Package size | ~122 MB (14 `.so` files, fetched from the official Termux repo at build time with SHA256 verification) | ~370 MB (full rootfs) |
+| Package size | ~135 MB (14 `.so` files, fetched from the official Termux repo at build time with SHA256 verification) | ~177 MB standard / ~253 MB compat (bundled Gecko engine; full rootfs) |
 | Toolchain | bionic libc covers fewer APIs than glibc: bash / ripgrep / native modules need item-by-item adaptation (see "Android platform constraints") | Full glibc environment inside the container; upstream toolchains work directly |
 | phantom process killer (Android 12+, system-wide 32 background child-process limit) | Single-process shape stays within the limit naturally | A full process tree requires the user to enable "disable child process restrictions"-type options |
-| HarmonyOS / EasyConnect (卓易通) | Verified working end-to-end (HarmonyOS 6 + EasyConnect, verified on 2026-09-19) | Marked "unverified" upstream (as of 2026-09-19) |
+| HarmonyOS / EasyConnect (卓易通) | Verified working end-to-end (HarmonyOS 6 + EasyConnect, verified on 2026-09-19) | Marked "unverified" upstream (as of 2026-09-21) |
+| Architecture coverage | arm64 (devices) + x86_64 (emulator debug build, CDP-enabled — all our automation runs on it) | arm64 only |
+| Built-in terminal (PTY) | ❌ Not available (node-pty is a controlled stub; the enablement plan is settled — see [PTY-RESEARCH](docs/PTY-RESEARCH-2026-09-21.md)) | ✅ Interactive multi-terminal |
+| LAN access | ✅ Toggle (native TCP reverse proxy to 0.0.0.0, token auth fail-closed; since 2026-09-21) | ✅ (token + SameSite cookie leak protection) |
+| Backup / restore | ✅ In-app export/restore (service-paused backup, credentials excluded, pre-restore inspection; since 2026-09-21) | ✅ (scoped backups, rotation, restore inspection) |
+| Self-check / repair | ✅ Self-check panel + one-tap repair + runtime reinstall (since 2026-09-21) | ✅ (23-item self-check + one-tap repair) |
+| Data location | Private dir + backup channel (no public-dir migration — criteria in [DATA-DIR-EVAL](docs/DATA-DIR-EVAL-2026-09-21.md)) | Public Documents/dshdata (survives uninstall) |
+| Device-control channel | ❌ Out of scope by strategy (ADB / Shizuku / OCR / overlay) | ✅ Wireless ADB / Shizuku / OCR skills / overlay |
+| Engineering gates | 48 standing gates (incl. negative-control leverage self-proof) + M4 169-item APK payload verification + per-deb SHA256 | CI Fast checks (~300 pure-logic assertions) + offline-signed script hot updates |
 | Positioning | An RP-specialized platform (ready to use out of the box; the underlying layer is equally a general DSH Android-ization harness) | A general DSH Android-ization platform (with a device-control channel) |
 
 The two approaches **are not competitors**:

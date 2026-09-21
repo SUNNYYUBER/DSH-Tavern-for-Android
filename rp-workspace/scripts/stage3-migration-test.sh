@@ -25,7 +25,7 @@ PKG="com.dshtavern.app"
 PY="${DSHT_PY:-<path-to-python.exe>}"
 DEV="$ROOT/stage3-device"                 # 设备数据本地镜像
 APP="/data/data/$PKG/files"
-APK_X64="$ROOT/DSH-Tavern-0.2.1-x86_64-debug.apk"
+APK_X64="$ROOT/DSH-Tavern-0.2.2-x86_64-debug.apk"
 
 say() { echo "[stage3] $*"; }
 die() { echo "[stage3][FATAL] $*" >&2; exit 1; }

@@ -17,7 +17,7 @@ import sys
 import zipfile
 
 argv = sys.argv[1:]
-apk = argv[0] if argv else 'DSH-Tavern-0.2.1-arm64-release.apk'
+apk = argv[0] if argv else 'DSH-Tavern-0.2.2-arm64-release.apk'
 rest = argv[1:]
 
 only_suffix = None

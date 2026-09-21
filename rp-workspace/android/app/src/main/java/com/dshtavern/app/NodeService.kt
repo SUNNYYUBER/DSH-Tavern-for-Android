@@ -38,6 +38,13 @@ class NodeService : Service() {
         /** 解压哨兵：§4.16.2 前端 dsht-rp-ui client 变更随 runtime.zip 重发布 → v97（覆盖安装强制重解压） */
         private const val RUNTIME_SENTINEL = ".installed-v371"
         private const val DSH_PORT = 3080
+        /** W-C（2026-09-21）：端口冲突探测区间（3080..3089，逐个 bind 试占用） */
+        private const val PORT_PROBE_MAX = 3089
+        /** W-A（2026-09-21）：LAN 代理端口 = activePort + 此偏移（避免与 loopback 同号冲突：
+         *  0.0.0.0:3080 与 127.0.0.1:3080 不能共存） */
+        private const val LAN_PORT_OFFSET = 10
+        /** Intent action：主界面请求「按最新设置重启 node」（LAN 开关变更等启动参数面变更） */
+        const val ACTION_RESTART_NODE = "com.dshtavern.app.RESTART_NODE"
         private const val OUTPUT_CAP = 200
         private const val PROOT_ROOTFS_DIR = "proot-rootfs"
         /** PRoot 真隔离（targetSdk 36：SELinux 仅允许从 nativeLibraryDir exec，busybox 实体必须是 libbusybox.so）。
@@ -71,6 +78,28 @@ class NodeService : Service() {
         @Volatile var portOpen: Boolean = false
         @Volatile var extractedFiles: Int = 0
         @Volatile var restartCount: Int = 0
+        /**
+         * 【W-C 2026-09-21】实际监听端口（端口冲突自动回退的结果；缺省 3080）。
+         * MainActivity 的 loadUrl / 等待屏文案 / 端口探活线程全部以它为准——
+         * 不再硬编码 3080。冷启动时由 findFreePort() 确定；连续启动失败 5 次
+         * 会触发一次重探测（可能在它挂掉期间端口被别人占了）。
+         */
+        @Volatile var activePort: Int = DSH_PORT
+        /** 【W-A 2026-09-21】局域网访问开关（镜像 SharedPreferences 的 lan_enabled；
+         *  服务启动与每次 node 启动时重读——开关变更经 ACTION_RESTART_NODE 生效） */
+        @Volatile var lanEnabled: Boolean = false
+        /** 【W-A】当前可用的局域网地址（http://<ip>:<port>/，已含端口；空 = LAN 未开或无 IPv4） */
+        @Volatile var lanUrls: List<String> = emptyList()
+        /**
+         * 【W-B 2026-09-21】维护模式（备份/恢复期间）：true 时看门狗不再拉起 node。
+         * 进入 = 停 node + 停 LAN 代理 + 失效旧看门狗；退出 = 新代看门狗重新拉起。
+         * 备份/恢复必须停 node：会话 jsonl 是热写文件，活备份会带上半行残尾。
+         */
+        @Volatile var maintenanceMode: Boolean = false
+        /** 当前服务实例（companion 维护入口用；onStartCommand 赋值，onDestroy 清空） */
+        @Volatile private var instance: NodeService? = null
+        /** 连续启动失败计数（端口 0→1 跳变归零；≥5 触发一次端口重探测） */
+        @Volatile private var startFailStreak: Int = 0
         /**
          * watchdog 自愈（2026-09-04 手机 agent 自检实证：ANR/内存峰值被杀，重启后
          * checkpoint 续跑——本标记让"上次异常退出"对用户可见）：启动时写 .dsht-alive
@@ -129,6 +158,12 @@ class NodeService : Service() {
             val o = org.json.JSONObject()
             o.put("state", state)
             o.put("portOpen", portOpen)
+            o.put("activePort", activePort) // W-C：实际监听端口（冲突回退后可能 ≠3080）
+            o.put("lanEnabled", lanEnabled) // W-A：局域网访问开关状态
+            val lanArr = org.json.JSONArray()
+            lanUrls.forEach { lanArr.put(it) }
+            o.put("lanUrls", lanArr) // W-A：可用局域网地址（含端口）
+            o.put("maintenanceMode", maintenanceMode) // W-B：备份/恢复进行中
             o.put("exitCode", nodeExitCode ?: org.json.JSONObject.NULL)
             o.put("lastError", lastError ?: org.json.JSONObject.NULL)
             o.put("extractedFiles", extractedFiles)
@@ -148,6 +183,43 @@ class NodeService : Service() {
             o.put("output", arr)
             return o.toString()
         }
+
+        // ---- W-B/W-D（2026-09-21）维护与自检的 companion 入口（MainActivity 调用）----
+
+        /** 进入维护模式：停 node + 停 LAN 代理 + 失效旧看门狗（备份/恢复期间不被拉起） */
+        fun enterMaintenance() {
+            maintenanceMode = true
+            instance?.stopForMaintenance()
+        }
+
+        /** 退出维护模式：新代看门狗拉起 node（并幂等重同步 profile 插件/symlink 林） */
+        fun exitMaintenance() {
+            maintenanceMode = false
+            instance?.resumeFromMaintenance()
+        }
+
+        /** 按最新设置重启 node（LAN 开关等启动参数面变更后调用；看门狗新代接管） */
+        fun restartNode() {
+            instance?.restartNodeNow()
+        }
+
+        /** 自检（W-D）：返回 {checks:[{id,name,ok,detail,repairable}]}；实例缺席时报单条失败 */
+        fun selfCheckJson(): String = instance?.runSelfCheck()
+            ?: org.json.JSONObject().put("checks", org.json.JSONArray().put(
+                org.json.JSONObject().put("id", "service").put("name", "运行时服务")
+                    .put("ok", false).put("detail", "服务未运行").put("repairable", false),
+            )).toString()
+
+        /** 一键修补（W-D）：执行全部可修复项后重跑自检，返回最新自检 JSON */
+        fun repairAndRecheck(): String {
+            instance?.runBasicRepairs()
+            return selfCheckJson()
+        }
+
+        /** 重装运行时（W-D 重度修复，UI 确认后调）：停 node → 删哨兵 → 重解压 → 拉起 */
+        fun reinstallRuntime() {
+            instance?.reinstallRuntimeNow()
+        }
     }
 
     private val started = AtomicBoolean(false)
@@ -161,6 +233,15 @@ class NodeService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startAsForeground()
         serviceAlive = true
+        instance = this
+        // W-A：镜像主界面的 LAN 开关（每次 node 启动前也会重读，这里先拿初值）
+        lanEnabled = getSharedPreferences("dsht", MODE_PRIVATE).getBoolean("lan_enabled", false)
+        // W-A/W-B：主界面的「立即重启」请求——按最新设置（LAN 开关/trusted-host/端口）重启 node
+        if (intent?.action == ACTION_RESTART_NODE) {
+            recordLine("restart requested by UI (apply latest settings)")
+            restartNodeNow()
+            return START_STICKY
+        }
         // ★ T-76（心跳 65）旧 token 必须**同步**清掉，且必须早于 startPortProbe()。
         // 原实现把"清旧"写在下面的后台线程里（要等 Thread.start() 被调度），而探活线程
         // 在此处立即启动并每秒读一次 dsht-token、在 webToken==null 时发布首个非空值
@@ -202,6 +283,9 @@ class NodeService : Service() {
                     ensureProotRootfs()
                     ensureToolLinks()
                     state = "EXTRACTED"
+                    // W-C：首次启动前确定实际端口（3080 被占则顺延 3081..3089）
+                    activePort = findFreePort()
+                    if (activePort != DSH_PORT) recordLine("port $DSH_PORT busy → fallback to $activePort")
                     startNodeForever()
                 } catch (t: Throwable) {
                     state = "FAILED"
@@ -214,19 +298,23 @@ class NodeService : Service() {
         return START_STICKY
     }
 
-    /** 端口探活线程：每秒 TCP 连 127.0.0.1:3080（比 WebView 报错可靠）+ token 文件轮询 */
+    /** 端口探活线程：每秒 TCP 连 127.0.0.1:activePort（比 WebView 报错可靠）+ token 文件轮询 */
     private fun startPortProbe() {
         if (portThread != null) return
         portThread = Thread {
+            var lastPort = false
             while (serviceAlive) {
                 portOpen = try {
                     Socket().use { s ->
-                        s.connect(InetSocketAddress("127.0.0.1", DSH_PORT), 400)
+                        s.connect(InetSocketAddress("127.0.0.1", activePort), 400)
                         true
                     }
                 } catch (_: Exception) {
                     false
                 }
+                // 端口 0→1 跳变 = node 真的起来了 ⇒ 连续失败计数归零（W-C 重探测的复位条件）
+                if (portOpen && !lastPort) startFailStreak = 0
+                lastPort = portOpen
                 // token 文件轮询（APK 坑 #12：卓易通/鸿蒙上 node stdout 管道可能整段静默，
                 // stdout 捕获链拿不到 token——插件进程内写 $DSH_HOME/dsht-token 作旁路通道；
                 // NodeService 启动 node 前删旧文件，此处读到的一定是本次进程的 token）
@@ -704,17 +792,43 @@ class NodeService : Service() {
         watchdog = Thread {
             val myGen = ++watchdogGen // 新代上岗：旧代 watchdog（若有）将检测到代际落后而退出
             while (!Thread.currentThread().isInterrupted && myGen == watchdogGen && serviceAlive) {
+                // W-B：维护模式（备份/恢复）期间不拉起 node，本代看门狗直接退役
+                if (maintenanceMode) {
+                    recordLine("maintenance mode: watchdog stands down")
+                    break
+                }
+                // W-C：连续 5 次起不来 → 端口可能在 node 缺席期间被别人占了，重探测一次
+                if (startFailStreak >= 5) {
+                    val prev = activePort
+                    activePort = findFreePort()
+                    startFailStreak = 0
+                    recordLine("start failed 5 times; port re-probe: $prev → $activePort")
+                }
+                // W-A：每次启动重读开关（立即重启路径下新值生效）并同步 LAN 代理
+                lanEnabled = getSharedPreferences("dsht", MODE_PRIVATE).getBoolean("lan_enabled", false)
+                ensureLanProxy()
                 try {
                     state = "STARTING"
                     restartCount += 1
-                    recordLine("starting node (attempt $restartCount)…")
+                    startFailStreak += 1
+                    recordLine("starting node (attempt $restartCount, port $activePort, lan=$lanEnabled)…")
                     Log.i(TAG, "starting node: $nodeBin")
-                    val pb = ProcessBuilder(
+                    // W-C/W-A：--port 指定实际端口；LAN 开时给 /api 信任栅栏登记
+                    // 本机各 IPv4 的代理地址（DSH 官方 flag，不动上游源码）
+                    val args = mutableListOf(
                         nodeBin.absolutePath,
                         // --expose-internals：cordis-plugin-hmr 必需（缺它启动即崩）
                         "--expose-internals",
                         entry.absolutePath, "web", "--no-open",
-                    ).apply {
+                        "--port", activePort.toString(),
+                    )
+                    if (lanEnabled) {
+                        for (ip in lanIpv4s()) {
+                            args.add("--trusted-host")
+                            args.add("$ip:${activePort + LAN_PORT_OFFSET}")
+                        }
+                    }
+                    val pb = ProcessBuilder(args).apply {
                         redirectErrorStream(true)
                         environment().apply {
                             put("HOME", filesDir.absolutePath)
@@ -755,6 +869,10 @@ class NodeService : Service() {
                             put("DSHT_APP_VERSION_CODE", BuildConfig.VERSION_CODE.toString())
                             // 目标 ABI：更新源可能同时挂 arm64/x86_64 两个包，按本机挑对应资产
                             put("DSHT_APP_ABI", Build.SUPPORTED_ABIS.firstOrNull() ?: "")
+                            // W-A：LAN 开关经 env 传给我方插件的信任栅栏（lanMode 判定见
+                            // dsht-plugin-shared/http.ts isTrusted；DSH 本体的 /api 栅栏
+                            // 走上面的 --trusted-host）。关 = 不设置（loopback 语义）
+                            if (lanEnabled) put("DSHT_LAN_MODE", "1")
                         }
                         directory(runtimeDir)
                     }
@@ -798,11 +916,277 @@ class NodeService : Service() {
         }.apply { name = "node-watchdog"; start() }
     }
 
+    // ---------------------------------------------------------------------------
+    // W-C（2026-09-21）端口冲突自动回退
+    // ---------------------------------------------------------------------------
+
+    /** 3080..3089 逐个试 bind，返回第一个可用端口（全占则抛错——好于静默起不来） */
+    private fun findFreePort(): Int {
+        for (p in DSH_PORT..PORT_PROBE_MAX) {
+            try {
+                java.net.ServerSocket().use { ss ->
+                    ss.reuseAddress = false
+                    ss.bind(InetSocketAddress("127.0.0.1", p))
+                    return p
+                }
+            } catch (_: Exception) { /* 被占，试下一个 */ }
+        }
+        throw IllegalStateException("端口 $DSH_PORT..$PORT_PROBE_MAX 全被占用")
+    }
+
+    // ---------------------------------------------------------------------------
+    // W-A（2026-09-21）局域网访问（loopback 反代到 0.0.0.0；上游刻意拒绑 0.0.0.0，
+    // 代理形态 = 不动上游安全防线，token 鉴权 fail-closed 不变）
+    // ---------------------------------------------------------------------------
+
+    private var lanProxy: LanProxy? = null
+
+    /** 本机 site-local IPv4 清单（LAN 地址展示 + --trusted-host 登记用） */
+    private fun lanIpv4s(): List<String> = try {
+        java.net.NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback }
+            .flatMap { it.inetAddresses.toList() }
+            .filter { it is java.net.Inet4Address && !it.isLoopbackAddress }
+            .map { it.hostAddress ?: "" }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .sorted()
+    } catch (_: Throwable) { emptyList() }
+
+    /** 按当前开关/端口同步 LAN 代理生命周期（幂等：状态没变就什么都不做） */
+    private fun ensureLanProxy() {
+        val wantPort = activePort + LAN_PORT_OFFSET
+        if (!lanEnabled || maintenanceMode) {
+            lanProxy?.stop()
+            lanProxy = null
+            lanUrls = emptyList()
+            return
+        }
+        val cur = lanProxy
+        if (cur != null && cur.listenPort == wantPort && cur.targetPort == activePort) {
+            // 已在跑：只刷新地址清单（DHCP 换 IP 时展示面跟上）
+            lanUrls = lanIpv4s().map { "http://$it:$wantPort/" }
+            return
+        }
+        lanProxy?.stop()
+        lanProxy = try {
+            LanProxy(wantPort, "127.0.0.1", activePort).also { it.start() }
+        } catch (t: Throwable) {
+            recordLine("LAN proxy bind failed on :$wantPort (${t.message})")
+            null
+        }
+        lanUrls = if (lanProxy != null) lanIpv4s().map { "http://$it:$wantPort/" } else emptyList()
+        if (lanProxy != null) recordLine("LAN access on :$wantPort → 127.0.0.1:$activePort (${lanUrls.size} addr)")
+    }
+
+    /**
+     * 极简 TCP 反代：0.0.0.0:listenPort → 127.0.0.1:targetPort。
+     * 纯字节转发（HTTP/WS/SSE 都透传）；鉴权完全交给 DSH 的 token 栅栏（无 token = 401），
+     * 本层不做任何明文判断——「代理不解密、不放宽」是它和「直接绑 0.0.0.0」的本质区别。
+     * 连接级两条泵线程 + SO_TIMEOUT 防僵死；daemon 线程随进程退出。
+     */
+    private class LanProxy(val listenPort: Int, private val targetHost: String, val targetPort: Int) {
+        @Volatile private var running = false
+        private var server: java.net.ServerSocket? = null
+        private val clients = java.util.concurrent.ConcurrentHashMap<Socket, Boolean>()
+
+        fun start() {
+            val ss = java.net.ServerSocket()
+            ss.reuseAddress = true
+            ss.bind(InetSocketAddress("0.0.0.0", listenPort))
+            server = ss
+            running = true
+            Thread {
+                while (running) {
+                    val client = try { ss.accept() } catch (_: Throwable) { break }
+                    clients[client] = true
+                    Thread { serve(client) }.apply { isDaemon = true; start() }
+                }
+            }.apply { name = "lan-proxy"; isDaemon = true; start() }
+        }
+
+        private fun serve(client: Socket) {
+            var upstream: Socket? = null
+            try {
+                client.soTimeout = 120_000
+                upstream = Socket()
+                upstream.soTimeout = 120_000
+                upstream.connect(InetSocketAddress(targetHost, targetPort), 3000)
+                val up = upstream
+                val t2 = Thread { pipe(client, up) } // 上行：client → upstream
+                t2.isDaemon = true
+                t2.start()
+                pipe(up, client) // 下行：upstream → client（本线程跑）
+            } catch (_: Throwable) {
+            } finally {
+                try { client.close() } catch (_: Throwable) {}
+                try { upstream?.close() } catch (_: Throwable) {}
+                clients.remove(client)
+            }
+        }
+
+        private fun pipe(from: Socket, to: Socket) {
+            try {
+                val buf = ByteArray(1 shl 15)
+                val inp = from.getInputStream()
+                val out = to.getOutputStream()
+                while (running) {
+                    val n = inp.read(buf)
+                    if (n < 0) break
+                    out.write(buf, 0, n)
+                    out.flush()
+                }
+            } catch (_: Throwable) {
+            } finally {
+                // 半关：让对端读到 EOF（HTTP keep-alive / WS 关帧的最低礼仪）
+                try { to.shutdownOutput() } catch (_: Throwable) {}
+            }
+        }
+
+        fun stop() {
+            running = false
+            try { server?.close() } catch (_: Throwable) {}
+            clients.keys.forEach { try { it.close() } catch (_: Throwable) {} }
+            clients.clear()
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // W-B（2026-09-21）维护模式（备份/恢复：停 node，防活备份带半行残尾）
+    // ---------------------------------------------------------------------------
+
+    /** 进入维护：失效看门狗 + 停 node + 停 LAN 代理（保留服务本体与端口探活） */
+    fun stopForMaintenance() {
+        ++watchdogGen
+        try { nodeProcess?.destroy() } catch (_: Throwable) {}
+        lanProxy?.stop()
+        lanProxy = null
+        lanUrls = emptyList()
+        state = "EXITED"
+        recordLine("maintenance: node stopped")
+    }
+
+    /** 退出维护：幂等重同步（profile 插件/symlink 林可能被恢复包改变）后重新拉起 */
+    fun resumeFromMaintenance() {
+        try {
+            ensureRpPluginPatch()
+            ensureToolLinks()
+        } catch (t: Throwable) {
+            recordLine("maintenance resume re-sync warn: ${t.message}")
+        }
+        recordLine("maintenance: resuming node")
+        startNodeForever()
+    }
+
+    /** 按最新设置立即重启 node（失效当前看门狗 → 新代接管 → 新一轮启动重读所有启动参数） */
+    fun restartNodeNow() {
+        ++watchdogGen
+        try { nodeProcess?.destroy() } catch (_: Throwable) {}
+        webToken = null // 旧 token 随进程作废，等新一轮 dsht-token 落盘
+        startNodeForever()
+    }
+
+    // ---------------------------------------------------------------------------
+    // W-D（2026-09-21）自检面板 + 一键修补
+    // ---------------------------------------------------------------------------
+
+    private fun check(id: String, name: String, ok: Boolean, detail: String, repairable: Boolean): org.json.JSONObject =
+        org.json.JSONObject()
+            .put("id", id).put("name", name).put("ok", ok)
+            .put("detail", detail).put("repairable", repairable)
+
+    /** 逐项体检（每项 = 一个可核的事实 + 是否可自动修；不夸大、不静默） */
+    fun runSelfCheck(): String {
+        val items = mutableListOf<org.json.JSONObject>()
+        // 1. 运行时解压（sentinel 在 = 已安装）
+        val sentinel = File(File(filesDir, RUNTIME_DIR), RUNTIME_SENTINEL)
+        items += check("runtime", "运行时解压", sentinel.exists(),
+            if (sentinel.exists()) RUNTIME_SENTINEL else "哨兵缺失（未解压或被清除）", false)
+        // 2. node 进程状态
+        items += check("node", "node 进程", state == "RUNNING" && nodeProcess != null,
+            "state=$state exit=${nodeExitCode ?: "-"}", false)
+        // 3. 端口
+        items += check("port", "端口 $activePort", portOpen, if (portOpen) "已开放" else "未监听", false)
+        // 4. web token
+        items += check("token", "web 令牌", webToken != null,
+            if (webToken != null) "已捕获" else "未捕获（等 node 打印/落盘）", false)
+        // 5. 工具 symlink 林（四件套 × 两处）
+        val nld = applicationInfo.nativeLibraryDir
+        var linkOk = 0
+        var linkTotal = 0
+        for (dir in listOf(File(filesDir, "$RUNTIME_DIR/bin"), File(filesDir, "$PROOT_ROOTFS_DIR/bin"))) {
+            for ((cmd, so) in DSHT_TOOL_LINKS) {
+                linkTotal++
+                val link = File(dir, cmd)
+                var cur: String? = null
+                try { cur = Os.readlink(link.path) } catch (_: Throwable) {}
+                if (cur == File(nld, so).absolutePath) linkOk++
+            }
+        }
+        items += check("toollinks", "工具链 symlink 林", linkOk == linkTotal,
+            "$linkOk/$linkTotal 就位", true)
+        // 6. proot rootfs（或如实报降级原因）
+        val rootfsOk = sandboxFallback == null &&
+            File(filesDir, "$PROOT_ROOTFS_DIR/bin/busybox").let { f ->
+                try { Os.readlink(f.path) != null } catch (_: Throwable) { false }
+            }
+        items += check("sandbox", "沙箱（proot 隔离）", rootfsOk,
+            if (rootfsOk) "就绪" else "已降级：${sandboxFallback ?: "rootfs 缺失"}", true)
+        // 7. profile 插件 patch
+        val patch = File(filesDir, ".dsh/profiles/web/cordis.patch.yml")
+        val patchOk = try { patch.readText().contains("dsht-rp-plugin") } catch (_: Throwable) { false }
+        items += check("profile", "RP 插件 profile 注册", patchOk,
+            if (patchOk) "cordis.patch.yml 就位" else "patch 行缺失", true)
+        // 8. 磁盘余量（<200MB 报警：会话 jsonl 追加 + 备份都需要空间）
+        val freeMb = filesDir.usableSpace / (1024 * 1024)
+        items += check("disk", "磁盘余量", freeMb >= 200, "${freeMb}MB 可用", false)
+        // 9. 数据目录可读
+        val dshHome = File(filesDir, ".dsh")
+        items += check("data", "数据目录（.dsh）", dshHome.isDirectory,
+            if (dshHome.isDirectory) "在" else "缺失（首启未初始化？）", false)
+        return org.json.JSONObject().put("checks", org.json.JSONArray().apply { items.forEach { put(it) } }).toString()
+    }
+
+    /** 一键修补：跑全部幂等修复器（symlink 林 / rootfs / profile 插件），不修运行时本体 */
+    fun runBasicRepairs() {
+        recordLine("self-repair: tool links / proot rootfs / profile plugins")
+        try { ensureToolLinks() } catch (t: Throwable) { recordLine("repair toollinks failed: ${t.message}") }
+        try { ensureProotRootfs() } catch (t: Throwable) { recordLine("repair rootfs failed: ${t.message}") }
+        try { ensureRpPluginPatch() } catch (t: Throwable) { recordLine("repair profile failed: ${t.message}") }
+    }
+
+    /** 重装运行时（W-D 重度修复：停 node → 删哨兵 → 重解压 → 拉起；UI 确认后调） */
+    fun reinstallRuntimeNow() {
+        ++watchdogGen
+        try { nodeProcess?.destroy() } catch (_: Throwable) {}
+        val runtimeDir = File(filesDir, RUNTIME_DIR)
+        runtimeDir.listFiles { f -> f.name.startsWith(".installed-v") }?.forEach { it.delete() }
+        recordLine("runtime sentinel removed; re-extracting")
+        Thread {
+            try {
+                state = "EXTRACTING"
+                ensureRuntime()
+                ensureProotRootfs()
+                ensureToolLinks()
+                state = "EXTRACTED"
+                startNodeForever()
+            } catch (t: Throwable) {
+                state = "FAILED"
+                lastError = t.message ?: t.javaClass.name
+                recordLine("FATAL(reinstall): $lastError")
+            }
+        }.start()
+    }
+
     override fun onDestroy() {
         serviceAlive = false
+        instance = null
         ++watchdogGen // 失效所有代次的 watchdog（防 interrupt 被 waitFor 吞掉后复活）
         watchdog?.interrupt()
         nodeProcess?.destroy()
+        lanProxy?.stop()
+        lanProxy = null
+        lanUrls = emptyList()
         // 正常销毁路径清标记：下次启动 marker 不在 = 上次是干净退出（非异常）
         try { File(filesDir, ALIVE_MARKER).delete() } catch (_: Throwable) { }
         recordLine("node service destroyed")

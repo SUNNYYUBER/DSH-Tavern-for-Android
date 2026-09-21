@@ -169,8 +169,8 @@ const archArg = (() => {
 })()
 
 const ALL_APKS = [
-  { arch: 'arm64', file: path.join(ROOT, 'DSH-Tavern-0.2.1-arm64-release.apk') },
-  { arch: 'x86_64', file: path.join(ROOT, 'DSH-Tavern-0.2.1-x86_64-debug.apk') },
+  { arch: 'arm64', file: path.join(ROOT, 'DSH-Tavern-0.2.2-arm64-release.apk') },
+  { arch: 'x86_64', file: path.join(ROOT, 'DSH-Tavern-0.2.2-x86_64-debug.apk') },
 ]
 const targets = archArg === null ? ALL_APKS : ALL_APKS.filter(a => a.arch === archArg)
 if (targets.length === 0) { console.error(`--arch 只能是 arm64 / x86_64（实得 ${archArg}）`); process.exit(2) }

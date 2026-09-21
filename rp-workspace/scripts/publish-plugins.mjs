@@ -34,7 +34,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const WS = path.resolve(HERE, '..')
 const NM = path.join(WS, 'dsh-runtime-android', 'node_modules')
 const STAGING = path.join(WS, 'tmp', 'publish-staging')
-const VERSION = '0.2.1'
+const VERSION = '0.2.2'
 const ENGINES = { node: '>=22.19.0', dsh: '>=0.1.5-rc.1 <0.1.6' }
 const REPO = { type: 'git', url: 'git+https://github.com/SUNNYYUBER/DSH-Tavern-for-Android.git' }
 

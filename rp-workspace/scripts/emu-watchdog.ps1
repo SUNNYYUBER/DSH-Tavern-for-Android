@@ -24,7 +24,7 @@ $ErrorActionPreference = 'Continue' # 恢复循环里单步失败不终止——
 $sdk      = "$env:USERPROFILE\.android\sdk"
 $emulator = "$sdk\emulator\emulator.exe"
 $adb      = "$sdk\platform-tools\adb.exe"
-$apk      = 'D:\DSH RolePlay\DSH-Tavern-0.2.1-x86_64-debug.apk'
+$apk      = 'D:\DSH RolePlay\DSH-Tavern-0.2.2-x86_64-debug.apk'
 $avd      = 'dsht-x64'
 
 function Write-Log($msg) { Write-Host "[watchdog $(Get-Date -Format 'HH:mm:ss')] $msg" }

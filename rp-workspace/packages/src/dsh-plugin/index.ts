@@ -4840,11 +4840,14 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   if (ctx.webServer) {
     /** 信任栅栏（对照 connection 包 isTrustedApiRequest 语义）：
      *  - webServer 绑 127.0.0.1（默认）：Host 必须是 loopback（防 DNS rebinding）
-     *  - webServer 绑 0.0.0.0（用户显式开放 LAN）：Host 任意，但浏览器请求（带 Origin）必须同源 */
+     *  - webServer 绑 0.0.0.0（用户显式开放 LAN）：Host 任意，但浏览器请求（带 Origin）必须同源
+     *  - 【W-A 2026-09-21】DSHT_LAN_MODE=1（NodeService 在 LAN 开关开启时注入）等价
+     *    lanMode：Android 的 LAN 是原生 TCP 反代（webServer 仍 loopback），经代理进来
+     *    的请求 Host 是 LAN 地址，没有这条会被误判成 DNS rebinding 而 403 */
     const isTrusted = (req: { headers: Record<string, unknown> }): boolean => {
       const host = String(req.headers.host ?? '').toLowerCase()
       const hostname = host.replace(/:\d+$/, '').replace(/^\[/, '').replace(/\]$/, '')
-      const lanMode = ctx.webServer?.host === '0.0.0.0'
+      const lanMode = ctx.webServer?.host === '0.0.0.0' || process.env.DSHT_LAN_MODE === '1'
       if (!lanMode && !['127.0.0.1', 'localhost', '::1'].includes(hostname)) return false
       const origin = req.headers.origin
       if (typeof origin === 'string' && origin !== 'null' && !origin.endsWith(host)) {

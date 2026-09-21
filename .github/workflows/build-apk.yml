@@ -1,0 +1,63 @@
+name: build-apk
+
+# W-F（GOAL-ANDROID-GAP-2026-09-21）：CI 出包。
+# 复现 build-dsht.ps1 完整链（fetch-native-libs → pnpm 构建 → 48 门禁 → gradle），
+# 产出与本地同口径的 x86_64 debug APK（arm64 release 需签名密钥，配置 secrets 后再开）。
+# 触发：手动（workflow_dispatch）+ 推 v* tag。
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build-x64:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # build-dsht.ps1 期望 gradle 在 rp-workspace/downloads/gradle/gradle-8.14
+      # （与本地同路径，免改脚本；缓存避免每次 130MB 下载）
+      - name: Provision Gradle 8.14
+        id: gradle
+        shell: pwsh
+        run: |
+          $dst = "rp-workspace/downloads/gradle"
+          if (-not (Test-Path "$dst/gradle-8.14/bin/gradle.bat")) {
+            New-Item -ItemType Directory -Force $dst | Out-Null
+            Invoke-WebRequest -Uri "https://services.gradle.org/distributions/gradle-8.14-bin.zip" -OutFile "$dst/gradle-8.14-bin.zip"
+            Expand-Archive -Path "$dst/gradle-8.14-bin.zip" -DestinationPath $dst
+            Remove-Item "$dst/gradle-8.14-bin.zip"
+          }
+          if (-not (Test-Path "$dst/gradle-8.14/bin/gradle.bat")) { throw "gradle 就位失败" }
+
+      # Android SDK：windows-latest 自带（ANDROID_HOME 已设）；确认 cmdline-tools 在
+      - name: Android SDK check
+        shell: pwsh
+        run: |
+          Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
+          if (-not $env:ANDROID_HOME) { throw "ANDROID_HOME 未设" }
+
+      # 完整链：不传 -SkipInstall（CI 无既有 runtime）；
+      # 原生库由脚本内 fetch-native-libs.mjs 自动下载（Termux deb + SHA256 校验）
+      - name: Build x86_64 debug APK
+        shell: pwsh
+        run: |
+          & .\rp-workspace\scripts\build-dsht.ps1 -DshVersion 0.1.5-rc.1 -Arch x86_64
+          if ($LASTEXITCODE -ne 0) { throw "build-dsht.ps1 failed: $LASTEXITCODE" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DSH-Tavern-x86_64-debug-apk
+          path: DSH-Tavern-*-x86_64-debug.apk
+          retention-days: 30

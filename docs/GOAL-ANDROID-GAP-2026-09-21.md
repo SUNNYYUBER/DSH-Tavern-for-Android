@@ -146,3 +146,23 @@ W-D 在 W-A/B 落地后把它们纳入自检项；W-E/W-H 是调研面，随时�
    DSHA v0.1.5-rc2 的新能力面同步刷新——现有表格还是其旧版口径）；
 5. 真机/鸿蒙验证按既定口径众包，不阻塞上述收口；
 6. 全套 vitest 绿 + 构建门禁绿 + 发新版 APK（版本号届时再定）。
+
+---
+
+## 交付记录（2026-09-21）
+
+| 工作面 | 状态 | 实现位置与口径 |
+|---|---|---|
+| W-G polyfill | ✅ | MainActivity `EXTRA_POLYFILLS`（AbortSignal.timeout + crypto.randomUUID，后者是 LAN HTTP 非 secure context 必需面），只补缺失键、onPageStarted 注入 |
+| W-A 局域网访问 | ✅ | 原生 TCP 反代 `LanProxy`（0.0.0.0:port+10 → 127.0.0.1:port——上游刻意拒绑 0.0.0.0，代理不动其防线，token 鉴权 fail-closed 不变）；`--trusted-host` 登记 LAN 地址；`DSHT_LAN_MODE` env 打通我方 4 处栅栏副本（shared/http.ts 单源 + dsh-plugin 内联）；设置面板开关（重启生效）+ 地址复制；[lan-trust-fence.spec.ts](file:///d:/DSH%20RolePlay/rp-workspace/packages/tests/lan-trust-fence.spec.ts) 6 条正反控 |
+| W-C 端口回退 | ✅ | `findFreePort()`（3080..3089 bind 试占）+ `--port` 传入 + 连续 5 败重探测；MainActivity/探活线程/等待屏全改 `activePort` |
+| W-B 备份/恢复 | ✅ | 维护模式（停 node 防活备份半行残尾）；导出 zip 排除 `.credentials.yaml`/`dsht-token` + `dsht-backup.json` 清单；恢复 = 只读体检（CRC + 预览）→ 确认 → 清 `.dsh` → 解压（路径穿越防护）→ 幂等重同步拉起；SAF 双通道 |
+| W-D 自检面板 | ✅ | 9 项自检（runtime/node/端口/token/symlink 林/沙箱/profile patch/磁盘/数据目录）+ 一键修补（三个幂等修复器）+ 重装运行时（删哨兵重解压）；设置面板入口 |
+| W-E node-pty 调研 | ✅ | [PTY-RESEARCH-2026-09-21.md](file:///d:/DSH%20RolePlay/docs/PTY-RESEARCH-2026-09-21.md)：第三方 prebuild dynsym 实证不可用（openpty UND）；决策 = NDK 进构建链 + 自编译 node-pty + openpty shim（x86_64 可自验是决定性论据）；实施另立 goal |
+| W-H 数据驻地评估 | ✅ | [DATA-DIR-EVAL-2026-09-21.md](file:///d:/DSH%20RolePlay/docs/DATA-DIR-EVAL-2026-09-21.md)：不迁（四判据：备份等效/FUSE IO/卓易通未知/机制破坏面）；含推翻条件 |
+| W-F CI 出包 | ✅ | [.github/workflows/build-apk.yml](file:///d:/DSH%20RolePlay/.github/workflows/build-apk.yml)（windows-latest 完整链：gradle 就位 → build-dsht.ps1 全量 → 产物上传）；build-dsht.ps1 的 JAVA_HOME 硬编码改条件化（CI 前提）；实证见工作流运行记录 |
+| README 刷新 | ✅ | 中英对照表按 DSHA v0.1.5-rc2 口径重排（13 维度，含本 goal 新能力与「数据驻地/工程体系/设备通道」明示差异） |
+
+验证：typecheck 全绿；vitest 85 文件 1817 通过（新增栅栏测试 6 条）；Kotlin `compileDebugKotlin` 编译通过。
+模拟器端到端实证（LAN 访问/备份恢复/端口回退 UI 面）按项目口径随真机众包——
+原生层逻辑已编译验证，栅栏层有单测正反控。
