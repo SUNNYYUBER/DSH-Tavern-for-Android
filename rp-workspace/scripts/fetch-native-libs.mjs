@@ -38,6 +38,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -60,7 +61,12 @@ const CACHE = [
 //   'git-core'   → dsh-runtime-android/git-core/（git 的 libexec；GIT_EXEC_PATH 指向）
 // ---------------------------------------------------------------------------
 const TARGETS = [
-  { so: 'libnode.so', deb: { x86_64: 'nodejs_x86_64.deb', aarch64: 'nodejs_aarch64.deb' }, inner: 'lib/libnode.so', lic: 'MIT' },
+  // 【W-F 2026-09-21】libnode 改 asset 直取：Termux nodejs ≥26.4.0-1 起 deb 改静态链接
+  // bin/node、**不再含 libnode.so**（控制包 Version: 26.4.0-1 实证）——deb 通道对
+  // libnode 已永久失效。asset = 本仓 release `native-cache-v1` 托管的、历版 APK 实际
+  // 在用的 libnode.so（MIT；SHA256 钉在下表）。deb 字段保留仅为档案记录。
+  { so: 'libnode.so', deb: { x86_64: 'nodejs_x86_64.deb', aarch64: 'nodejs_aarch64.deb' }, inner: 'lib/libnode.so', lic: 'MIT',
+    asset: { x86_64: 'libnode-x86_64.so', aarch64: 'libnode-arm64.so' } },
   { so: 'libproot.so', deb: { x86_64: 'proot_5.1.107.92_x86_64.deb', aarch64: 'proot_5.1.107.92_aarch64.deb' }, inner: 'bin/proot', lic: 'GPLv2' },
   { so: 'libbusybox.so', deb: { x86_64: 'busybox_1.38.0-1_x86_64.deb', aarch64: 'busybox_1.38.0-1_aarch64.deb' }, inner: 'bin/busybox', lic: 'GPLv2' },
   { so: 'libcares.so', deb: { x86_64: 'c-ares_x86_64.deb', aarch64: 'c-ares_1.34.8_aarch64.deb' }, inner: 'lib/libcares.so', lic: 'MIT' },
@@ -132,7 +138,13 @@ const SHA256 = {
   'libffi_x86_64.deb': 'fb3788bf51af4b838519291840c1f8a1e19c56423355f91a41e963109b8926a2',
   'libsqlite_3.53.4_aarch64.deb': '0e909ce0d50fe123305446cd22e0c5edf535d40344b9b065fbdcdee52f53198d',
   'libsqlite_x86_64.deb': 'c2801581e7c656aec11153e5ef42179b9f8db8b9739fb6706899b93fa2655e6e',
+  // ---- W-F（2026-09-21）asset 直取项（本仓 release native-cache-v1 托管）----
+  'libnode-arm64.so': 'a0d21a1589312919114b24a5cc520c30ab7f26f9985b3f0c643c153172ebd1e6',
+  'libnode-x86_64.so': '2aea3793e8c789b09a77e35150b536cef7ceb8ddcbfc276ba07d60eceb514a29',
 }
+
+/** asset 直取项的下载基址（本仓 release；libnode 的 deb 通道失效后的替代源） */
+const ASSET_BASE = 'https://github.com/SUNNYYUBER/DSH-Tavern-for-Android/releases/download/native-cache-v1'
 
 const MIRRORS = [
   'https://packages.termux.dev/apt/termux-main/pool/main',
@@ -205,6 +217,7 @@ function destReady (spec, destDir) {
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 
 if (isMain) {
+  await (async () => {
   const argv = process.argv.slice(2)
   const flag = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d }
   const CHECK = argv.includes('--check')
@@ -212,7 +225,7 @@ if (isMain) {
   const archArg = flag('--arch', 'all')
   const arches = archArg === 'all' ? Object.keys(ARCHES) : [archArg]
   for (const a of arches) {
-    if (!ARCHES[a]) { console.error(`✗ 未知架构：${a}（可选 ${Object.keys(ARCHES).join(' / ')} / all）`); process.exit(1) }
+    if (!ARCHES[a]) { console.error(`✗ 未知架构：${a}（可选 ${Object.keys(ARCHES).join(' / ')} / all）`); process.exitCode = 1; return }
   }
 
   const missing = []
@@ -235,13 +248,14 @@ if (isMain) {
   if (CHECK) {
     if (missing.length === 0) {
       console.log(`[native-libs] ✓ 双架构 ${TARGETS.length * arches.length} 项齐备（跳过 ${skipped} 项已存在）`)
-      process.exit(0)
+      return
     }
     console.error(`[native-libs] ✗ 缺失 ${missing.length} 项：`)
     for (const m of missing) console.error('  · ' + m)
     console.error('  ⇒ 这些是**第三方二进制**（Termux deb 提取），本仓库不再分发。')
     console.error('  ⇒ 补齐：node scripts/fetch-native-libs.mjs（首次需联网，之后走 downloads/ 缓存）')
-    process.exit(1)
+    process.exitCode = 1
+    return
   }
 
   // —— 补齐模式：定位 deb（缓存优先）→ 校验 → 解包 → 提取 ——
@@ -256,6 +270,75 @@ if (isMain) {
       if (fs.existsSync(alt)) return alt
     }
     return null
+  }
+
+  /**
+   * 【W-F 2026-09-21】缓存缺失时从镜像下载（兑现头注 ②「缺失才联网」——
+   * 此前只报错给 URL 让人手抓，GitHub Actions 首跑实证此路必断）。
+   * 落 `downloads/proot/`（与缓存同位，此后幂等）；**下载即过 SHA256 表**
+   * （校验不符 = 疑似镜像串版/上游换版，换下一路径，全灭返回 null 由调用方 fail-closed）。
+   *
+   * URL 解析两级：① 直名（缓存名 = pool 名的多数 deb）；② pool 目录清单里
+   * 同包同架构的最新 deb（nodejs 这类缓存名被剥了版本号的——pool 只留最新版，
+   * 直名必 404；SHA256 表同时把版本钉死：上游换版 = 校验不符 = 出声失败，不静默降级）。
+   */
+  async function downloadDeb (debFile) {
+    const pkg = debFile.split('_')[0]
+    const archSuffix = debFile.match(/_(aarch64|x86_64|arm|i686|all)\.deb$/)?.[0] ?? ''
+    const dest = path.join(WS, 'downloads', 'proot', debFile)
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    const tryOne = async (url) => {
+      try {
+        const res = await fetch(url, { redirect: 'follow' })
+        if (!res.ok) return false
+        const buf = Buffer.from(await res.arrayBuffer())
+        const want = SHA256[debFile]
+        if (want) {
+          const got = createHash('sha256').update(buf).digest('hex')
+          if (got !== want) {
+            console.error(`  ✗ ${debFile} SHA256 不符（${url}）：${got}`)
+            return false
+          }
+        }
+        fs.writeFileSync(dest, buf)
+        console.log(`  ↓ ${debFile} ← ${url}（${Math.round(buf.length / 1024)} KB）`)
+        return true
+      } catch { return false }
+    }
+    for (const m of MIRRORS) {
+      const dir = `${m}/${pkg[0]}/${pkg}`
+      if (await tryOne(`${dir}/${debFile}`)) return dest
+      // 第二级：目录清单取同包同架构的最新版本文件
+      try {
+        const idx = await (await fetch(dir + '/', { redirect: 'follow' })).text()
+        const names = [...idx.matchAll(/href="([^"]+\.deb)"/g)].map(x => x[1])
+          .filter(n => n.startsWith(pkg + '_') && n.endsWith(archSuffix))
+          .sort()
+        if (names.length > 0 && await tryOne(`${dir}/${names[names.length - 1]}`)) return dest
+      } catch { /* 清单不可读 → 下一个镜像 */ }
+    }
+    return null
+  }
+
+  /** asset 直取（本仓 release 托管的单文件；缓存 → 下载 → SHA256 → 落缓存位） */
+  async function downloadAsset (assetName) {
+    const cached = findDeb(assetName)
+    if (cached) return cached
+    const dest = path.join(WS, 'downloads', 'proot', assetName)
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    try {
+      const res = await fetch(`${ASSET_BASE}/${assetName}`, { redirect: 'follow' })
+      if (!res.ok) return null
+      const buf = Buffer.from(await res.arrayBuffer())
+      const want = SHA256[assetName]
+      if (want && createHash('sha256').update(buf).digest('hex') !== want) {
+        console.error(`  ✗ ${assetName} SHA256 不符（asset 源）`)
+        return null
+      }
+      fs.writeFileSync(dest, buf)
+      console.log(`  ↓ ${assetName} ← native-cache-v1（${Math.round(buf.length / 1024)} KB）`)
+      return dest
+    } catch { return null }
   }
 
   function sha256 (p) {
@@ -317,14 +400,38 @@ if (isMain) {
     for (const spec of TARGETS) {
       const destDir = destDirFor(spec, arch)
       if (!FORCE && destReady(spec, destDir)) continue
+      // asset 直取项（libnode：deb 通道已失效，见 TARGETS 注释）——单文件下载 + 校验 + 拷贝
+      if (spec.asset) {
+        const assetName = spec.asset[termuxArch]
+        const p = await downloadAsset(assetName)
+        if (!p) {
+          console.error(`✗ asset 获取失败：${assetName}（native-cache-v1 与缓存均不可得）`)
+          process.exitCode = 1
+          return
+        }
+        const got = sha256(p)
+        if (SHA256[assetName] && got !== SHA256[assetName]) {
+          console.error(`✗ SHA256 不符：${assetName}\n  期望 ${SHA256[assetName]}\n  实得 ${got}`)
+          process.exitCode = 1
+          return
+        }
+        fs.mkdirSync(destDir, { recursive: true })
+        fs.copyFileSync(p, path.join(destDir, spec.so))
+        const kb = Math.round(fs.statSync(path.join(destDir, spec.so)).size / 1024)
+        console.log(`  ✓ ${arch}/${spec.so}（${kb} KB · ${spec.lic}）← asset:${assetName}`)
+        fetched += 1
+        continue
+      }
       const debFile = debNameFor(spec.deb, termuxArch)
-      const debPath = findDeb(debFile)
+      let debPath = findDeb(debFile)
+      if (!debPath) debPath = await downloadDeb(debFile) // 缓存缺失 → 镜像下载（W-F）
       if (!debPath) {
-        console.error(`✗ 缺 deb：${debFile}`)
-        console.error(`  ⇒ 从上游取（上次构建缓存在 downloads/）：`)
+        console.error(`✗ 缺 deb 且镜像下载失败：${debFile}`)
+        console.error(`  ⇒ 手工来源：`)
         for (const m of MIRRORS) console.error(`     ${m}/<首字母>/${debFile.split('_')[0]}/${debFile}`)
         console.error('  ⇒ 或直接把 deb 放进 rp-workspace/downloads/proot/ 后重跑本脚本')
-        process.exit(1)
+        process.exitCode = 1
+        return
       }
       const want = SHA256[debFile]
       if (want) {
@@ -332,7 +439,8 @@ if (isMain) {
         if (got !== want) {
           console.error(`✗ SHA256 不符：${debFile}\n  期望 ${want}\n  实得 ${got}`)
           console.error('  ⇒ 上游可能已换版。**先核对来源**再更新脚本里的 SHA256 表（防供应链替换）。')
-          process.exit(1)
+          process.exitCode = 1
+          return
         }
       } else {
         console.warn(`⚠ ${debFile} 无 SHA256 记录 ⇒ 跳过校验（请补进脚本的 SHA256 表）`)
@@ -357,5 +465,5 @@ if (isMain) {
     }
   }
   console.log(`[native-libs] 完成：新提取 ${fetched} 项，跳过 ${skipped} 项（已存在）`)
-  process.exit(0)
+  })()
 }
