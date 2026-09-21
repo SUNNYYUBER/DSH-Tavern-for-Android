@@ -1573,6 +1573,9 @@ $svcText = $svcText -replace "\.installed-v$oldV", ".installed-v$newV"
 Write-Host "  RUNTIME_SENTINEL: .installed-v$oldV → .installed-v$newV（覆盖安装将重新解压）"
 
 $assets = "$android\app\src\main\assets"
+# CI 净环境坑（第十四跑实证）：assets 目录无被 git 跟踪的文件 ⇒ checkout 后不存在
+# ⇒ tar 写 dsh-runtime.zip 报 "Failed to open"。构建脚本自足：先确保目录在。
+New-Item -ItemType Directory -Force $assets | Out-Null
 Remove-Item "$assets\dsh-runtime.zip" -Force -ErrorAction SilentlyContinue
 Push-Location $runtimeDst
 Remove-Item verify-home -Recurse -Force -ErrorAction SilentlyContinue
