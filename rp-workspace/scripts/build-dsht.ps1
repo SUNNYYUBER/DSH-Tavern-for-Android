@@ -564,7 +564,12 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  [gate] OK audit-selftest-claims.mjs --selftest（136/136，含声明过期 / 悬空引用 / 未接入契约负控与杠杆；W45 补：按区段语义界定扫描面 + 任意路径前缀 + 对比叙述/别的量词排除；★ W65 补：变化叙述（A → B 取右值）+ 窗口不得截断在数字中间 + ★ 第三受守面（本文件的 gate 文案）；★ W71 补：头注声明的判据条数 vs 实现条数；★ W72 补：表格行内**跨列**分数抽取（表格列边界不再切断窗口）；★ W73 补：头注「无汇总数逐条清单」vs 实现分组键；★ W74 补：闸门支持的**输入面参数**必须被其负控真的传过；★ W75 补：头注「## 退出码」段 vs 实现的 exit 实参（幽灵声明 / 未声明的码）；★ W76 补：**第二排版形态**（注释行内「退出码：0 = …」，含续行、引用编号剔除、Python 用 sys.exit/return N、括号配平）；★ W77 补：**头注用法行声明的 CLI flag vs 实现真的读它**（双向对账 + 四种读取形态 + 含反引号的行跳过 + 豁免表机器守）；★ W78 补：**读数登记的 `Pattern` 必须真的能匹配到值**（实跑核验 + 自调用链排除 + 只出声不报红两种边界 + 非法正则与「匹配 0 行」分家））"
 & node $stClaims | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "判据未通过：audit-selftest-claims.mjs（文档里的自证分数声明与实测不一致或无法被证伪）" }
+if ($LASTEXITCODE -ne 0) {
+    # 同上：失败带证据（第十一跑：自证全绿但主检挂，输出同样被吞）
+    $stMain = & node $stClaims 2>&1 | Out-String
+    Write-Host $stMain
+    throw "判据未通过：audit-selftest-claims.mjs（文档里的自证分数声明与实测不一致或无法被证伪）"
+}
 Write-Host "  [gate] OK audit-selftest-claims.mjs（文档声明与脚本实测逐条一致，且分数行可被机器读出）"
 Show-Reading -Gate 'audit-selftest-claims.mjs' -Path $stClaims   # ★ W62：受检闸门数 / 文档声明数
 $stNc = Join-Path $ws 'scripts\audit-selftest-claims-negctl.mjs'
