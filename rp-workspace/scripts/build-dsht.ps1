@@ -22,7 +22,9 @@ $ErrorActionPreference = 'Stop'
 Remove-Item Env:\NODE_DEBUG -ErrorAction SilentlyContinue
 # pnpm 经 npx 调用：nvm 切换 node 版本后全局 pnpm 不一定在 PATH（踩过）
 $pnpm = @('npx', '-y', 'pnpm@10')
-$root       = 'D:\DSH RolePlay'
+# 仓库根从脚本位置推导（本地 = D:\DSH RolePlay；CI = D:\a\<repo>\<repo>）——
+# 此前硬编码 'D:\DSH RolePlay'，GitHub Actions 上必炸（W-F 首跑实证 2026-09-21）
+$root       = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $ws         = "$root\rp-workspace"
 $runtimeSrc = "$ws\dsh-runtime-src"          # 安装用干净目录
 $runtimeDst = "$ws\dsh-runtime-android"      # 平台适配后的安卓 runtime
