@@ -98,6 +98,15 @@ function runAudit (docPath, asName) {
 if (!fs.existsSync(AUDIT)) { console.error(`✗ 找不到 ${AUDIT}`); process.exit(2) }
 if (!fs.existsSync(SRC)) { console.error(`✗ 找不到底本文档 ${SRC}`); process.exit(2) }
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true })
+// ★★ 判据⑤ 负控的前提 fixture（**W-F / CI 第十二跑实证**）：负控 D/E 注入的引用必须是
+//   「磁盘真实存在但不在版本控制内」的文件——此前**依赖本机 tmp/ 里的历史探针氛围**，
+//   CI 净环境不存在 ⇒ 判据① 先抓到（报「可执行引用悬空」而非「不在版本控制内」
+//   ⇒ 负控 D/E 两条假红，36/38 vs 38/38）。⇒ fixture 由负控**自造**（B11：测试前提
+//   不得依赖环境氛围）。
+const FIXTURE_TMP_PROBE = path.join(TMP_DIR, 'w32-all-projectable.mjs')
+if (!fs.existsSync(FIXTURE_TMP_PROBE)) {
+  fs.writeFileSync(FIXTURE_TMP_PROBE, '// 判据⑤ 负控 fixture：真实存在但不应被文档引用（tmp/ 不入版本控制）\n')
+}
 
 const ORIG = fs.readFileSync(SRC, 'utf8')
 const lines = ORIG.split('\n')
