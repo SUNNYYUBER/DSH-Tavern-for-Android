@@ -73,6 +73,21 @@ jobs:
           node .\rp-workspace\scripts\build-rp-ui.mjs
           if ($LASTEXITCODE -ne 0) { throw "build-rp-ui failed: $LASTEXITCODE" }
 
+      # DSH 运行时预装（门禁在脚本 Step 1 安装之前跑，audit-session-integrity 的自证
+      # 要 dsh-runtime-src 里的官方实现——没有这步，CI 净环境必炸 fail-closed。
+      # 与 build-dsht.ps1 Step 1 同口径；脚本随后会重删重装一遍（幂等，保证其自证不变量）
+      - name: Pre-install DSH runtime (gate prerequisite)
+        shell: pwsh
+        run: |
+          $src = "rp-workspace/dsh-runtime-src"
+          New-Item -ItemType Directory -Force $src | Out-Null
+          [IO.File]::WriteAllText("$src/package.json", "{`"dependencies`": {`"@deepseek-ai/dsh`": `"0.1.5-rc.1`", `"dsh-preset-enhance`": `"0.3.2-rc.1`"}}")
+          Push-Location $src
+          npx -y pnpm@10 install --node-linker=hoisted --registry=https://registry.npmmirror.com
+          if ($LASTEXITCODE -ne 0) { Pop-Location; throw "pnpm install dsh failed: $LASTEXITCODE" }
+          Pop-Location
+          if (-not (Test-Path "$src/node_modules/@deepseek-ai/dsh/lib/bin.js")) { throw "dsh bin.js 未就位" }
+
       # 原生库就位（Termux deb + deb 级 SHA256 校验；构建脚本 Step 0.1 只做检查不自动补）
       - name: Fetch native libs (Termux debs, SHA256-verified)
         shell: pwsh
