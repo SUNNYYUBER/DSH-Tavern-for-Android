@@ -160,7 +160,7 @@ W-D 在 W-A/B 落地后把它们纳入自检项；W-E/W-H 是调研面，随时�
 | W-D 自检面板 | ✅ | 9 项自检（runtime/node/端口/token/symlink 林/沙箱/profile patch/磁盘/数据目录）+ 一键修补（三个幂等修复器）+ 重装运行时（删哨兵重解压）；设置面板入口 |
 | W-E node-pty 调研 | ✅ | [PTY-RESEARCH-2026-09-21.md](file:///d:/DSH%20RolePlay/docs/PTY-RESEARCH-2026-09-21.md)：第三方 prebuild dynsym 实证不可用（openpty UND）；决策 = NDK 进构建链 + 自编译 node-pty + openpty shim（x86_64 可自验是决定性论据）；实施另立 goal |
 | W-H 数据驻地评估 | ✅ | [DATA-DIR-EVAL-2026-09-21.md](file:///d:/DSH%20RolePlay/docs/DATA-DIR-EVAL-2026-09-21.md)：不迁（四判据：备份等效/FUSE IO/卓易通未知/机制破坏面）；含推翻条件 |
-| W-F CI 出包 | ✅ | [.github/workflows/build-apk.yml](file:///d:/DSH%20RolePlay/.github/workflows/build-apk.yml)（windows-latest 完整链：gradle 就位 → build-dsht.ps1 全量 → 产物上传）；build-dsht.ps1 的 JAVA_HOME 硬编码改条件化（CI 前提）；实证见工作流运行记录 |
+| W-F CI 出包 | ✅ | [.github/workflows/build-apk.yml](file:///d:/DSH%20RolePlay/.github/workflows/build-apk.yml)（windows-latest 完整链：gradle 就位 → build-dsht.ps1 全量 → 产物上传）；build-dsht.ps1 的 JAVA_HOME 硬编码改条件化（CI 前提）；**实证收口**：[run 35609107434](https://github.com/SUNNYYUBER/DSH-Tavern-for-Android/actions/runs/35609107434) success（第 15 跑，前 14 跑实证修坑 19 个——硬编码路径×2、净环境缺生成物/锚定/依赖、Termux pool 结构与 libnode 通道失效、CRLF/quotepath、cp437、真值日志入库位、负控 fixture 自造、assets 目录不自足等），artifact `DSH-Tavern-x86_64-debug-apk` 72.4MB 已上传 |
 | README 刷新 | ✅ | 中英对照表按 DSHA v0.1.5-rc2 口径重排（13 维度，含本 goal 新能力与「数据驻地/工程体系/设备通道」明示差异） |
 
 验证：typecheck 全绿；vitest 85 文件 1817 通过（新增栅栏测试 6 条）；Kotlin `compileDebugKotlin` 编译通过。
