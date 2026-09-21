@@ -71,7 +71,7 @@ const TARGETS = [
   { so: 'libbusybox.so', deb: { x86_64: 'busybox_1.38.0-1_x86_64.deb', aarch64: 'busybox_1.38.0-1_aarch64.deb' }, inner: 'bin/busybox', lic: 'GPLv2' },
   { so: 'libcares.so', deb: { x86_64: 'c-ares_x86_64.deb', aarch64: 'c-ares_1.34.8_aarch64.deb' }, inner: 'lib/libcares.so', lic: 'MIT' },
   { so: 'libc++_shared.so', deb: { x86_64: 'libc++_29_x86_64.deb', aarch64: 'libc++_29_aarch64.deb' }, inner: 'lib/libc++_shared.so', lic: 'Apache-2.0 WITH LLVM-exception' },
-  { so: 'libffi.so', deb: { x86_64: 'libffi_x86_64.deb', aarch64: 'libffi_3.5.2_aarch64.deb' }, inner: 'lib/libffi.so', lic: 'MIT' },
+  { so: 'libffi.so', deb: { x86_64: 'libffi_3.8.0_x86_64.deb', aarch64: 'libffi_3.8.0_aarch64.deb' }, inner: 'lib/libffi.so', lic: 'MIT' },
   { so: 'libsqlite3.so', deb: { x86_64: 'libsqlite_x86_64.deb', aarch64: 'libsqlite_3.53.4_aarch64.deb' }, inner: 'lib/libsqlite3.so', lic: 'Public Domain' },
 
   // ---- P1 能力补齐包（2026-09-20；Termux 官方源，依赖闭包已用 scripts/elf-needed.mjs 核对）----
@@ -134,8 +134,8 @@ const SHA256 = {
   'c-ares_x86_64.deb': 'c5d6194d69a04089040ca50dad96ed7df8773bd3c3d7c4be7d1dd5661ceae6b4',
   'libc++_29_aarch64.deb': 'bb9f12113c137aa0e8513bb51cc49fe77a5ce3ca39ab9e92c57d228ecdf00222',
   'libc++_29_x86_64.deb': 'a4325afa2ecde73742499766e2a46202003e5cb3dcd2b7773ae25f386f3fecfa',
-  'libffi_3.5.2_aarch64.deb': '8c8c1d6ffb049d8496a21c1202d9b4dc9145140886fdbb45716684565f4ed3f5',
-  'libffi_x86_64.deb': 'fb3788bf51af4b838519291840c1f8a1e19c56423355f91a41e963109b8926a2',
+  'libffi_3.8.0_aarch64.deb': '4f255badf74cd31f6a2801c17fa1444199c84c834b517b7c843e2fe9ebe91d77',
+  'libffi_3.8.0_x86_64.deb': '59121ca4bc5f5735d7bb603bd99548983064e8fde97d236e97122cb87d3452a3',
   'libsqlite_3.53.4_aarch64.deb': '0e909ce0d50fe123305446cd22e0c5edf535d40344b9b065fbdcdee52f53198d',
   'libsqlite_x86_64.deb': 'c2801581e7c656aec11153e5ef42179b9f8db8b9739fb6706899b93fa2655e6e',
   // ---- W-F（2026-09-21）asset 直取项（本仓 release native-cache-v1 托管）----
@@ -306,7 +306,10 @@ if (isMain) {
       } catch { return false }
     }
     for (const m of MIRRORS) {
-      const dir = `${m}/${pkg[0]}/${pkg}`
+      // pool 目录前缀（Debian 惯例，Packages 索引实证）：lib* 包用前 4 字符
+      // （libc++/libffi/libsqlite → libc/libf/libs），其余用首字符
+      const prefix = pkg.startsWith('lib') ? pkg.slice(0, 4) : pkg[0]
+      const dir = `${m}/${prefix}/${pkg}`
       if (await tryOne(`${dir}/${debFile}`)) return dest
       // 第二级：目录清单取同包同架构的最新版本文件
       try {
