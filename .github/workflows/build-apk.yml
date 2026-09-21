@@ -48,8 +48,14 @@ jobs:
           Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
           if (-not $env:ANDROID_HOME) { throw "ANDROID_HOME 未设" }
 
-      # 完整链：不传 -SkipInstall（CI 无既有 runtime）；
-      # 原生库由脚本内 fetch-native-libs.mjs 自动下载（Termux deb + SHA256 校验）
+      # 原生库就位（Termux deb + deb 级 SHA256 校验；构建脚本 Step 0.1 只做检查不自动补）
+      - name: Fetch native libs (Termux debs, SHA256-verified)
+        shell: pwsh
+        run: |
+          node .\rp-workspace\scripts\fetch-native-libs.mjs
+          if ($LASTEXITCODE -ne 0) { throw "fetch-native-libs failed: $LASTEXITCODE" }
+
+      # 完整链：不传 -SkipInstall（CI 无既有 runtime）
       - name: Build x86_64 debug APK
         shell: pwsh
         run: |
