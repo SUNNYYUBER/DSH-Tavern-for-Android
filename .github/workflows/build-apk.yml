@@ -58,6 +58,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "pnpm install failed: $LASTEXITCODE" }
         working-directory: rp-workspace/packages
 
+      # TH vendor 自愈（jquery/zod 等不进锁文件的 5 包）+ rp-ui 构建
+      # （th-vendor.gen.txt 是生成物、gitignore 不入库——audit-th-face-coverage 要它；
+      # 没有这两步，CI 净环境必炸在 Could not resolve "./th-vendor.gen.txt?raw"）
+      - name: Vendor deps self-heal + build rp-ui (gen files)
+        shell: pwsh
+        run: |
+          node .\rp-workspace\scripts\vendor-deps.mjs
+          if ($LASTEXITCODE -ne 0) { throw "vendor-deps failed: $LASTEXITCODE" }
+          node .\rp-workspace\scripts\build-rp-ui.mjs
+          if ($LASTEXITCODE -ne 0) { throw "build-rp-ui failed: $LASTEXITCODE" }
+
       # 原生库就位（Termux deb + deb 级 SHA256 校验；构建脚本 Step 0.1 只做检查不自动补）
       - name: Fetch native libs (Termux debs, SHA256-verified)
         shell: pwsh
