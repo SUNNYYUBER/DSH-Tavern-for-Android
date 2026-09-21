@@ -14,6 +14,10 @@ jobs:
   build-x64:
     runs-on: windows-latest
     timeout-minutes: 120
+    env:
+      # Python 门禁输出含中文；CI 控制台缺省 cp437/cp1252 会 UnicodeEncodeError（第八跑实证）
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
 
