@@ -47,9 +47,14 @@
 //   是否存在」这一额外假设（若不存在会被空 catch 吞掉 ⇒ 自愈静默失效）。
 // ============================================================================
 import { readFileSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 
+// 路径从脚本位置推导（scripts/ 的上一级即 rp-workspace 根）——
+// 此前硬编码 'D:/DSH RolePlay/...'，CI 净环境 checkout 路径不同 ⇒ READ FAILED（第十三跑实证）。
+const WS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const FILES = [
-  'D:/DSH RolePlay/rp-workspace/dsh-runtime-android/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js',
+  path.join(WS, 'dsh-runtime-android', 'node_modules', '@deepseek-ai', 'dsh-session-persistence-jsonl', 'lib', 'index.js'),
 ]
 const MARKER = 'DSHT-RESILIENT-LIST'
 
