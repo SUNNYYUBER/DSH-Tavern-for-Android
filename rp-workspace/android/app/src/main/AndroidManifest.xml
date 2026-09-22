@@ -62,5 +62,20 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="常驻本地 DSH 运行时（node web 服务 + WebView 前端），非数据同步" />
         </service>
+
+        <!-- Shizuku 通道（W-2）：设备能力（截屏/输入/通知）经 shell(uid 2000) 执行。
+             见 docs/SHIZUKU-RESEARCH-2026-09-21.md。
+             · 不加任何 <uses-permission moe.shizuku.manager.permission.*>——
+               Shizuku 的 Apache-2.0 §6 明确禁止第三方声明该权限族；
+               v11+ 用自实现权限（Shizuku.checkSelfPermission/requestPermission）。
+             · android:permission 的作用是**保护本 provider 不被普通 app 访问**（官方注释语义）。
+             · exported=true 是必须的：Shizuku 官方 App 需跨进程访问它。 -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 </manifest>

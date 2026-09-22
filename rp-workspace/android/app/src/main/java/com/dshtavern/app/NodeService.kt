@@ -234,6 +234,13 @@ class NodeService : Service() {
         startAsForeground()
         serviceAlive = true
         instance = this
+        // W-2：Shizuku 通道初始化（注册 binder/权限监听，幂等）。
+        // 【为什么在服务里而不是 Activity】设备能力由 node 侧触发，而服务是常驻的、
+        // Activity 可能随时被回收（onDestroy 故意不 stopService）⇒ 权限状态必须
+        // 在服务进程里可读。见 ShizukuBridge 头注。
+        try { ShizukuBridge.init(this) } catch (t: Throwable) {
+            recordLine("shizuku init failed: ${t.message}")
+        }
         // W-A：镜像主界面的 LAN 开关（每次 node 启动前也会重读，这里先拿初值）
         lanEnabled = getSharedPreferences("dsht", MODE_PRIVATE).getBoolean("lan_enabled", false)
         // W-A/W-B：主界面的「立即重启」请求——按最新设置（LAN 开关/trusted-host/端口）重启 node
@@ -1095,6 +1102,24 @@ class NodeService : Service() {
             .put("id", id).put("name", name).put("ok", ok)
             .put("detail", detail).put("repairable", repairable)
 
+    /**
+     * 带**三态**的自检项（W-7 看板需求）。
+     *
+     * 【为什么需要它】原有 schema 只有布尔 `ok`，而 Shizuku 通道有五种状态
+     * （未安装/未启动/未授权/可用/系统不支持）——压成布尔会把「未安装」和
+     * 「已装未启动」显示成同一件事，用户无从处置（两者的修法完全不同）。
+     * 故新增 `state` 字段携带原始状态串，`ok` 仍保留（= 是否可用）以兼容既有 UI。
+     */
+    private fun checkState(
+        id: String, name: String, state: String, ok: Boolean,
+        detail: String, action: String?, repairable: Boolean,
+    ): org.json.JSONObject =
+        org.json.JSONObject()
+            .put("id", id).put("name", name).put("ok", ok)
+            .put("detail", detail).put("repairable", repairable)
+            .put("state", state)
+            .put("action", action ?: org.json.JSONObject.NULL)
+
     /** 逐项体检（每项 = 一个可核的事实 + 是否可自动修；不夸大、不静默） */
     fun runSelfCheck(): String {
         val items = mutableListOf<org.json.JSONObject>()
@@ -1144,6 +1169,20 @@ class NodeService : Service() {
         val dshHome = File(filesDir, ".dsh")
         items += check("data", "数据目录（.dsh）", dshHome.isDirectory,
             if (dshHome.isDirectory) "在" else "缺失（首启未初始化？）", false)
+        // 10. Shizuku 通道（W-2/W-7）——设备能力面；不可用**不算故障**（可选能力），
+        //     故 ok 语义 = 「本能力是否可用」，而 detail 给出准确的五态与处置建议。
+        //     repairable=false：修复需要用户交互（装 App / 启动服务 / 授权），
+        //     与既有三个「无声幂等修复器」形态不同，故不挂一键修补。
+        val shizukuState = ShizukuBridge.currentState()
+        val (shizukuDesc, shizukuAction) = ShizukuBridge.describe(shizukuState)
+        items += checkState(
+            "shizuku", "设备能力（Shizuku）",
+            shizukuState.name,
+            shizukuState == ShizukuBridge.State.READY,
+            shizukuDesc,
+            shizukuAction,
+            false,
+        )
         return org.json.JSONObject().put("checks", org.json.JSONArray().apply { items.forEach { put(it) } }).toString()
     }
 

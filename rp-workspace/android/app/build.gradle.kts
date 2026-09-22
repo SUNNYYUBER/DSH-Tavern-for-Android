@@ -86,4 +86,13 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.webkit:webkit:1.11.0")
+    // Shizuku 通道（W-2）：设备能力经 shell(uid 2000) 执行。
+    // 这是本项目**第一个非 AndroidX 依赖**——破例理由见
+    // docs/SHIZUKU-RESEARCH-2026-09-21.md §五：自实现 adb 协议（TLS+密钥管理）
+    // 是单人项目的净负债，而 Shizuku 是「不 root 超越沙盒」的标准通道。
+    // 版本钉死 13.1.5（Maven Central 实测最新；13.1.5 修的是 Android 14 上
+    // requestBinderForNonProviderProcess 崩溃）。许可 Apache-2.0，与项目兼容。
+    // 【不声明任何 moe.shizuku.manager.permission.*】——其 §6 明确禁止。
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 }
