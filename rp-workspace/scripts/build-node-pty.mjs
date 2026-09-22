@@ -4,11 +4,15 @@
 //   bionic libc 自 API 23 起原生提供 openpty/forkpty/ptsname/posix_openpt/
 //   grantpt/unlockpt ⇒ 零 shim、零额外库；-lutil 必须删（bionic 无独立 libutil）。
 //
-// 输入：dsh-runtime-android/node_modules/node-pty（上游源码，pin 版本）
+// 输入：dsh-runtime-src/node_modules/node-pty（Step 1 装好的官方包，含 C++ 源码）
 //       downloads/node-deb 里的 Termux node 头（node_api.h —— 与运行时同源）
-// 输出：runtime 的 node-pty/prebuilds/android-<arch>/pty.node
+// 输出：**dsh-runtime-src**/node_modules/node-pty/prebuilds/android-<arch>/pty.node
 //       （node-pty utils.loadNativeModule 的查找路径之一；
 //        Android 上 process.platform==='android' ⇒ 目录名 android-<arch>）
+//
+// 【为什么写 src 而不是 dsh-runtime-android】Step 3 会 `Remove-Item $runtimeDst -Recurse`
+// 后从 `$runtimeSrc` 复制 node_modules ⇒ 写到 dst 的产物必被删（本轮实测踩到）。
+// 写 src 则随 Step 3 的复制自然进 dst。
 //
 // 实证（llvm-readelf）：openpty/forkpty/ptsname 全部 @LIBC；
 //   NEEDED = libc++_shared.so + libm.so + libdl.so + libc.so（全是我们已有的库）。
@@ -20,8 +24,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const WS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-const PTY_SRC = path.join(WS, 'dsh-runtime-android', 'node_modules', 'node-pty')
-const NAPI_SRC = path.join(WS, 'dsh-runtime-android', 'node_modules', 'node-addon-api')
+const PTY_SRC = path.join(WS, 'dsh-runtime-src', 'node_modules', 'node-pty')
+const NAPI_SRC = path.join(WS, 'dsh-runtime-src', 'node_modules', 'node-addon-api')
 const OUT_DIR = path.join(WS, 'tmp', 'node-pty-build')
 
 // node_api.h 来源：Termux node 头（与运行时同源，避免与宿主机 node 头 ABI 漂移）

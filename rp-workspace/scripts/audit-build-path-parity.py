@@ -89,6 +89,12 @@ STUB_EXEMPT = {
     ("node-addon-landlock-run/index.js", "@deepseek-ai/node-addon-system/lib/index.js"):
         "ps1 独有的『landlock 新代出口路径』（0.1.5 起官方把它合并进 node-addon-system）；"
         "python 路径已弃用，复活时须把 STUB_MAP 补成新旧双路径",
+    # 【2026-09-21 W-1】node-pty-sim 是 **PC android-sim 验证专用的临时替换**，
+    # 不是常规平台 stub：ps1 的 Step 4 在起 sim 前后临时换/还原（验完即还原成上游原版）。
+    # python 路径**不跑 sim 验证** ⇒ 无对应动作是**正确**的，不是漏落盘。
+    # 真机路径用的是自编译 prebuilds/android-*（见 build-node-pty.mjs），与此无关。
+    ("node-pty-sim/index.js", "node-pty/lib/index.js"):
+        "PC android-sim 验证专用的临时替换（验完还原上游原版）；python 路径不跑 sim 验证 ⇒ 无对应动作是正确的",
 }
 
 

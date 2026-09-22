@@ -23,7 +23,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const WS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-const PTY_DIR = path.join(WS, 'dsh-runtime-android', 'node_modules', 'node-pty', 'prebuilds')
+// 产物在 **dsh-runtime-src**（Step 1.5 写那里，随 Step 3 复制进 dsh-runtime-android）。
+// 两处都查：构建期在 src，构建后（SkipInstall 等）可能在 android。
+const PTY_DIRS = [
+  path.join(WS, 'dsh-runtime-src', 'node_modules', 'node-pty', 'prebuilds'),
+  path.join(WS, 'dsh-runtime-android', 'node_modules', 'node-pty', 'prebuilds'),
+]
 
 const PTY_SYMBOLS = ['openpty', 'forkpty', 'ptsname', 'posix_openpt', 'grantpt', 'unlockpt']
 const ALLOWED_NEEDED = new Set(['libc.so', 'libm.so', 'libdl.so', 'libc++_shared.so'])
@@ -137,10 +142,15 @@ const fail = (msg) => {
 console.log('=== node-pty 预编译产物静态断言（W-1）===')
 
 for (const [dir, expect] of Object.entries(ARCH_EXPECT)) {
-  const file = path.join(PTY_DIR, dir, 'pty.node')
-  console.log(`\n[${dir}] ${file}`)
-  if (!fs.existsSync(file)) {
-    fail(`产物缺失：${file}`)
+  // 取第一个**产物存在**的候选目录（优先 src = 构建期权威位置）
+  let file = null
+  for (const base of PTY_DIRS) {
+    const cand = path.join(base, dir, 'pty.node')
+    if (fs.existsSync(cand)) { file = cand; break }
+  }
+  console.log(`\n[${dir}] ${file ?? '(两处均无产物)'}`)
+  if (!file) {
+    fail(`产物缺失：${PTY_DIRS.map((b) => path.join(b, dir, 'pty.node')).join(' / ')}`)
     continue
   }
 

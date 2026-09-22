@@ -1,4 +1,4 @@
-# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
+﻿# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
 # 用法：
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.8        # 完整流程：装新版本 DSH → 平台适配 → 验证 → 打包 → APK
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.7 -SkipInstall  # runtime 已就绪，只跑后半段（打包/APK/sentinel）
@@ -787,6 +787,26 @@ if (-not $SkipInstall) {
     if (-not $binOk) { throw "dsh lib/bin.js 不存在（安装异常）" }
     Write-Host "  安装完成，bin.js 就位"
 
+    # -----------------------------------------------------------------------
+    # Step 1.5 自编译 node-pty 就位（W-1）——【必须在 Step 1 之后、Step 3 之前】
+    #   · 必须在 Step 1 之后：Step 1 清空并重装 `$runtimeSrc` ⇒ 官方 node-pty 包
+    #     才在场（含 C++ 源码），且我们自编译的 android-* 尚未部署；
+    #   · 必须在 Step 3 之前：Step 3 从 `$runtimeSrc` 复制 node_modules 到
+    #     `$runtimeDst` ⇒ 产物写在 src 才能随复制进 dst。
+    #   · 【为什么不能"手工先跑一次"】官方 prebuilds 是 linux/darwin/win32 ——
+    #     Android 不在其中，**每次重装都会回到"无 android 产物"状态**
+    #     （P-1 家族：声明是自动的、实质是手工记得跑）。
+    #   幂等（覆盖写）；NDK 缺失即 fail-closed。
+    & node (Join-Path $ws 'scripts\build-node-pty.mjs')
+    if ($LASTEXITCODE -ne 0) {
+        throw "node-pty 自编译失败——检查 NDK 是否就位（sdkmanager ""ndk;29.0.14033849""）"
+    }
+    # 静态断言（架构 / PTY 符号全 @LIBC / NEEDED 白名单）——防误塞 glibc 产物
+    & node (Join-Path $ws 'scripts\audit-pty-prebuilt.mjs')
+    if ($LASTEXITCODE -ne 0) {
+        throw "node-pty 产物静态断言失败（详见 node scripts/audit-pty-prebuilt.mjs）"
+    }
+
     Step 2 '平台审计（列出全部原生/平台专属包）'
     $nm = "$runtimeSrc\node_modules"
     $nativePkgs = @()
@@ -853,12 +873,15 @@ if (-not $SkipInstall) {
     $ptyPrebuilds = @('android-arm64', 'android-x64') | ForEach-Object { "$runtimeDst\node_modules\node-pty\prebuilds\$_\pty.node" }
     $ptyMissing = $ptyPrebuilds | Where-Object { -not (Test-Path $_) }
     if ($ptyMissing) {
-        throw "node-pty 原生产物缺失（先跑 node scripts/build-node-pty.mjs）：`n$($ptyMissing -join "`n")"
+        throw "node-pty 原生产物缺失（Step 0.15 的 build-node-pty.mjs 应已部署）：`n$($ptyMissing -join "`n")"
     }
-    # 清掉非 android 的 prebuilds（上游含 linux/darwin/win32 全套，win32 侧还有 .pdb
-    # 与 conpty 目录，体积可观）——Android 运行时只可能加载 android-<arch>。
+    # 清掉**用不上**的 prebuilds：win32 侧带 .pdb 与 conpty 目录（体积可观），
+    # darwin 同样无用。但**必须保留 linux-***——Step 4 的 android-sim 把
+    # process.platform 伪装成 linux、arch 伪装成 arm64 ⇒ node-pty 会去找
+    # `prebuilds/linux-arm64/pty.node`；删了它 sim 验证会以
+    # 「dsh-subprocess-local 插件加载失败」告终（本轮实测踩到）。
     Get-ChildItem "$runtimeDst\node_modules\node-pty\prebuilds" -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -notmatch '^android-' } |
+        Where-Object { $_.Name -match '^(win32|darwin)-' } |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     # 构建期静态断言：双架构 pty.node 的 PTY 符号必须由 libc 提供（bionic 原生支持，
     # 见 docs/PTY-RESEARCH-2026-09-21.md 附录 B）。用 NDK 的 llvm-readelf 做判据。
@@ -989,6 +1012,22 @@ if (-not $SkipInstall) {
         Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
     }
     $vh = "$runtimeDst\verify-home"; New-Item -ItemType Directory -Force -Path $vh | Out-Null
+    # 【W-1 连带处置】sim 期间临时用 stub 顶替 node-pty 的 JS 层。
+    #   原因：sim 伪装 platform=linux ⇒ node-pty 去找 prebuilds/linux-x64/pty.node，
+    #   而那是 **glibc 编译的 Linux .so，Windows node 无法 dlopen**（报 "Cannot find module"）
+    #   ⇒ `dsh-subprocess-local`（顶层 import node-pty）加载失败、整棵 plugin tree 崩。
+    #   这不是降级而是「PC 无法承载真 PTY」的如实处置——真机走 prebuilds/android-*。
+    #   验完**必须还原**上游原版（否则真机包会被 stub 覆盖 ⇒ 终端不可用）。
+    $ptyLib = "$runtimeDst\node_modules\node-pty\lib\index.js"
+    $ptyLibBackup = "$env:TEMP\dsht-pty-lib-backup.js"
+    $ptySimStub = "$ws\stubs\node-pty-sim\index.js"
+    $ptyStubbed = $false
+    if ((Test-Path $ptyLib) -and (Test-Path $ptySimStub)) {
+        Copy-Item $ptyLib $ptyLibBackup -Force
+        Copy-Item $ptySimStub $ptyLib -Force
+        $ptyStubbed = $true
+        Write-Host "  [sim] node-pty JS 临时替换为 stub（PC 无法 dlopen Linux .so；验完还原）" -ForegroundColor DarkCyan
+    }
     # PS5.1：Start-Process 无 -Environment 参数——经进程环境变量继承（本 shell 会话级，脚本结束不影响用户环境）
     $env:HOME = $vh; $env:DSH_HOME = "$vh\.dsh"
     $p = Start-Process -FilePath node -ArgumentList "--expose-internals", "-r", "..\scripts\android-sim.cjs", "node_modules\@deepseek-ai\dsh\lib\bin.js", "web", "--no-open", "--port", "3090" `
@@ -1003,6 +1042,12 @@ if (-not $SkipInstall) {
     $errLog = Get-Content "$env:TEMP\dsht-verify.err.log" -Raw -ErrorAction SilentlyContinue
     $outLog = Get-Content "$env:TEMP\dsht-verify.out.log" -Raw -ErrorAction SilentlyContinue
     if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+    # ★ 还原上游原版 node-pty（无论验证结论如何，都要还原——否则真机包被 stub 污染）
+    if ($ptyStubbed -and (Test-Path $ptyLibBackup)) {
+        Copy-Item $ptyLibBackup $ptyLib -Force
+        Remove-Item $ptyLibBackup -Force -ErrorAction SilentlyContinue
+        Write-Host "  [sim] node-pty JS 已还原为上游原版" -ForegroundColor DarkCyan
+    }
     if ($portOpen -or ($outLog -match 'dsh web: http')) {
         Write-Host "  ✅ web 已监听 3090（0.1.2 token 模式；TCP 探测=$portOpen）——完全通过" -ForegroundColor Green
     } elseif ($errLog -match 'Cannot find module') {
