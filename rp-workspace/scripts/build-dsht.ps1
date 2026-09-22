@@ -1,4 +1,4 @@
-﻿# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
+# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
 # 用法：
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.8        # 完整流程：装新版本 DSH → 平台适配 → 验证 → 打包 → APK
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.7 -SkipInstall  # runtime 已就绪，只跑后半段（打包/APK/sentinel）
@@ -1363,13 +1363,16 @@ Step 4.72 'R10 三大插件打包进 runtime node_modules（MVU / 酒馆助手 /
 # 与 dsht-rp-plugin 同款形态：Cordis 插件自包含 bundle（named exports name/inject/apply，
 # 共享代码经 dsht-plugin-shared 内联，零 @deepseek-ai 运行时依赖）；
 # profile patch 由 NodeService 启动时幂等写入（insert 行按包名逐个补齐）。
-$r10Plugins = @('dsht-plugin-mvu', 'dsht-plugin-tavern-helper', 'dsht-plugin-prompt-template', 'dsht-plugin-memory')
+$r10Plugins = @('dsht-plugin-mvu', 'dsht-plugin-tavern-helper', 'dsht-plugin-prompt-template', 'dsht-plugin-memory', 'dsht-plugin-device')
 # 【T-88】各包 id（cordis patch 行用）——与 rebuild-plugins.ps1 的 $r10Ids 同源同值（两侧漂移 = PC 可装性破裂）
 $r10Ids = @{
     'dsht-plugin-mvu' = 'dsht-mvu'
     'dsht-plugin-tavern-helper' = 'dsht-tavern-helper'
     'dsht-plugin-prompt-template' = 'dsht-prompt-template'
     'dsht-plugin-memory' = 'dsht-memory'
+    # 【W-3】设备能力插件：把截屏/输入/通知/系统状态暴露为 DSH 工具，
+    # 经 native DeviceBridge → Shizuku(uid 2000) 执行。
+    'dsht-plugin-device' = 'dsht-device'
 }
 Push-Location "$ws\packages"
 foreach ($r10 in $r10Plugins) {

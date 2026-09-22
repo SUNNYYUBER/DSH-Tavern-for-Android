@@ -128,6 +128,14 @@ class NodeService : Service() {
          * 无此行 → null → MainActivity 降级干净 URL。
          */
         @Volatile var webToken: String? = null
+        /**
+         * 【W-3】设备能力桥（DeviceBridge）端口与令牌。
+         *
+         * 令牌每次 node 启动重新生成（与 web token 同款生命周期）；仅经 env 传给
+         * node 子进程，**不落盘**——故不进备份、也不被其它 app 猜到。
+         */
+        @Volatile private var deviceBridgePort: Int = 0
+        @Volatile private var deviceBridgeToken: String? = null
         private var tokenFileMisses = 0
         // 行首 "dsh web:" 锚定 + URL 里任意位置的 token 参数（host/端口/路径形态放宽——
         // 真机 announce URL 形态不保证 127.0.0.1 精确匹配，踩过：正则过严 → token 永不捕获）
@@ -240,6 +248,23 @@ class NodeService : Service() {
         // 在服务进程里可读。见 ShizukuBridge 头注。
         try { ShizukuBridge.init(this) } catch (t: Throwable) {
             recordLine("shizuku init failed: ${t.message}")
+        }
+        // W-3：设备能力桥启动（幂等）。令牌每次进程启动重新生成，仅经 env 传给 node。
+        // 【为什么在这里】node 启动时需要 env 里的端口/令牌 ⇒ 必须在起 node 之前。
+        if (deviceBridgePort == 0) {
+            val tok = java.util.UUID.randomUUID().toString().replace("-", "")
+            try {
+                val p = DeviceBridge.start(this, tok)
+                if (p > 0) {
+                    deviceBridgePort = p
+                    deviceBridgeToken = tok
+                    recordLine("device bridge on 127.0.0.1:$p")
+                } else {
+                    recordLine("device bridge 未启动（端口耗尽）——设备能力不可用，其余功能不受影响")
+                }
+            } catch (t: Throwable) {
+                recordLine("device bridge 启动失败: ${t.message}")
+            }
         }
         // W-A：镜像主界面的 LAN 开关（每次 node 启动前也会重读，这里先拿初值）
         lanEnabled = getSharedPreferences("dsht", MODE_PRIVATE).getBoolean("lan_enabled", false)
@@ -438,6 +463,9 @@ class NodeService : Service() {
                 "dsht-prompt-template" to "dsht-plugin-prompt-template",
                 "dsht-mobile" to "dsht-plugin-mobile",
                 "dsht-memory" to "dsht-plugin-memory",
+                // W-3：设备能力插件（截屏/输入/通知/系统状态）——与 build-dsht.ps1
+                // 的 $r10Ids 同源同值；缺这行插件不会被 loader 激活（工具不出现）
+                "dsht-device" to "dsht-plugin-device",
                 "preset-enhance" to "dsh-preset-enhance",
             )
             val patch = File(webProfile, "cordis.patch.yml")
@@ -880,6 +908,13 @@ class NodeService : Service() {
                             // dsht-plugin-shared/http.ts isTrusted；DSH 本体的 /api 栅栏
                             // 走上面的 --trusted-host）。关 = 不设置（loopback 语义）
                             if (lanEnabled) put("DSHT_LAN_MODE", "1")
+                            // W-3：设备能力桥的端口与令牌（node 侧 dsht-plugin-device
+                            // 据此请求 native 执行）。令牌每次 node 启动重新生成——
+                            // 与 web token 同款生命周期，且**不落盘到可备份区**。
+                            if (deviceBridgePort > 0) {
+                                put("DSHT_DEVICE_PORT", deviceBridgePort.toString())
+                                deviceBridgeToken?.let { put("DSHT_DEVICE_TOKEN", it) }
+                            }
                         }
                         directory(runtimeDir)
                     }

@@ -1,4 +1,4 @@
-﻿# rebuild-plugins.ps1 — 重建我方全部插件产物（build-plugins.sh 的 PowerShell 等价物）
+# rebuild-plugins.ps1 — 重建我方全部插件产物（build-plugins.sh 的 PowerShell 等价物）
 # ============================================================================
 # 为什么需要：本机 `bash` 指向 WSL，`D:/...` 盘符路径在 WSL 里解析失败，
 # `build-plugins.sh` 直接跑不起来（实机验证：esbuild 路径判定为"不存在"）。
@@ -121,6 +121,8 @@ $r10Ids = @{
     'dsht-plugin-tavern-helper' = 'dsht-tavern-helper'
     'dsht-plugin-prompt-template' = 'dsht-prompt-template'
     'dsht-plugin-memory' = 'dsht-memory'
+    # 【W-3】设备能力插件（与 build-dsht.ps1 的 $r10Ids 同源同值）
+    'dsht-plugin-device' = 'dsht-device'
 }
 foreach ($r10 in $r10Ids.Keys) {
     $dir = "$nm\$r10"
