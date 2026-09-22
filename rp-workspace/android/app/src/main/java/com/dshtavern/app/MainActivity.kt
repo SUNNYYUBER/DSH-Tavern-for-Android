@@ -1686,9 +1686,193 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    // ---- W-D 自检面板 ----
+    // ---- W-D 自检面板 → W-7 能力-权限矩阵看板 ----
 
-    private fun formatSelfCheck(json: String): Pair<String, Boolean> {
+    /** 一行能力的展示模型（W-7）。 */
+    private data class CapRow(
+        val id: String,
+        val name: String,
+        val ok: Boolean,
+        /** 三态原始值（W-2/W-6 引入的 checkState 字段；旧项无此字段时为空） */
+        val state: String,
+        val detail: String,
+        /** 该行的处置建议（可为空 = 无建议） */
+        val action: String?,
+        val repairable: Boolean,
+    )
+
+    private fun parseSelfCheck(json: String): List<CapRow> {
+        val arr = try { JSONObject(json).optJSONArray("checks") } catch (_: Throwable) { null }
+            ?: return emptyList()
+        val out = mutableListOf<CapRow>()
+        for (i in 0 until arr.length()) {
+            val c = arr.getJSONObject(i)
+            out += CapRow(
+                id = c.optString("id"),
+                name = c.optString("name"),
+                ok = c.optBoolean("ok"),
+                state = c.optString("state", ""),
+                detail = c.optString("detail"),
+                action = if (c.isNull("action")) null else c.optString("action").ifEmpty { null },
+                repairable = c.optBoolean("repairable"),
+            )
+        }
+        return out
+    }
+
+    /**
+     * W-7：能力-权限矩阵看板的**分组渲染**。
+     *
+     * 【为什么分组】原「自检」是平铺的 9 项诊断清单，用户看不出「哪些是我该管的」。
+     * 看板按**可用性**分三组，并把「不可用但需用户动手」的项单列在最前——
+     * 那才是用户真正需要看的（其余全绿时不必读）。
+     */
+    private fun formatBoard(rows: List<CapRow>): String {
+        if (rows.isEmpty()) return "能力数据不可用（运行时可能未就绪）"
+        val needUser = rows.filter { !it.ok && !it.repairable }
+        val needRepair = rows.filter { !it.ok && it.repairable }
+        val ready = rows.filter { it.ok }
+        val sb = StringBuilder()
+        fun section(title: String, list: List<CapRow>) {
+            if (list.isEmpty()) return
+            sb.append("【").append(title).append("】\n")
+            for (r in list) {
+                sb.append(if (r.ok) "　✓ " else "　✗ ").append(r.name)
+                if (r.state.isNotEmpty() && !r.ok) sb.append("（").append(r.state).append("）")
+                sb.append('\n')
+                sb.append("　　　　").append(r.detail).append('\n')
+                r.action?.let { sb.append("　　→ ").append(it).append('\n') }
+            }
+            sb.append('\n')
+        }
+        section("需要你操作", needUser)
+        section("可一键修补", needRepair)
+        section("已就绪", ready)
+        return sb.toString().trim()
+    }
+
+    /**
+     * W-7：把某一行映射成「点击后做什么」（**一键跳转**）。
+     *
+     * 【设计原则】只有**真的能做点什么**的行才可点（返回非 null）。
+     * 可点的行在列表里带「→ 建议」提示，与渲染保持一致（声明与实现同源）。
+     */
+    private fun actionFor(r: CapRow): Pair<String, () -> Unit>? = when (r.id) {
+        "shizuku" -> when (r.state) {
+            "NOT_INSTALLED" -> "去安装 Shizuku（打开应用商店）" to {
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("market://search?q=moe.shizuku.privileged.api")))
+                } catch (_: Throwable) {
+                    Toast.makeText(this, "未找到应用商店；请搜索「Shizuku」安装", Toast.LENGTH_LONG).show()
+                }
+            }
+            "NOT_RUNNING" -> "打开 Shizuku 启动服务" to {
+                val i = packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                if (i != null) startActivity(i)
+                else Toast.makeText(this, "Shizuku 未安装", Toast.LENGTH_SHORT).show()
+            }
+            "NOT_AUTHORIZED" -> "请求授权" to {
+                val ok = ShizukuBridge.requestPermission()
+                Toast.makeText(
+                    this,
+                    if (ok) "已发起授权请求，请在弹窗中允许" else "无法发起请求（可能已选「拒绝且不再询问」，请到 Shizuku 里手动授权）",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+            else -> null
+        }
+        "exchange" -> "打开同步面板" to { syncExchangeDir() }
+        "toollinks", "sandbox", "profile" -> "一键修补这三项" to { repairSelfCheck() }
+        "runtime" -> "重装运行时…" to { confirmReinstallRuntime() }
+        else -> null
+    }
+
+    private fun repairSelfCheck() {
+        Thread {
+            val rows = parseSelfCheck(NodeService.repairAndRecheck())
+            handler.post {
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("修补后复检")
+                    .setMessage(formatBoard(rows))
+                    .setPositiveButton("好", null)
+                    .show()
+            }
+        }.start()
+    }
+
+    private fun confirmReinstallRuntime() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("重装运行时？")
+            .setMessage("删除运行时哨兵并重新解压约 2.4 万个文件（几分钟）。会话/设置等用户数据不受影响。")
+            .setPositiveButton("重装") { _, _ ->
+                NodeService.reinstallRuntime()
+                Toast.makeText(this, "运行时重装中（见等待屏进度）…", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /**
+     * W-7 看板：标题列出「需要你操作」的项，正文是可点列表（点该项执行其跳转）。
+     */
+    private fun showSelfCheckDialog() {
+        Thread {
+            val rows = parseSelfCheck(NodeService.selfCheckJson())
+            handler.post {
+                if (rows.isEmpty()) {
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("能力看板")
+                        .setMessage("数据不可用（运行时可能未就绪）")
+                        .setPositiveButton("好", null)
+                        .show()
+                    return@post
+                }
+                val labels = rows.map { r ->
+                    val mark = if (r.ok) "✓" else "✗"
+                    val suffix = if (actionFor(r) != null) "　（可点）" else ""
+                    "$mark ${r.name}$suffix"
+                }.toMutableList<String>()
+                // 末尾追加一个全局动作项（不在 rows 内，单独处理）
+                val globalIdx = labels.size
+                labels += "⟳ 一键修补全部可修项"
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("能力看板（${rows.count { it.ok }}/${rows.size} 就绪）")
+                    .setItems(labels.toTypedArray()) { _, which ->
+                        if (which == globalIdx) { repairSelfCheck(); return@setItems }
+                        val r = rows[which]
+                        val act = actionFor(r)
+                        if (act != null) act.second.invoke()
+                        else {
+                            // 无动作的行：显示该项详情（不让点击变成「没反应」）
+                            android.app.AlertDialog.Builder(this)
+                                .setTitle(r.name)
+                                .setMessage(
+                                    "状态：${if (r.ok) "就绪" else "未就绪"}" +
+                                        (if (r.state.isNotEmpty()) "（${r.state}）" else "") +
+                                        "\n\n${r.detail}" +
+                                        (r.action?.let { "\n\n建议：$it" } ?: ""),
+                                )
+                                .setPositiveButton("好", null)
+                                .show()
+                        }
+                    }
+                    .setNeutralButton("查看全部详情") { _, _ ->
+                        android.app.AlertDialog.Builder(this)
+                            .setTitle("能力详情")
+                            .setMessage(formatBoard(rows))
+                            .setPositiveButton("好", null)
+                            .setNegativeButton("重装运行时…") { _, _ -> confirmReinstallRuntime() }
+                            .show()
+                    }
+                    .setNegativeButton("关闭", null)
+                    .show()
+            }
+        }.start()
+    }
+
+    /** 旧实现（保留为史实参考，勿恢复）：平铺文本 + 两个固定按钮。 */
+    @Suppress("unused")
+    private fun formatSelfCheckLegacy(json: String): Pair<String, Boolean> {
         val o = JSONObject(json)
         val arr = o.optJSONArray("checks") ?: return "自检数据不可用" to false
         val sb = StringBuilder()
@@ -1703,44 +1887,6 @@ class MainActivity : AppCompatActivity() {
             if (!c.optBoolean("ok") && c.optBoolean("repairable")) anyRepairable = true
         }
         return sb.toString().trim() to anyRepairable
-    }
-
-    private fun showSelfCheckDialog() {
-        Thread {
-            val (text, anyRepairable) = formatSelfCheck(NodeService.selfCheckJson())
-            handler.post {
-                val b = android.app.AlertDialog.Builder(this)
-                    .setTitle("自检")
-                    .setMessage(text)
-                    .setNegativeButton("关闭", null)
-                if (anyRepairable) {
-                    b.setPositiveButton("一键修补") { _, _ ->
-                        Thread {
-                            val (t2, _) = formatSelfCheck(NodeService.repairAndRecheck())
-                            handler.post {
-                                android.app.AlertDialog.Builder(this)
-                                    .setTitle("修补后复检")
-                                    .setMessage(t2)
-                                    .setPositiveButton("好", null)
-                                    .show()
-                            }
-                        }.start()
-                    }
-                }
-                b.setNeutralButton("重装运行时…") { _, _ ->
-                    android.app.AlertDialog.Builder(this)
-                        .setTitle("重装运行时？")
-                        .setMessage("删除运行时哨兵并重新解压约 2.4 万个文件（几分钟）。会话/设置等用户数据不受影响。")
-                        .setPositiveButton("重装") { _, _ ->
-                            NodeService.reinstallRuntime()
-                            Toast.makeText(this, "运行时重装中（见等待屏进度）…", Toast.LENGTH_LONG).show()
-                        }
-                        .setNegativeButton("取消", null)
-                        .show()
-                }
-                b.show()
-            }
-        }.start()
     }
 
     /** 「所有文件访问」系统设置页（MANAGE_EXTERNAL_STORAGE 的专用入口） */

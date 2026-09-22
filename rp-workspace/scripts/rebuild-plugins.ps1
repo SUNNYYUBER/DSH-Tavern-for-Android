@@ -1,4 +1,4 @@
-# rebuild-plugins.ps1 — 重建我方全部插件产物（build-plugins.sh 的 PowerShell 等价物）
+﻿# rebuild-plugins.ps1 — 重建我方全部插件产物（build-plugins.sh 的 PowerShell 等价物）
 # ============================================================================
 # 为什么需要：本机 `bash` 指向 WSL，`D:/...` 盘符路径在 WSL 里解析失败，
 # `build-plugins.sh` 直接跑不起来（实机验证：esbuild 路径判定为"不存在"）。
@@ -69,8 +69,13 @@ if (Test-Path $srcAssets) {
 Say ("  OK dsht-rp-plugin  {0} KB" -f [math]::Round((Get-Item "$rp\lib\index.js").Length / 1KB, 1))
 
 # 2. 【T-88】R10 四插件恢复独立构建（与 build-dsht.ps1 Step 4.72 同形态）
-Say "[2/7] R10 四插件独立构建（MVU / 酒馆助手 / 提示词模板 / 剧情记忆）"
-foreach ($r10 in @('dsht-plugin-mvu', 'dsht-plugin-tavern-helper', 'dsht-plugin-prompt-template', 'dsht-plugin-memory')) {
+Say "[2/7] R10 五插件独立构建（MVU / 酒馆助手 / 提示词模板 / 剧情记忆 / 设备能力）"
+# ⚠️ 本列表必须与 build-dsht.ps1 的 $r10Plugins **逐字一致**。历史上这里漏过
+#    dsht-plugin-device（只在下方 $r10Ids 里登记了 id、没进本循环）⇒ 产物只写
+#    package.json（main: lib/index.js）却不生成 lib/index.js ⇒ 真机 Cordis
+#    加载该包失败 ⇒ **整棵插件树起不来 / DSH boot loop**（第 45 次重启实录）。
+#    该漂移现由 scripts/audit-plugin-build-parity.mjs 常驻守（W-3 事故防回归）。
+foreach ($r10 in @('dsht-plugin-mvu', 'dsht-plugin-tavern-helper', 'dsht-plugin-prompt-template', 'dsht-plugin-memory', 'dsht-plugin-device')) {
     Build-NodePlugin $r10 "src/$r10/index.ts"
 }
 
@@ -160,8 +165,8 @@ Say ("  OK app.js {0} KB" -f [math]::Round((Get-Item "$rp\assets\app.js").Length
 
 Say ''
 Say '=== 部署结果 ==='
-# 【T-88】R10 四包恢复独立构建 ⇒ 列表同步恢复。
-foreach ($p in @('dsht-rp-plugin','dsht-plugin-mvu','dsht-plugin-tavern-helper','dsht-plugin-prompt-template','dsht-plugin-memory','dsht-plugin-mobile','dsht-plugin-undo','dsht-preflight')) {
+# 【T-88】R10 五包恢复独立构建 ⇒ 列表同步恢复。
+foreach ($p in @('dsht-rp-plugin','dsht-plugin-mvu','dsht-plugin-tavern-helper','dsht-plugin-prompt-template','dsht-plugin-memory','dsht-plugin-device','dsht-plugin-mobile','dsht-plugin-undo','dsht-preflight')) {
     $f = "$nm\$p\lib\index.js"
     if (Test-Path $f) { Say ("  {0,-32} {1,10} B" -f $p, (Get-Item $f).Length) }
     else { Say ("  {0,-32} （未部署）" -f $p) }

@@ -36,7 +36,7 @@ class NodeService : Service() {
         private const val RUNTIME_DIR = "dsh-runtime"
         private const val RUNTIME_ZIP = "dsh-runtime.zip"
         /** 解压哨兵：§4.16.2 前端 dsht-rp-ui client 变更随 runtime.zip 重发布 → v97（覆盖安装强制重解压） */
-        private const val RUNTIME_SENTINEL = ".installed-v374"
+        private const val RUNTIME_SENTINEL = ".installed-v376"
         private const val DSH_PORT = 3080
         /** W-C（2026-09-21）：端口冲突探测区间（3080..3089，逐个 bind 试占用） */
         private const val PORT_PROBE_MAX = 3089
@@ -433,11 +433,22 @@ class NodeService : Service() {
             // 旧布局清理：独立 dsht-rp-ui 包已并入 dsht-rp-plugin（老安装升级时删掉旧包与 patch 行）
             val legacyUi = File(webProfile, "node_modules/dsht-rp-ui")
             if (legacyUi.exists()) legacyUi.deleteRecursively()
-            // R10 三大插件（MVU / 酒馆助手 / 提示词模板）+ 剧情记忆（楼层总结）：单产物 lib/index.js，无 assets
+            // R10 三大插件（MVU / 酒馆助手 / 提示词模板）+ 剧情记忆（楼层总结）+ 设备能力（W-3）：
+            // 单产物 lib/index.js，无 assets。
             // 【T-88】package.json 字段与构建脚本（rebuild-plugins.ps1 / build-dsht.ps1）同源同值
             // （dsh.bundle.patch 声明在 Android 不被消费——profile patch 由本服务手写；但字段保持
             //   一致防「同名包两侧两个形状」的漂移，T-88 拆包纪律）
-            for (pkg in listOf("dsht-plugin-mvu", "dsht-plugin-tavern-helper", "dsht-plugin-prompt-template", "dsht-plugin-memory")) {
+            // ⚠️【W-3 真机 boot loop 事故·2026-09-21】本循环必须与 pluginRows（下方 patch 写入）
+            //   **逐字同集**。事故形态：`dsht-device` 只加进了 pluginRows 却没加进本拷贝循环
+            //   ⇒ profile patch 引用了 `dsht-plugin-device`，但 App **从不**把它拷进 webProfile
+            //   ⇒ Cordis 的 loader 拿不到该条目（`entry.fiber === undefined`，不是「加载抛错」）
+            //   ⇒ `assertEntriesLoaded` 抛 `plugin(s) failed to load: dsht-plugin-device` ⇒
+            //   **整棵插件树起不来、DSH boot loop**（`node exited with code 1; restart in 3s`）。
+            //   注意与 R10 那些包的区别：**只在干净安装下暴露**——有残留目录的老设备看起来「包在场」，
+            //   实则是上一次部署的孤儿，与 patch 的引用没有任何契约关系。
+            //   该「拷贝集 ≡ patch 集」不变量现有机器判据（见 scripts/audit-plugin-build-parity.mjs
+            //   的姊妹判据，NodeService 侧由 tests 的 device 部署契约用例守）。
+            for (pkg in listOf("dsht-plugin-mvu", "dsht-plugin-tavern-helper", "dsht-plugin-prompt-template", "dsht-plugin-memory", "dsht-plugin-device")) {
                 copyPackage(webProfile, pkg, "lib/index.js",
                     "{\"name\":\"$pkg\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"dsh\":{\"bundle\":{\"patch\":\"./cordis.patch.yml\"}}}")
             }
@@ -525,6 +536,19 @@ class NodeService : Service() {
             recordLine("profile cordis.yml aligned to 0.1.2 canonical form")
         }
         val pkgJson = File(webProfile, "package.json")
+        // ⚠️【patchReload 必须是 "startup"，不能沿用 web 模板默认的 "live"】
+        //   取值只允许 "live" / "startup"（dsh-app-boot 的 loadProfileDirectory 硬校验）。
+        //   "live" 会在 boot 之后走 `watchUserPatches`：它**硬依赖 Cordis HMR 服务**
+        //     if (hmr === void 0) throw new Error(`${binName}: user patch-layer watching
+        //       requires the Cordis HMR service`)
+        //   而 HMR 在 Android 上起不来——dsh-base 的 bundle patch 里 `hmr` 行本身是
+        //   `disabled: true`，补建同名 entry 仍命中该 disabled 行 ⇒ `ctx.get("hmr")` 恒为
+        //   undefined ⇒ 抛错 ⇒ `node exited with code 1` **boot loop**（实测：插件树修好
+        //   之后立刻暴露，此前一直被更早的插件树失败掩盖）。
+        //   "startup" 只在启动时读一次用户 patch 层，跳过整个 HMR 分支。
+        //   【为什么这在产品语义上是对的】App 内的 cordis.patch.yml 由本服务**幂等维护**，
+        //   不存在「用户在设备上手工编辑 patch 文件、期望热生效」的场景 —— live reload
+        //   在 Android 上没有对应使用面，纯粹是一份官方 web 模板的默认值。
         val pkgCanonical = """
             |{
             |  "name": "dsh-profile-web",
@@ -536,14 +560,17 @@ class NodeService : Service() {
             |        "@deepseek-ai/dsh-base",
             |        "@deepseek-ai/dsh-web-app"
             |      ],
-            |      "patchReload": "live"
+            |      "patchReload": "startup"
             |    }
             |  }
             |}
         """.trimMargin("|") + "\n"
-        if (!pkgJson.exists() || !pkgJson.readText().contains("dsh-web-app")) {
+        // 守卫必须同时覆盖 patchReload：老安装的 package.json 已含 "dsh-web-app"，
+        // 只判该字符串会让 `"patchReload": "live"` 在升级后**残留** ⇒ 老用户继续 boot loop。
+        val pkgText = if (pkgJson.exists()) pkgJson.readText() else null
+        if (pkgText == null || !pkgText.contains("dsh-web-app") || pkgText.contains("\"patchReload\": \"live\"")) {
             pkgJson.writeText(pkgCanonical)
-            recordLine("profile package.json aligned to 0.1.2 canonical form")
+            recordLine("profile package.json aligned to canonical form (patchReload=startup)")
         }
         val wsYml = File(webProfile, "pnpm-workspace.yaml")
         val wsCanonical = "packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n"

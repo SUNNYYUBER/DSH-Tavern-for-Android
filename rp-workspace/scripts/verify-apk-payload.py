@@ -510,7 +510,20 @@ REGEX_MARKS = {
     'L1 双指不误判拖拽': rb'touches\.length\s*>\s*1',
 }
 
-APKS = ['DSH-Tavern-0.2.2-x86_64-debug.apk', 'DSH-Tavern-0.2.2-arm64-release.apk']
+# 【App 版本单源】从 `android/app/build.gradle.kts` 的 `versionName` 实读，不在本文件另写一份。
+# 由头：此前硬编码 `0.2.2`，与 gradle 的 versionName 是两个独立字面量 ⇒ 发版时核验会去读
+# **旧名文件**（不存在则报「找不到」，而不是「新包有问题」），而构建全绿 —— P-30 静默族。
+def _app_version() -> str:
+    _g = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'android', 'app', 'build.gradle.kts')
+    with io.open(_g, 'r', encoding='utf-8') as f:
+        m = re.search(r'versionName\s*=\s*"([^"]+)"', f.read())
+    if not m:
+        raise SystemExit(f'无法从 {_g} 读出 versionName（app 版本单源）')
+    return m.group(1)
+
+
+_AV = _app_version()
+APKS = [f'DSH-Tavern-{_AV}-x86_64-debug.apk', f'DSH-Tavern-{_AV}-arm64-release.apk']
 
 # ★ W47：`--apk-root <目录>` —— 显式指定 APK 所在目录（默认 = 当前工作目录）。
 #   为什么需要：APK 交付在**仓库根**，而构建脚本的 cwd 是 `rp-workspace/`

@@ -24,7 +24,11 @@ $ErrorActionPreference = 'Continue' # 恢复循环里单步失败不终止——
 $sdk      = "$env:USERPROFILE\.android\sdk"
 $emulator = "$sdk\emulator\emulator.exe"
 $adb      = "$sdk\platform-tools\adb.exe"
-$apk      = 'D:\DSH RolePlay\DSH-Tavern-0.2.2-x86_64-debug.apk'
+# 【App 版本单源】从 android/app/build.gradle.kts 的 versionName 实读（同 emulator-dsht.ps1）。
+# 否则发版后 watchdog 会把**上一版** APK 重新装回去，而日志看不出异常。
+$_g = Join-Path $PSScriptRoot '..\android\app\build.gradle.kts'
+$_m = [regex]::Match([IO.File]::ReadAllText($_g), 'versionName\s*=\s*"([^"]+)"')
+$apk      = if ($_m.Success) { "D:\DSH RolePlay\DSH-Tavern-$($_m.Groups[1].Value)-x86_64-debug.apk" } else { '' }
 $avd      = 'dsht-x64'
 
 function Write-Log($msg) { Write-Host "[watchdog $(Get-Date -Format 'HH:mm:ss')] $msg" }

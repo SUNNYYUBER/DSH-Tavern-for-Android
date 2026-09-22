@@ -26,7 +26,7 @@
  * 用 mock ctx 捕获 register 的定义，再手工驱动 execute。
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { apply } from '../src/dsht-plugin-device/index.ts'
+import { apply, inject } from '../src/dsht-plugin-device/index.ts'
 
 interface ToolDef {
   name: string
@@ -36,19 +36,34 @@ interface ToolDef {
   isConcurrencySafe: () => boolean
 }
 
-/** 捕获 apply 注册的工具与提示词段。 */
-function makeHost() {
+/**
+ * 捕获 apply 注册的工具与提示词段。
+ *
+ * 【为什么 mock 的是 `ctx.inject` 而不是 `ctx.tools`】定案修法（见插件文件头「定案」）
+ * 把工具注册放进了 `ctx.inject(['tools','systemPrompt'], cb)` 的**子 fiber**：
+ * 顶层的 `ctx.tools` 在 Cordis 严格代理下**读取即抛**，只有 cb 收到的 scope 才有它。
+ * 故 mock 必须走同一条路——否则测的是「另一种接线」，测不到真机语义。
+ *
+ * `deferred = true` 模拟「该层永远拿不到这些 service」：callback 永不被调用，
+ * 但 apply 正常返回（这正是真机上期望的降级态）。
+ */
+function makeHost({ deferred = false }: { deferred?: boolean } = {}) {
   const tools = new Map<string, ToolDef>()
   const sections: Array<{ name: string; order: number; text: string }> = []
+  const injectCalls: string[][] = []
   const ctx = {
-    tools: {
-      register: (def: ToolDef) => { tools.set(def.name, def) },
-    },
-    systemPrompt: {
-      section: (def: { name: string; order: number; text: string }) => { sections.push(def) },
+    inject: (deps: string[], cb: (scope: unknown) => void) => {
+      injectCalls.push(deps)
+      if (deferred) return // 依赖永不就绪 ⇒ callback 不执行（真机 web profile 全局层的实况）
+      cb({
+        tools: { register: (def: ToolDef) => { tools.set(def.name, def) } },
+        systemPrompt: {
+          section: (def: { name: string; order: number; text: string }) => { sections.push(def) },
+        },
+      })
     },
   }
-  return { ctx, tools, sections }
+  return { ctx, tools, sections, injectCalls }
 }
 
 const ALL_TOOLS = ['device_screenshot', 'device_status', 'device_notifications', 'device_input']
@@ -280,5 +295,63 @@ describe('W-3 设备插件：未知 action 不抛（判据 6）', () => {
     const out = String(await h.tools.get('device_input')!.execute({ action: 'reboot' }, {}))
     expect(out).toContain('reboot')
     expect(out).toContain('tap') // 提示可用值
+  })
+})
+
+/**
+ * W-3 事故回归（2026-09-21 真机 boot loop）——判据 7/8。
+ *
+ * ## 事故全貌（两层语义都踩过，故两条判据各守一层）
+ * **第一层**：首版 `inject = ['tools','systemPrompt']`。这两个 service 属 **agent 会话面**，
+ *   本插件却挂在 **web profile 全局层**（同层只有 webServer/settings/llm）⇒ 父 fiber 停
+ *   PENDING ⇒ Cordis 报 `could not be resolved` ⇒ **整棵插件树加载失败** ⇒
+ *   `node exited with code 1; restart in 3s`（连续 45 次）。
+ * **第二层**：把 inject 清空后**直接读** `ctx.tools` 做守卫。Cordis 的 ctx 是严格代理，
+ *   未声明即读**直接抛**：`cannot get property "tools" without inject` ⇒ 同样打挂整树。
+ * **定案**：`inject = []`（父 entry 立即 activated）+ `ctx.inject([...], cb)` 延迟接线
+ *   （子 fiber 承载等待；不可得就安静地等，不抛不报错）。
+ *
+ * ## 各判据守什么
+ * 判据 7 守「**不得再把 agent 面 service 放进顶层 inject**」——一旦加回，真机立刻复现
+ *   boot loop；这条断言在**单测阶段**（秒级、不需设备）就能拦住。
+ * 判据 7b 守「**不得再出现顶层直接访问 ctx.tools / ctx.systemPrompt**」——即第二层坑。
+ *   做法：只给 mock 一个 `inject`（**不提供** tools/systemPrompt），若源码里残留任何顶层
+ *   `ctx.tools` 读取，`apply` 会因属性不存在而抛（真机上则是 Cordis 代理抛）。
+ * 判据 8 守「**依赖缺席时 apply 必须正常返回、工具一个都不注册**」——这是真机上的
+ *   **期望降级态**（设备桥照常监听，只是 agent 看不到 device_* 工具）。
+ */
+describe('W-3 事故回归：web profile 全局层下的延迟接线（判据 7/8）', () => {
+  it('判据7：inject 必须为空（声明 agent 会话面 service 会让整树加载失败）', () => {
+    expect(inject).toEqual([])
+  })
+
+  it('判据7b：inject 里绝不出现 tools / systemPrompt / sessions / agents', () => {
+    for (const bad of ['tools', 'systemPrompt', 'sessions', 'agents']) {
+      expect(inject, `inject 不得含 '${bad}'（web profile 全局层不可得 ⇒ boot loop）`).not.toContain(bad)
+    }
+  })
+
+  it('判据7c：apply 不得在顶层直接读 ctx.tools / ctx.systemPrompt（严格代理会抛）', () => {
+    // mock 只有 inject：顶层读 ctx.tools 会抛（真机语义）；能正常返回即证明没读
+    const h = makeHost()
+    expect(() => apply(h.ctx as never)).not.toThrow()
+    // 且必须是通过 ctx.inject 声明的
+    expect(h.injectCalls.length, 'apply 未经 ctx.inject 声明依赖').toBe(1)
+    expect(h.injectCalls[0]).toEqual(['tools', 'systemPrompt'])
+  })
+
+  it('判据8：依赖缺席（deferred）⇒ apply 正常返回且一个工具都不注册', () => {
+    const h = makeHost({ deferred: true })
+    expect(() => apply(h.ctx as never)).not.toThrow()
+    expect(h.tools.size, '依赖缺席却注册了工具（半残状态）').toBe(0)
+    expect(h.sections.length).toBe(0)
+    // 依赖声明仍须发出（将来 service 挂上这层时能自动生效）
+    expect(h.injectCalls[0]).toEqual(['tools', 'systemPrompt'])
+  })
+
+  it('判据8b：依赖就绪（正常路径）⇒ 工具注册照常发生（回归不误伤）', () => {
+    const h = makeHost()
+    apply(h.ctx as never)
+    for (const t of ALL_TOOLS) expect(h.tools.has(t), `依赖就绪却缺 ${t}`).toBe(true)
   })
 })

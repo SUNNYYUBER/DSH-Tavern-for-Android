@@ -168,9 +168,23 @@ const archArg = (() => {
   return i >= 0 ? process.argv[i + 1] : null
 })()
 
+// 【App 版本单源】与 build-dsht.ps1 同款口径：从 `android/app/build.gradle.kts` 的
+// `versionName` 实读，**不在本文件里另写一份**。由头：此前这里硬编码 `0.2.2`，与 gradle
+// 的 versionName 是两个字面量 ⇒ 发版时会出现「文件名 0.2.2 / 包内 0.2.3」的错配，
+// 而构建与核验**全绿**（核验读的是旧名文件，根本核不到新产物 —— P-30 静默族）。
+const gradleKts = path.join(ROOT, 'rp-workspace', 'android', 'app', 'build.gradle.kts')
+let appVersion = null
+try {
+  appVersion = /versionName\s*=\s*"([^"]+)"/.exec(fs.readFileSync(gradleKts, 'utf8'))?.[1] ?? null
+} catch { /* 缺失时下方以明确错误终止 */ }
+if (appVersion === null) {
+  console.error(`无法从 ${gradleKts} 读出 versionName（app 版本单源）`)
+  process.exit(2)
+}
+
 const ALL_APKS = [
-  { arch: 'arm64', file: path.join(ROOT, 'DSH-Tavern-0.2.2-arm64-release.apk') },
-  { arch: 'x86_64', file: path.join(ROOT, 'DSH-Tavern-0.2.2-x86_64-debug.apk') },
+  { arch: 'arm64', file: path.join(ROOT, `DSH-Tavern-${appVersion}-arm64-release.apk`) },
+  { arch: 'x86_64', file: path.join(ROOT, `DSH-Tavern-${appVersion}-x86_64-debug.apk`) },
 ]
 const targets = archArg === null ? ALL_APKS : ALL_APKS.filter(a => a.arch === archArg)
 if (targets.length === 0) { console.error(`--arch 只能是 arm64 / x86_64（实得 ${archArg}）`); process.exit(2) }

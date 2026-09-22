@@ -116,3 +116,7 @@ rp-workspace/.m7-cards.json
 #   ★ 不入库的理由：本仓库**不分发**任何第三方二进制 ⇒ 不承担 GPL 的再分发义务
 #     ⇒ 本项目的 MIT 许可不受影响（法律说明见 docs/THIRD_PARTY_LICENSES.md）
 rp-workspace/android/app/src/main/jniLibs/**/*.so
+
+# 【2026-09-21 W-3 发版】模拟器验证的调试 dump（DSML 出站报文，仅排障用）
+#   由 ef-*/emu-preset-* 探针脚本产出，随时可重跑再生 ⇒ 不必入库。
+rp-workspace/out/emu-verify/

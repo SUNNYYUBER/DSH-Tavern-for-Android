@@ -36,7 +36,18 @@ $archDir    = if ($Arch -eq 'x86_64') { 'x86_64' } else { 'arm64-v8a' }
 $runtimeLib = if ($Arch -eq 'x86_64') { "$ws\dsh-runtime-x64\lib" } else { "$ws\dsh-runtime\lib" }
 $buildType  = if ($Arch -eq 'x86_64') { 'debug' } else { 'release' }
 $gradleTask = if ($Arch -eq 'x86_64') { 'assembleDebug' } else { 'assembleRelease' }
-$apkOut     = "$root\DSH-Tavern-0.2.2-$Arch-$buildType.apk"
+# 【App 版本单源】从 `android/app/build.gradle.kts` 的 `versionName` 实读，**不在这里另写一份**。
+# 由头：此前 APK 产物名硬编码 `0.2.2`，而 gradle 的 versionName 是另一个字面量 ⇒ 两者可以
+# 各自漂移（实测发版时就会产出「文件名 0.2.2 / 包内 versionName 0.2.3」的错配，而构建全绿、
+# 无人报警——P-30 静默族）。gradle 是 versionName 的**权威处**（它决定 APK 元数据与
+# 「检查更新」的比较基准），故以它为单源反读。
+$gradleKts  = "$android\app\build.gradle.kts"
+$gradleKtsText = [IO.File]::ReadAllText($gradleKts)
+$avMatch = [regex]::Match($gradleKtsText, 'versionName\s*=\s*"([^"]+)"')
+if (-not $avMatch.Success) { throw "无法从 $gradleKts 读出 versionName（app 版本单源）" }
+$AppVersion = $avMatch.Groups[1].Value
+$apkOut     = "$root\DSH-Tavern-$AppVersion-$Arch-$buildType.apk"
+Write-Host "  App 版本（单源 = build.gradle.kts）：$AppVersion"
 # JAVA_HOME：本地开发机的固定路径优先（历史习惯）；不存在则尊重调用方已设的
 # JAVA_HOME（CI 由 setup-java 注入）——否则 GitHub Actions 上必炸（W-F 2026-09-21）
 $jdkLocal = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.12.8-hotspot'
@@ -217,6 +228,10 @@ $readingGates = @{
     'audit-device-tiers.mjs'          = @{ Exe = 'node'; Pattern = '解析到 \d+ 个 op'; Label = '设备 op 档位声明数（W-4）' }
     # 【W-6】交换目录拒绝清单规模（凭据不出去的结构约束）
     'audit-exchange-guards.mjs'       = @{ Exe = 'node'; Pattern = '交换拒绝清单（\d+）'; Label = '交换目录拒绝清单条数（W-6）' }
+    # 【W-3 事故防回归】插件构建路径的 R10 包集对账（循环集 / 源码在场 / id 表 / 产物落 lib/index.js）
+    'audit-plugin-build-parity.mjs'   = @{ Exe = 'node'; Pattern = '构建循环包集（\d+）'; Label = '插件构建路径包集（W-3 事故防回归）' }
+    # 【W-3 事故防回归】NodeService 的 profile 部署契约（部署集≡patch集 / patchReload≠live / 守卫覆盖）
+    'audit-nodeservice-deploy.mjs'    = @{ Exe = 'node'; Pattern = '部署集（\d+）'; Label = 'NodeService 部署契约（W-3 事故防回归）' }
 }
 
 <#
@@ -294,6 +309,27 @@ $auditNode = @(
     # 理由：交换目录是 App 私有区 ↔ /sdcard 的桥，凭据一旦被搬过去，
     # 任何 app / 用户在文件管理器里都能读——本项目头号风险类型。
     'audit-exchange-guards.mjs',
+    # 【2026-09-21 W-3 事故防回归】插件构建路径的两侧包集对账。
+    # 守：build-dsht.ps1 与 rebuild-plugins.ps1 的**构建循环包集**一致、每包源码入口在场、
+    # 两侧 id 表都有登记、产物真的写到 `lib/index.js`。
+    # 理由（真实事故，非假想）：W-3 把 `dsht-plugin-device` 只加进了 rebuild 侧的 `$r10Ids`
+    # 而漏了构建循环 ⇒ 该路径写出 `package.json(main: lib/index.js)` 却不生成 `lib/index.js`
+    # ⇒ 真机 Cordis 加载失败 ⇒ **整棵插件树起不来、DSH boot loop**（模拟器实录第 45 次重启）。
+    # 这类漂移对 `audit-build-path-parity.py`（marker / stub 口径）**结构不可见**：
+    # 差异在「插件源码 → 构建产物」这层。故必须有本判据。
+    'audit-plugin-build-parity.mjs',
+    # 【2026-09-21 W-3 事故防回归】NodeService 的 profile 部署契约。
+    # 守：① 部署集（拷贝循环 + 独立 copyPackage*）与 pluginRows（patch 写入）**互为子集**；
+    #     ② pkgCanonical 的 patchReload ≠ "live"；③ package.json 重写守卫覆盖 patchReload。
+    # 理由（真实事故，三层连环，每层都是「静态看全对、真机才炸、代价是整机不可用」）：
+    #   ① device 进了 pluginRows 却漏进拷贝循环 ⇒ patch 引用一个 App 从不部署的包
+    #      ⇒ loader 拿不到 entry（fiber===undefined）⇒ boot loop（且**只在干净安装暴露**，
+    #      老设备上的孤儿目录让它看起来「包在场」）；
+    #   ③ patchReload="live" ⇒ runProfile 走 watchUserPatches ⇒ 硬依赖 HMR 服务
+    #      ⇒ Android 上 HMR 起不来（dsh-base 里 hmr 行 disabled）⇒ boot loop
+    #      （被 ① 掩盖，修好 ① 后才暴露）。
+    # 该判据经决定性负控：移除 device 拷贝 / 回退 live 都能被精确点名，还原即转绿。
+    'audit-nodeservice-deploy.mjs',
     # 【第二十五轮 W4 新增】「单测装置 vs 真机」脚本语义一致性闸门。
     # 守：卡脚本在真机以 <script type="module"> 注入（th-shim.ts 锚点断言）⇒ **严格模式**；
     # 而单测用 node:vm **经典脚本**语义。两者**不是同一套语义**（实证：同一段带 with 的代码
@@ -1822,7 +1858,7 @@ Write-Host "  [gate] OK verify-apk-payload.py（M4 内容级：$Arch 包标记�
 Step 7 '收尾提醒'
 Write-Host @"
 
-[完成] DSH $DshVersion → DSH Tavern APK（sentinel v$newV，versionName 0.2.2）
+[完成] DSH $DshVersion → DSH Tavern APK（sentinel v$newV，versionName $AppVersion）
 后续人工动作（见 UPDATE-SOP.md §1 步骤 7）：
   1. 引擎回归：cd rp-workspace\packages; npx vitest run
   2. 真机验收：安装 APK → 诊断面板看「解压→启动→端口✓」→ 截图反馈

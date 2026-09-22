@@ -43,8 +43,19 @@ const check = (ok, label, extra = '') => {
 }
 const info = (m) => console.log(`  · ${m}`)
 
-/** R10 四插件（顺序即 patch 语义；memory 必须最后——pre-step waterfall 顺序不变量 B5） */
-const R10 = ['dsht-plugin-mvu', 'dsht-plugin-tavern-helper', 'dsht-plugin-prompt-template', 'dsht-plugin-memory']
+/**
+ * R10 插件集（顺序即 patch 语义；`dsht-rp` 必须先于 `dsht-memory`——pre-step
+ * waterfall 顺序不变量 B5）。
+ *
+ * 【W-3】`dsht-plugin-device` 于 2026-09-21 追加在**末尾**（与 NodeService.pluginRows
+ * 的既有顺序一致）。它对 B5 无影响，依据是实证而非推断：其 `index.ts` 只有
+ * `systemPrompt.section` + 4 个 `tools.register`，**没有任何 `ctx.on('pre-step')`
+ * 钩子** ⇒ 不参与 waterfall 嵌套。
+ * ⚠️ 附加在末尾还有一条硬约束：判据 7 用 `R10.slice(0, 3)` 取「有 webServer 路由
+ * 的插件」跑动态行为比对，device 无路由 ⇒ **新插件只能追加到末尾**，否则会顶掉
+ * 该切片里的成员、让判据 7 静默少跑一个模块。
+ */
+const R10 = ['dsht-plugin-mvu', 'dsht-plugin-tavern-helper', 'dsht-plugin-prompt-template', 'dsht-plugin-memory', 'dsht-plugin-device']
 
 /** 把某个 TS 入口打成临时 ESM，供动态行为判据 import */
 function bundle (entry) {
@@ -184,6 +195,16 @@ function parsePluginRows (ktSrc) {
   return [...m[1].matchAll(/"([^"]+)"\s+to\s+"([^"]+)"/g)].map(x => ({ id: x[1], pkg: x[2] }))
 }
 
+/**
+ * 数 ps1 `$r10Ids` 哈希表的**登记项数**（= 键数 = 包数）。
+ * 单源：判据 8c 与 --selftest-parser 都用它，避免「同一口径抄两遍、改一处漏一处」
+ * （这正是本次 W-3 假红的成因：硬编码 4 散落在两处）。
+ */
+function countR10Ids (ps1Src) {
+  const body = (ps1Src.match(/\$r10Ids\s*=\s*@\{([\s\S]*?)\n\}/) || [null, ''])[1] || ''
+  return [...body.matchAll(/'([^']+)'\s*=/g)].length
+}
+
 // ---------------------------------------------------------------------------
 // 主验证
 // ---------------------------------------------------------------------------
@@ -204,9 +225,15 @@ async function main () {
     const realBd = path.join(HERE, 'build-dsht.ps1')
     if (fs.existsSync(realBd)) {
       const rr = parseSplitEntries(fs.readFileSync(realBd, 'utf8'))
-      const ok = rr.entries.length >= 5 && rr.r10Loop && rr.r10Loop.names.length === 4 && rr.unresolved.length === 0
+      // 【W-3 修正】原先硬编码 `names.length === 4` —— W-3 引入 dsht-plugin-device 后
+      // 循环成员变 5，这里没跟着改 ⇒ 假红（把正常的构建判成「解析器未通过」）。
+      // 改口径：循环成员数必须与 `$r10Ids` 登记数**一致**（真不变量），而不是某个具体数字。
+      const declared = countR10Ids(fs.readFileSync(realBd, 'utf8'))
+      const loopNames = rr.r10Loop ? rr.r10Loop.names.length : 0
+      const ok = rr.entries.length >= 5 && rr.r10Loop &&
+        loopNames === declared && declared > 0 && rr.unresolved.length === 0
       if (ok) n++
-      console.log(`  ${ok ? '[ok] ' : '[FAIL] '}真实 build-dsht.ps1：entries=${rr.entries.length}（≥5）· 循环成员=${rr.r10Loop ? rr.r10Loop.names.length : 0}（期望 4）· 未覆盖入口=${rr.unresolved.length}（期望 0）`)
+      console.log(`  ${ok ? '[ok] ' : '[FAIL] '}真实 build-dsht.ps1：entries=${rr.entries.length}（≥5）· 循环成员=${loopNames}（期望 = $r10Ids 登记数 ${declared}）· 未覆盖入口=${rr.unresolved.length}（期望 0）`)
     }
     const total = PARSER_CASES.length + (fs.existsSync(path.join(HERE, 'build-dsht.ps1')) ? 1 : 0)
     console.log(`\n[verify-rp-consolidation selftest-parser] ${n}/${total} PASS`)
@@ -252,8 +279,8 @@ async function main () {
         if (!t.includes(`src/${p}/index.ts`)) cross.push(`${p}（缺自己的入口注释）`)
         for (const q of R10) if (q !== p && t.includes(`src/${q}/index.ts`)) cross.push(`${p}（内联了 ${q} 入口）`)
       }
-      check(missing.length === 0 && cross.length === 0, '判据3 R10 四包产物在场且互不内联入口',
-        missing.length > 0 ? `缺失：${missing.join(', ')}` : cross.length > 0 ? cross.join('；') : '4/4 在场且独立')
+      check(missing.length === 0 && cross.length === 0, `判据3 R10 ${R10.length} 包产物在场且互不内联入口`,
+        missing.length > 0 ? `缺失：${missing.join(', ')}` : cross.length > 0 ? cross.join('；') : `${R10.length}/${R10.length} 在场且独立`)
     }
 
     // ---- 判据 4：ejs-worker 随 prompt-template 独立包（workerPath 与加载者同目录）----
@@ -273,11 +300,11 @@ async function main () {
     {
       const rows = fs.existsSync(NODE_SERVICE) ? parsePluginRows(fs.readFileSync(NODE_SERVICE, 'utf8')) : null
       const ids = rows?.map(r => r.id) ?? []
-      const expect = ['dsht-rp', 'dsht-mvu', 'dsht-tavern-helper', 'dsht-prompt-template', 'dsht-mobile', 'dsht-memory', 'preset-enhance']
+      const expect = ['dsht-rp', 'dsht-mvu', 'dsht-tavern-helper', 'dsht-prompt-template', 'dsht-mobile', 'dsht-memory', 'dsht-device', 'preset-enhance']
       const missingRows = expect.filter(e => !ids.includes(e))
       const orderOk = ids.indexOf('dsht-rp') !== -1 && ids.indexOf('dsht-memory') !== -1 && ids.indexOf('dsht-rp') < ids.indexOf('dsht-memory')
       check(rows !== null && missingRows.length === 0 && orderOk,
-        '判据6 pluginRows 齐全（7 行）且 dsht-rp 先于 dsht-memory（pre-step 顺序不变量）',
+        `判据6 pluginRows 齐全（${expect.length} 行）且 dsht-rp 先于 dsht-memory（pre-step 顺序不变量）`,
         rows === null ? 'pluginRows 解析失败（Kotlin 形态变了？）'
           : missingRows.length > 0 ? `缺行：${missingRows.join(', ')}`
             : !orderOk ? `顺序：${ids.join(' → ')}` : ids.join(' → '))
@@ -319,15 +346,23 @@ async function main () {
         if (!fs.existsSync(path.join(dir, 'cordis.patch.yml'))) bad.push(`${p}（cordis.patch.yml 缺失）`)
       }
       check(bad.length === 0, '判据8 R10 各包 PC 可装性（dsh.bundle.patch + cordis.patch.yml）',
-        bad.length > 0 ? bad.join('；') : '4/4 可 dsh plugin add')
+        bad.length > 0 ? bad.join('；') : `${R10.length}/${R10.length} 可 dsh plugin add`)
     }
 
     // ---- 判据 8c：权威路径的 R10 独立构建形态仍可被机器读出（解析器自证的实时版）----
     {
-      const rr = parseSplitEntries(fs.readFileSync(path.join(HERE, 'build-dsht.ps1'), 'utf8'))
-      const ok = rr.entries.length >= 5 && rr.r10Loop !== null && rr.r10Loop.names.length === 4 && rr.unresolved.length === 0
-      check(ok, '判据8c build-dsht.ps1 的 R10 独立构建形态可解析（entries≥5 · 循环成员=4 · 未覆盖=0）',
-        `entries=${rr.entries.length} loopNames=${rr.r10Loop ? rr.r10Loop.names.length : 0} unresolved=${rr.unresolved.length}`)
+      const bdSrc = fs.readFileSync(path.join(HERE, 'build-dsht.ps1'), 'utf8')
+      const rr = parseSplitEntries(bdSrc)
+      const declared = countR10Ids(bdSrc)
+      const names = rr.r10Loop ? rr.r10Loop.names.length : 0
+      // 【W-3 修正】原为硬编码 `names.length === 4`。W-3 加入 dsht-plugin-device 后
+      // 循环成员变 5 ⇒ 该硬编码变成假红，把正常构建判成「拆包不完整、勿发货」。
+      // 真不变量是「循环成员数 == $r10Ids 登记数」（每个被编译的包都必须有 patch id，
+      // 否则包在但永不被 mount），而不是某个会随插件数变化的具体数字。
+      const ok = rr.entries.length >= 5 && rr.r10Loop !== null &&
+        names === declared && declared > 0 && rr.unresolved.length === 0
+      check(ok, `判据8c build-dsht.ps1 的 R10 独立构建形态可解析（entries≥5 · 循环成员=${declared} · 未覆盖=0）`,
+        `entries=${rr.entries.length} loopNames=${names} declaredIds=${declared} unresolved=${rr.unresolved.length}`)
     }
   } finally {
     if (negctlBytes !== null) {

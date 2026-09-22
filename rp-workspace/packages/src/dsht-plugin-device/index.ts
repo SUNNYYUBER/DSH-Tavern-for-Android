@@ -21,7 +21,50 @@
  */
 
 export const name = 'dsht-plugin-device'
-export const inject = ['tools', 'systemPrompt']
+
+/**
+ * 【为什么 inject 是空的 + 工具注册走 ctx.inject(...) 延迟接线】
+ * （真机 boot loop 事故的定案修法·2026-09-21，两层语义都踩过一遍）
+ *
+ * ## 第一层：顶层 inject 声明不可得依赖 ⇒ 整树加载失败
+ * 首版写 `inject = ['tools', 'systemPrompt']`，真机上 **DSH 完全起不来**：
+ *   `dsh: plugin(s) failed to load: dsht-plugin-device; Cordis startup failed because
+ *    these plugin(s) could not be resolved`
+ *   ⇒ `node exited with code 1; restart in 3s`（模拟器实录连续第 45 次重启）。
+ * 根因：`tools` / `systemPrompt` 是 **agent 会话面**的 service，而本插件挂的是
+ * **web profile 全局层**——该层只 provide `webServer` / `settings` / `llm` 一类。
+ * 同层对照实证：`dsht-plugin-memory`（`['webServer','settings','llm','agentDefaultModel']`）
+ * 与 `dsht-plugin-tavern-helper`（`['webServer','settings']`）**都正常激活**，
+ * 唯独声明了 `tools`/`systemPrompt` 的本插件停在 PENDING ⇒ Cordis 判定
+ * 「could not be resolved」⇒ **整棵插件树加载失败**（一个插件的依赖写错，
+ * 代价由全树承担）。
+ *
+ * ## 第二层：把 inject 清空后**直接访问** ctx.tools ⇒ 另一种抛错
+ * 天真的「那就别声明了」也不行。Cordis 的 ctx 是**严格代理**：
+ * 未在 `inject` 里声明的 service，**读取即抛**——
+ *   实测：`dsht-plugin-device: Error: cannot get property "tools" without inject`
+ *   （`at new apply (.../dsht-plugin-device/lib/index.js:49:12)`）
+ * ⇒ 于是 `inject = []` + `if (!ctx.tools ...)` 守卫同样把整树打挂。
+ *
+ * ## 定案：官方为「可能不在场的依赖」提供的机制 = `ctx.inject(deps, cb)`
+ * [cordis/lib/index.js] `inject(inject, callback)` 文档原文：
+ *   *"Start a callback once the requested dependencies are available."*
+ * 它内部就是 `this.plugin({ inject, apply: callback })` —— 即**起一个子 fiber**
+ * 承载这份依赖声明的等待。于是：
+ *   · 父 entry 的 `inject = []` ⇒ **立即 activated**，`assertEntriesActivated` 通过，
+ *     整棵树正常起来（不再由本插件连坐全树）；
+ *   · 子 fiber 安静地等 `tools`/`systemPrompt`：该层永远不可得就一直等（**不抛、不报错**），
+ *     将来某代 DSH 把 agent 面 service 挂到这层时，registration 会**自动生效**；
+ *   · callback 收到的 ctx 里 `tools`/`systemPrompt` 已解析好 ⇒ 绕开严格代理的抛错。
+ * 官方同款实例：`@deepseek-ai/dsh-agent-tool-presentation/lib/index.js:46`
+ *   `ctx.inject(["codeRuntime"], (runtimeCtx) => { runtimeCtx.tools.presentAs(config.mode); })`
+ *
+ * ## 本插件为何可以零 inject
+ * 它不依赖任何 host service 做实事：执行链是
+ * `fetch(127.0.0.1:$DSHT_DEVICE_PORT)` + `process.env` 取 token，纯本机 HTTP。
+ * `tools`/`systemPrompt` 只用于「把能力**告诉** agent」，缺席不影响设备桥本身。
+ */
+export const inject: string[] = []
 
 // ---------------------------------------------------------------------------
 // 宿主服务最小面（与其它 dsht-plugin-* 同构，按需声明）
@@ -41,6 +84,16 @@ interface LikeSystemPrompt {
   section: (def: { name: string; order: number; text: string }) => void
 }
 interface Ctx {
+  /**
+   * 【延迟接线入口】官方 API：依赖就绪时才调用 callback（见文件头「定案」一节）。
+   * 为什么不能用 `ctx.tools` 直接读：Cordis 的 ctx 是严格代理，未在顶层 `inject`
+   * 声明的 service **读取即抛** `cannot get property "tools" without inject`。
+   */
+  inject: (deps: string[], callback: (scope: ToolScope) => void) => unknown
+}
+
+/** `ctx.inject([...], cb)` 回调收到的 ctx：此时声明的 service 已解析好。 */
+interface ToolScope {
   tools: LikeToolRegistry
   systemPrompt: LikeSystemPrompt
 }
@@ -125,8 +178,23 @@ const outputText = {
 }
 
 export function apply(ctx: Ctx): void {
+  // ---- 延迟接线（见文件头「定案」一节）----
+  // 本函数**立即返回**、父 entry 立即 activated（不再让整树因本插件连坐）；
+  // 工具/提示词段的注册被放进子 fiber，只在 `tools` 与 `systemPrompt` 都就绪时执行。
+  // 在该层永远不可得的情况下子 fiber 一直等待——**不抛、不报错**，这是刻意的：
+  // 「设备桥在监听、但 agent 看不到 device_* 工具」是完全可接受的降级态
+  // （多数用户没装 Shizuku，本就不该看到这些工具）。
+  ctx.inject(['tools', 'systemPrompt'], (scope: ToolScope) => {
+    registerDeviceTools(scope)
+  })
+}
+
+/** 把 device_* 工具与提示词段注册进宿主（仅在依赖就绪时被调用）。 */
+function registerDeviceTools(scope: ToolScope): void {
+  const { tools, systemPrompt } = scope
+
   // ---- 提示词段（与 dsh-plugin 的 tool:* 段同构）----
-  ctx.systemPrompt.section({
+  systemPrompt.section({
     name: 'tool:device',
     order: 118,
     text:
@@ -136,7 +204,7 @@ export function apply(ctx: Ctx): void {
   })
 
   // ---- device_screenshot ----
-  ctx.tools.register({
+  tools.register({
     name: 'device_screenshot',
     description:
       'Take a screenshot of the Android device screen. Returns the saved PNG path (user-visible in a file manager). Read-only.',
@@ -158,7 +226,7 @@ export function apply(ctx: Ctx): void {
   })
 
   // ---- device_status ----
-  ctx.tools.register({
+  tools.register({
     name: 'device_status',
     description:
       'Read Android system status: battery, wifi, display or storage. Read-only, lowest risk.',
@@ -184,7 +252,7 @@ export function apply(ctx: Ctx): void {
   })
 
   // ---- device_notifications ----
-  ctx.tools.register({
+  tools.register({
     name: 'device_notifications',
     description:
       'Read recent Android notifications (package, title, text). The system redacts sensitive fields by default. Contains private data — use only when the user asks about notifications.',
@@ -209,7 +277,7 @@ export function apply(ctx: Ctx): void {
   // 【档位】danger-full-access ⇒ native 侧默认拒绝（fail-closed），等守门人就绪。
   // 工具仍然注册（让 agent 知道「有这个能力、但现在不可用」比完全隐藏更诚实——
   // 隐藏会让 agent 反复尝试别的路径，注册 + 明确拒绝让它一次得到准确答复）。
-  ctx.tools.register({
+  tools.register({
     name: 'device_input',
     description:
       'Simulate user input on the Android device: tap, swipe, type text, or press a key. DANGEROUS — can operate other apps. Requires explicit user approval; currently denied by default.',

@@ -16,7 +16,12 @@ $ErrorActionPreference = 'Stop'
 $sdk      = "$env:USERPROFILE\.android\sdk"
 $emulator = "$sdk\emulator\emulator.exe"
 $adb      = "$sdk\platform-tools\adb.exe"
-$apk      = 'D:\DSH RolePlay\DSH-Tavern-0.2.2-x86_64-debug.apk'
+# 【App 版本单源】从 android/app/build.gradle.kts 的 versionName 实读，不在这里另写死——
+# 否则发版后本脚本仍去找旧名 APK（表现为「装的是上一版」，而毫无报错）。
+$_g = Join-Path $PSScriptRoot '..\android\app\build.gradle.kts'
+$_m = [regex]::Match([IO.File]::ReadAllText($_g), 'versionName\s*=\s*"([^"]+)"')
+if (-not $_m.Success) { throw "无法从 android/app/build.gradle.kts 读出 versionName（app 版本单源）" }
+$apk      = "D:\DSH RolePlay\DSH-Tavern-$($_m.Groups[1].Value)-x86_64-debug.apk"
 $avd      = 'dsht-x64'
 
 if (-not (Test-Path $emulator)) { throw "emulator 不存在：$emulator" }
