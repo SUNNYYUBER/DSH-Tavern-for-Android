@@ -215,6 +215,8 @@ $readingGates = @{
     'audit-goal-sections.mjs'         = @{ Exe = 'node'; Pattern = '\[工作面表\]'; Label = '§十一 三表规模（P-49）' }
     # 【W-4】设备 op 档位对账读数：解析到的 op 数 + danger 档 op 数
     'audit-device-tiers.mjs'          = @{ Exe = 'node'; Pattern = '解析到 \d+ 个 op'; Label = '设备 op 档位声明数（W-4）' }
+    # 【W-6】交换目录拒绝清单规模（凭据不出去的结构约束）
+    'audit-exchange-guards.mjs'       = @{ Exe = 'node'; Pattern = '交换拒绝清单（\d+）'; Label = '交换目录拒绝清单条数（W-6）' }
 }
 
 <#
@@ -286,6 +288,12 @@ $auditNode = @(
     # 理由：档位是**代理量**——写错档位（如 input_tap 误标 READ_ONLY）时守门人不拦，
     # 而一切看起来都正常（测试过、功能可用），只有出事才知道（P-41 家族形态）。
     'audit-device-tiers.mjs',
+    # 【2026-09-21 W-6 新增】共享交换目录安全契约对账。
+    # 守：凭据拒绝清单（NEVER_MIRROR）非空且含凭据项、与备份排除清单一致
+    # （两处都是「凭据不出去」的实现，漂移意味着漏了一处）、拒绝必须**双向**。
+    # 理由：交换目录是 App 私有区 ↔ /sdcard 的桥，凭据一旦被搬过去，
+    # 任何 app / 用户在文件管理器里都能读——本项目头号风险类型。
+    'audit-exchange-guards.mjs',
     # 【第二十五轮 W4 新增】「单测装置 vs 真机」脚本语义一致性闸门。
     # 守：卡脚本在真机以 <script type="module"> 注入（th-shim.ts 锚点断言）⇒ **严格模式**；
     # 而单测用 node:vm **经典脚本**语义。两者**不是同一套语义**（实证：同一段带 with 的代码

@@ -1317,6 +1317,17 @@ class MainActivity : AppCompatActivity() {
         // 冷启动即分享（ACTION_SEND）：拷入 inbox，端口就绪后拉起导入 tab
         handleIncomingIntent(intent)
 
+        // W-6：冷启动跑一次交换目录同步（后台线程，不阻塞 UI）——
+        // 用户往文件管理器里放完东西回 App 就能看到，无需手动点。
+        Thread {
+            try {
+                val r = ExchangeDir.sync(applicationContext)
+                if (r.changed) android.util.Log.i("DSHT-Exchange", "cold-start sync: ${r.summary()}")
+            } catch (t: Throwable) {
+                android.util.Log.w("DSHT-Exchange", "cold-start sync failed: ${t.message}")
+            }
+        }.start()
+
         // §4.16.2：冷启动即深链（ACTION_VIEW dsht://session/<id>）→ 暂存待端口就绪后派发
         handleLocateDeepLink(intent)
 
@@ -1366,6 +1377,8 @@ class MainActivity : AppCompatActivity() {
         actions += { startBackup() }
         items += "恢复数据（从备份 zip 还原）…"
         actions += { startRestorePick() }
+        items += "同步交换目录（与文件管理器互拷）…"
+        actions += { syncExchangeDir() }
         items += "自检与一键修补…"
         actions += { showSelfCheckDialog() }
         items += "关于（版本信息）"
@@ -1419,6 +1432,54 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- W-B 备份 ----
+
+    /**
+     * W-6：交换目录同步（与文件管理器互拷）。
+     *
+     * 【为什么是手动 + 进 App 时自动，而不是守护进程】/sdcard 是 FUSE 挂载，
+     * FileObserver 跨挂载点不可靠；而常驻守护进程与「不新增守护进程」的项目口径冲突。
+     * 手动触发 + 冷启动同步已覆盖真实使用（用户放完文件回 App 就能看到）。
+     */
+    private fun syncExchangeDir() {
+        val where = ExchangeDir.externalLabel(this)
+        android.app.AlertDialog.Builder(this)
+            .setTitle("同步交换目录")
+            .setMessage(
+                "把下面这个目录与 App 内部交换区互拷（新者胜）：\n\n$where\n\n" +
+                    "· 适合：往手机里放角色卡 / 日志 / 备份，或在电脑上直接取 App 输出的文件\n" +
+                    "· 只同步这一层文件，不会递归整个目录树\n" +
+                    "· 凭据文件（.credentials.yaml / dsht-token）**永不参与**，双向都不会被搬动",
+            )
+            .setPositiveButton("开始同步") { _, _ ->
+                Thread {
+                    val r = try { ExchangeDir.sync(this) } catch (t: Throwable) {
+                        ExchangeDir.Report(0, 0, 0, emptyList(), listOf(t.message ?: "未知错误"))
+                    }
+                    runOnUiThread {
+                        val detail = buildString {
+                            appendLine(r.summary())
+                            if (r.blocked.isNotEmpty()) {
+                                appendLine()
+                                appendLine("被拒绝的凭据文件（双向都不搬）：")
+                                r.blocked.forEach { appendLine("· $it") }
+                            }
+                            if (r.errors.isNotEmpty()) {
+                                appendLine()
+                                appendLine("失败项：")
+                                r.errors.forEach { appendLine("· $it") }
+                            }
+                        }
+                        android.app.AlertDialog.Builder(this)
+                            .setTitle(if (r.errors.isEmpty()) "同步完成" else "同步完成（有失败项）")
+                            .setMessage(detail)
+                            .setPositiveButton("好", null)
+                            .show()
+                    }
+                }.start()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
 
     private fun startBackup() {
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US)

@@ -1218,6 +1218,19 @@ class NodeService : Service() {
             shizukuAction,
             false,
         )
+        // 11. 共享交换目录（W-6）——两处目录都存在即可用；凭据永不映射是**结构约束**
+        //     （ExchangeDir.NEVER_MIRROR 双向拒绝），此处只报可用性 + 位置。
+        val exAppSide = ExchangeDir.appSide(this)
+        val exExtSide = ExchangeDir.externalSide(this)
+        val exOk = exAppSide.isDirectory && exExtSide.isDirectory
+        items += checkState(
+            "exchange", "共享交换目录（文件管理器互通）",
+            if (exOk) "READY" else "UNAVAILABLE",
+            exOk,
+            if (exOk) ExchangeDir.externalLabel(this) else "交换目录创建失败",
+            if (exOk) "设置面板 → 同步交换目录" else "检查存储权限",
+            false,
+        )
         return org.json.JSONObject().put("checks", org.json.JSONArray().apply { items.forEach { put(it) } }).toString()
     }
 
