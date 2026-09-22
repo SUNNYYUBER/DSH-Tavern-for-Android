@@ -213,6 +213,8 @@ $readingGates = @{
     'audit-open-items.mjs'            = @{ Exe = 'node'; Pattern = '\[开放项\] §六 表'; Label = '§六 开放项规模（R10 动态区）' }
     'audit-doc-refs.mjs'              = @{ Exe = 'node'; Pattern = '\[文档引用\] 扫描'; Label = 'E-H 文档一致性扫描规模（§八 E-H）' }
     'audit-goal-sections.mjs'         = @{ Exe = 'node'; Pattern = '\[工作面表\]'; Label = '§十一 三表规模（P-49）' }
+    # 【W-4】设备 op 档位对账读数：解析到的 op 数 + danger 档 op 数
+    'audit-device-tiers.mjs'          = @{ Exe = 'node'; Pattern = '解析到 \d+ 个 op'; Label = '设备 op 档位声明数（W-4）' }
 }
 
 <#
@@ -278,6 +280,12 @@ $auditNode = @(
     # 需要 `$env:TH_ROOT` 指向 JS-Slash-Runner 外部副本；**缺失时 fail-closed（exit 2）**，
     # 不会静默变绿（P-11）。
     'audit-th-face-coverage.mjs',
+    # 【2026-09-21 W-4 新增】设备 op 档位声明对账。
+    # 守：DeviceBridge 的 OPS 表里每个 op 都有档位、**danger 档真的被守门人拦住**
+    # （不是恒 false 死代码或绕过）、danger 判定早于命令构造、与设计文档一致。
+    # 理由：档位是**代理量**——写错档位（如 input_tap 误标 READ_ONLY）时守门人不拦，
+    # 而一切看起来都正常（测试过、功能可用），只有出事才知道（P-41 家族形态）。
+    'audit-device-tiers.mjs',
     # 【第二十五轮 W4 新增】「单测装置 vs 真机」脚本语义一致性闸门。
     # 守：卡脚本在真机以 <script type="module"> 注入（th-shim.ts 锚点断言）⇒ **严格模式**；
     # 而单测用 node:vm **经典脚本**语义。两者**不是同一套语义**（实证：同一段带 with 的代码

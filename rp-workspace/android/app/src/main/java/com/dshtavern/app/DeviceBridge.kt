@@ -436,8 +436,20 @@ object DeviceBridge {
         }
     }
 
-    /** danger 档批准判定。W-4 就绪前恒为 false（fail-closed）。 */
-    private fun dangerApproved(op: String): Boolean = false
+    /** danger 档批准判定。W-4 守门人：挂起请求 → 通知用户确认（默认拒绝，超时即拒）。 */
+    private fun dangerApproved(op: String): Boolean = Gate.requestApproval(appCtx, op)
+
+    /**
+     * 记录守门人决策（W-4 审计面）。
+     *
+     * 【为什么单独一条】守门人的「拒绝」不经过 [dispatch] 的常规审计路径
+     * （批准发生在档位判定阶段、命令尚未构造），但它是**最该留痕**的一类
+     * 决策——将来若要回答「AI 有没有试图点过什么」，看的就是这里。
+     */
+    fun recordGateDecision(op: String, approved: Boolean, answered: Boolean) {
+        val tier = OPS[op]?.tier?.name ?: "?"
+        audit(op, JSONObject(), Tier.valueOf(tier), if (approved) "gate-approved" else if (answered) "gate-denied" else "gate-timeout")
+    }
 
     private fun err(e: Err, detail: String): JSONObject =
         JSONObject().put("ok", false).put("error", e.name).put("detail", detail)

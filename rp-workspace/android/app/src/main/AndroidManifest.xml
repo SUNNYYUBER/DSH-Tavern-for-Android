@@ -77,5 +77,13 @@
             android:enabled="true"
             android:exported="true"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!-- W-4 守门人：danger 档设备操作的批准按钮回调。
+             exported=false —— 只有系统通知栏的 PendingIntent 能触发它
+             （PendingIntent 以本 App 身份发出，不受 exported 限制），
+             其它应用无法伪造「批准」。 -->
+        <receiver
+            android:name=".GateReceiver"
+            android:exported="false" />
     </application>
 </manifest>
