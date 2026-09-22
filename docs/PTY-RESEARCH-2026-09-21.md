@@ -1,17 +1,26 @@
 # W-E 调研：DSH 终端（node-pty）在 bionic 路线上的打通方案（2026-09-21）
 
 > GOAL-ANDROID-GAP-2026-09-21 的 W-E 决策点交付物。
-> 结论先行：**走「NDK 进构建链 + 自编译 node-pty（上游源码 + openpty shim）」单一路径**；
+> 结论先行：**走「NDK 进构建链 + 自编译 node-pty（上游源码）」单一路径**；
 > 第三方 prebuild（node-pty-android-arm64）经 ELF 实证**不可直接使用**；
 > 自研 JNI pty 桥**不需要**（node-pty 自编译已覆盖且 x86_64 可自验）。
 > 实施另立 goal，本文是决策依据。
+>
+> **★ 2026-09-21 修订（W-1 实施期实证，推翻本文原假设）**：原文称「bionic 无
+> `openpty()/forkpty()`，需 ~50 行 shim」——**该假设错误**。NDK 编译探针与
+> `llvm-readelf` 双实证：**bionic 自 API 23 起在 libc 内原生提供
+> `openpty` / `forkpty` / `ptsname` / `posix_openpt` / `grantpt` / `unlockpt`**，
+> NDK 29 的 `<pty.h>` 就在 `sysroot/usr/include/`。⇒ **零 shim、零额外库**
+> （`-lutil` 也不需要）。详见文末附录 B。
 
 ## 现状
 
 - DSH web 的内置终端依赖 `node-pty`（原生模块）；我方 [stubs/node-pty](file:///d:/DSH%20RolePlay/rp-workspace/stubs/node-pty)
   是受控报错 stub——终端功能整体不可用（唯一「不可用但安静」的大功能面）。
-- bionic 的根本障碍：glibc 的 `openpty()/forkpty()`（libutil）在 bionic **不存在**；
-  bionic 只有更底层的 `posix_openpt/grantpt/unlockpt/ptsname(_r)`（Termux 终端就靠这层）。
+- ~~bionic 的根本障碍：glibc 的 `openpty()/forkpty()`（libutil）在 bionic **不存在**。~~
+  **【已推翻】** bionic 自 API 23 起**原生提供** openpty 族（全部由 libc 提供，
+  见附录 B 实证）。真正的障碍只剩「node-pty 官方 prebuild 是 glibc 编译，
+  bionic 加载不了」——即**必须用 NDK 自编译，但不需要任何 shim**。
 
 ## 候选路径与实证
 
@@ -36,11 +45,14 @@ node 侧。功能上够用，但要自己维护一套 node 侧 API 与 DSH termi
 而 DSH terminal 要的是 `require('node-pty')` 的标准形态，自研桥等于重新发明
 node-pty 的 JS 面，工作量严格大于直接编译 node-pty。
 
-### 路径 ③ NDK 进构建链 + 自编译 node-pty（上游源码 + openpty shim）——✅ 选它
+### 路径 ③ NDK 进构建链 + 自编译 node-pty（上游源码）——✅ 选它
 
 DioNanos fork 的做法（也是 Codex/Copilot 的 Termux 分支的做法）证明可行：
-node-pty 的 unix 侧源码（pty.cc 等少数 .cc）用 Android NDK 的 clang 直接编译，
-`openpty/forkpty` 用 ~50 行 shim 补齐（posix_openpt 组合，bionic 全有，可全量审计）。
+node-pty 的 unix 侧源码（pty.cc 等少数 .cc）用 Android NDK 的 clang 直接编译。
+
+**【2026-09-21 修订】** 原方案含「`openpty/forkpty` 用 ~50 行 shim 补齐」——
+**实证后此步完全删除**：bionic libc 原生提供，`-lutil` 也不需要（附录 B）。
+实际链接需求 = 只连 `libc.so` + `libdl.so`。
 
 **成本账**：
 
@@ -48,7 +60,7 @@ node-pty 的 unix 侧源码（pty.cc 等少数 .cc）用 Android NDK 的 clang �
 |---|---|
 | NDK 引入 | 构建机一次性 ~1.5GB（SDK 已在；`sdk/ndk/<ver>` 的 Windows prebuilt clang 直接可用）；CI 同步骤 |
 | C 编译步骤 | build-dsht.ps1 加一个 Step：双架构各编一次（`--target=aarch64-linux-android28` / `x86_64-linux-android28`），输出进 jniLibs |
-| openpty shim | ~50 行 C（自研、可审计，替代第三方 prebuild 的信任面） |
+| ~~openpty shim~~ | **【已删除】零 shim**——bionic libc 原生提供（附录 B 实证） |
 | node-pty 源码 | pin 上游版本 + SHA256（fetch-native-libs 同款纪律）；与 node 24 的 N-API 兼容性上游持续维护 |
 | 部署形态 | `pty.node` 伪装 `libdsht-pty-node.so`？—— **不需要**：`.node` 是 dlopen 不是 execve，SELinux 不管 dlopen（runtime/lib 里 dlopen 先例已在：带版本号 so 全套在跑）。npm alias `node-pty@npm:<我们的包>` 或直接覆盖 stub 目录 |
 
@@ -82,3 +94,44 @@ node-pty 的 unix 侧源码（pty.cc 等少数 .cc）用 Android NDK 的 clang �
   `posix_openpt / grantpt / unlockpt` = 无引用（即 shim 不在二进制内）；
 - Termux 官方仓库 `packages/libandroid-pty` = 404（无此包）；
 - 我方 `libandroid-support.so`（runtime 已在）不含 openpty 族符号（dynsym 实证）。
+
+## 附录 B：bionic 原生 PTY 支持实证（2026-09-21 W-1 实施期新增）
+
+**假设被推翻**：原文（及多数二手资料）称「bionic 无 openpty/forkpty，需从
+`posix_openpt` 组合 shim」。用 NDK 直接做编译探针，结论相反。
+
+**探针**：`rp-workspace/tmp/pty-probe.c` —— 调用 `openpty` / `ptsname` /
+`forkpty` / `posix_openpt` / `grantpt` / `unlockpt`。
+
+**实证 1（编译链接）**：NDK 29.0.14033849 双架构编译**均 exit=0**：
+```
+aarch64-linux-android28-clang  pty-probe.c  →  exit 0
+x86_64-linux-android28-clang   pty-probe.c  →  exit 0
+```
+
+**实证 2（符号来源，`llvm-readelf --dyn-syms`）**：全部符号标 `@LIBC`：
+```
+ 4: ... UND openpty@LIBC        7: ... UND forkpty@LIBC
+ 6: ... UND ptsname@LIBC        8: ... UND posix_openpt@LIBC
+ 9: ... UND grantpt@LIBC       10: ... UND unlockpt@LIBC
+```
+
+**实证 3（NEEDED 全集）**：只有 `libdl.so` + `libc.so`——**无 libutil**：
+```
+ 0x01 (NEEDED)  Shared library: [libdl.so]
+ 0x01 (NEEDED)  Shared library: [libc.so]
+```
+
+**实证 4（头文件在场）**：`$NDK/toolchains/llvm/prebuilt/windows-x86_64/sysroot/usr/include/pty.h`
+存在，自述 `openpty/forkpty` **Available since API level 23**
+（`__INTRODUCED_IN(23)`）——与我们 `minSdk = 28` 兼容，余量充足。
+
+**唯一编译报错**：`TIOCPTYGNAME` 未声明（bionic 无此 ioctl 宏）。但 node-pty
+`pty.cc` 只在 `#if defined(__APPLE__)` 分支用它（第 717 行注释「Use
+TIOCPTYGNAME instead of ptsname()」在 macOS 路径），**linux 分支走 `ptsname()`
+——bionic 有**。⇒ 对 node-pty linux 编译路径**零影响**。
+
+**结论**：任务从「需自研 shim + 审计第三方信任面」降级为
+**「配置 NDK 交叉编译参数即可」**——W-1 的成本与风险都显著低于原估。
+`-lutil` 在 `binding.gyp` 里需删（bionic 无独立 libutil，符号在 libc 内，
+保留 `-lutil` 会链接失败）。

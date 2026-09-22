@@ -835,10 +835,36 @@ if (-not $SkipInstall) {
     Copy-Item "$stubs\sharp\index.mjs" "$runtimeDst\node_modules\sharp\dist\index.mjs" -Force
     Copy-Item "$stubs\koffi\index.js" "$runtimeDst\node_modules\koffi\index.js" -Force
     Copy-Item "$stubs\koffi\index.cjs" "$runtimeDst\node_modules\koffi\index.cjs" -Force
-    Copy-Item "$stubs\node-pty\index.js" "$runtimeDst\node_modules\node-pty\lib\index.js" -Force
-    # node-pty prebuilds 全删（linux-arm64 是 glibc 编译，Android bionic 加载必炸；体积也省）
+    # node-pty：自编译原生模块（W-1）——**不再用 stub**。
+    #   实证（docs/PTY-RESEARCH-2026-09-21.md 附录 B）：bionic libc 自 API 23 起
+    #   原生提供 openpty/forkpty/ptsname ⇒ NDK 交叉编译上游源码即可，零 shim。
+    #   JS 层用上游原版（stub 会抛错，正是终端不可用的原因）；
+    #   原生产物走 prebuilds/android-<arch>/pty.node（node-pty 的查找路径之一）。
+    #   【为什么从 dsh-runtime-src 取 JS】dsh-runtime-android 的那份可能已被上一代
+    #   构建的 stub 覆盖；src 目录是未被构建触碰的干净源。
+    $ptyJsSrc = "$ws\dsh-runtime-src\node_modules\node-pty\lib\index.js"
+    if (Test-Path $ptyJsSrc) {
+        Copy-Item $ptyJsSrc "$runtimeDst\node_modules\node-pty\lib\index.js" -Force
+        Write-Host "  node-pty：上游 JS 恢复（W-1 自编译，非 stub）"
+    } else {
+        throw "node-pty 上游 JS 源缺失：$ptyJsSrc（自编译链路依赖它）"
+    }
+    # 编译产物就位检查（双架构 prebuilds 必须已在 node_modules/node-pty/prebuilds 下）
+    $ptyPrebuilds = @('android-arm64', 'android-x64') | ForEach-Object { "$runtimeDst\node_modules\node-pty\prebuilds\$_\pty.node" }
+    $ptyMissing = $ptyPrebuilds | Where-Object { -not (Test-Path $_) }
+    if ($ptyMissing) {
+        throw "node-pty 原生产物缺失（先跑 node scripts/build-node-pty.mjs）：`n$($ptyMissing -join "`n")"
+    }
+    # 清掉非 android 的 prebuilds（上游含 linux/darwin/win32 全套，win32 侧还有 .pdb
+    # 与 conpty 目录，体积可观）——Android 运行时只可能加载 android-<arch>。
+    Get-ChildItem "$runtimeDst\node_modules\node-pty\prebuilds" -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch '^android-' } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    # 构建期静态断言：双架构 pty.node 的 PTY 符号必须由 libc 提供（bionic 原生支持，
+    # 见 docs/PTY-RESEARCH-2026-09-21.md 附录 B）。用 NDK 的 llvm-readelf 做判据。
+    & node "$ws\scripts\audit-pty-prebuilt.mjs"
+    if ($LASTEXITCODE -ne 0) { throw "node-pty 原生模块静态断言失败（详见 node scripts/audit-pty-prebuilt.mjs）" }
     if (-not $SkipInstall) {
-    Remove-Item "$runtimeDst\node_modules\node-pty\prebuilds" -Recurse -Force -ErrorAction SilentlyContinue
     # 沙箱双平台雷：dsh-sandbox-local 顶层静态 import 这两个包（landlock native 二进制 / koffi 顶层调用）
     # probe()='unusable' 让 DSH 走 SandboxUnavailableError 降级路径——沙箱不可用但服务可启动
     #

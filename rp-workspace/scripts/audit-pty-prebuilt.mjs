@@ -1,0 +1,192 @@
+// audit-pty-prebuilt.mjs —— node-pty 自编译产物的构建期静态断言（W-1）
+//
+// 【为什么需要它】交叉编译的 ARM ELF 无法在 Windows 构建机上 dlopen，
+// 所以「产物能不能在设备上加载」必须用**静态判据**守。判据的设计依据是
+// docs/PTY-RESEARCH-2026-09-21.md 附录 B 的实证结论：
+//
+//   1. PTY 六个符号（openpty/forkpty/ptsname/posix_openpt/grantpt/unlockpt）
+//      必须是 UND 且**由 libc 提供**（bionic 自 API 23 起原生提供）——
+//      这同时排除了「误把 glibc/Termux 编译产物塞进来」（那样的 runpath/版本标记会不同）。
+//   2. NEEDED 全集 ⊆ {libc.so, libm.so, libdl.so, libc++_shared.so}——
+//      多出任何库（尤其 libutil.so）都说明链接配置错了（bionic 无独立 libutil）。
+//   3. 架构必须对（ELF e_machine）
+//
+// 自研 ELF 解析（不依赖 NDK/llvm-readelf 在场——CI 上 NDK 由 workflow 提供，
+// 但判据本身应能在任何机器上独立跑）。
+//
+// 退出码：0 = 全部通过；1 = 有判据失败（含产物缺失）
+//
+// 用法：node scripts/audit-pty-prebuilt.mjs
+
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const WS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+const PTY_DIR = path.join(WS, 'dsh-runtime-android', 'node_modules', 'node-pty', 'prebuilds')
+
+const PTY_SYMBOLS = ['openpty', 'forkpty', 'ptsname', 'posix_openpt', 'grantpt', 'unlockpt']
+const ALLOWED_NEEDED = new Set(['libc.so', 'libm.so', 'libdl.so', 'libc++_shared.so'])
+
+// ELF e_machine：AArch64 = 183，x86-64 = 62
+const ARCH_EXPECT = {
+  'android-arm64': { machine: 183, name: 'AArch64' },
+  'android-x64': { machine: 62, name: 'x86-64' },
+}
+
+// ---- 极简 ELF64 解析（只取本判据需要的段） ----
+function parseElf(buf) {
+  if (buf.readUInt32LE(0) !== 0x464c457f) throw new Error('not ELF')
+  if (buf[4] !== 2) throw new Error('not ELF64')
+  const machine = buf.readUInt16LE(0x12)
+  const shoff = Number(buf.readBigUInt64LE(0x28))
+  const shentsize = buf.readUInt16LE(0x3a)
+  const shnum = buf.readUInt16LE(0x3c)
+  const shstrndx = buf.readUInt16LE(0x3e)
+  const sh = (i) => shoff + i * shentsize
+  const shstrOff = Number(buf.readBigUInt64LE(sh(shstrndx) + 0x18))
+  // 注意：off 是**相对 base 的偏移**（section name / strtab 索引都这样用），
+  // 循环必须从 base+off 起（早期版本漏加 base ⇒ 段名全读不出，判据静默失效）
+  const LIMIT = buf.length
+  const cstr = (base, off) => {
+    let e = base + off
+    if (e < 0 || e >= LIMIT) return ''
+    while (e < LIMIT && buf[e] !== 0) e++
+    return buf.toString('latin1', base + off, e)
+  }
+  const sectAt = (o) => cstr(shstrOff, buf.readUInt32LE(sh(o)))
+
+  let dynsym = null // { off, size, link }
+  let dynstr = null // { off }
+  let verneed = null // { off, size }
+  let versym = null // { off, size }
+  for (let i = 0; i < shnum; i++) {
+    const name = sectAt(i)
+    const off = Number(buf.readBigUInt64LE(sh(i) + 0x18))
+    const size = Number(buf.readBigUInt64LE(sh(i) + 0x20))
+    const link = buf.readUInt32LE(sh(i) + 0x28)
+    if (name === '.dynsym') dynsym = { off, size, link }
+    if (name === '.dynstr') dynstr = { off }
+    if (name === '.gnu.version_r') verneed = { off, size, link }
+    if (name === '.gnu.version') versym = { off, size, link }
+  }
+  if (!dynsym || !dynstr) throw new Error('no .dynsym/.dynstr')
+
+  // verneed 链：版本索引 → soname@version 名
+  const verMap = new Map()
+  if (verneed) {
+    let o = verneed.off
+    const end = verneed.off + verneed.size
+    let guard = 0
+    while (o < end && guard++ < 64) {
+      const vn_cnt = buf.readUInt16LE(o + 2)
+      const vn_file = o + buf.readUInt32LE(o + 4)
+      const vn_aux = o + buf.readUInt32LE(o + 8)
+      const vn_next = buf.readUInt32LE(o + 12)
+      const soname = cstr(dynstr.off, buf.readUInt32LE(vn_file))
+      let a = vn_aux
+      for (let i = 0; i < vn_cnt; i++) {
+        const vna_other = buf.readUInt16LE(a + 6) & 0x7fff
+        const vna_name = cstr(dynstr.off, buf.readUInt32LE(a + 8))
+        verMap.set(vna_other, `${soname}@${vna_name}`)
+        const anext = buf.readUInt32LE(a + 16)
+        if (anext === 0) break
+        a += anext
+      }
+      if (vn_next === 0) break
+      o += vn_next
+    }
+  }
+
+  // 符号：找目标符号的 shndx（0=UND）与版本名
+  const symInfo = new Map() // name → { und, provider }
+  const idxOf = (o) => Math.floor((o - dynsym.off) / 24)
+  for (let o = dynsym.off; o < dynsym.off + dynsym.size; o += 24) {
+    const nameOff = buf.readUInt32LE(o)
+    if (nameOff === 0) continue
+    const name = cstr(dynstr.off, nameOff)
+    const shndx = buf.readUInt16LE(o + 6)
+    const vi = versym ? buf.readUInt16LE(versym.off + idxOf(o) * 2) & 0x7fff : 0
+    symInfo.set(name, { und: shndx === 0, provider: verMap.get(vi) ?? (vi ? `verIdx=${vi}` : null) })
+  }
+
+  // NEEDED 全集（.dynamic 段）
+  const needed = []
+  for (let i = 0; i < shnum; i++) {
+    if (sectAt(i) !== '.dynamic') continue
+    const off = Number(buf.readBigUInt64LE(sh(i) + 0x18))
+    const size = Number(buf.readBigUInt64LE(sh(i) + 0x20))
+    for (let o = off; o < off + size; o += 16) {
+      const tag = Number(buf.readBigUInt64LE(o))
+      const val = Number(buf.readBigUInt64LE(o + 8))
+      if (tag === 0) break
+      if (tag === 1) needed.push(cstr(dynstr.off, val))
+    }
+  }
+
+  return { machine, symInfo, needed }
+}
+
+// ---- 判据 ----
+let failed = false
+const fail = (msg) => {
+  console.error(`  ✗ ${msg}`)
+  failed = true
+}
+
+console.log('=== node-pty 预编译产物静态断言（W-1）===')
+
+for (const [dir, expect] of Object.entries(ARCH_EXPECT)) {
+  const file = path.join(PTY_DIR, dir, 'pty.node')
+  console.log(`\n[${dir}] ${file}`)
+  if (!fs.existsSync(file)) {
+    fail(`产物缺失：${file}`)
+    continue
+  }
+
+  let elf
+  try {
+    elf = parseElf(fs.readFileSync(file))
+  } catch (e) {
+    fail(`ELF 解析失败：${e?.message ?? e}`)
+    continue
+  }
+
+  // 判据 1：架构
+  if (elf.machine !== expect.machine) {
+    fail(`架构不符：e_machine=${elf.machine}，期望 ${expect.machine}（${expect.name}）`)
+  } else {
+    console.log(`  ✓ 判据1 架构 = ${expect.name}`)
+  }
+
+  // 判据 2：PTY 六符号为 UND 且由 libc 提供
+  const bad = []
+  for (const s of PTY_SYMBOLS) {
+    const info = elf.symInfo.get(s)
+    if (!info) {
+      // 未被引用的符号不算失败（源码可能在某架构上不用某个），但记一笔
+      continue
+    }
+    if (!info.und) bad.push(`${s} 不是 UND（shndx≠0）——被静态实现进本模块？`)
+    else if (!info.provider || !info.provider.endsWith('@LIBC')) {
+      bad.push(`${s} 提供方 = ${info.provider ?? '(无版本标记)'}，期望 *@LIBC`)
+    }
+  }
+  if (bad.length) bad.forEach(fail)
+  else console.log(`  ✓ 判据2 PTY 符号全部由 libc 提供（bionic 原生，零 shim）`)
+
+  // 判据 3：NEEDED 全集在允许集内（尤其排除 libutil.so）
+  const extra = elf.needed.filter((n) => !ALLOWED_NEEDED.has(n))
+  if (extra.length) {
+    fail(`NEEDED 含未允许的库：${extra.join(', ')}（允许集：${[...ALLOWED_NEEDED].join(', ')}）`)
+  } else {
+    console.log(`  ✓ 判据3 NEEDED = ${elf.needed.join(', ')}`)
+  }
+}
+
+if (failed) {
+  console.error('\n✗ node-pty 产物静态断言失败')
+  process.exitCode = 1
+} else {
+  console.log('\n✓ node-pty 双架构产物静态断言全部通过')
+}

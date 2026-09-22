@@ -193,13 +193,16 @@ else:
     log("  3a 删 win32/darwin 平台包（检查模式跳过）")
 
 # --- 3b. stubs（坑 #1/#2：stub 是 Android 唯一正解——原生二进制无法在 bionic 加载）
+# 【2026-09-21 W-1 变更】node-pty **不再 stub**：改为 NDK 自编译原生模块
+#   （实证 bionic libc 原生提供 openpty/forkpty/ptsname，见 docs/PTY-RESEARCH-2026-09-21.md
+#   附录 B）。故从 STUB_MAP 移除，改由下方的「上游 JS 恢复 + prebuilds 校验」处理。
+#   两条链（ps1 / python）必须等价——audit-build-path-parity 守。
 STUB_MAP = [
     ("node-addon-require-builtin/index.js", "node-addon-require-builtin/lib/index.js"),
     ("sharp/index.js", "sharp/dist/index.cjs"),
     ("sharp/index.mjs", "sharp/dist/index.mjs"),
     ("koffi/index.js", "koffi/index.js"),
     ("koffi/index.cjs", "koffi/index.cjs"),
-    ("node-pty/index.js", "node-pty/lib/index.js"),
     ("node-addon-landlock-run/index.js", "@deepseek-ai/node-addon-landlock-run/lib/index.js"),
     ("dsh-sandbox-windows-acl/index.js", "@deepseek-ai/dsh-sandbox-windows-acl/lib/index.js"),
     ("dsh-sandbox-windows-acl/runner.js", "@deepseek-ai/dsh-sandbox-windows-acl/lib/runner.js"),
@@ -223,6 +226,35 @@ for _src_rel, _dst_rel in STUB_MAP:
     shutil.copyfile(_s, _d)
     _stub_ok += 1
 log("  3b stubs 六件套：%d 项%s" % (_stub_ok, "（待复制）" if CHECK_ONLY else "已落位"))
+
+# --- 3b-2. node-pty 自编译接入（W-1）——上游 JS 恢复 + prebuilds 就位校验
+# 【路径注意】node-pty 不在 @deepseek-ai 下（NM 指错会静默判「缺失」）⇒ 用 DST\node_modules
+_pty_root = os.path.join(DST, "node_modules", "node-pty")
+_pty_lib = os.path.join(_pty_root, "lib", "index.js")
+_pty_js_src = os.path.join(WS, "dsh-runtime-src", "node_modules", "node-pty", "lib", "index.js")
+if os.path.isfile(_pty_js_src):
+    if CHECK_ONLY:
+        log("  ✓ 3b-2 node-pty 上游 JS 源就位（待复制）")
+    else:
+        os.makedirs(os.path.dirname(_pty_lib), exist_ok=True)
+        shutil.copyfile(_pty_js_src, _pty_lib)
+        log("  ✓ 3b-2 node-pty 上游 JS 已恢复（非 stub）")
+else:
+    log("  ✗ 3b-2 node-pty 上游 JS 源缺失：%s" % _pty_js_src)
+    STATS["failed"] += 1
+
+_pty_missing = []
+for _pdir in ("android-arm64", "android-x64"):
+    _p = os.path.join(_pty_root, "prebuilds", _pdir, "pty.node")
+    if not os.path.isfile(_p):
+        _pty_missing.append(_p)
+if _pty_missing:
+    log("  ✗ 3b-2 node-pty 原生产物缺失（先跑 node scripts/build-node-pty.mjs）：")
+    for _p in _pty_missing:
+        log("      %s" % _p)
+    STATS["failed"] += 1
+else:
+    log("  ✓ 3b-2 node-pty prebuilds 双架构就位")
 
 # --- 3c. sim 补丁（PC 上伪装 linux 做 android-sim 验证；真机 Android 不受影响）
 patch(
