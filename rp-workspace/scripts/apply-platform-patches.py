@@ -199,8 +199,6 @@ else:
 #   两条链（ps1 / python）必须等价——audit-build-path-parity 守。
 STUB_MAP = [
     ("node-addon-require-builtin/index.js", "node-addon-require-builtin/lib/index.js"),
-    ("sharp/index.js", "sharp/dist/index.cjs"),
-    ("sharp/index.mjs", "sharp/dist/index.mjs"),
     ("koffi/index.js", "koffi/index.js"),
     ("koffi/index.cjs", "koffi/index.cjs"),
     ("node-addon-landlock-run/index.js", "@deepseek-ai/node-addon-landlock-run/lib/index.js"),
@@ -255,6 +253,20 @@ if _pty_missing:
     STATS["failed"] += 1
 else:
     log("  ✓ 3b-2 node-pty prebuilds 双架构就位")
+
+# --- 3b-3. sharp wasm 就位校验（W-5）——sharp 不再 stub，改用 @img/sharp-wasm32
+# 【为什么】sharp 官方 prebuild 无 android（npm registry 实测缺 @img/sharp-libvips-android-*），
+# 而 bionic 与 glibc 不兼容 ⇒ 直接拿 linux prebuild 必炸。
+# 但 sharp 主包自带 wasm 兜底分支（dist/sharp.cjs:102-108），装上 wasm 包后自动回退
+# ⇒ 图片通道真的可用（实测 19/19 判据）。wasm 与架构无关 ⇒ 单份产物覆盖双架构。
+# 两条链（ps1/python）必须等价——audit-build-path-parity.py 守。
+_sharp_wasm = os.path.join(DST, "node_modules", "@img", "sharp-wasm32", "package.json")
+if os.path.isfile(_sharp_wasm):
+    log("  ✓ 3b-3 sharp @img/sharp-wasm32 已就位（W-5 wasm 路线，非 stub）")
+else:
+    log("  ✗ 3b-3 sharp wasm 包缺失：%s" % _sharp_wasm)
+    log("      （runtimeSrc/package.json 应声明 @img/sharp-wasm32；见 build-dsht.ps1 Step 1）")
+    STATS["failed"] += 1
 
 # --- 3c. sim 补丁（PC 上伪装 linux 做 android-sim 验证；真机 Android 不受影响）
 patch(

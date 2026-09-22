@@ -34,15 +34,27 @@
 
 1. 下载并安装对应架构的 APK（`arm64` = 真机，`x86_64` = 模拟器）。首次启动要解压约 2.4 万个文件，等它跑完。
 2. 打开 App → **设置 → 模型** → 填入你的 API Key（DeepSeek 官方，或任意 OpenAI 兼容端点）。
+   > ⚠️ **这个模型不只是用来聊天的——它还要亲自跑数据迁移**（见第 4 步）。变量结构、深度提示、正则这些细节一旦翻错，聊天就会出怪问题，所以**强烈建议填你手里性能最强的模型**。
 3. 侧栏底部「🎭 角色扮演」→「导入」页，选一种导入方式：
 
    | 导入方式 | 用途 |
    |---|---|
    | 📦 **完整数据包** | `data/` 文件夹打包的 zip —— 角色卡 / 世界书 / 聊天记录 / 预设一次迁移 |
-   | 🎴 **角色卡** | 单个 PNG 或 JSON —— 生成一个工作区 + 带开场白的会话 |
+   | 🎴 **角色卡** | 单个 PNG 或 JSON |
    | 📚 **世界书** | world JSON |
 
-4. 回到「角色」页，点开角色卡即可开聊。**建议先导入一张卡试聊一轮，确认链路通畅，再导完整数据包。**
+   选好文件后，完整数据包会先给你一个**预览确认**（哪些新增 / 覆盖 / 丢弃）；单卡、单书则直接开工。
+4. **等适配 agent 干完活（这一步不能跳过）。**
+   **迁移不是格式拷贝，是 AI 翻译。** 你上传的 ST 数据由「适配 agent」（挂了 `st-migration` 技能的角色扮演专家）亲自阅读、理解，再写成 DSHTavern 的原生格式——角色卡 → 工作区、世界书 → 技能、聊天记录 → DSH 会话、ST 预设 → RP 预设，外加变量树与校验回执。
+
+   点确认后 App 会**自动新建一个「ST 数据适配」会话并跳转过去**，同时替你发出开工消息（你不需要自己打字）。**在这个会话里你能实时看到 agent 干活**：逐类目的进度、校验回执，最后产出一份 `migration-report.md` 中文总结（失败项会显式列出，不会静默）。
+
+   - **耗时提示**：这是大活。整包迁移（真实数据常有上百本书 + 数百 MB 聊天记录）需要**等待较长时间**，让它跑完。
+   - **中断了不用重做**：批次列表会给中断的包打上「可续跑」标记，点「▶ 断点续跑」会**接着上次的断点补缺失类目**，已完成的类目自动跳过。
+   - **数据包很大或模型一般**：先拿一张单卡试跑一轮，确认链路通畅再导整包。
+5. 适配完成后回到「角色」页，工作区已注册，点开角色卡即可开聊。
+
+   > 出问题不用慌：如果导入失败、或导入后行为不对，直接把现象用大白话发给**任意一个会话**里的 harness，让它按 `st-migration` 契约排查。
 
 ## 能做什么
 
@@ -333,15 +345,27 @@ Why is it public? Two reasons: to share a working approach for running the DSH r
 
 1. Download and install the APK for your architecture (`arm64` = real devices, `x86_64` = emulators). First launch unpacks ~24,000 files — let it finish.
 2. Open the app → **Settings → Model** → enter your API key (DeepSeek official, or any OpenAI-compatible endpoint).
+   > ⚠️ **This model is not just for chatting — it runs the data migration itself** (see step 4). Details like variable structure, depth prompts and regex are easy to get wrong, and a bad translation shows up as weird chat behaviour. **Use the strongest model you have access to.**
 3. Sidebar bottom "🎭 Roleplay" → "Import" tab, pick an import mode:
 
    | Import mode | What it does |
    |---|---|
    | 📦 **Full data package** | A zip of your `data/` folder — cards, world books, chats, presets in one migration |
-   | 🎴 **Character card** | A single PNG or JSON — creates a workspace + a session with the greeting |
+   | 🎴 **Character card** | A single PNG or JSON |
    | 📚 **World book** | world JSON |
 
-4. Back to the "Characters" tab, open a card and start chatting. **Try one card first to confirm the pipeline works, then import the full package.**
+   After picking a file, the full data package shows a **preview gate** first (what will be added / overwritten / dropped); single cards and books start straight away.
+4. **Wait for the adapter agent to finish — this step cannot be skipped.**
+   **Migration is not a format copy, it is an AI translation.** Your SillyTavern data is read, understood and rewritten into DSHTavern's native shapes by an "adapter agent" (a roleplay specialist loaded with the `st-migration` skill): cards → workspaces, world books → skills, chats → DSH sessions, ST presets → RP presets, plus variable trees and verification receipts.
+
+   On confirm, the app **creates a "ST 数据适配" session and jumps you into it**, sending the kickoff message on your behalf (no typing needed). **You watch the agent work live** in that session: per-category progress, verification receipts, and finally a `migration-report.md` summary in Chinese (failures listed explicitly, never silently dropped).
+
+   - **Time**: this is heavy work. A full package (real data often means 100+ books and hundreds of MB of chat logs) takes **a long while** — let it finish.
+   - **Interrupted? No need to start over**: the batch list marks interrupted packages as resumable; "▶ Resume from checkpoint" fills in only the missing categories and skips the completed ones.
+   - **Large package or a modest model**: try a single card first to confirm the pipeline works, then run the full import.
+5. Once adaptation finishes, go back to the "Characters" tab — the workspace is registered and the card is ready to chat.
+
+   > If something goes wrong: describe the symptom in plain language to the harness in **any session** and let it debug against the `st-migration` contract.
 
 ## What it can do
 

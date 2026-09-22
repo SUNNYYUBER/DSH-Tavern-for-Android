@@ -95,6 +95,13 @@ STUB_EXEMPT = {
     # 真机路径用的是自编译 prebuilds/android-*（见 build-node-pty.mjs），与此无关。
     ("node-pty-sim/index.js", "node-pty/lib/index.js"):
         "PC android-sim 验证专用的临时替换（验完还原上游原版）；python 路径不跑 sim 验证 ⇒ 无对应动作是正确的",
+    # 【2026-09-21 W-5】sharp 的两条 sim 替换（index.js → dist/index.cjs、index.mjs → dist/index.mjs）
+    # 同 node-pty-sim 的理由：真机走 @img/sharp-wasm32（架构无关，无 .so 加载问题），
+    # 这里只是 PC sim 期间临时顶替（sharp 主包在 sim 下会去找 linux glibc .node，Windows 无法 dlopen）。
+    ("sharp/index.js", "sharp/dist/index.cjs"):
+        "PC android-sim 验证专用的临时替换（真机走 @img/sharp-wasm32；验完还原上游原版）",
+    ("sharp/index.mjs", "sharp/dist/index.mjs"):
+        "同上（ESM 入口）",
 }
 
 

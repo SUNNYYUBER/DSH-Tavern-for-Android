@@ -779,11 +779,26 @@ if (-not $SkipInstall) {
     # 找最近的 package.json——空目录会让 add/install 提升到 rp-workspace 根（把我们工程
     # 根的 package.json/node_modules 当成安装目标，root 被污染成 dsh 依赖树，踩过）。
     # 先写明依赖再 install：cwd 自带 package.json 即 project root，node_modules 落本目录。
+    #
+    # 【2026-09-21 W-5】`@img/sharp-wasm32` —— sharp 的 **WebAssembly 版**。
+    # 为什么加它：sharp 的官方 prebuild 只有 linux glibc/musl、darwin、win32、wasm，
+    # **没有 android**（npm registry 实测缺 @img/sharp-libvips-android-*）。而 bionic
+    # 与 glibc 不兼容 ⇒ 直接拿 linux prebuild 必炸，原方案（stub）是「如实报错但图片通道不可用」。
+    # 实测发现（tmp/sharp-wasm-spike/，19/19 PASS）：**sharp 主包自己就有 wasm 兜底分支**
+    # （dist/sharp.cjs:102-108 `if (!sharp) sharp = require("@img/sharp-wasm32/sharp.node")`），
+    # 官方帮助文案也明确写「Add WebAssembly-based dependencies: npm install sharp @img/sharp-wasm32」。
+    # ⇒ 我们**只需装上它，不写任何转发层**；sharp 在 Android 上自动回退 wasm。
+    # 实测能力面：metadata() 字段契约完整（space/depth/hasAlpha/format/width/height）、
+    # jpeg/webp 编码、raw 全解码、clone/resize/rotate/toColourspace 全通、
+    # png/jpeg/webp/gif 四格式（= DSH MEDIA_TYPES 白名单）全支持，
+    # libvips 8.18.6（正好满足 DSH 的 >= 8.18.6），单份产物覆盖双架构（wasm 与架构无关）。
+    # 版本钉死 0.35.4（= 运行时装的 sharp 版本；二者必须同版，否则绑定契约不匹配）。
     [IO.File]::WriteAllText("$runtimeSrc\package.json", (@"
 {
 	"dependencies": {
 		"@deepseek-ai/dsh": "$DshVersion",
-		"dsh-preset-enhance": "$PresetEnhanceVersion"
+		"dsh-preset-enhance": "$PresetEnhanceVersion",
+		"@img/sharp-wasm32": "0.35.4"
 	}
 }
 "@))
@@ -859,8 +874,25 @@ if (-not $SkipInstall) {
         Where-Object { $_.Name -match 'win32|darwin|linux' } | Remove-Item -Recurse -Force
     # 3c. 应用 stubs（六件套：require-builtin / sharp / koffi / node-pty / landlock-run / sandbox-windows-acl）
     Copy-Item "$stubs\node-addon-require-builtin\index.js" "$runtimeDst\node_modules\node-addon-require-builtin\lib\index.js" -Force
-    Copy-Item "$stubs\sharp\index.js" "$runtimeDst\node_modules\sharp\dist\index.cjs" -Force
-    Copy-Item "$stubs\sharp\index.mjs" "$runtimeDst\node_modules\sharp\dist\index.mjs" -Force
+    # 【W-5】sharp：**不再 stub**——改用 @img/sharp-wasm32（WebAssembly 版）。
+    #   sharp 主包自带 wasm 兜底分支（dist/sharp.cjs:102-108），装上 wasm 包后
+    #   在 Android 上自动回退 ⇒ 图片通道**真的可用**（实测 19/19 判据通过：
+    #   metadata 契约完整 / jpeg+webp 编码 / raw 全解码 / clone+resize+rotate+
+    #   toColourspace / png-jpeg-webp-gif 四格式 / libvips 8.18.6）。
+    #   【为什么这里不能留 stub】stub 会让「上传图片」明确失败（INVALID_IMAGE）；
+    #   而 wasm 路线让它工作。stubs\sharp\* 仅在 PC sim 验证期临时顶替（见 Step 4）。
+    #   （wasm 包由 Step 1 的 runtimeSrc\package.json 声明并安装。）
+    $sharpWasm = "$runtimeDst\node_modules\@img\sharp-wasm32\package.json"
+    if (Test-Path $sharpWasm) {
+        Write-Host "  sharp：@img/sharp-wasm32 已就位（W-5 wasm 路线，非 stub）"
+    } else {
+        throw "sharp wasm 包缺失：$sharpWasm（Step 1 的 package.json 应已声明 @img/sharp-wasm32）"
+    }
+    <#
+      原 stub 落盘（保留为史实记录，勿恢复）：
+      Copy-Item "$stubs\sharp\index.js" "$runtimeDst\node_modules\sharp\dist\index.cjs" -Force
+      Copy-Item "$stubs\sharp\index.mjs" "$runtimeDst\node_modules\sharp\dist\index.mjs" -Force
+    #>
     Copy-Item "$stubs\koffi\index.js" "$runtimeDst\node_modules\koffi\index.js" -Force
     Copy-Item "$stubs\koffi\index.cjs" "$runtimeDst\node_modules\koffi\index.cjs" -Force
     # node-pty：自编译原生模块（W-1）——**不再用 stub**。
@@ -1036,6 +1068,26 @@ if (-not $SkipInstall) {
         $ptyStubbed = $true
         Write-Host "  [sim] node-pty JS 临时替换为 stub（PC 无法 dlopen Linux .so；验完还原）" -ForegroundColor DarkCyan
     }
+    # 【W-5 同款处置】sharp 在 sim 下也会去找 linux glibc 的 .node 预编译产物
+    #（Windows node 无法 dlopen）⇒ 临时用降级模块顶替，验完还原。
+    # 【为什么真机不用它】真机走 @img/sharp-wasm32（架构无关，无 .so 加载问题），
+    # 这里的替换**仅覆盖 PC sim**，故不削弱真机能力。
+    $sharpCjs = "$runtimeDst\node_modules\sharp\dist\index.cjs"
+    $sharpMjs = "$runtimeDst\node_modules\sharp\dist\index.mjs"
+    $sharpCjsBackup = "$env:TEMP\dsht-sharp-cjs-backup.js"
+    $sharpMjsBackup = "$env:TEMP\dsht-sharp-mjs-backup.js"
+    $sharpStubDir = "$ws\stubs\sharp"
+    $sharpStubbed = $false
+    if ((Test-Path $sharpCjs) -and (Test-Path "$sharpStubDir\index.js")) {
+        Copy-Item $sharpCjs $sharpCjsBackup -Force
+        Copy-Item "$sharpStubDir\index.js" $sharpCjs -Force
+        $sharpStubbed = $true
+        if ((Test-Path $sharpMjs) -and (Test-Path "$sharpStubDir\index.mjs")) {
+            Copy-Item $sharpMjs $sharpMjsBackup -Force
+            Copy-Item "$sharpStubDir\index.mjs" $sharpMjs -Force
+        }
+        Write-Host "  [sim] sharp 临时替换为降级模块（PC 无法 dlopen Linux .so；验完还原）" -ForegroundColor DarkCyan
+    }
     # PS5.1：Start-Process 无 -Environment 参数——经进程环境变量继承（本 shell 会话级，脚本结束不影响用户环境）
     $env:HOME = $vh; $env:DSH_HOME = "$vh\.dsh"
     $p = Start-Process -FilePath node -ArgumentList "--expose-internals", "-r", "..\scripts\android-sim.cjs", "node_modules\@deepseek-ai\dsh\lib\bin.js", "web", "--no-open", "--port", "3090" `
@@ -1055,6 +1107,18 @@ if (-not $SkipInstall) {
         Copy-Item $ptyLibBackup $ptyLib -Force
         Remove-Item $ptyLibBackup -Force -ErrorAction SilentlyContinue
         Write-Host "  [sim] node-pty JS 已还原为上游原版" -ForegroundColor DarkCyan
+    }
+    # ★ 还原 sharp 上游原版（同款理由）
+    if ($sharpStubbed) {
+        if (Test-Path $sharpCjsBackup) {
+            Copy-Item $sharpCjsBackup $sharpCjs -Force
+            Remove-Item $sharpCjsBackup -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path $sharpMjsBackup) {
+            Copy-Item $sharpMjsBackup $sharpMjs -Force
+            Remove-Item $sharpMjsBackup -Force -ErrorAction SilentlyContinue
+        }
+        Write-Host "  [sim] sharp 已还原为上游原版" -ForegroundColor DarkCyan
     }
     if ($portOpen -or ($outLog -match 'dsh web: http')) {
         Write-Host "  ✅ web 已监听 3090（0.1.2 token 模式；TCP 探测=$portOpen）——完全通过" -ForegroundColor Green
