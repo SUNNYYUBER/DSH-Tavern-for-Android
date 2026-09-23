@@ -14,6 +14,11 @@ jobs:
   build-x64:
     runs-on: windows-latest
     timeout-minutes: 120
+    # 【2026-09-21 W-3 发版】默认的 GITHUB_TOKEN 权限是只读，`gh release upload` 会被
+    # 拒为 **403 Resource not accessible by integration**（实测）。发布资产需要 contents:write。
+    # 最小授权：只给 contents，不给其他面。
+    permissions:
+      contents: write
     env:
       # Python 门禁输出含中文；CI 控制台缺省 cp437/cp1252 会 UnicodeEncodeError（第八跑实证）
       PYTHONIOENCODING: utf-8
