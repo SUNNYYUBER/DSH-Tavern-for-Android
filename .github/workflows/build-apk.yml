@@ -61,6 +61,28 @@ jobs:
           Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
           if (-not $env:ANDROID_HOME) { throw "ANDROID_HOME 未设" }
 
+      # 【W-1 2026-09-21】NDK 就位 —— build-dsht.ps1 Step 1.5 要用它交叉编译 node-pty。
+      # 为什么必须显式装：runner 镜像的 NDK 版本我们不控制，而 build-node-pty.mjs 钉死
+      # NDK_VERSION=29.0.14033849（交叉编译工具链路径由它拼出）。不装则 Step 1.5 直接
+      # throw「node-pty 自编译失败——检查 NDK 是否就位」⇒ **CI 必红**（实测：v0.2.3 tag
+      # 触发的那次运行就死在这里，此前 CI 成功是因为 W-1 尚未接入构建链）。
+      # sdkmanager 在 cmdline-tools/latest/bin；装到 $ANDROID_HOME/ndk/<ver>。
+      - name: Provision Android NDK 29.0.14033849 (node-pty cross-compile)
+        shell: pwsh
+        run: |
+          $ndkVer = '29.0.14033849'
+          $ndkDir = Join-Path $env:ANDROID_HOME "ndk/$ndkVer"
+          if (Test-Path $ndkDir) { Write-Host "NDK 已就位：$ndkDir"; exit 0 }
+          $sdkmanager = Get-ChildItem "$env:ANDROID_HOME/cmdline-tools" -Recurse -Filter 'sdkmanager.bat' -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $sdkmanager) { throw "找不到 sdkmanager.bat（cmdline-tools 缺失）" }
+          Write-Host "sdkmanager：$sdkmanager"
+          # yes 应答许可（sdkmanager 首次会问）
+          'y' * 20 -split '' | Out-Null
+          cmd /c "echo y| `"$sdkmanager`" --install `"ndk;$ndkVer`""
+          if (-not (Test-Path $ndkDir)) { throw "NDK 安装失败：$ndkDir 不存在" }
+          Write-Host "NDK 就位：$ndkDir"
+
       # packages 依赖就位（Step 0.5 的 AST 类门禁要 typescript 等 devDependencies；
       # 构建脚本内的完整安装在门禁之后——没有这一步，CI 净环境必炸在 audit-body-dup-ast。
       # 注意 rp-workspace 根**没有** pnpm-workspace.yaml，装根目录不覆盖 packages/ 的 devDeps）
