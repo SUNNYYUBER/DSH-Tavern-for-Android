@@ -1737,8 +1737,8 @@ function evaluatePluginCompatibility(manifest, exemptions = {}, runtimeVersion =
 
 | 步 | 动作 | 要点 |
 |---|---|---|
-| B.1 | **接入 `dsh-session-format-v3-to-v4` 迁移** | 必须收集**直属 subagent 子会话证据**（官方明示：缺失则拒绝） |
-| B.2 | ★ **迁移前强制全量备份**（用户已裁定） | 备份落**共享交换目录**（`/sdcard`，**不入库**）+ 加 `.gitignore` 规则堵死「被误拷进仓库」（**已完成**，见 E.6） |
+| B.1 | **接入 `dsh-session-format-v3-to-v4` 迁移** | 必须收集**直属 subagent 子会话证据**（官方明示：缺失则拒绝；**已实测证实**，见 E.7）。⚠️ **仍未做** |
+| B.2 | ★ **迁移前强制全量备份**（用户已裁定） | 备份落**共享交换目录**（`/sdcard`，**不入库**）+ 加 `.gitignore` 规则堵死「被误拷进仓库」（**已完成**，见 E.6）。⚠️ **运行时的备份动作本身仍未做** |
 | B.3 | 我方解析器按 v4 复核：`session-repair.ts` 的 `ENVELOPE_KEYS` / `STEP_SCOPED`（含 `tool/result`） | ✅ **已完成** —— 见下方「B.3 执行记录」 |
 | B.4 | `pickCurrentSessionFilename` 取最大 N ⇒ 确认认 v4 文件 | v4 文件到来时会自动挑中 |
 | B.5 | 单源 `sessionFormatKnownGenerations` **加 4** | ✅ **已完成**（`[3, 4]`，见状态） |
@@ -1931,11 +1931,62 @@ export interface PluginsSettingsTabEntry { id: string; order: number; label: str
 
 | 步 | 动作 |
 |---|---|
-| E.1 | `-DshVersion 0.1.7-rc.1` + 单源同步 + **lockfile 显式更新并提交**（B1-3 修正） | ✅ 单源已改（含 `dsh-runtime-src/package.json`） |
-| E.2 | 重装 runtime（`--no-frozen-lockfile`）→ 重跑补丁（13 条） | ⏳ 进行中 |
-| E.3 | **全量门禁**（Step 0.5 全项 + Step 0.55 + Step 5.4 + Step 6.5/6.6） | ⏳ |
-| E.4 | `audit-upgrade-readiness.mjs` 六段全过（**含 UNKNOWN 禁止**） | ⏳ |
-| E.5 | vitest：基线 **1841 passed / 4 failed**（那 4 个是 `undo.spec.ts` 的既有 git flaky，见 KNOWN-DEBT）⇒ 升级后**不得多于** 4 | ⏳ |
+| E.1 | `-DshVersion 0.1.7-rc.1` + 单源同步 + **lockfile 显式更新并提交**（B1-3 修正） | ✅ 完成（单源 3 处同改，见下） |
+| E.2 | 重装 runtime（`--no-frozen-lockfile`）→ 重跑补丁（**13 条全部命中**） | ✅ 完成（**267 子包零漂移**） |
+| E.3 | **全量门禁**（Step 0.5 全项 + Step 0.55 + Step 5.4 + Step 6.5/6.6） | ✅ 全过 |
+| E.4 | `audit-upgrade-readiness.mjs` 六段全过（**含 UNKNOWN 禁止**） | ✅ 通过 |
+| E.5 | vitest：基线 **1842 passed / 3 failed**（那 3 个是 `undo.spec.ts` 的既有 git flaky，见 KNOWN-DEBT）⇒ 升级后**不得多于** 3 | ✅ 通过（**一字不差地等于基线**） |
+| E.6 | ★ **产出 APK**（arm64 release）并核验内嵌 runtime | ✅ `DSH-Tavern-0.2.7-arm64-release.apk`（265.8 MB） |
+
+##### E 交付记录（2026-09-23 · 构建成功）
+
+```
+[完成] DSH 0.1.7-rc.1 → DSH Tavern APK（sentinel v386，versionName 0.2.7）
+  APK 交付：D:\DSH RolePlay\DSH-Tavern-0.2.7-arm64-release.apk（265.8 MB，assembleRelease，ABI=arm64-v8a）
+✓ 主包 @deepseek-ai/dsh        = 0.1.7-rc.1
+✓ 子包 @deepseek-ai/dsh-session = 0.1.7-rc.1
+✓ 数据兼容形态（isReplaceOp）   = op / startSeq / endSeq
+  => 核验 169 项，缺失 0 项
+```
+
+**E.5 的第二轮（诚实留痕）**：修 `session-contract` 的两处代次适配后重跑，
+`Test Files 1 failed | 85 passed (86)` · `Tests 3 failed | 1842 passed | 2 skipped (1847)`，
+3 个失败**全部**是 `undo.spec.ts` 的 git flaky（`0xC000013A`）⇒ **等于基线，判据通过**。
+
+##### E.7 执行记录（T-02b 契约探针：**v4 迁移要求「显式子级证据」**，实跑撞上）
+
+**现象**：升级到 0.1.7 后 vitest 由 4 失败变 **9 失败** —— 5 例
+`HEADER-REJECT: V3 catalog migration requires explicit historical child facts`。
+
+**取证**（读产物，不猜）`dsh-session-format-v3-to-v4/lib/index.js:1414-1416`：
+
+```js
+createStage() {
+  throw new SessionFormatUnsupportedMigrationError(
+    "V3 catalog migration requires explicit historical child facts, " +
+    "including an empty array for a parent without children");
+}
+```
+
+⇒ `sessionFormatV3ToV4` 这条**静态边**在 0.1.7 上**无条件拒绝**；身体恢复必须走
+`createSessionFormatCatalogWithChildren(<子级集合>)`，**空数组才表示「确无子级」**。
+
+★ 这与**附录 A.2 记录的「迁移硬约束①」逐字吻合** —— 当时是**读 README 推出来的**，
+本轮是**实跑撞上的** ⇒ 两路独立取证互相印证（**这是本审计文档唯一一次「推测先于实测被证实」**）。
+
+**修法（跨代兼容，两处）**：
+
+| 文件 | 改动 | 要点 |
+|---|---|---|
+| `tests/session-contract-probe.mjs` | `typeof catalogMod.createSessionFormatCatalogWithChildren === 'function'` ⇒ 用它 + `[]`；否则退回 `sessionFormatCatalog` | 本探针的样本**确实没有 subagent 子会话** ⇒ 空数组是**如实声明**，不是绕过 |
+| `tests/session-contract.spec.ts` | 反面样本的**拒绝理由**正则补 `chunk references` / `explicit historical child facts` | ★ 断言①（必须被拒）**不变**；变的只是**被谁在哪一步拒** |
+
+★ **纪律**：断言「拒绝理由」时必须**两种代次的写法都认** —— 否则升级后会把
+「**拒绝理由变了**」误报成「**约束失效了**」（**P-45**：判据口径必须与真目标对齐）。
+
+⚠️ **诚实边界（R7）**：本探针只覆盖「**无子级**」样本。**带子级的迁移**是
+`NodeService` / 会话写入路径的职责（**B.1**），那边必须**收集真实直属子会话集合**，
+**不在本探针面内**。
 
 ##### E 执行记录（2026-09-23 · **换版本构建的一个必然失败点**）
 
