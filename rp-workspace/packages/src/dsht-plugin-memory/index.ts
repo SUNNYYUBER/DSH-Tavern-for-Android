@@ -61,6 +61,10 @@ import { escapeResidualMacros } from '../dsht-plugin-shared/card-fence.ts'
 // 【W4 2026-09-14】官方投影读取单源（cwd / session.id / surface.nodes）——
 // 此前本插件 5 处裸读（含 `(session as ...).surface?.nodes ?? []` 的手写形状守卫）。
 import { readHostSessionId, readSessionCwd, readSurfaceNodes } from '../dsht-plugin-shared/host-projection.ts'
+// 【2026-09-23 DSH 升级轮 · 阶段 B.3】plugin source 的**代次无关**识别单源 ——
+// v4 迁移器把 `{kind:'plugin', plugin:'<名>'}` 改写成 `{kind:'plugin:<名>'}` 并删掉 `plugin` 字段
+// ⇒ 只认 `src.kind === 'plugin'` 的写法在 v4 下会**静默失效**（见 session-repair.ts 的 isPluginSourceKind 头注）。
+import { isPluginSourceKind, pluginNameOf } from '../dsht-plugin-shared/session-repair.ts'
 // E1-E8/E11：表格系统（st-memory-enhancement 机制级移植）——纯逻辑层在本目录 tables.ts，
 // 这里只做数据面接线（/tables 读取 + step-summary/rebuild 两个 llm 路由）
 import {
@@ -982,6 +986,11 @@ export function apply(ctx: Ctx, _config: unknown): void {
       const src = m.source ?? {}
       const dm = (ev.data ?? {}) as { turn?: unknown; message?: { turn?: unknown } }
       const turn = typeof dm.turn === 'number' ? dm.turn : (typeof dm.message?.turn === 'number' ? dm.message.turn : null)
+      // ★★ 2026-09-23 阶段 B.3：**plugin source 的插件名按代次无关口径取**
+      //   （v3 读 `src.plugin`；v4 从 `kind:'plugin:<名>'` 切 —— 见 isPluginSourceKind 头注）。
+      //   原先的 `src.plugin === name && src.kind === 'plugin'` 在 v4 下**恒为假**
+      //   ⇒ 本插件自写的影子 marker 不再被归入「可折叠快照」⇒ 影子折叠静默失效。
+      const srcPluginName = pluginNameOf(src as Record<string, unknown>)
       nodes.push({
         seq,
         isFloor: m.role === 'assistant' || (m.role === 'user' && src.kind === 'user'),
@@ -989,8 +998,8 @@ export function apply(ctx: Ctx, _config: unknown): void {
         // 本插件自己的影子 marker 也归入"可折叠快照"——否则 marker 每轮新增一个、
         // 永远留在视图里（模型实测抱怨"很多重复的上下文折叠标记"）；归入后随连续段
         // 合并折叠，marker 数量有界（每个连续段一个）
-        isSnapshot: src.form === 'snapshot' || (src.plugin === name && src.kind === 'plugin'),
-        sig: JSON.stringify([src.plugin ?? '', (Array.isArray(src.sections) ? src.sections : []).map(x => x?.name ?? '')]),
+        isSnapshot: src.form === 'snapshot' || (srcPluginName === name && isPluginSourceKind(src.kind)),
+        sig: JSON.stringify([srcPluginName ?? '', (Array.isArray(src.sections) ? src.sections : []).map(x => x?.name ?? '')]),
         chars,
         oneshot: src.form === 'snapshot' && src.oneshot === true,
         windowCopy: src.form === 'snapshot' && src.windowRange !== undefined,
@@ -1111,7 +1120,9 @@ export function apply(ctx: Ctx, _config: unknown): void {
         const ev = sessionEventAt(session, seq)
         if (ev?.type !== 'user/message') continue
         const d = ev.data as { source?: { plugin?: unknown; kind?: unknown } | null; content?: Array<{ type?: unknown; text?: unknown }> } | undefined
-        if (d?.source?.plugin !== name || d.source.kind !== 'plugin') continue
+        // ★ 2026-09-23 阶段 B.3：代次无关口径（v4 的 kind 是 `plugin:<名>` 且无 `plugin` 字段）
+        if (!d?.source || pluginNameOf(d.source as Record<string, unknown>) !== name
+          || !isPluginSourceKind(d.source.kind)) continue
         for (const b of Array.isArray(d.content) ? d.content : []) {
           if (b?.type === 'text' && typeof b.text === 'string') max = Math.max(max, parseFoldedFromMarker(b.text))
         }

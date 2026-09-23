@@ -15,6 +15,8 @@
 
 import { open, readdir } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+// 【2026-09-23 DSH 升级轮 · 阶段 B.3】plugin source 的代次无关识别单源（v3 `'plugin'` / v4 `'plugin:<名>'`）。
+import { isPluginSourceKind } from './session-repair.ts'
 
 // @adapt contract:persistence.format
 /**
@@ -108,13 +110,16 @@ export function normalizeSnapshotMessageRoles(content: string): { content: strin
  * 【鲁棒轮 2026-09-09】排除 source.kind === 'plugin'（live 回退/重新生成后的 marker
  * 「[已回退] …」原实现会被当锚 → lastUserText = marker 文案 → 前端把系统文案当输入重发；
  * live 路径同口径）。kind 缺失（存量旧数据）视为真用户消息——不破坏旧会话兼容。
+ * ★ 2026-09-23 阶段 B.3：v4 迁移器把 plugin source 的 kind 改写成 **`plugin:<名>`**
+ *   ⇒ 只认 `'plugin'` 会让上面那条排除在 v4 下**静默失效**（回退 marker 又会被当锚）。
  */
 export function findLastUserMessage(events: Array<{ type: string; seq: number; data?: unknown }>): { seq: number; text: string } | null {
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i]
     if (ev?.type !== 'user/message') continue
     const d = ev.data as { content?: Array<{ type: string; text?: string }>; source?: { kind?: unknown } } | undefined
-    if (d?.source?.kind === 'plugin') continue
+    // ★ 2026-09-23 阶段 B.3：代次无关（v3 的 'plugin' 与 v4 的 'plugin:<名>' 都排除）
+    if (isPluginSourceKind(d?.source?.kind)) continue
     const text = (d?.content ?? []).filter(b => b.type === 'text').map(b => b.text ?? '').join('\n')
     return { seq: ev.seq, text }
   }

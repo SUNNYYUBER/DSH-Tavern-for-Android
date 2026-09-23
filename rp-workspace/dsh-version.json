@@ -9,8 +9,8 @@
   "sessionReplaceOpFields": ["op", "startSeq", "endSeq"],
   "_sessionReplaceOpFieldsNote": "★ 这是**数据兼容的真正判据**（比版本号更本质）：设备上真实会话数据的 replace surfaceOp 字段名。dsh-session 的 isReplaceOp 是**严格三键**断言（Object.keys(op).length === 3），字段名换代 ⇒ 官方 loader 直接拒绝既有日志 ⇒ 会话打不开。审计脚本会读构建产物核对此形态。",
 
-  "sessionFormatKnownGenerations": [3],
-  "_sessionFormatKnownGenerationsNote": "★ 2026-09-23（DSH 升级轮新增）：我方解析器**实际覆盖的会话格式代次**。这是升级验收判据⑥ 的输入 —— 判据读官方 dsh-session-format-catalog 的 currentVersion，与本表比对：**不在表内即 BLOCK**（我方解析器读不懂该代次 ⇒ 老会话打不开）；**本表为空则判 UNKNOWN**（不是放行！未声明 = 无法判定，P-17）。当前只声明 [3]（0.1.5 线）。升级到 0.1.7（格式 v4）时必须：① 接入 dsh-session-format-v3-to-v4 迁移；② 复核我方 session-repair / session-surgery / session-write 对 v4 形态（tool/result 的 role:'tool'、kind 命名表）的处理；③ 完成后方可把 4 加入本表。",
+  "sessionFormatKnownGenerations": [3, 4],
+  "_sessionFormatKnownGenerationsNote": "★ 2026-09-23（DSH 升级轮新增）：我方解析器**实际覆盖的会话格式代次**。这是升级验收判据⑥ 的输入 —— 判据读官方 dsh-session-format-catalog 的 currentVersion，与本表比对：**不在表内即 BLOCK**（我方解析器读不懂该代次 ⇒ 老会话打不开）；**本表为空则判 UNKNOWN**（不是放行！未声明 = 无法判定，P-17）。★ 2026-09-23 阶段 B.3 已完成：① v4 的 surfaceOp 形态**实测未变**（仍 op/startSeq/endSeq，取证 dsh-session-format-v3-to-v4/lib/index.js:606-607,1392-1395）⇒ 我方 session-repair 的代次判据已由 `srcVersion >= 3` 的**巧合正确**改为**显式代次表 + 未知代次 fail-closed**（SURFACE_OP_STYLE_BY_GENERATION）；② v4 **改写 plugin source**（`{kind:'plugin',plugin:'<名>'}` ⇒ `{kind:'plugin:<名>'}` 且删 plugin 字段）⇒ 我方新增代次无关识别单源 `isPluginSourceKind`/`pluginNameOf`，并修掉 6 处「只认 kind==='plugin'」的静默失效点（session-repair×3、dsh-plugin×3、dsht-plugin-memory×2、session-surgery×1）；③ v4 的 `tool/result` role 改为 `'tool'` —— 我方**不写也不读** `tool/result` 的 message 形态（楼层判定只认 user/assistant），实测确认无影响。⇒ 6 条 vitest 控（session-repair.spec.ts 的 v4 describe）钉住上述形态。",
 
   "sessionReplaceOpKnownGenerations": {
     "startSeq-endSeq": "0.1.5+（当前世代；设备上 1747 处真实数据即此形态）",

@@ -9,7 +9,7 @@
  * 在 tests/session-contract.spec.ts 里（需要 runtime，缺失时自动跳过）。
  */
 import { describe, expect, it } from 'vitest'
-import { repairSessionForV3 } from '../src/dsht-plugin-shared/session-repair.ts'
+import { repairSessionForV3, surfaceOpStyleOf, isPluginSourceKind, pluginNameOf } from '../src/dsht-plugin-shared/session-repair.ts'
 
 const HDR = JSON.stringify({ type: 'session', version: 0, id: 's1', createdAt: 1, cwd: '/data/x', delegationDepth: 0 })
 
@@ -564,6 +564,108 @@ describe('session-repair: surfaceOp 字段名按代次自适应（心跳 47 事�
       if (ev.surfaceOp === undefined || ev.surfaceOp === 'append') continue
       expect(opKeys(ev)).toEqual(['endSeq', 'op', 'startSeq'])
     }
+  })
+})
+
+/**
+ * ★★ **2026-09-23 DSH 升级轮 · 阶段 B.3：v4（0.1.7）形态**
+ *
+ * 由头：0.1.7 引入会话格式 **v4**（`currentVersion: 3 → 4`）。实测
+ * `dsh-session-format-v3-to-v4/lib/index.js` 得到两条**决定性事实**：
+ *   ⑴ `surfaceOp` 形态**未变**（仍 `op/startSeq/endSeq`）⇒ v4 下 `4 >= 3` 仍成立，
+ *      但那是**第二次巧合** ⇒ 本文件把「代次 ⇒ 字段名」改成**显式查表**；
+ *   ⑵ v4 **改写 plugin source**：`{kind:'plugin', plugin:'<名>'}` ⇒ `{kind:'plugin:<名>'}`，
+ *      **删掉 `plugin` 字段** ⇒ 所有「只认 `kind === 'plugin'`」的判定在 v4 下**静默失效**。
+ *
+ * ★ 这两条都是**「恰好正确」的反面**：不补控，升级后不会有任何信号（P-30）。
+ */
+describe('session-repair: v4（0.1.7 会话格式）', () => {
+  const HDR_V4 = JSON.stringify({ type: 'session', version: 4, id: 's1', createdAt: 1, cwd: '/data/x', delegationDepth: 0 })
+  const sessionV4 = (events: Array<[string, Record<string, unknown>, Record<string, unknown>?]>): string => {
+    const lines = [HDR_V4]
+    events.forEach(([type, data, extra], i) => {
+      lines.push(JSON.stringify({ type, seq: i, time: 1000 + i, data, ...(extra ?? {}) }))
+    })
+    return lines.join('\n') + '\n'
+  }
+
+  it('★代次表：v4 的 surfaceOp 仍是 startSeq/endSeq（实测 v4 形态未变）', () => {
+    expect(surfaceOpStyleOf(4)).toBe('startSeq-endSeq')
+    expect(surfaceOpStyleOf(3)).toBe('startSeq-endSeq')
+    expect(surfaceOpStyleOf(2)).toBe('start-end')
+  })
+
+  it('★★代次表 fail-closed：**未登记代次** ⇒ 返回 null（不猜字段名）', () => {
+    // 这是关键纪律：猜错字段名会把**可读会话改成不可读**（2026-09-11 实机事故，不可逆）。
+    expect(surfaceOpStyleOf(5)).toBeNull()
+    expect(surfaceOpStyleOf(99)).toBeNull()
+    expect(surfaceOpStyleOf(-1)).toBeNull()
+  })
+
+  it('★★未知代次的文件 ⇒ 修复器**放弃修复**并给出理由（不是猜一个字段名写坏它）', () => {
+    const src = JSON.stringify({ type: 'session', version: 9, id: 's1', createdAt: 1, cwd: '/data/x', delegationDepth: 0 }) + '\n'
+      + JSON.stringify({ type: 'user/message', seq: 1, time: 1, data: { id: 'u1', role: 'user', content: [{ type: 'text', text: 'x' }], source: { kind: 'user' } }, surfaceOp: 'append' }) + '\n'
+    const r = repairSessionForV3(src)
+    expect(r.changed).toBe(false)
+    expect(r.error).toContain('未知会话格式代次')
+    // ★ 内容必须**逐字节未动**（放弃修复 = 不动文件，而不是改一半）
+    expect(r.content).toBe(src)
+  })
+
+  it('★ v4 文件（已知代次）仍能正常修复 ⇒ 输出 startSeq/endSeq', () => {
+    const src = sessionV4([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      MA(1, 1, 'a1', '正文'),
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+      // 带 v2 形状 replace 的 user/message ⇒ 必须被改成 startSeq/endSeq
+      ['user/message', { id: 'u2', role: 'user', content: [{ type: 'text', text: '重生成' }], source: { kind: 'user' } },
+        { surfaceOp: { op: 'replace', start: 3, end: 3 }, sourceEventSeqs: [3] }],
+    ])
+    const r = repairSessionForV3(src)
+    expect(r.changed).toBe(true)
+    const replaced = parse(r.content).filter(e => e.surfaceOp !== undefined && e.surfaceOp !== 'append')
+    expect(replaced.length).toBe(1)
+    expect(opKeys(replaced[0])).toEqual(['endSeq', 'op', 'startSeq'])
+  })
+
+  it('★★ v4 的 plugin source（`kind:\'plugin:<名>\'`、无 `plugin` 字段）仍被认出是 plugin source', () => {
+    // v4 迁移器把我方 `{kind:'plugin', plugin:'dsht-plugin-memory'}` 改写成
+    // `{kind:'plugin:dsht-plugin-memory'}` 并**删掉 plugin 字段**（实测 lib/index.js:86-107）。
+    expect(isPluginSourceKind('plugin')).toBe(true)
+    expect(isPluginSourceKind('plugin:dsht-plugin-memory')).toBe(true)
+    expect(pluginNameOf({ kind: 'plugin', plugin: 'dsht-repair' })).toBe('dsht-repair')
+    expect(pluginNameOf({ kind: 'plugin:dsht-repair', form: 'snapshot' })).toBe('dsht-repair')
+    // 反向：非 plugin source 不得被误认（守 P-38）
+    expect(isPluginSourceKind('user')).toBe(false)
+    expect(isPluginSourceKind('model')).toBe(false)
+    expect(isPluginSourceKind('tool')).toBe(false)
+    expect(isPluginSourceKind('pluginish')).toBe(false) // ★ 前缀必须带冒号
+    expect(pluginNameOf({ kind: 'user' })).toBeNull()
+  })
+
+  it('★★ v4 形态的 plugin source：自定义键仍能搬进 sections（归一逻辑不得静默失效）', () => {
+    // 修前 `kind === 'plugin'` 时：v4 的 `kind:'plugin:<名>'` 判 false ⇒ allowed=null ⇒
+    // 非法键检查**整段跳过** ⇒ 归一静默失效。本控钉住修后的行为。
+    const src = sessionV4([
+      ['turn/start', { turn: 1 }],
+      ['step/start', { turn: 1, step: 1 }],
+      ['user/message', {
+        id: 'u1', role: 'user',
+        content: [{ type: 'text', text: '快照' }],
+        source: { kind: 'plugin:dsht-plugin-memory', form: 'snapshot', thData: { a: 1 } },
+      }, { surfaceOp: 'append' }],
+      ['step/end', { turn: 1, step: 1 }],
+      ['turn/end', { turn: 1, reason: { kind: 'completed' } }],
+    ])
+    const r = repairSessionForV3(src)
+    const u = parse(r.content).find(e => e.type === 'user/message')!
+    const s = (u.data as { source: Record<string, unknown> }).source
+    // 非法键 `thData` 必须被搬进 sections（而不是原样留在 source 上）
+    expect(Object.hasOwn(s, 'thData')).toBe(false)
+    const secs = s.sections as Array<{ name: string; text: string }>
+    expect(secs.some(x => x.text.includes('thData'))).toBe(true)
   })
 })
 

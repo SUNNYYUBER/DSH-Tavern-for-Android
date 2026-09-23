@@ -1739,10 +1739,47 @@ function evaluatePluginCompatibility(manifest, exemptions = {}, runtimeVersion =
 |---|---|---|
 | B.1 | **接入 `dsh-session-format-v3-to-v4` 迁移** | 必须收集**直属 subagent 子会话证据**（官方明示：缺失则拒绝） |
 | B.2 | ★ **迁移前强制全量备份**（用户已裁定） | 备份落**共享交换目录**（`/sdcard`，**不入库**）+ 加 `.gitignore` 规则堵死「被误拷进仓库」（**已完成**，见 E.6） |
-| B.3 | 我方解析器按 v4 复核：`session-repair.ts` 的 `ENVELOPE_KEYS` / `STEP_SCOPED`（含 `tool/result`） | ★ `srcVersion >= 3` 的**巧合正确性**改为**按代次查表** |
+| B.3 | 我方解析器按 v4 复核：`session-repair.ts` 的 `ENVELOPE_KEYS` / `STEP_SCOPED`（含 `tool/result`） | ✅ **已完成** —— 见下方「B.3 执行记录」 |
 | B.4 | `pickCurrentSessionFilename` 取最大 N ⇒ 确认认 v4 文件 | v4 文件到来时会自动挑中 |
-| B.5 | 单源 `sessionFormatKnownGenerations` **加 4**（**已完成**，见状态） | 判据⑥ 会用它 |
+| B.5 | 单源 `sessionFormatKnownGenerations` **加 4** | ✅ **已完成**（`[3, 4]`，见状态） |
 | B.6 | **用真实批次数据**跑迁移 + 打开（模拟器上，1 个 v0 会话 + 23+ 真实会话在真机） | 唯一能证明「数据没坏」的判据 |
+
+##### B.3 执行记录（2026-09-23，**含一次对审计结论的实测纠正**）
+
+**取证方式**：`npm pack @deepseek-ai/dsh-session-format-v3-to-v4@0.1.7-alpha.1`
++ `@deepseek-ai/dsh-session@0.1.7-alpha.1`，逐行读 `lib/index.js`（**不靠文档转述**）。
+
+**实测得到的 4 条决定性事实**：
+
+| # | 事实 | 证据 | 对我方的影响 |
+|---|---|---|---|
+| 1 | `surfaceOp` 形态 **未变**（仍 `op/startSeq/endSeq`） | `v3-to-v4/lib/index.js:606-607`（读）· `:1392-1395`（写） | `srcVersion >= 3` 在 v4 下**仍然正确 —— 但这是第二次巧合** |
+| 2 | v4 **改写 plugin source**：`{kind:'plugin',plugin:'<名>'}` ⇒ `{kind:'plugin:<名>'}`，**`plugin` 字段被删** | 同文件 `:86-107`（`producerKind` / `rewritePluginSource`） | ★★ **真实破坏**：我方插件不在官方两份名单里 ⇒ 所有 `kind === 'plugin'` 判定**静默失效** |
+| 3 | `form` / `sections` 等载荷字段**被完整保留**（filter 只删 `plugin`） | 同文件 `:106` | 语义没丢，只是**识别口径**要扩 |
+| 4 | 写入侧仍接受 `kind:'plugin'` | `dsh-session@0.1.7-alpha.1` 的 `lib/types/index.js:265-273`：对 user/message 的 source 只要求「`kind` 非空字符串 + `content` 是数组」 | **写入侧无需改动** |
+
+★ **对审计原文的纠正**：附录 A.3 曾列「`ENVELOPE_KEYS` 需按 v4 扩面（新增键）」——
+**实测不成立**：v4 的 `plugin:` 前缀只出现在 **message / content 内部**，
+**信封键集合未变**（`ENVELOPE_KEYS` 无需改）。这一类"按文档推测"的结论**必须**在实施前用实测复核。
+
+**我方改动（4 个文件、9 处）**：
+
+| 文件 | 改动 |
+|---|---|
+| `session-repair.ts` | 新增 **`SURFACE_OP_STYLE_BY_GENERATION` 代次表** + `surfaceOpStyleOf()`（**未知代次 ⇒ `null` ⇒ 放弃修复**，fail-closed）；新增 **`isPluginSourceKind()`** / **`pluginNameOf()`** 作为 plugin source 识别的**单源**（P-1）；3 处 `kind === 'plugin'` 改为单源判定 |
+| `session-surgery.ts` | `findLastUserMessage` 的 plugin 排除改用 `isPluginSourceKind`（否则 v4 下回退 marker **又会被当锚**） |
+| `dsh-plugin/index.ts` | 3 处 `msg.source?.plugin === name` 改 `pluginNameOf === name`（`scanSurfaceHistory` / claimed 扫描 / 长程提取游标） |
+| `dsht-plugin-memory/index.ts` | 2 处：`isSnapshot` 判定 + 折叠游标扫描 —— 否则 **v4 下影子折叠静默失效** |
+
+**机器守**：`tests/session-repair.spec.ts` 新增 `describe('session-repair: v4（0.1.7 会话格式）')` **6 条控**
+（代次表正控 / 未登记代次 fail-closed / 未知代次文件放弃修复且**逐字节未动** / v4 文件正常修复 /
+plugin source 双向识别含**反向不得误认** / v4 形态自定义键仍搬进 sections）。
+
+**验收**：`typecheck` 三段 **0 错** · `vitest` **1841 passed / 4 failed**（那 4 个 = KNOWN-DEBT 的 git flaky，与本次无关）·
+新增 6 条控全过（`session-repair.spec.ts` **36/36**）。
+
+★ **一条方法论结论**：「**恰好正确**」必须转成「**显式声明 + 未知即拒**」——
+`srcVersion >= 3` 之所以危险，不是因为它现在错，而是因为**官方下一次再换代时它不会报警**（P-30）。
 
 #### 阶段 C：补丁层
 

@@ -75,6 +75,10 @@ import {
 } from '../dsht-plugin-shared/session-write.ts'
 // 【阶段3 2026-09-10】存量 v0 会话 → 0.1.5 可迁移形态（8 类不合规的纯函数重写器）
 import { repairSessionForV3 } from '../dsht-plugin-shared/session-repair.ts'
+// 【2026-09-23 DSH 升级轮 · 阶段 B.3】plugin source 的**代次无关**识别单源 ——
+// v4 迁移器把 `{kind:'plugin', plugin:'<名>'}` 改写成 `{kind:'plugin:<名>'}` 且**删掉 `plugin` 字段**
+// ⇒ 本文件里所有 `msg.source?.plugin === name` 的写法在 v4 下**恒为假**（静默失效）。
+import { isPluginSourceKind, pluginNameOf } from '../dsht-plugin-shared/session-repair.ts'
 // 【阶段3 2026-09-10】TH 楼层元数据 sidecar：0.1.5 白名单不许挂 source，迁到 rp/th-floors/
 import { mergeSalvagedThFloors, upsertThFloors, readThFloors, lookupThFloor, type ThFloorRecord } from '../dsht-plugin-shared/th-floors.ts'
 // D-3：system 槽位路由（TT 对齐投影；合法通道 = system-prompt/assemble 的 assembly.sections）
@@ -287,7 +291,8 @@ export function scanSurfaceHistory(session: LikeSession, claimed: LikeMessage[],
   const pushMsg = (msg: LikeMessage | undefined | null) => {
     if (!msg || !Array.isArray(msg.content)) return
     if (msg.source?.form === 'snapshot') return
-    if (msg.source?.plugin === name) return
+    // ★ 2026-09-23 阶段 B.3：代次无关（v4 无 `plugin` 字段，名在 `kind:'plugin:<名>'` 里）
+    if (msg.source && pluginNameOf(msg.source as Record<string, unknown>) === name) return
     let t = messageText(msg).trim()
     if (t && regexScripts.length > 0) {
       // ST 语义：WI 扫描看到的是 prompt 正则后的文本（claimed 批已处理过，surface 旧消息在此补跑）
@@ -310,7 +315,8 @@ export function scanSurfaceHistory(session: LikeSession, claimed: LikeMessage[],
   // 本批 claimed（新用户消息）也进扫描文本（已过正则，不再重复）
   for (const m of claimed) {
     if (!m || !Array.isArray(m.content)) continue
-    if (m.source?.form === 'snapshot' || m.source?.plugin === name) continue
+    // ★ 2026-09-23 阶段 B.3：代次无关（同 pushMsg）
+    if (m.source?.form === 'snapshot' || (m.source && pluginNameOf(m.source as Record<string, unknown>) === name)) continue
     const t = messageText(m).trim()
     if (t) texts.push(t)
   }
@@ -4448,7 +4454,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 const msg = (ev.data as { message?: LikeMessage } | undefined)?.message
                 // 无论可否提取都推进游标（这条消息不属于提取面，不是漏扫）
                 if (!msg || !Array.isArray(msg.content)) { maxSeq = Math.max(maxSeq, seq); continue }
-                if (msg.source?.form === 'snapshot' || msg.source?.plugin === name) { maxSeq = Math.max(maxSeq, seq); continue }
+                // ★ 2026-09-23 阶段 B.3：代次无关（同 scanSurfaceHistory）
+                if (msg.source?.form === 'snapshot'
+                  || (msg.source && pluginNameOf(msg.source as Record<string, unknown>) === name)) { maxSeq = Math.max(maxSeq, seq); continue }
                 // 官方 assistant 消息可能无 id（DSH 事件本体 id 可选）——无 id 按内容 hash 去重
                 const mid = typeof msg.id === 'string' && msg.id ? msg.id : `h:${hash36(messageText(msg))}`
                 if (stateSeen.has(mid)) { maxSeq = Math.max(maxSeq, seq); continue }

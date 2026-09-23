@@ -46,6 +46,50 @@ const USER_SOURCE_KEYS = new Set(['kind', 'rpcId', 'clientTimeZone'])
 /** tool source 的合法键 */
 const TOOL_SOURCE_KEYS = new Set(['kind', 'callId'])
 
+/**
+ * ★★ **v4 的 plugin source 形态**（**2026-09-23 DSH 升级轮 · 阶段 B.3 新增**）。
+ *
+ * ## 实测形态（取自 0.1.7-rc.1 的 `dsh-session-format-v3-to-v4/lib/index.js:86-107`）
+ *
+ * v3 的 plugin source 是 `{ kind: 'plugin', plugin: '<名>', form, sections, … }`。
+ * v4 迁移器 `rewritePluginSource` **改 kind、删 plugin 键**：
+ *   · 官方第一方名单（`RENAMED_PRODUCERS` / `RELEASED_SAME_NAME_PRODUCERS`）⇒ 换成**自有 kind**
+ *     （如 `compact`→`compact-checkpoint`、`system-prompt`→`runtime-context`）；
+ *   · **其余一律** ⇒ `kind = 'plugin:<原名>'`（第 92 行 `return \`plugin:${plugin}\``），
+ *     且 `plugin` 字段被 **filter 掉**（第 106 行）。
+ *
+ * ★★ **对我方的影响（真实、已取证）**：我方插件（`dsht-plugin-memory` / `dsht-repair` …）
+ * **不在官方两份名单里** ⇒ 迁移后变成 `{ kind: 'plugin:dsht-plugin-memory', form: 'snapshot', sections: [...] }`
+ * ⇒ 原先 `s.kind === 'plugin'` 的判定**全部落空**（`form` 归一不再执行、
+ * `memory` 插件的 `isSnapshot` 判定失效 ⇒ 影子折叠静默失效）。
+ *
+ * ★ **好消息**：`form` / `sections` 等**载荷字段被完整保留**（filter 只删 `plugin`）
+ * ⇒ 语义没丢，只是**识别口径**要扩。
+ *
+ * ⇒ 本函数是「**这是不是一个 plugin source**」的**唯一判据**（**P-1**：同一语义一处读法），
+ *   同时认 v3 的 `'plugin'` 与 v4 的 `'plugin:<名>'`。
+ *
+ * @param kind source 上的 `kind` 字段
+ * @returns 是 plugin source ⇒ true
+ */
+export function isPluginSourceKind(kind: unknown): boolean {
+  if (typeof kind !== 'string') return false
+  return kind === 'plugin' || kind.startsWith('plugin:')
+}
+
+/**
+ * 取 plugin source 的**插件名**（v3 读 `plugin` 字段；v4 从 `kind: 'plugin:<名>'` 里切）。
+ * @param source source 对象
+ * @returns 插件名；无法判定 ⇒ `null`
+ */
+export function pluginNameOf(source: Record<string, unknown>): string | null {
+  const kind = source.kind
+  if (typeof kind !== 'string') return null
+  if (kind === 'plugin') return typeof source.plugin === 'string' ? source.plugin : null
+  if (kind.startsWith('plugin:')) return kind.slice('plugin:'.length)
+  return null
+}
+
 /** 一条待落 sidecar 的楼层数据（key 在重编号后才最终确定） */
 interface PendingSalvage {
   ev: RawEvent
@@ -101,6 +145,48 @@ interface RawEvent {
  *   决定 —— v3 写 `{op,startSeq,endSeq}`，v0–v2 写 `{op,start,end}`。此前无条件写 v2 形状，
  *   遇到已经是 v3 的文件就会**把可读会话改成不可读**（实机实证，详见函数内 §0 注释）。
  */
+/**
+ * ★ **会话格式代次表**（**2026-09-23 DSH 升级轮 · 阶段 B.3 新增**）。
+ *
+ * ## 为什么必须建表（取代原来的 `srcVersion >= 3`）
+ *
+ * 原实现用 **`srcVersion >= 3`** 决定 `surfaceOp` 字段名 —— 这在 0.1.5 线（v0~v3）
+ * **是对的**，但那是**巧合**：该判据的真实语义是「**这一代次的表面操作字段名是什么**」，
+ * 而 `>= 3` 只是「当前已知代次里恰好从 3 开始改名」的**代理量**（**P-41**：
+ * 代理量会随外部世界变化而失准）。
+ *
+ * ★★ **实测取证（0.1.7-rc.1 的 `dsh-session-format-v3-to-v4`）**：
+ * v4 **没有**改 `surfaceOp` 形态 —— 仍读 `operation['startSeq']` / `operation['endSeq']`
+ * （`lib/index.js:606-607`），且写出时也是 `{op, startSeq, endSeq}`
+ * （`lib/index.js:1392-1395`）。⇒ v4 下 `4 >= 3` 仍成立，**但这是第二次巧合**。
+ *
+ * ⇒ **改法**：把「代次 ⇒ 表面操作字段名」写成**显式表**，
+ *   未知代次 **fail-closed**（`null` ⇒ 调用方**放弃修复**而不是猜一个字段名 ——
+ *   猜错会**把可读会话改成不可读**，正是 2026-09-11 那次实机事故的形态）。
+ *
+ * ★ 纪律：**外部世界新增代次时，本表必须显式登记**（否则新代次的文件会被拒修，
+ *   而不是被**猜错**后写坏 —— 拒修是安全的，写坏是不可逆的）。
+ */
+const SURFACE_OP_STYLE_BY_GENERATION: Record<number, 'start-end' | 'startSeq-endSeq'> = {
+  0: 'start-end',
+  1: 'start-end',
+  2: 'start-end',
+  3: 'startSeq-endSeq',
+  4: 'startSeq-endSeq', // ★ 2026-09-23 阶段 B.3 登记（实测 v4 形态未变，见上）
+}
+
+/**
+ * 按**代次**取表面操作字段名；**未知代次 ⇒ `null`**（fail-closed，调用方必须放弃修复）。
+ *
+ * @param generation 被修文件自己声明的 `header.version`
+ * @returns 字段名风格，或 `null`（未知代次）
+ */
+export function surfaceOpStyleOf(generation: number): 'start-end' | 'startSeq-endSeq' | null {
+  return Object.hasOwn(SURFACE_OP_STYLE_BY_GENERATION, generation)
+    ? SURFACE_OP_STYLE_BY_GENERATION[generation]!
+    : null
+}
+
 export function repairSessionForV3(content: string): SessionRepairResult {
   const lines = content.split('\n')
   while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop()
@@ -131,8 +217,18 @@ export function repairSessionForV3(content: string): SessionRepairResult {
   // 而修复器每次启动都会跑 → 这是个**会自己扩散**的数据损坏：修一次，坏一次。
   // 判据必须看**被修文件自己声明的代次**（header.version），不是"我们打算迁到哪一代"。
   const srcVersion = typeof header.version === 'number' ? header.version : 0
-  const currentOpStyle = srcVersion >= 3
-  /** 按目标代次生成 replace surfaceOp（v3 用 startSeq/endSeq；v0–v2 用 start/end） */
+  // ★★ 2026-09-23 阶段 B.3：**按代次查表**（取代原先的 `srcVersion >= 3` 代理量 —— 见上方
+  //   `SURFACE_OP_STYLE_BY_GENERATION` 头注）。未知代次 ⇒ **放弃修复**（fail-closed）：
+  //   猜错字段名会把**可读会话改成不可读**（2026-09-11 实机事故形态，不可逆）。
+  const opStyle = surfaceOpStyleOf(srcVersion)
+  if (opStyle === null) {
+    return {
+      content, changed: false, notes: [], events: 0, salvaged: [],
+      error: `未知会话格式代次 v${srcVersion}（代次表未登记）⇒ 放弃修复（fail-closed：猜错字段名会把可读会话写坏）`,
+    }
+  }
+  const currentOpStyle = opStyle === 'startSeq-endSeq'
+  /** 按目标代次生成 replace surfaceOp（v3+ 用 startSeq/endSeq；v0–v2 用 start/end） */
   const makeReplaceOp = (start: number, end: number): Record<string, unknown> =>
     currentOpStyle ? { op: 'replace', startSeq: start, endSeq: end } : { op: 'replace', start, end }
 
@@ -573,7 +669,11 @@ function fixUserMessage(data: Record<string, unknown>, notes: string[]): { data:
   if (src !== null && typeof src === 'object') {
     const s = { ...(src as Record<string, unknown>) }
     const kind = String(s.kind ?? '')
-    const allowed = kind === 'plugin' ? PLUGIN_SOURCE_KEYS
+    // ★★ 2026-09-23 阶段 B.3：**同时认 v3 的 `'plugin'` 与 v4 的 `'plugin:<名>'`**
+    //   （见 `isPluginSourceKind` 头注：v4 迁移器把我方 source 的 kind 改成 `plugin:<名>`
+    //   并删掉 `plugin` 字段 ⇒ 只认 `'plugin'` 会让下面整段归一逻辑在 v4 下静默失效）。
+    const isPluginSrc = isPluginSourceKind(kind)
+    const allowed = isPluginSrc ? PLUGIN_SOURCE_KEYS
       : kind === 'model' ? MODEL_SOURCE_KEYS
         : kind === 'user' ? USER_SOURCE_KEYS
           : kind === 'tool' ? TOOL_SOURCE_KEYS
@@ -584,7 +684,7 @@ function fixUserMessage(data: Record<string, unknown>, notes: string[]): { data:
         // thData 等结构化载荷 → plugin source 搬进 sections（合法携带位）
         const payload: Record<string, unknown> = {}
         for (const k of illegal) { payload[k] = s[k]; delete s[k] }
-        if (s.kind === 'plugin') {
+        if (isPluginSrc) {
           const sections = Array.isArray(s.sections) ? (s.sections as Array<Record<string, unknown>>) : []
           sections.push({ name: 'dsht:legacy', text: JSON.stringify(payload) })
           s.form = s.form ?? 'snapshot'
@@ -598,7 +698,7 @@ function fixUserMessage(data: Record<string, unknown>, notes: string[]): { data:
         changed = true
       }
     }
-    if (s.kind === 'plugin' && normalizePluginForm(s, notes)) changed = true
+    if (isPluginSrc && normalizePluginForm(s, notes)) changed = true
     d.source = s
   }
   return { data: d, changed, ...(dropped !== undefined ? { dropped } : {}) }
