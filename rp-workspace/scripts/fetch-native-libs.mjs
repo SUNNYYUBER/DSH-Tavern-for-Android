@@ -146,7 +146,11 @@ const TARGETS = [
   { so: 'libicui18n.so.78', dest: 'runtime-lib', deb: { x86_64: 'libicu_78.3_x86_64.deb', aarch64: 'libicu_78.3_aarch64.deb' }, inner: 'lib/libicui18n.so.78.3', lic: 'Unicode-3.0' },
   { so: 'libicudata.so.78', dest: 'runtime-lib', deb: { x86_64: 'libicu_78.3_x86_64.deb', aarch64: 'libicu_78.3_aarch64.deb' }, inner: 'lib/libicudata.so.78.3', lic: 'Unicode-3.0' },
   // pcre2：libdsht-git 的 NEEDED（与 bash 无关 —— bash 只走 libreadline/libiconv）
-  { so: 'libpcre2-8.so', dest: 'runtime-lib', deb: { x86_64: 'pcre2_10.47_x86_64.deb', aarch64: 'pcre2_10.47_aarch64.deb' }, inner: 'lib/libpcre2-8.so.0.14.0', lic: 'BSD-3-Clause' },
+  // 【命名注意】Termux 的 pcre2 包里**只有不带版本号的 `libpcre2-8.so`**
+  //   （没有 `libpcre2-8.so.0.14.0` 实体）。故 inner 必须写不版本号的那个 ——
+  //   本项曾因照抄「.so.0.14.0」而在 CI 上 fail-closed 报错
+  //   「deb 内找不到 libpcre2-8.so.0.14.0」，这里按上游实际布局修正。
+  { so: 'libpcre2-8.so', dest: 'runtime-lib', deb: { x86_64: 'pcre2_10.47_x86_64.deb', aarch64: 'pcre2_10.47_aarch64.deb' }, inner: 'lib/libpcre2-8.so', lic: 'BSD-3-Clause' },
 ]
 
 // deb 级 SHA256（本机缓存实算；上游换版时**必须**同步本表 —— 校验不通过即报错）
