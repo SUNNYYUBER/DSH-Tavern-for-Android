@@ -620,14 +620,57 @@ _sp = os.path.join(NM, "dsh-session-persistence-jsonl", "lib", "index.js")
 
 # F1 扩展：v0.1.5 起 link 出现 3 个位置（import / defaultFileSystem / 两处调用）
 # 1) import 加 rename
-patch(
-    _sp,
-    "DSHT-ANDROID-RENAME-PATCH",
-    r'import \{ link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate \} from "node:fs/promises";',
-    'import { link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, truncate } from "node:fs/promises"; /* DSHT-ANDROID-RENAME-PATCH */',
-    1,
-    "F1-1 import 补 rename",
-)
+#
+# ★★ 2026-09-23 DSH 升级轮 · 阶段 E：**本步与 `patch-resilient-list.mjs` 争同一条 import 行**
+#   （实测踩到 ⇒ `失败 1` ⇒ 构建中止）：
+#     · `patch-resilient-list.mjs`（build 的 **Step 4.85**）会给同一行补 `rename`
+#       并写下 **`DSHT-RESILIENT-IMPORT`** 标记；
+#     · 而本步（python 的 **Step 4.8** / ps1 的同名步）的锚点是**官方原样**那一行
+#       ⇒ 当 4.85 先跑过时，本步命中 0 ⇒ 报 FAIL。
+#   ★ 该交互**早已被记录**（见 build-dsht.ps1:1814-1820 与 audit-build-path-parity.py 的
+#     EXEMPT 注释），但**只在 ps1 侧用「语义判据」绕开了**；**python 侧一直是裸锚点**
+#     ⇒ 本轮换到 0.1.7 后就炸了（P-1：同一语义两处实现，一处改了另一处没改）。
+#   ⇒ 修法（与 ps1 侧口径**完全对齐**，P-1）：**用「语义已生效」判据替代裸锚点** ——
+#     与 `build-dsht.ps1` 的同名步（$hasRenameImport && !$hasLinkPublish）**同一口径**。
+#     · 语义已生效（import 含 rename ）⇒ 只回填 marker（不重写、不报错）；
+#     · 未生效 ⇒ 按锚点替换。
+#     ★ 为什么必须用「语义」而不是放宽正则：本行的**尾部注释**会被别的步骤改写
+#       （实测：`patch-resilient-list.mjs` 追加了 `/* DSHT-RESILIENT-IMPORT: … */`）
+#       ⇒ 任何锚住行尾的正则都**迟早会失配**（P-41：代理量会与事实脱钩）。
+def _f1_import_already_effective(text):
+    """import 行是否已含 rename（语义判据，不依赖行尾注释形态）。"""
+    m = re.search(r'import \{([^}]*)\} from "node:fs/promises";', text)
+    if m is None:
+        return None
+    return "rename" in [x.strip() for x in m.group(1).split(",")]
+
+
+_f1_state = _f1_import_already_effective(open(_sp, encoding="utf-8", newline="").read()) if os.path.isfile(_sp) else None
+if _f1_state is None:
+    log("  ✗ F1-1 import 补 rename：找不到 node:fs/promises 的 import 行")
+    STATS["failed"] += 1
+elif _f1_state:
+    # 已生效 ⇒ 只确保 marker 在位（marker 是幂等代理量，语义才是事实）
+    with open(_sp, "r", encoding="utf-8", newline="") as f:
+        _t = f.read()
+    if "DSHT-ANDROID-RENAME-PATCH" in _t:
+        log("  · F1-1 import 补 rename：已打补丁，跳过")
+        STATS["skipped"] += 1
+    else:
+        _m = re.search(r'(import \{[^}]*\} from "node:fs/promises";)', _t)
+        with open(_sp, "w", encoding="utf-8", newline="") as f:
+            f.write(_t.replace(_m.group(1), _m.group(1) + " /* DSHT-ANDROID-RENAME-PATCH */", 1))
+        log("  ✓ F1-1 import 补 rename：语义已生效 ⇒ 仅回填 marker（import 已含 rename）")
+        STATS["applied"] += 1
+else:
+    patch(
+        _sp,
+        "DSHT-ANDROID-RENAME-PATCH",
+        r'import \{ (?:link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, )(?:rename, )?(?:rm, stat, truncate) \} from "node:fs/promises";',
+        'import { link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, stat, truncate } from "node:fs/promises"; /* DSHT-ANDROID-RENAME-PATCH */',
+        1,
+        "F1-1 import 补 rename",
+    )
 # 2) defaultFileSystem 暴露 rename（v0.1.5 新增的 internals.fs 接口）
 patch(
     _sp,
