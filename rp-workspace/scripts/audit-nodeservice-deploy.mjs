@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * audit-nodeservice-deploy.mjs — 守 NodeService 的「profile 部署契约」三条不变量
+ * audit-nodeservice-deploy.mjs — 守 NodeService/MainActivity 的「部署 + 迁移前置」四条不变量
  * ============================================================================
  * 【为什么需要它（W-3 真机 boot loop 事故，2026-09-21）】
  * 该事故连爆三层，每层都是「静态看起来全对、只有真机才炸、代价是**整个 DSH 起不来**」：
@@ -31,9 +31,17 @@
  *   2. **patchReload ≠ live**：`pkgCanonical` 里必须是 `"startup"`。这是③的直接判据。
  *   3. **老安装升级可达性**：`package.json` 的重写守卫必须**覆盖 patchReload**
  *      （否则老用户的 `"live"` 会残留，升级后继续 boot loop）。
+ *   4. **★ 会话格式代次常量不得漂移**（2026-09-23 DSH 0.1.7 升级轮新增）：
+ *      `MainActivity.CURRENT_SESSION_GENERATION` 必须等于单源 `dsh-version.json` 的
+ *      `sessionFormatKnownGenerations` 的**最大值**。
+ *      【为什么这也算"部署契约"】该常量是 **v4 迁移前置闸门**的判定上界
+ *      （「会话头 version < 本值 ⇒ 待迁移 ⇒ 打开前先强制全量备份」）。它落后一代 ⇒
+ *      **静默少备份一整代会话** ⇒ 用户打开老会话后被官方**不可逆**迁移，回退无门。
+ *      ⇒ 与①②③同族：**静态看全对、只在真机发作、代价是数据**。
  *
- * 【为什么不能只靠单测】判据 1/2/3 是 **Kotlin 源码里跨段落的一致性**，没有可运行的
- * 单元边界；而它们一旦破了，代价是整机不可用。故必须有一条**静态对账**常驻。
+ * 【为什么不能只靠单测】判据 1/2/3/4 是 **Kotlin 源码里跨段落（乃至跨文件）的一致性**，
+ * 没有可运行的单元边界；而它们一旦破了，代价是整机不可用或**数据不可逆丢失**。
+ * 故必须有一条**静态对账**常驻。
  *
  * 用法：node scripts/audit-nodeservice-deploy.mjs [--selftest]
  * 退出码：0 = 契约完整；1 = 破约；2 = 文件缺失；3 = selftest 失败
@@ -101,7 +109,7 @@ function parsePatchReload(text) {
   return m ? m[1] : null
 }
 
-export function audit({ ktText }) {
+export function audit({ ktText, mainText = '', knownGenerations = null }) {
   const problems = []
   const notes = []
 
@@ -155,6 +163,38 @@ export function audit({ ktText }) {
     )
   } else {
     notes.push('重写守卫覆盖 patchReload（老安装升级可达）')
+  }
+
+  // ---- 判据 4：会话格式代次常量 与 单源 knownGenerations 不得漂移 ----
+  //
+  // 【为什么要有这条】MainActivity 的 `CURRENT_SESSION_GENERATION` 是 **v4 迁移前置闸门**
+  // 的判定上界（「文件头 version < 本值 ⇒ 待迁移 ⇒ 先强制备份」）。若它比单源
+  // `sessionFormatKnownGenerations` 的**最大值**小，闸门就会**漏判**一整代会话
+  // ⇒ 用户在没有备份的情况下打开老会话 ⇒ 不可逆迁移后无法回退。
+  // ⇒ 这条漂移是「静默少备份」，不报错、不崩溃，只能靠判据抓（P-30）。
+  const ktGen = (() => {
+    const m = mainText.match(/CURRENT_SESSION_GENERATION\s*=\s*(\d+)/)
+    return m ? Number(m[1]) : null
+  })()
+  if (knownGenerations === null) {
+    notes.push('判据4: 未提供 knownGenerations（跳过 —— 只跑单文件审计时无法判定漂移）')
+  } else if (ktGen === null) {
+    problems.push(
+      '判据4: MainActivity 里未找到 CURRENT_SESSION_GENERATION —— v4 迁移前置闸门的判定上界缺失，' +
+        '「迁移前强制全量备份」将无从判断哪些会话待迁移',
+    )
+  } else {
+    const want = Math.max(...knownGenerations)
+    if (ktGen !== want) {
+      problems.push(
+        `判据4: 代次常量漂移 —— MainActivity.CURRENT_SESSION_GENERATION=${ktGen}，` +
+          `而单源 dsh-version.json 的 sessionFormatKnownGenerations 最大值为 ${want} ⇒ ` +
+          `迁移前置闸门会**漏判**代次在 [${ktGen}, ${want}) 区间的会话，` +
+          `这些会话将在**没有备份**的情况下被不可逆地迁移`,
+      )
+    } else {
+      notes.push(`代次常量一致：CURRENT_SESSION_GENERATION=${ktGen} = max(knownGenerations)`)
+    }
   }
 
   return { problems, notes }
@@ -215,6 +255,24 @@ private fun f() {
     const r = audit({ ktText: good.replace('"patchReload": "startup"', '"patchReload": "never"') })
     ok('负控E：patchReload 非法取值被抓（判据2）', r.problems.some((p) => p.startsWith('判据2') && p.includes('非法')))
   }
+  // 7) 判据 4：代次常量与其单源上界一致（正控）/ 漂移（负控）/ 缺失（负控）
+  const mainGood = 'private const val CURRENT_SESSION_GENERATION = 4\n'
+  {
+    const r = audit({ ktText: good, mainText: mainGood, knownGenerations: [3, 4] })
+    ok('正控F：代次常量 = max(knownGenerations) 时无问题', r.problems.length === 0)
+  }
+  {
+    const r = audit({ ktText: good, mainText: 'private const val CURRENT_SESSION_GENERATION = 3\n', knownGenerations: [3, 4] })
+    ok('负控F：代次常量落后于单源被抓（判据4，漏备份一整代）', r.problems.some((p) => p.startsWith('判据4') && p.includes('漂移')))
+  }
+  {
+    const r = audit({ ktText: good, mainText: '', knownGenerations: [3, 4] })
+    ok('负控G：代次常量缺失被抓（判据4）', r.problems.some((p) => p.startsWith('判据4') && p.includes('未找到')))
+  }
+  {
+    const r = audit({ ktText: good, mainText: mainGood, knownGenerations: null })
+    ok('零控H：未提供单源时不报漂移（只出声，不误报）', r.problems.filter((p) => p.startsWith('判据4')).length === 0)
+  }
 
   let pass = 0
   for (const [name, goodRes] of results) {
@@ -240,11 +298,30 @@ if (!existsSync(KT)) {
   process.exit(2)
 }
 
-const r = audit({ ktText: readFileSync(KT, 'utf8') })
+// 判据 4 需要两个额外输入：MainActivity（代次常量所在）与单源 dsh-version.json。
+// 两者缺失时**降级为出声**（不冒充通过、也不误报）——由 `notes` 里的「跳过」文案体现。
+const MAIN = join(WS, 'android', 'app', 'src', 'main', 'java', 'com', 'dshtavern', 'app', 'MainActivity.kt')
+const VER = join(WS, 'dsh-version.json')
+let knownGenerations = null
+if (existsSync(VER)) {
+  try {
+    // 单源带 UTF-8 BOM ⇒ 必须剥掉再 parse（否则 JSON.parse 抛）
+    const j = JSON.parse(readFileSync(VER, 'utf8').replace(/^\uFEFF/, ''))
+    if (Array.isArray(j.sessionFormatKnownGenerations)) knownGenerations = j.sessionFormatKnownGenerations
+  } catch (e) {
+    console.error(`  ! dsh-version.json 解析失败：${e.message}`)
+  }
+}
+
+const r = audit({
+  ktText: readFileSync(KT, 'utf8'),
+  mainText: existsSync(MAIN) ? readFileSync(MAIN, 'utf8') : '',
+  knownGenerations,
+})
 for (const n of r.notes) console.log(`  · ${n}`)
 
 if (r.problems.length === 0) {
-  console.log('PASS  NodeService 部署契约完整（3 判据：拷贝集≡patch集 / patchReload≠live / 守卫覆盖）')
+  console.log('PASS  NodeService 部署契约完整（4 判据：拷贝集≡patch集 / patchReload≠live / 守卫覆盖 / 代次常量不上漂）')
   process.exit(0)
 }
 for (const p of r.problems) console.error(`  ✗ ${p}`)

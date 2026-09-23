@@ -88,6 +88,21 @@ class MainActivity : AppCompatActivity() {
          */
         private val BACKUP_EXCLUDE = setOf(".credentials.yaml", "dsht-token")
 
+        /**
+         * ★ 当前会话格式代次（2026-09-23 DSH 0.1.7 升级轮）。
+         *
+         * 【为什么要有这个常量，而不是散落的字面量 `4`】迁移闸门靠「文件头 version < 本值」
+         * 判定待迁移集合。这个判定必须**只有一处**（P-1），否则下次官方再换代时
+         * 会漏改一处、静默少备份一批会话。
+         *
+         * 【与单源 `dsh-version.json` 的关系】那边的 `sessionFormatKnownGenerations`
+         * 是**我方能读写的代次集合** `[3, 4]`；这里是**运行时当前写出的代次**。
+         * 两者随同一次升级一起变，本值必须等于该集合的**最大值**
+         * （由 `audit-nodeservice-deploy.mjs` 的判据守住，防漂移）。
+         * 0.1.5-rc.3 = 3；0.1.7-rc.1 = **4**。
+         */
+        private const val CURRENT_SESSION_GENERATION = 4
+
         /** §4.16.2 深链派发重试上限：前端 rp-ui 未就绪时 400ms × 25 ≈ 10s 内等监听注册 */
         private const val LOCATE_RETRY_MAX = 25
 
@@ -943,6 +958,12 @@ class MainActivity : AppCompatActivity() {
 
         startForegroundService(Intent(this, NodeService::class.java))
 
+        // ★ 2026-09-23 DSH 0.1.7 升级轮：v4 迁移前置闸门。
+        // 必须在这里（**用户还来不及打开任何老会话**）就把待迁移数据备份下来 ——
+        // 一旦用户点开老会话，官方运行时会原地、不可逆地把它升到 v4。
+        // 本调用自带「无待迁移数据则零开销」与「同一批只备份一次」两个短路，见其头注。
+        ensurePreMigrationBackup()
+
         // §4.16.2：WebView 版本碎片检测（低版本仅 Toast 提示，不打断启动）
         checkWebViewVersion()
 
@@ -1414,6 +1435,8 @@ class MainActivity : AppCompatActivity() {
         }
         items += "备份数据（导出 zip，凭据不进包）…"
         actions += { startBackup() }
+        items += "升级前安全备份（自动，落交换目录）…"
+        actions += { preUpgradeBackup(interactive = true) }
         items += "恢复数据（从备份 zip 还原）…"
         actions += { startRestorePick() }
         items += "同步交换目录（与文件管理器互拷）…"
@@ -1473,6 +1496,196 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- W-B 备份 ----
+
+    // ---- 升级前安全备份 + v4 迁移前置闸门（2026-09-23 DSH 0.1.7 升级轮）----
+    //
+    // 【为什么单独做一套，不复用 startBackup()】startBackup 走 SAF：**必须用户手选位置**，
+    //   因而**不可能自动跑**。而 dsh 0.1.7 的 v3→v4 会话迁移是**不可逆**的（官方明示
+    //   "拒绝不改源"），用户已裁定「迁移前强制全量备份」⇒ 备份必须能在**没有用户交互**
+    //   的启动路径上完成 ⇒ 必须落**固定路径**（交换目录，用户可见、不入库、不进隐私区）。
+    //
+    // 【与 startBackup 的关系】两者互补、不互相替代：
+    //   · startBackup（SAF）—— 用户主动、位置自选、可用于换机/归档；
+    //   · 本函数 —— 升级动作的**前置条件**，位置固定、可自动、用于「出事能回退」。
+    //
+    // 【安全口径与 startBackup 完全一致】同一个 BACKUP_EXCLUDE（`$DSH_HOME` 根下的
+    //   凭据与运行时令牌）**不进包** —— 备份落在用户可见的交换目录里，更不该带钥匙。
+
+    /** 自动备份文件名前缀（诊断/自检按它找最近一次）。 */
+    private val preUpgradeBackupPrefix = "dsht-prebak-"
+
+    /** 自动备份落点：交换目录（用户可见，`/sdcard/Documents/dsht-exchange/` 或回退位置）。 */
+    private fun preUpgradeBackupDir(): File = ExchangeDir.externalSide(this)
+
+    /**
+     * 升级前安全备份：停 node（维护模式，防活备份带半行残尾）→ zip `$DSH_HOME`
+     * （排除凭据/令牌）→ 恢复 node。
+     *
+     * @param interactive true = 用户手动触发（弹窗报告结果）；false = 升级流程内部调用（写日志 + 面板）
+     * @return 成功时的 zip 文件；失败返回 null
+     */
+    private fun preUpgradeBackup(interactive: Boolean): File? {
+        var out: File? = null
+        var msg: String
+        NodeService.enterMaintenance()
+        try {
+            val home = File(filesDir, ".dsh")
+            val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                .format(java.util.Date())
+            val dst = File(preUpgradeBackupDir(), "$preUpgradeBackupPrefix$stamp.zip")
+            var entries = 0
+            var bytes = 0L
+            var sessions = 0
+            java.util.zip.ZipOutputStream(dst.outputStream().buffered()).use { zip ->
+                home.walkTopDown().filter { it.isFile }.forEach { f ->
+                    val rel = f.relativeTo(home).path.replace(File.separatorChar, '/')
+                    if (BACKUP_EXCLUDE.contains(rel)) return@forEach
+                    zip.putNextEntry(java.util.zip.ZipEntry(rel))
+                    f.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                    entries++
+                    bytes += f.length()
+                    if (rel.endsWith(".jsonl")) sessions++
+                }
+                val manifest = JSONObject()
+                    .put("createdAt", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", java.util.Locale.US).format(java.util.Date()))
+                    .put("kind", "pre-upgrade")
+                    .put("appVersion", BuildConfig.VERSION_NAME)
+                    .put("abi", Build.SUPPORTED_ABIS.firstOrNull() ?: "")
+                    .put("entries", entries)
+                    .put("uncompressedBytes", bytes)
+                    .put("sessionLogs", sessions)
+                    .toString()
+                zip.putNextEntry(java.util.zip.ZipEntry(BACKUP_MANIFEST))
+                zip.write(manifest.toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
+            }
+            out = dst
+            val mb = bytes / (1024L * 1024L)
+            // 先算出 mb 再插值：**不要**在字符串模板里直接做 1024 的除法运算
+            // （本次实测踩到：模板里的「星号+斜杠」会被 Kotlin 词法器读成 KDoc 结束符，
+            //  从而提前关闭上方的注释块，报错却出现在**很远**的行上，极难定位）。
+            msg = "升级前备份完成：$entries 个文件 / ${mb}MB（会话日志 $sessions 份）\n\n位置：${dst.absolutePath}\n" +
+                "凭据/令牌已排除，与本机 API Key 无关。"
+            android.util.Log.i("DSHTavern", "pre-upgrade backup ok: ${dst.absolutePath} entries=$entries")
+        } catch (t: Throwable) {
+            msg = "升级前备份失败：${t.message}\n\n会话迁移不可逆，未备份前不要打开老会话。"
+            android.util.Log.e("DSHTavern", "pre-upgrade backup failed", t)
+        } finally {
+            NodeService.exitMaintenance()
+        }
+        val shown = msg
+        val result = out
+        handler.post {
+            if (interactive) {
+                android.app.AlertDialog.Builder(this)
+                    .setTitle(if (result != null) "升级前备份已就绪" else "升级前备份失败")
+                    .setMessage(shown)
+                    .setPositiveButton("好", null)
+                    .show()
+            } else {
+                Toast.makeText(this, shown.lineSequence().first(), Toast.LENGTH_LONG).show()
+            }
+        }
+        return result
+    }
+
+    /**
+     * ★ **v4 迁移前置闸门**（2026-09-23 DSH 0.1.7 升级轮）。
+     *
+     * 【为什么必须在**启动路径**上拦】会话从 v3 升到 v4 是**首次打开老会话时由官方运行时
+     * 自动完成**的（我方无法「先预览再决定」）。一旦发生：
+     *   · **不可逆**（官方明示失败时"拒绝不改源"，成功则原地升版）；
+     *   · 旧版 APK **读不懂** v4 文件 ⇒ 想回退到旧版会**丢会话**。
+     * ⇒ 备份必须发生在**用户第一次打开老会话之前**，而不是"提醒他记得备份"。
+     *
+     * 【判据 = 文件头的 `version` 字段，与 `dsh-version.json` 的
+     *   `sessionFormatKnownGenerations` 同源语义（P-1：不另立一套版本判定）】
+     *   · 本次升级后运行时写出的代次 = 4（0.1.7 的当前代次）；
+     *   · 扫描会话目录下每个 jsonl 的**第一行**（会话头），凡 version < 4 且是数字 ⇒ 待迁移。
+     *
+     * 【为什么是「启动时一次」而不是「每次进 App 都查」】扫描要读每个会话文件的首行，
+     *   而会话目录可能有几十上百份。用一个上界标记（已备份到的最高代次）确保
+     *   **同一批待迁移数据只备份一次**，且**新出现的旧代次文件仍会被抓到**。
+     */
+    private fun ensurePreMigrationBackup() {
+        Thread {
+            val pending = findLegacySessions()
+            if (pending.isEmpty()) {
+                android.util.Log.i("DSHTavern", "pre-migration gate: no legacy session (< v4)")
+                return@Thread
+            }
+            val marked = prefs.getInt("premig_backup_for_gen", -1)
+            val highestLegacy = pending.maxOf { it.second }
+            if (marked >= highestLegacy) {
+                android.util.Log.i(
+                    "DSHTavern",
+                    "pre-migration gate: ${pending.size} legacy session(s), backup already recorded (gen $marked)",
+                )
+                return@Thread
+            }
+            android.util.Log.w(
+                "DSHTavern",
+                "pre-migration gate: ${pending.size} legacy session(s) (max gen $highestLegacy) ⇒ 强制备份",
+            )
+            val f = preUpgradeBackup(interactive = false)
+            if (f == null) {
+                runOnUiThread {
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("升级前备份失败 —— 请先别打开老会话")
+                        .setMessage(
+                            "检测到 ${pending.size} 个旧格式会话，它们在 dsh 0.1.7 下会被**不可逆地**升级到 v4 格式，" +
+                                "而升级前备份没能写成。\n\n" +
+                                "在备份成功之前，**请先不要在 App 里打开这些老会话**：\n" +
+                                "· 可先腾出存储空间，再到「设置 → 升级前安全备份」重试；\n" +
+                                "· 备份成功后再正常使用。",
+                        )
+                        .setPositiveButton("我知道了", null)
+                        .show()
+                }
+                return@Thread
+            }
+            prefs.edit().putInt("premig_backup_for_gen", highestLegacy).apply()
+        }.start()
+    }
+
+    /**
+     * 扫描 `$DSH_HOME` 下所有会话 jsonl，返回**待迁移**的（文件, 代次）列表。
+     *
+     * 只读每个文件的**第一行**（会话头），不做全量解析 —— 会话可能有几十 MB。
+     * 读不出头 / 头里没有数字 version 的文件**跳过**（不是会话就不该进这个集合）。
+     */
+    private fun findLegacySessions(): List<Pair<File, Int>> {
+        val home = File(filesDir, ".dsh")
+        if (!home.isDirectory) return emptyList()
+        val out = mutableListOf<Pair<File, Int>>()
+        home.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".jsonl") }
+            .forEach { f ->
+                val gen = try {
+                    f.bufferedReader(Charsets.UTF_8).use { r -> firstLineVersion(r.readLine()) }
+                } catch (t: Throwable) {
+                    android.util.Log.w("DSHTavern", "pre-migration gate: 读头失败 ${f.name}: ${t.message}")
+                    null
+                }
+                if (gen != null && gen < CURRENT_SESSION_GENERATION) out += (f to gen)
+            }
+        return out
+    }
+
+    /** 会话头 → 代次；非会话头 / 无 version / 非数字 ⇒ null。 */
+    private fun firstLineVersion(line: String?): Int? {
+        if (line.isNullOrBlank()) return null
+        val o = try { JSONObject(line) } catch (t: Throwable) { return null }
+        if (o.optString("type") != "session") return null
+        if (!o.has("version")) return null
+        val v = o.opt("version")
+        return when (v) {
+            is Number -> v.toInt()
+            is String -> v.toIntOrNull()
+            else -> null
+        }
+    }
 
     /**
      * 导出诊断包（2026-09-23，接 `DiagPack`）。
