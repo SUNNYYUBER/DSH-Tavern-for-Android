@@ -1,10 +1,10 @@
-﻿{
+{
   "_comment": "DSH 运行时版本 = 单一事实来源（SSOT）。见 docs/GOAL.md §七 R21 / §11.1 W25。",
   "_why": "此前「当前锁定版本」散落在三处 package.json（其中一处已过期写成 0.1.2-rc.1）+ 四份叙述文档，且没有任何机器判据。第二十七轮 W24c 因照抄上一轮命令 -DshVersion 0.1.2-rc.1 而把 runtime 静默降级：0.1.2 世代的 dsh-session.isReplaceOp 要求 op+start+end，而设备上 1747 处真实数据是 op+startSeq+endSeq ⇒ 装出去历史会话全部打不开（由契约探针 BLOCK 才拦下）。",
   "_howToChange": "升级 runtime 时必须同步改本文件（dshVersion + sessionReplaceOpFields），然后跑 node rp-workspace/scripts/audit-dsh-version.mjs 复核；构建期 Step 0.7 会断言 -DshVersion 与本文件一致。",
 
   "dshVersion": "0.1.5-rc.1",
-  "_dshVersionNote": "写进 dsh-runtime-src/package.json 的 @deepseek-ai/dsh 精确 pin（无 caret）。子包由 caret 解析，实际可能落到更小的 rc（当前 dsh-session 解析为 0.1.5-rc.2），故子包版本不在此处 pin，改用下面的形态判据。",
+  "_dshVersionNote": "★ 2026-09-23 审计修正：本字段**必须与顶层 @deepseek-ai/dsh 的版本一致**。历史说明写「子包由 caret 解析，实际可能落到更小的 rc」——该描述已过期：实测顶层 pin 为 0.1.5-rc.1 时，全部 231 个 dsh* 子包**已解析到 0.1.5-rc.3**（即「更大的 rc」），形成「顶层旧、子包新」的版本分裂。分裂影响面覆盖几乎整个运行时，且 audit-dsh-version.mjs 的判据②只比对顶层主包版本、**看不见子包漂移**（判据盲区）。详见 docs/DSH-UPGRADE-AUDIT-2026-09-23.md §2.2 与 §4 阶段 0。",
 
   "sessionReplaceOpFields": ["op", "startSeq", "endSeq"],
   "_sessionReplaceOpFieldsNote": "★ 这是**数据兼容的真正判据**（比版本号更本质）：设备上真实会话数据的 replace surfaceOp 字段名。dsh-session 的 isReplaceOp 是**严格三键**断言（Object.keys(op).length === 3），字段名换代 ⇒ 官方 loader 直接拒绝既有日志 ⇒ 会话打不开。审计脚本会读构建产物核对此形态。",
