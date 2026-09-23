@@ -227,13 +227,15 @@ if (process.argv.includes('--selftest')) {
   }
 
   // 正控 1：就绪信号存在 ⇒ 必须命中
+  //   ★ 语料里**不写 URL**：本仓 `audit-publish-hygiene` 会把 `http://<host>` 形态
+  //     当作「外部服务器地址」报红（判据只锚 `dsh web:` 这个子串，URL 是多余信息）。
   {
-    const fsx = fakeFs({ '/x/dsh-web-app/lib/index.js': 'console.log("dsh web: http://...")' })
+    const fsx = fakeFs({ '/x/dsh-web-app/lib/index.js': 'console.log("dsh web: ready")' })
     const r1 = probeCliSurface('/x', fsx.readFile, fsx.readDir)
     ok(r1.probes['dsh web:'].length === 1, `正控1 就绪信号命中（实得 ${r1.probes['dsh web:'].length} 处，扫了 ${r1.scanned} 文件）`)
 
     // ★ 杠杆：把信号改一个字 ⇒ 必须 0 命中（证明判据锚在**精确串**上，不是模糊匹配）
-    const fsx2 = fakeFs({ '/x/dsh-web-app/lib/index.js': 'console.log("dsh webX http://...")' })
+    const fsx2 = fakeFs({ '/x/dsh-web-app/lib/index.js': 'console.log("dsh webX ready")' })
     const r2 = probeCliSurface('/x', fsx2.readFile, fsx2.readDir)
     ok(r2.probes['dsh web:'].length === 0 && r2.scanned === 1,
       `★杠杆 信号改一字 ⇒ 0 命中但确实扫了 ${r2.scanned} 个文件（判据锚在精确串上）`)
