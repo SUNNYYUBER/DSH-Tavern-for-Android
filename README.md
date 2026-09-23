@@ -254,6 +254,7 @@ DSH RolePlay/
 
 | 想了解 | 看这里 |
 |---|---|
+| **架构入门（外部贡献者从这里开始）** | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | 现状与背景 | [MASTER_TODO.md](MASTER_TODO.md) |
 | 兼容契约 | [ST-COMPAT-PACT.md](rp-workspace/docs/ST-COMPAT-PACT.md) |
 | 功能冻结与承诺分级 | [V0.3-FREEZE.md](docs/V0.3-FREEZE.md) |
@@ -565,6 +566,7 @@ DSH RolePlay/
 
 | Topic | Where |
 |---|---|
+| **Architecture primer (start here as a contributor)** | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Status & background | [MASTER_TODO.md](MASTER_TODO.md) |
 | Compat contract | [ST-COMPAT-PACT.md](rp-workspace/docs/ST-COMPAT-PACT.md) |
 | Feature freeze & tiering | [V0.3-FREEZE.md](docs/V0.3-FREEZE.md) |
