@@ -3,11 +3,17 @@
 // 1) 自愈：重命名到 header 声明的物理路径；2) 兜底：跳过 + 告警。幂等：带标记跳过。
 //
 // ============================================================================
-// 【2026-09-16 W24c · P-27 形态：同一条补丁要覆盖两代产物】
-//
-// 症状（本轮实测）：装 dsh 0.1.5 世代后本脚本报
+// 【2026-09-16 W24c · P-27 形态：同一条补丁要覆盖**多代**产物】
+// 症状（当时实测）：装 dsh 0.1.5 世代后本脚本报
 //     ANCHOR MISMATCH ... count = 0
 // ⇒ `throw "resilient-list 补丁失败"` ⇒ **整个构建中止**。
+//
+// ★★ 2026-09-23 DSH 升级轮 · 阶段 E：**同一个故事在 0.1.7 上重演了一次**
+//   —— 0.1.7 又改了两处形态（详见下方 `ORIG_017` 头注）⇒ 旧的两代锚点**都不匹配**。
+//   ⇒ 本脚本的 `VARIANTS` 现为**三代**（0.1.7 / 0.1.5 / 0.1.2）。
+//   ★ 这条教训的形态是 **P-27**（声明在写下的一刻就开始过期）：
+//     「两代锚点」这个说法本身就假设了「官方不会再改」——而它又改了。
+//     故本次把「按代次枚举」写成了显式的表（而不是再加一个 if）。
 //
 // 真因（读产物逐行确认，不是猜）：官方在 0.1.5 里**重构了 `listArtifacts`**：
 //   · 0.1.2 世代（旧锚点）—— 循环体内**自己**调 `assertStoredIdentity(path, meta, …)`：
@@ -207,15 +213,97 @@ const REPL_015 = [
   `${T}${T}${T}${T}});`,
 ].join('\n')
 
-/** 两代锚点表（顺序：新代在前，因为它更可能是当前 runtime） */
+// ---- 新代次（dsh 0.1.7）锚点 ----
+//
+// ★★ 2026-09-23 DSH 升级轮 · 阶段 E：**0.1.7 相对 0.1.5 又有两处形态变化**
+//   （实测 `@deepseek-ai/dsh-session-persistence-jsonl@0.1.7` 的 `lib/index.js:3039-3053`）：
+//     ① catch 子句多了一类可跳过错误：
+//          0.1.5：`if (error instanceof SessionFormatUnsupportedError) continue;`
+//          0.1.7：`if (error instanceof SessionFormatUnsupportedError
+//                        || error instanceof SessionPersistenceCorruptionError) continue;`
+//        —— ★ **官方自己也开始容忍坏会话文件了**（正是本补丁的立意），
+//          但**只覆盖 `SessionPersistenceCorruptionError` 一类**，
+//          而实机那次的错是**身份漂移**（`readGenerationHeader` 抛别的错）⇒ **本补丁仍必要**。
+//     ② `artifacts.push` 多了一个字段：`sourceVersion: selected.sourceVersion`
+//        （且 `path` 与 `header` 分行写）。
+//   ⇒ 锚点按 0.1.7 原样构造（**逐字**，含行尾逗号），不靠"模糊匹配"。
+const ORIG_017 = [
+  `${T}${T}${T}let header;`,
+  `${T}${T}${T}try {`,
+  `${T}${T}${T}${T}header = await this.readGenerationHeader(selected, void 0, signal);`,
+  `${T}${T}${T}} catch (error) {`,
+  `${T}${T}${T}${T}if (error instanceof SessionFormatUnsupportedError || error instanceof SessionPersistenceCorruptionError) continue;`,
+  `${T}${T}${T}${T}throw error;`,
+  `${T}${T}${T}}`,
+  `${T}${T}${T}if (header === void 0) continue;`,
+  `${T}${T}${T}if (ids.has(header.id)) throw new Error(\`duplicate JSONL session id "\${header.id}" appears in multiple project directories\`);`,
+  `${T}${T}${T}ids.add(header.id);`,
+  `${T}${T}${T}artifacts.push({`,
+  `${T}${T}${T}${T}header,`,
+  `${T}${T}${T}${T}path: selected.sourcePath,`,
+  `${T}${T}${T}${T}sourceVersion: selected.sourceVersion`,
+  `${T}${T}${T}});`,
+].join('\n')
+
+const REPL_017 = [
+  `${T}${T}${T}let header;`,
+  `${T}${T}${T}let effectivePath = selected.sourcePath;`,
+  `${T}${T}${T}try {`,
+  `${T}${T}${T}${T}header = await this.readGenerationHeader(selected, void 0, signal);`,
+  `${T}${T}${T}} catch (error) {`,
+  `${T}${T}${T}${T}if (error instanceof SessionFormatUnsupportedError || error instanceof SessionPersistenceCorruptionError) continue;`,
+  `${T}${T}${T}${T}/* ${MARKER}: 单条坏身份会话文件不致命——先尽力自愈（重命名到 header 声明的物理路径），`,
+  `${T}${T}${T}${T}   失败则跳过并告警；绝不允许一条坏文件让 cordis init 崩溃 boot-loop 整个 runtime`,
+  `${T}${T}${T}${T}   （实机实证：手机端任务卡死强杀重启后 st-w82dal 身份漂移 → listArtifacts throw → node exit 1 死循环）`,
+  `${T}${T}${T}${T}   注：0.1.5 起 identity 检查在 readGenerationHeader 内，抛错时 header 尚未赋值`,
+  `${T}${T}${T}${T}   ⇒ 这里重读首行取 cwd/id 来算目标路径；自愈成功后本次跳过，下次 boot 自然读到已归位文件`,
+  `${T}${T}${T}${T}   ★ 0.1.7 官方已开始容忍 SessionPersistenceCorruptionError，但**身份漂移不在那一类里**`,
+  `${T}${T}${T}${T}     ⇒ 本自愈仍必要 */`,
+  `${T}${T}${T}${T}let healed = false;`,
+  `${T}${T}${T}${T}try {`,
+  `${T}${T}${T}${T}${T}const firstLine = this.compression === "zstd" ? await this.readFirstZstdLine(effectivePath, signal) : await this.readFirstLine(effectivePath, signal);`,
+  `${T}${T}${T}${T}${T}if (firstLine !== void 0) {`,
+  `${T}${T}${T}${T}${T}${T}const rawHeader = JSON.parse(firstLine);`,
+  `${T}${T}${T}${T}${T}${T}const want = logPath(this.root, rawHeader.cwd, String(rawHeader.id), this.compression);`,
+  `${T}${T}${T}${T}${T}${T}if (want && want !== effectivePath && !(await this.exists(want))) {`,
+  `${T}${T}${T}${T}${T}${T}await mkdir(dirname(want), { recursive: true });`,
+  `${T}${T}${T}${T}${T}${T}await rename(effectivePath, want);`,
+  `${T}${T}${T}${T}${T}${T}effectivePath = want;`,
+  `${T}${T}${T}${T}${T}${T}healed = true;`,
+  `${T}${T}${T}${T}${T}${T}console.warn(\`\${this.name}: healed session log identity: \${selected.sourcePath} -> \${want}\`);`,
+  `${T}${T}${T}${T}${T}${T}}`,
+  `${T}${T}${T}${T}${T}}`,
+  `${T}${T}${T}${T}} catch {}`,
+  `${T}${T}${T}${T}if (!healed) {`,
+  `${T}${T}${T}${T}${T}console.warn(\`\${this.name}: skipping session log with mismatched identity: \${effectivePath} (\${String(error?.message ?? error)})\`);`,
+  `${T}${T}${T}${T}${T}continue;`,
+  `${T}${T}${T}${T}}`,
+  `${T}${T}${T}${T}/* 自愈成功：本次不加入 artifacts（下轮 boot 自然读到已归位文件），避免「改路径后重试读 header」的额外风险 */`,
+  `${T}${T}${T}${T}continue;`,
+  `${T}${T}${T}}`,
+  `${T}${T}${T}if (header === void 0) continue;`,
+  `${T}${T}${T}if (ids.has(header.id)) {`,
+  `${T}${T}${T}${T}console.warn(\`\${this.name}: skipping duplicate session id "\${header.id}" at \${effectivePath}\`);`,
+  `${T}${T}${T}${T}continue;`,
+  `${T}${T}${T}}`,
+  `${T}${T}${T}ids.add(header.id);`,
+  `${T}${T}${T}artifacts.push({`,
+  `${T}${T}${T}${T}header,`,
+  `${T}${T}${T}${T}path: effectivePath,`,
+  `${T}${T}${T}${T}sourceVersion: selected.sourceVersion`,
+  `${T}${T}${T}});`,
+].join('\n')
+
+/** 三代锚点表（顺序：新代在前，因为它更可能是当前 runtime） */
 const VARIANTS = [
+  { gen: 'dsh 0.1.7（catch 含 CorruptionError + artifacts 带 sourceVersion）', orig: ORIG_017, repl: REPL_017 },
   { gen: 'dsh 0.1.5（identity 检查在 readGenerationHeader 内）', orig: ORIG_015, repl: REPL_015 },
   { gen: 'dsh 0.1.2（循环体内直接 assertStoredIdentity）', orig: ORIG_012, repl: REPL_012 },
 ]
 
 /**
  * 自愈用到的 `rename` 必须**在该模块里可解析**。
- * 旧代次（0.1.2）的 import 行本就含 `rename`；新代次（0.1.5）**不含**（它改用
+ * 旧代次（0.1.2）的 import 行本就含 `rename`；0.1.5 / 0.1.7 **不含**（官方改用
  * `publishNewFileWin32` + `internals.fs.link` 两条发布路径，`rename` 不再被官方引用）。
  * ⇒ 本补丁若不补 import，`rename` 会是 **ReferenceError**，而它落在 `catch {}` 里
  *   ⇒ **自愈静默失效**（正是 P-3 最忌讳的形态：功能没了但看不出来）。
