@@ -574,19 +574,34 @@ class NodeService : Service() {
             recordLine("profile cordis.yml aligned to 0.1.2 canonical form")
         }
         val pkgJson = File(webProfile, "package.json")
-        // ⚠️【patchReload 必须是 "startup"，不能沿用 web 模板默认的 "live"】
-        //   取值只允许 "live" / "startup"（dsh-app-boot 的 loadProfileDirectory 硬校验）。
-        //   "live" 会在 boot 之后走 `watchUserPatches`：它**硬依赖 Cordis HMR 服务**
-        //     if (hmr === void 0) throw new Error(`${binName}: user patch-layer watching
-        //       requires the Cordis HMR service`)
-        //   而 HMR 在 Android 上起不来——dsh-base 的 bundle patch 里 `hmr` 行本身是
-        //   `disabled: true`，补建同名 entry 仍命中该 disabled 行 ⇒ `ctx.get("hmr")` 恒为
-        //   undefined ⇒ 抛错 ⇒ `node exited with code 1` **boot loop**（实测：插件树修好
-        //   之后立刻暴露，此前一直被更早的插件树失败掩盖）。
-        //   "startup" 只在启动时读一次用户 patch 层，跳过整个 HMR 分支。
-        //   【为什么这在产品语义上是对的】App 内的 cordis.patch.yml 由本服务**幂等维护**，
-        //   不存在「用户在设备上手工编辑 patch 文件、期望热生效」的场景 —— live reload
-        //   在 Android 上没有对应使用面，纯粹是一份官方 web 模板的默认值。
+        // ⚠️【注释已于 2026-09-23 DSH 升级轮 · 阶段 D.3 重写 —— 原文对 0.1.7 已不成立】
+        //
+        // ## 0.1.5 的事实（原文所述）
+        //   `patchReload` 取值只允许 "live" / "startup"（dsh-app-boot 硬校验）；"live" 会在
+        //   boot 后走 `watchUserPatches`，**硬依赖 Cordis HMR 服务**；而当时 dsh-base 的
+        //   bundle patch 把 hmr 行写成 **`disabled: true`（恒）** ⇒ `ctx.get("hmr")` 恒
+        //   undefined ⇒ 抛错 ⇒ boot loop。故定案 "startup"。
+        //
+        // ## ★★ 0.1.7 的实测事实（变了三处，全部来自隔离安装实测）
+        //   ① **`patchReload` 这个键整个消失了** —— `dsh-app-boot@0.1.7-alpha.1` 全包
+        //      **0 命中**（0.1.5 有 9 处）；`readProfileManifest` 现在**只取
+        //      `dsh.profile.bundles`**（`lib/index.js:823-834`）⇒ 该键**被静默忽略**
+        //      （不读、不校验、不报错）。新的 profile 模型 = `dsh.profile.bundles`
+        //      + `cordis.patch.yml`，**没有"patch 重载时机"这个概念**。
+        //   ② **HMR 行不再恒 disabled** —— dsh-base 的 `cordis.patch.yml:28-32` 现在是
+        //        `- id: hmr` / `name: '@deepseek-ai/dsh-hmr'`
+        //        / `disabled: !!js "!ctx.get('profileContext')"`
+        //      即**条件启用**（有 profileContext 就启用），而 0.1.5 是 `disabled: true`。
+        //      ⇒ 原文「补建同名 entry 仍命中该 disabled 行」的推理**在 0.1.7 上失效**：
+        //      现在**不能**断言 HMR 在 Android 起不来（要真机验证，属阶段 F）。
+        //   ③ 包名 `cordis-plugin-hmr` → **`dsh-hmr`**（与 `--expose-internals` 的注释同源）。
+        //
+        // ## 处置（本轮的取舍）
+        //   **保留** `"patchReload": "startup"`：它在 0.1.7 上是**无害的多余键**
+        //   （官方静默忽略），删掉它反而会让**同一份 APK 的 profile 无法回退到 0.1.5**
+        //   （那代仍硬校验该键）。★ 这是**跨代兼容**的取舍，不是"忘了删"。
+        //   ⚠️ **诚实边界（R7）**：因此**不能**再从本键推断「Android 上 HMR 被禁用了」——
+        //   那是 0.1.5 的结论。0.1.7 的真实行为要由模拟器实测确定（阶段 F）。
         val pkgCanonical = """
             |{
             |  "name": "dsh-profile-web",

@@ -1846,10 +1846,48 @@ python `ast.parse` OK · PowerShell `Parser::ParseFile` **0 语法错误** ·
 
 | 步 | 动作 | 要点 |
 |---|---|---|
-| D.1 | ~~NodeService 去掉 `--expose-internals`~~ → ★ **改为：保留该 flag**（B4 已撤销，见 E.2），只更新注释里的包名（`cordis-plugin-hmr` → `dsh-hmr`） | 实测该 flag 在 0.1.7 仍被 `dsh-hmr` 使用，且传了完全正常 |
-| D.2 | ★★ `settings.plugin.item` **无等价替代** ⇒ 需**设计决策**（见下方「D.2 详述」） | 我方 3+1 张「中文辨识卡」的设置入口，**静默失效**型 |
-| D.3 | profile 三件套复核：`patchReload` 定案（`cordis-plugin-hmr` 已被 `dsh-hmr` 取代 ⇒ **HMR 可用性要重测**） | ★ B4 撤销后这条**更重要**了：若 `dsh-hmr` 真能在 Android 起来，`"startup"` 的取舍理由要重写 |
-| D.4 | 包改名同步：`dsh-agent-presets` → `dsh-agent-preset(+registry)`；`dsh-code-runtime` → `dsh-ptc-runtime*` | 检查我方是否引用 |
+| D.1 | ~~NodeService 去掉 `--expose-internals`~~ → ★ **保留该 flag**（B4 已撤销，见 E.2），只更新注释里的包名（`cordis-plugin-hmr` → `dsh-hmr`） | ✅ **已完成**（commit `930e50e`） |
+| D.2 | ★★ `settings.plugin.item` **无等价替代** ⇒ 需**设计决策**（见下方「D.2 详述」） | ⏳ **待你拍板方案** |
+| D.3 | profile 三件套复核：`patchReload` 定案（`cordis-plugin-hmr` 已被 `dsh-hmr` 取代 ⇒ **HMR 可用性要重测**） | ✅ **已完成**（结论**完全推翻**，见下） |
+| D.4 | 包改名同步：`dsh-agent-presets` → `dsh-agent-preset(+registry)` | ✅ **已完成**（见下） |
+
+##### D.3 执行记录（★ **`patchReload` 这个键在 0.1.7 上整个消失了**）
+
+**实测（隔离安装 `@deepseek-ai/dsh@0.1.7-alpha.1`）三处变化**：
+
+| # | 项 | 0.1.5-rc.3 | 0.1.7-alpha.1 |
+|---|---|---|---|
+| 1 | **`patchReload` 键** | 存在（`dsh-app-boot` **9 处**，硬校验 `"live"`/`"startup"`） | ★★ **全包 0 命中**；`readProfileManifest`（`lib/index.js:823-834`）**只取 `dsh.profile.bundles`** ⇒ 该键**被静默忽略**（不读 / 不校验 / 不报错） |
+| 2 | **dsh-base 的 hmr 行** | `name: '@deepseek-ai/cordis-plugin-hmr'` + **`disabled: true`（恒）** + `config.root: ['.']` | `name: '@deepseek-ai/dsh-hmr'` + **`disabled: !!js "!ctx.get('profileContext')"`（条件）** + `config.root: []` |
+| 3 | **profile 模型** | `dsh.profile.bundles` + `patchReload`（重载时机） | `dsh.profile.bundles` + `cordis.patch.yml`，**没有"重载时机"这个概念** |
+
+⇒ ★★ **原文的推理链在 0.1.7 上整体失效**：
+原文「`"live"` ⇒ 走 `watchUserPatches` ⇒ 硬依赖 HMR ⇒ 而 hmr 行恒 `disabled: true` ⇒ boot loop」
+—— 这条链的**两个关键环节**（`patchReload` 的语义、hmr 行恒 disabled）在 0.1.7 上**都不成立**。
+
+★ **处置（跨代兼容的取舍，不是"忘了删"）**：
+**保留** `"patchReload": "startup"` —— 它在 0.1.7 上是**无害的多余键**（官方静默忽略），
+删掉反而会让**同一份 APK 的 profile 无法回退到 0.1.5**（那代仍硬校验该键）。
+⚠️ **诚实边界（R7）**：因此**不能**再从该键推断「Android 上 HMR 被禁用了」——
+**0.1.7 上 HMR 可能真能起来**（条件是 `profileContext` 存在），**必须真机验证**（属阶段 F）。
+NodeService 的注释已按上述事实**整段重写**（含"原文对 0.1.7 已不成立"的显式标注）。
+
+##### D.4 执行记录（包改名 + 一个**面级消失**）
+
+| 项 | 实测 | 我方影响 |
+|---|---|---|
+| `dsh-agent-presets` → `dsh-agent-preset`（**单数**） | 旧包**最后版本 0.1.6-alpha.2**（不再发布）；0.1.7 换成 `dsh-agent-preset` + `dsh-agent-preset-registry` + `dsh-client-ui-agent-preset` | `capture-contracts.mjs:373` 引用的 `dsh-agent-presets/presets` **在 0.1.7 上不存在** |
+| ★★ **preset yml 面整体消失** | 0.1.7 全 `node_modules` 递归扫 `*.cordis.yml` = **0 命中**；新包 `lib/`/`skills/` 里没有任何 `agent.cordis.yml`。预设改为 **registry 驱动**（`dsh-agent-preset-registry` 的 `list()` + `EntryTree`），**不再是"一目录一份 yml"的磁盘布局** | `capture-contracts.mjs` 的**面 7（presets）结构上不可采集** |
+| `dsh-code-runtime` → `dsh-workflow-ptc` | 0.1.7 deps 里已无 `dsh-code-runtime`，改为 `dsh-workflow-ptc` | 我方仅在 `agent.cordis.yml` 的**注释**里提到（非代码引用）⇒ 无需改 |
+
+★ **处置**：面 7 的候选表**保留历史两形态**（0.1.x 仍要能采），并**在候选全空时出声**
+（`ⓘ 面 7 presets：候选目录均不存在 ⇒ 该面在这一代结构上不可采集`）——
+静默产出空数组会让快照看起来"采到了但内容为空"，与"这代没有该面"**同貌**（**P-30**）。
+★ 面 7 的另一半（`legalModes`，来自 `dsh-agent-tool-presentation`）**在 0.1.7 上仍可采集**
+（该包仍在，`lib/index.js:31` 的 `const Config = z.object({ mode: z.union([` 形态未变）⇒
+`capturePresets` 的 fail-closed 断言（第 398 行）在 0.1.7 上**不会误触发**。
+
+**验收**：`audit-nodeservice-deploy.mjs` **PASS**（3 判据全过）· `capture-contracts.mjs` 在 0.1.5 上**7 面全采**（含 `presets.json: OK`）。
 
 ##### D.2 详述：`settings.plugin.item` 消失（**本轮又一次自我纠错**）
 

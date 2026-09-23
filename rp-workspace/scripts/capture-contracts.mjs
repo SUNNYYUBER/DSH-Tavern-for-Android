@@ -368,10 +368,25 @@ function captureSettings(root) {
 
 function capturePresets(root) {
   // 预设 yml 在 dsh 主包 config/agent-presets/*/agent.cordis.yml（0.1.x 布局）
+  // ★★ 2026-09-23 DSH 升级轮 · 阶段 D.4：**0.1.7 起该面没有物理 yml 了**。
+  //   实测（`@deepseek-ai/dsh@0.1.7-alpha.1` 隔离安装）：
+  //     · `@deepseek-ai/dsh-agent-presets` 这个包 **已不存在**（最后版本 0.1.6-alpha.2）；
+  //       改名成 `@deepseek-ai/dsh-agent-preset`（**单数**）+ 新增 `-registry`；
+  //     · 新包的 `lib/` / `skills/` 里 **没有任何 `agent.cordis.yml`**；
+  //       全 `node_modules` 递归扫 `*.cordis.yml` = **0 命中**；
+  //     · 预设改为 **registry 驱动**（`dsh-agent-preset-registry` 的 `list()` +
+  //       `cordis-plugin-loader` 的 `EntryTree`），**不再是"一个目录一份 yml"的磁盘布局**。
+  //   ⇒ 本面在 0.1.7 上**结构上不可采集**（不是路径写错）。
+  //   ★ 处置：候选表保留历史两形态（0.1.x 仍要能采），并**在两个候选都为空时出声**——
+  //     静默产出空数组会让快照看起来"采到了但内容为空"，与"这代没有该面"**同貌**（P-30）。
   const presetRoots = [
     join(root, 'dsh', 'config', 'agent-presets'),
     join(root, 'dsh-agent-presets', 'presets'),
   ].filter((p) => existsSync(p))
+  if (presetRoots.length === 0) {
+    console.log('  ⓘ 面 7 presets：候选目录均不存在 ⇒ 该面在**这一代**结构上不可采集'
+      + '（0.1.7 起预设改为 registry 驱动，无物理 yml）——出声，不当成"采到 0 条"（P-30/P-43）')
+  }
   const presets = []
   for (const pr of presetRoots) {
     for (const name of listDir(pr)) {
