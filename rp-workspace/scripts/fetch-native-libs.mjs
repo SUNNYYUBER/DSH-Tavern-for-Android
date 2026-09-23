@@ -151,6 +151,30 @@ const TARGETS = [
   //   本项曾因照抄「.so.0.14.0」而在 CI 上 fail-closed 报错
   //   「deb 内找不到 libpcre2-8.so.0.14.0」，这里按上游实际布局修正。
   { so: 'libpcre2-8.so', dest: 'runtime-lib', deb: { x86_64: 'pcre2_10.47_x86_64.deb', aarch64: 'pcre2_10.47_aarch64.deb' }, inner: 'lib/libpcre2-8.so', lic: 'BSD-3-Clause' },
+
+  // ───────────────────────────────────────────────────────────────────────
+  // 【2026-09-21 第二次补齐】proot 资产面的依赖库 —— 此前**只在注释里声明**
+  // ───────────────────────────────────────────────────────────────────────
+  // 事故形态（CI 实测）：`build-dsht.ps1` 的 proot 步骤注释写着
+  //   「runtime lib/ = libbusybox.so.1.38.0 + libtalloc.so.2(2.4.3)
+  //     + libandroid-shmem.so(0.7) + libandroid-selinux.so(14.0.0.11-1) + …」
+  // —— 但那份清单**从没进过 TARGETS**，这些库一直靠**本机历史缓存**在场。
+  // CI 净 checkout 上它们不存在 ⇒ audit-native-deps 精确报红 3 项
+  //   （libbusybox.so 需要 libbusybox.so.1.38.0 / libproot.so 需要
+  //     libtalloc.so.2 与 libandroid-shmem.so）。
+  //
+  // 这跟 libz 事故是**同一族**：注释把「本机恰好有」写成了「构建链会提供」。
+  // 修法就是把它们变成 TARGETS 的**一等条目** —— 有 deb 名、有 SHA256、
+  // 有 inner 路径，任何净环境都能自动取到。
+  //
+  // 【部署面】一律 runtime-lib（dlopen 路径）：
+  //   · libbusybox.so.1.38.0 是 busybox 启动器的**运行时依赖**（libbusybox.so 本体在 jniLibs）
+  //   · libtalloc/libandroid-shmem 是 libproot.so 的依赖
+  //   · libandroid-selinux 是 busybox 在部分 ROM 上的依赖
+  { so: 'libbusybox.so.1.38.0', dest: 'runtime-lib', deb: { x86_64: 'busybox_1.38.0-1_x86_64.deb', aarch64: 'busybox_1.38.0-1_aarch64.deb' }, inner: 'lib/libbusybox.so.1.38.0', lic: 'GPLv2' },
+  { so: 'libtalloc.so.2', dest: 'runtime-lib', deb: { x86_64: 'libtalloc_2.4.3_x86_64.deb', aarch64: 'libtalloc_2.4.3_aarch64.deb' }, inner: 'lib/libtalloc.so.2.4.3', lic: 'LGPL-3.0' },
+  { so: 'libandroid-shmem.so', dest: 'runtime-lib', deb: { x86_64: 'libandroid-shmem_0.7_x86_64.deb', aarch64: 'libandroid-shmem_0.7_aarch64.deb' }, inner: 'lib/libandroid-shmem.so', lic: 'BSD-2-Clause' },
+  { so: 'libandroid-selinux.so', dest: 'runtime-lib', deb: { x86_64: 'libandroid-selinux_14.0.0.11-1_x86_64.deb', aarch64: 'libandroid-selinux_14.0.0.11-1_aarch64.deb' }, inner: 'lib/libandroid-selinux.so', lic: 'Apache-2.0' },
 ]
 
 // deb 级 SHA256（本机缓存实算；上游换版时**必须**同步本表 —— 校验不通过即报错）
@@ -184,6 +208,13 @@ const SHA256 = {
   'libicu_78.3_x86_64.deb': '19fa8c4d828719f465d523983b1e0d833e4130bb22790104638965d97e27fe60',
   'pcre2_10.47_aarch64.deb': '51f915d22de639bfca6ec029ae613987bbe3bc73626eede13319fd2e95f50b63',
   'pcre2_10.47_x86_64.deb': '8e4fb14ba014f9b2d5e07b6ed9c519b31d00a6e7ddeb5804c3b076a6c841c2fb',
+  // ---- proot 资产面依赖库（2026-09-21 第二次补齐；哈希取自 build-dsht.ps1 既有记录）----
+  'libtalloc_2.4.3_aarch64.deb': 'ac81ad623d74c209718b9f3acb2dd702cc8a88c431e820d212229910b4db29da',
+  'libtalloc_2.4.3_x86_64.deb': '7ca2eaae2e53b28228a01301bc410b62845403d6317c25b8e0a7f40681de0628',
+  'libandroid-shmem_0.7_aarch64.deb': '0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6',
+  'libandroid-shmem_0.7_x86_64.deb': 'ffa9e4c87467b158b148d0ff92dda796aa038276c2075af3269cdcdb06f25797',
+  'libandroid-selinux_14.0.0.11-1_aarch64.deb': '00afd8c34087c2864737b51fd9d104dc5e955f6ec3c0f50c0c7ef5b4a56866b9',
+  'libandroid-selinux_14.0.0.11-1_x86_64.deb': '99cf96556683ddb53f7d645ca1720e10523c4796ce5b41c583da9f89a47679ce',
   // ---- 既有 ----
   'nodejs_aarch64.deb': 'eaf3ed8a6e4b72ebaa8c2cb3bad778c577cdf9ea87ca91761213d8a3940fc090',
   'nodejs_x86_64.deb': 'd3a0e7b8e110ba87969a56f45a8fa63730100e9faec413a6f377ebc76c5b616e',

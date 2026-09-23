@@ -128,7 +128,8 @@ export function checkClosure (neededBySo, present) {
 // ---------------------------------------------------------------------------
 function selftest () {
   const cases = []
-  const add = (name, expect, neededBySo, present) => cases.push({ name, expect, neededBySo, present })
+  const add = (name, expect, neededBySo, present, alsoProvided) =>
+    cases.push({ name, expect, neededBySo, present, alsoProvided })
 
   // 正控：全部可解析
   add('正控：依赖齐全 ⇒ 无问题', null,
@@ -142,7 +143,7 @@ function selftest () {
   add('负控：缺 libicudata ⇒ 报红', '需要 libicudata.so.78',
     new Map([['libicuuc.so.78', ['libicudata.so.78']]]),
     new Set())
-  // 负控③：系统库不算问题
+  // 正控③：系统库不算问题
   add('正控：系统库豁免', null,
     new Map([['libX.so', ['libc.so', 'libm.so', 'libdl.so', 'liblog.so']]]),
     new Set())
@@ -151,6 +152,17 @@ function selftest () {
   // 负控⑤：多库连锁缺（git 场景）
   add('负控：缺 libpcre2-8/libcrypto ⇒ 各报一条', 'libdsht-git.so 需要 libpcre2-8.so',
     new Map([['libdsht-git.so', ['libpcre2-8.so', 'libz.so.1', 'libcrypto.so.3']]]),
+    new Set())
+  // 正控⑥：**proot 资产面**的依赖库已在 TARGETS 里 ⇒ 与其它库同等对待。
+  // 【为什么保留这条】它守的是「proot 依赖库不得只写在注释里」这条教训：
+  // 曾经 libbusybox.so.1.38.0 / libtalloc.so.2 / libandroid-shmem.so 只出现在
+  // build-dsht.ps1 的注释里、从未进 TARGETS，CI 净环境因此取不到 ⇒ 门禁报红。
+  add('正控：proot 依赖库在 TARGETS ⇒ 正常解析', null,
+    new Map([['libproot.so', ['libtalloc.so.2', 'libandroid-shmem.so']]]),
+    new Set(['libtalloc.so.2', 'libandroid-shmem.so']))
+  // 负控⑦：proot 依赖库不在包内 ⇒ 仍须报红（证明没有「proot 就豁免」的后门）
+  add('负控：proot 依赖库缺失 ⇒ 报红', 'libproot.so 需要 libtalloc.so.2',
+    new Map([['libproot.so', ['libtalloc.so.2']]]),
     new Set())
 
   let pass = 0
