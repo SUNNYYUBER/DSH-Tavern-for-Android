@@ -57,6 +57,9 @@ android {
     // 好处是与上方 defaultConfig 的版本号**同源**——不手抄版本号，杜绝漂移。
     buildFeatures {
         buildConfig = true
+        // W-3 执行层：Shizuku UserService 的 AIDL（IShizukuExec）。
+        // AGP 8 起 aidl 默认关闭，不显式打开则 IShizukuExec 类不存在、编译期报错。
+        aidl = true
     }
 
     buildTypes {

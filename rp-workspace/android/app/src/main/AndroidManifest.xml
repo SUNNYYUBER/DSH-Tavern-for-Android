@@ -111,5 +111,19 @@
                 android:name="android.service.quicksettings.TOGGLEABLE_TILE"
                 android:value="true" />
         </service>
+
+        <!-- 【W-3 执行层 2026-09-21】Shizuku UserService：以 shell(uid 2000) 跑本项目的设备命令。
+             官方要求（docs/SHIZUKU-RESEARCH-2026-09-21.md §4.2）：
+             · 必须 exported=true —— Shizuku 服务端要跨进程 bind 它；
+             · permission=android.permission.BIND_JOB_SERVICE 不适用；这里用
+               Shizuku 官方文档要求的 exported + 无自定义权限（bind 由 Shizuku 后端以
+               shell 身份发起，普通 app 无法凭空 bind 到它，因为 bindUserService 需
+               先通过 Shizuku 的权限检查）。
+             · 必须带 process 后缀，避免与 app 主进程混住（服务端要 System.exit 自己退）。
+             服务端实现见 ShizukuExecService.kt；AIDL 见 aidl/IShizukuExec.aidl。 -->
+        <service
+            android:name=".ShizukuExecService"
+            android:exported="true"
+            android:process=":shizuku_exec" />
     </application>
 </manifest>

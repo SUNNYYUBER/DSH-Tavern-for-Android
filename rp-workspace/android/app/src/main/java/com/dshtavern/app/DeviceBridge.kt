@@ -120,6 +120,28 @@ object DeviceBridge {
     private const val MAX_TEXT_LEN = 512
     private const val COORD_RE = """^-?\d{1,5}$"""
 
+    /**
+     * 执行层是否已接线。
+     *
+     * 【为什么是一个显式常量而不是靠注释】W-3 的验收口径是「每个工具模拟器实证」，
+     * 而执行层未接通时**一切静态检查仍全绿**（编译过、18 条单测过、门禁过）——
+     * 只有真机调用才知道「什么都没发生」。故把这件事做成**机器可读的单源**：
+     * · 看板按它显示「执行层：未接线（命令构造就绪）」而不是假装可用；
+     * · `audit-device-tiers.mjs` 与 vitest 规格按它决定是否要求「真跑证据」；
+     * · 接线完成时改这一处，所有下游自动切到「必须真跑」。
+     */
+    const val EXEC_WIRED: Boolean = true
+
+    /**
+     * 文本类 op 回传 stdout 的字符上限。
+     *
+     * 【为什么必须截断】`dumpsys notification` 在真机上可达数十万字符；
+     * 原样回给 agent 会一次性把上下文打满（且 binder 单次事务约 1MB 会直接失败）。
+     * 截断时**必须**同时给出 `truncated:true`，让 agent 知道「还有但没给全」——
+     * 静默截断属于 P-3 族（看起来完整、实际残缺）。
+     */
+    private const val MAX_STDOUT_CHARS = 16_000
+
     @Volatile private var server: ServerSocket? = null
     @Volatile private var running = false
     @Volatile private var port: Int = 0
@@ -256,6 +278,35 @@ object DeviceBridge {
         respond(sock, if (result.optBoolean("ok")) 200 else 400, result)
     }
 
+    /**
+     * 能力面只读自述（W-7 看板的「设备能力」行用它给出**具体读数**而非一句「可用」）。
+     *
+     * 【为什么不走 HTTP】W-7 看板在 App 进程内渲染，直接取比自打一次 HTTP 更省事、
+     * 也避免「看板要依赖桥已起来」的循环依赖。**不返回 token**。
+     */
+    fun capabilityReport(): JSONObject {
+        val st = ShizukuBridge.currentState()
+        val (reason, action) = ShizukuBridge.describe(st)
+        val tiers = JSONObject()
+        for (t in Tier.values()) {
+            tiers.put(t.name, OPS.values.count { it.tier == t })
+        }
+        return JSONObject()
+            .put("running", running)
+            .put("port", port)
+            .put("shizuku_state", st.name)
+            .put("reason", reason)
+            .put("action", action)
+            .put("tier_counts", tiers)
+            .put("ops", OPS.keys.joinToString(","))
+            .put("exec_wired", EXEC_WIRED)
+            .put("exec_link", ShizukuExec.link.name)
+            .put("exec_detail", ShizukuExec.describe())
+            .put("exec_backend_uid", ShizukuExec.backendUid() ?: -1)
+            .put("out_dir", appCtx?.let { outDir(it).absolutePath } ?: "")
+            .put("last_error", lastError.get())
+    }
+
     private fun respond(sock: Socket, code: Int, body: JSONObject) {
         val bytes = body.toString().toByteArray(Charsets.UTF_8)
         val head = "HTTP/1.1 $code ${if (code == 200) "OK" else "Bad Request"}\r\n" +
@@ -282,12 +333,16 @@ object DeviceBridge {
         val def = OPS[op] ?: return err(Err.BAD_ARGS, "未知 op：$op（可用：${OPS.keys.joinToString(", ")}）")
 
         // ★ 档位判定（W-4 守门人的接缝）。
-        // 首期：danger 档**默认拒绝**（fail-closed）——W-4 就绪后这里改为
-        // 「请求用户批准 → 批准则放行」。
+        // danger 档：挂起请求 → 通知用户确认（默认拒绝，超时/异常/无 Context 即拒）。
+        // 注：批准**不可能**在「设备能力不可用」时成功（需先经 Shizuku 才能执行），
+        // 故提示文案按「需批准 且 需 Shizuku」两件事分别说清，不让用户白点一次。
         if (def.tier == Tier.DANGER_FULL_ACCESS && !dangerApproved(op)) {
             audit(op, args, def.tier, "denied")
+            val st = ShizukuBridge.currentState()
+            val shizukuHint = if (st == ShizukuBridge.State.READY) ""
+            else "；且当前设备能力不可用（${ShizukuBridge.describe(st).first}），即使批准也无法执行"
             return err(Err.DENIED_BY_POLICY,
-                "该操作属 danger 档（$op：${def.desc}），需用户显式批准；当前版本默认拒绝")
+                "该操作属 danger 档（$op：${def.desc}），需用户显式批准$shizukuHint")
         }
 
         // 前置：设备能力可用性（如实报，不崩）
@@ -408,9 +463,48 @@ object DeviceBridge {
      * `NOT_IMPLEMENTED`——**但命令构造与校验链路已完整可测**（判据 3/4/5/8）。
      */
     private fun exec(op: String, cmd: List<String>): JSONObject {
-        Log.i(TAG, "would exec: ${cmd.joinToString(" ")}")
-        return err(Err.NOT_IMPLEMENTED,
-            "命令构造已就绪（${cmd.size} 个参数），执行层待 UserService 真机验证后接入")
+        Log.i(TAG, "exec: ${cmd.joinToString(" ")}")
+        // EXEC_WIRED 是**唯一的真相源**；这里的判据与它同源，不各写一份。
+        if (!EXEC_WIRED) {
+            return err(Err.NOT_IMPLEMENTED,
+                "命令构造已就绪（${cmd.size} 个参数），执行层待 UserService 真机验证后接入")
+        }
+        // 经 Shizuku UserService（shell uid）以**数组形态**执行 —— 不经 shell，
+        // 与 buildCommand 的唯一构造点配套（设计 §1.1 的核心纪律）。
+        val (code, out, errText) = ShizukuExec.exec(cmd)
+        if (code != 0) {
+            lastError.set(1)
+            val detail = when {
+                errText.isNotBlank() -> "退出码 $code：${errText.trim().take(400)}"
+                else -> "退出码 $code（无 stderr）"
+            }
+            return err(Err.EXEC_FAILED, detail)
+        }
+        return try {
+            when (op) {
+                // 截屏等**产生产物文件**的 op：把产物路径回给 node，并把字节读回 App 侧
+                // （读回是为了让 AppUI 也能直接展示，且证明产物真的可读）。
+                "screencap" -> {
+                    val path = cmd.last()
+                    val bytes = ShizukuExec.readBase64(path)
+                    JSONObject().put("ok", true)
+                        .put("op", op)
+                        .put("path", path)
+                        .put("bytes", bytes?.size ?: 0)
+                        .put("readable", bytes != null)
+                        .put("via", "shizuku")
+                        .put("stdout", out.trim())
+                }
+                // 文本类 op：截断回传（防一次拉爆 binder / 把整屏通知糊进上下文）。
+                else -> JSONObject().put("ok", true)
+                    .put("op", op)
+                    .put("stdout", out.trim().take(MAX_STDOUT_CHARS))
+                    .put("truncated", out.length > MAX_STDOUT_CHARS)
+                    .put("via", "shizuku")
+            }
+        } catch (t: Throwable) {
+            err(Err.EXEC_FAILED, "结果装配失败：${t.javaClass.simpleName}: ${t.message}")
+        }
     }
 
     // ---------------------------------------------------------------------

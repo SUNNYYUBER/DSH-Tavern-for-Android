@@ -1826,6 +1826,48 @@ class MainActivity : AppCompatActivity() {
         else -> null
     }
 
+    /**
+     * W-3 诚实行：设备通道的执行层接线状态。
+     *
+     * 【为什么不并进 selfCheck 的 json】那条链来自 NodeService 的自检脚本（node 侧），
+     * 而「执行层是否接线」是 **native 侧事实**（`DeviceBridge.EXEC_WIRED`）。
+     * 把 native 事实塞进 node 自检会让两处各说一份（P-1 形态）——故直接在 App 侧取。
+     */
+    private fun deviceHonestyRow(): CapRow {
+        val rep = DeviceBridge.capabilityReport()
+        val wired = rep.optBoolean("exec_wired", false)
+        val st = rep.optString("shizuku_state", "?")
+        val port = rep.optInt("port", 0)
+        val execDetail = rep.optString("exec_detail", "")
+        val backendUid = rep.optInt("exec_backend_uid", -1)
+        val tiers = rep.optJSONObject("tier_counts")
+        val tierText = if (tiers == null) "?"
+        else listOf("READ_ONLY", "WORKSPACE_WRITE", "DANGER_FULL_ACCESS")
+            .joinToString(" / ") { "${tiers.optInt(it, 0)}" }
+        // W-2 验收口径：uid 2000 = ADB 后端（本项目不做 root 路线，0 要如实标出）。
+        val uidText = when (backendUid) {
+            -1 -> "uid 未知"
+            0 -> "uid 0（root 后端 —— 非本项目推荐路径）"
+            2000 -> "uid 2000（ADB/shell 后端）"
+            else -> "uid $backendUid"
+        }
+        return CapRow(
+            id = "deviceexec",
+            name = "设备工具执行层",
+            ok = wired,
+            state = if (wired) "WIRED" else "NOT_WIRED",
+            detail = if (wired) {
+                "执行层已接线（经 Shizuku UserService）：$execDetail；桥端口 $port；" +
+                    "档位分布 $tierText；$uidText"
+            } else {
+                "命令构造与档位判定就绪，**执行层未接线** ⇒ device 工具当前不会真的执行" +
+                    "（会如实返回 NOT_IMPLEMENTED，不会假装成功）。桥端口 $port；档位分布 $tierText；Shizuku=$st"
+            },
+            action = if (wired) null else "需真机验证 Shizuku UserService 后接入；在此之前请勿依赖 device 工具的产出",
+            repairable = false,   // 不是 App 内一键能修的（需真机接入）
+        )
+    }
+
     private fun repairSelfCheck() {
         Thread {
             val rows = parseSelfCheck(NodeService.repairAndRecheck())
@@ -1856,7 +1898,12 @@ class MainActivity : AppCompatActivity() {
      */
     private fun showSelfCheckDialog() {
         Thread {
-            val rows = parseSelfCheck(NodeService.selfCheckJson())
+            val rows = parseSelfCheck(NodeService.selfCheckJson()).toMutableList()
+            // W-3 诚实面：把设备通道的**真实**接线状态作为一行进看板。
+            // 为什么单列：`exec()` 未接线时一切静态检查全绿（编译/单测/门禁/boot），
+            // 只有这里能如实告诉用户「设备工具目前不会真的执行」。修好接线后
+            // `EXEC_WIRED=true` 会让这一行自动转为 ✓（判据在 audit-device-honesty.mjs）。
+            rows += deviceHonestyRow()
             handler.post {
                 if (rows.isEmpty()) {
                     android.app.AlertDialog.Builder(this)

@@ -25,7 +25,9 @@
  * 要测的是**接线**（工具注册后 execute 的实际行为），不是某个纯函数。
  * 用 mock ctx 捕获 register 的定义，再手工驱动 execute。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from 'vitest'
+import fs from 'node:fs'
+import path from 'node:path'
 import { apply, inject } from '../src/dsht-plugin-device/index.ts'
 
 interface ToolDef {
@@ -353,5 +355,63 @@ describe('W-3 事故回归：web profile 全局层下的延迟接线（判据 7/
     const h = makeHost()
     apply(h.ctx as never)
     for (const t of ALL_TOOLS) expect(h.tools.has(t), `依赖就绪却缺 ${t}`).toBe(true)
+  })
+})
+
+/**
+ * W-3 验收补口：**RP 插件侧的真实调用样例**（判据 9）。
+ *
+ * ## 为什么需要这条
+ * GOAL §二 W-3 的验收原文是「每个工具模拟器实证 + **RP 插件侧至少一个真实调用样例**」。
+ * 本仓库此前**只有工具注册与单测**，RP 侧零调用 —— 即「工具存在但没人用」。
+ * 这条判据把「RP 侧的调用样例在场、且与工具真名一致、且不踩 danger 档」钉成回归锁。
+ *
+ * ## 为什么守 RP skill 文档而不是 RP 源码
+ * 本项目的「RP 插件」有两面：**代码面**（dsht-rp-plugin / dsht-plugin-mvu / dsht-rp-ui）
+ * 与**技能面**（assets/skills/*，即 agent 实际读的操作手册）。设备能力是**给 agent 用的**，
+ * 故合理的调用样例落在技能面（`st-migration` 负责导入适配，是设备能力唯一的自然场景）。
+ * 代码面主动调 device_* 反而是**设计错误**（RP 插件不该自己截屏）。
+ *
+ * ## 各断言守什么
+ * · 9  — 调用样例在场（否则本条回归锁空转）
+ * · 9b — 样例里出现的 `device_*` 名字**必须都是真注册的工具名**（防文档与实现漂移：
+ *         文档写了 `device_click` 这种不存在的名字，agent 照着调就会失败）
+ * · 9c — 样例**不得示范调用 danger 档的 `device_input`**（迁移是无人值守批处理；
+ *         示范一个会挂起等 60s 批准的调用会卡死整条流水线）
+ * · 9d — 样例必须写明「执行层未接线时的降级姿态」（否则 agent 拿到 NOT_IMPLEMENTED
+ *         会重试/申请提权 —— 正是 P-3 静默失败族的变体）
+ */
+describe('W-3 验收：RP 插件侧的真实调用样例（判据 9）', () => {
+  const SKILL = path.join(
+    __dirname, '..', 'src', 'dsh-plugin', 'assets', 'skills', 'st-migration', 'SKILL.md',
+  )
+  let skill: string
+
+  beforeAll(() => {
+    skill = fs.readFileSync(SKILL, 'utf8')
+  })
+
+  it('判据9：st-migration 技能里必须有 device_* 的调用样例', () => {
+    expect(skill, 'RP 侧无任何 device_* 调用样例 —— W-3 验收口径未达').toMatch(/device_(screenshot|status)\s*\(/)
+  })
+
+  it('判据9b：样例里提到的每个 device_* 名字都必须真的注册过（防文档漂移）', () => {
+    const mentioned = new Set(skill.match(/device_[a-z_]+/g) ?? [])
+    expect(mentioned.size, '样例里一个 device_* 都没提到（判据已空转）').toBeGreaterThan(0)
+    for (const name of mentioned) {
+      expect(ALL_TOOLS, `技能文档提到了不存在的工具 ${name} —— agent 照调必失败`).toContain(name)
+    }
+  })
+
+  it('判据9c：样例不得示范调用 danger 档的 device_input（会挂起无人值守的迁移）', () => {
+    // 允许**文字警告**提到 device_input（本 skill 正是这么写的），
+    // 但不允许出现「调用形态」：device_input( ... ) / device_input: ...
+    expect(skill).not.toMatch(/device_input\s*\(/)
+    expect(skill).not.toMatch(/device_input\s*:\s*\{/)
+  })
+
+  it('判据9d：样例必须写明执行层未接线时的降级姿态（含 NOT_IMPLEMENTED）', () => {
+    expect(skill).toMatch(/NOT_IMPLEMENTED/)
+    expect(skill, '未写明「不要重试/不要申请提权」—— agent 会卡在设备工具上').toMatch(/不要重试|不要.*申请提权/)
   })
 })

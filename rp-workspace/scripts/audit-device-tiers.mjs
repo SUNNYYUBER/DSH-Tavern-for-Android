@@ -90,14 +90,56 @@ function check(bridgeText, gateText, designText) {
     problems.push('Gate 的批准判据不是「真收到用户答复且为 true」——可能把超时/异常当批准')
   }
 
-  // 判据 ③：与文档一致
+  // 判据 ③：**三档位**都要真实存在（W-4 验收口径原文：「三档位正反控测试进套件」）
+  // 【为什么不是只查 danger】此前这里只判 `dangerOps.length === 0` ⇒ READ_ONLY 与
+  // WORKSPACE_WRITE **两档零覆盖**：把某一档整体删空（或改名）判据仍报绿，
+  // 而档位表的语义已经残缺（P-30 家族：代理量与事实脱钩）。
+  // 三档齐全本身是「档位矩阵可映射」的前提 —— W-4 的批准闸只在 danger 档生效，
+  // 但 read-only / workspace-write 的存在性同样是档位声明的一部分。
+  const tierCount = new Map()
+  for (const t of KNOWN) tierCount.set(t, 0)
+  for (const [, t] of ops) if (tierCount.has(t)) tierCount.set(t, tierCount.get(t) + 1)
+  for (const [t, n] of tierCount) {
+    if (n === 0) problems.push(`档位 ${t} 在 OPS 表里零 op —— 三档位之一空转（档位矩阵残缺）`)
+  }
+
   const dangerOps = [...ops.entries()].filter(([, t]) => t === 'DANGER_FULL_ACCESS').map(([k]) => k)
   if (dangerOps.length === 0) problems.push('代码里没有任何 danger 档 op —— 守门人没有对象')
   if (designText !== null && !/danger-full-access/i.test(designText)) {
     problems.push('设计文档里找不到 danger-full-access 的档位声明 —— 文档与代码脱节')
   }
+  // 设计文档必须同样声明另外两档（否则「复用 DSH 档位语义」只有一档落地）
+  if (designText !== null && !/read-only/i.test(designText)) {
+    problems.push('设计文档里找不到 read-only 的档位声明 —— 三档位语义未完整落地到文档')
+  }
+  if (designText !== null && !/workspace-write/i.test(designText)) {
+    problems.push('设计文档里找不到 workspace-write 的档位声明 —— 三档位语义未完整落地到文档')
+  }
 
-  return { problems, ops, dangerOps }
+  // 判据 ④：**非 danger 档不得被 danger 闸误拦**（正反控的「反向」那一半）
+  // 闸的判据是 `def.tier == Tier.DANGER_FULL_ACCESS && !dangerApproved(op)`
+  // —— 若有人把条件写成 `!dangerApproved(op)`（漏掉档位判定），
+  // read-only / workspace-write 会被一并拦死（功能静默失效、无报错）。
+  const gateCond = bridgeText.match(/if \(([^)]*dangerApproved\(op\)[^)]*)\)/)
+  if (!gateCond) {
+    problems.push('找不到 danger?Approved 的调用条件 —— 闸的档位判据无法核对')
+  } else if (!/tier\s*==\s*Tier\.DANGER_FULL_ACCESS/.test(gateCond[1])) {
+    problems.push(`闸的条件里没有档位判定（实际：${gateCond[1].trim()}）—— 非 danger 档会被误拦`)
+  }
+  return { problems, ops, dangerOps, tierCount }
+}
+
+/**
+ * 构造一份「只剩 danger-full-access 档声明」的设计文档样本。
+ * 【用途】负控⑨ —— 证明「三档位语义必须完整落地到文档」这条判据有区分力。
+ * 把两种可能的大小写/连字符形态都抹掉，避免样本因写法差异而假绿。
+ */
+function designWithoutReadOnly(designText) {
+  if (designText === null) return null
+  return designText
+    .replace(/read-only/gi, 'xxx-yyy')
+    .replace(/read only/gi, 'xxx yyy')
+    .replace(/readonly/gi, 'xxxyyy')
 }
 
 // ---------------------------------------------------------------------------
@@ -133,6 +175,25 @@ function selftest() {
       .replace(/\s*"input_swipe" to OpDef\([^\n]*\n/g, '').replace(/\s*"input_text" to OpDef\([^\n]*\n/g, '')
       .replace(/\s*"input_key" to OpDef\([^\n]*\n/g, ''),
     realGate, realDesign)
+
+  // ---- W-4「三档位正反控」新增：每一档都要有能触发它的负控 ----
+  // 负控⑥：read-only 档被清空（把两条 READ_ONLY op 提级为 WORKSPACE_WRITE）
+  add('read-only 档被清空 ⇒ 报红', '档位 READ_ONLY 在 OPS 表里零 op',
+    real.replace('"screencap" to OpDef(Tier.READ_ONLY', '"screencap" to OpDef(Tier.WORKSPACE_WRITE')
+      .replace('"system_status" to OpDef(Tier.READ_ONLY', '"system_status" to OpDef(Tier.WORKSPACE_WRITE'),
+    realGate, realDesign)
+  // 负控⑦：workspace-write 档被清空（notifications 降级为 READ_ONLY）
+  add('workspace-write 档被清空 ⇒ 报红', '档位 WORKSPACE_WRITE 在 OPS 表里零 op',
+    real.replace('"notifications" to OpDef(Tier.WORKSPACE_WRITE', '"notifications" to OpDef(Tier.READ_ONLY'),
+    realGate, realDesign)
+  // 负控⑧：**反向** —— 闸漏掉档位判定 ⇒ 非 danger 档会被误拦
+  add('闸条件漏掉档位判定 ⇒ 报红', '没有档位判定',
+    real.replace('if (def.tier == Tier.DANGER_FULL_ACCESS && !dangerApproved(op))',
+      'if (!dangerApproved(op))'),
+    realGate, realDesign)
+  // 负控⑨：设计文档只剩 danger 档声明（三档位语义未完整落地）
+  add('设计文档缺 read-only/workspace-write 声明 ⇒ 报红', 'read-only 的档位声明',
+    real, realGate, designWithoutReadOnly(realDesign))
 
   let pass = 0
   for (const c of cases) {

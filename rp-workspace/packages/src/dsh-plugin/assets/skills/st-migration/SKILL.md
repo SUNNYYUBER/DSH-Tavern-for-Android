@@ -102,6 +102,42 @@ slug / projectKey / sessionId 规则见 references/slug-rules.md——必须严�
 - `dsht-tavern-helper variables`（GET/PUT/DELETE，scope=global|character|chat + slug/sessionId + path?）；`variables/merged`；`scripts`（PUT `{scripts}`）；`scripts/run`（POST `{id, slug?, sessionId?}`）；`macros/expand`（POST `{text, slug?, sessionId?}` → `{result, writes}`，酒馆助手宏真展开：`{{user}}/{{char}}/{{persona}}/{{getvar}}/{{setvar}}/{{random}}/{{pick}}/{{roll}}/{{time}}/{{date}}/{{datetime}}/{{weekday}}/{{// 注释}}/{{noop}}`，setvar 落盘对应作用域，未知宏原样保留）。
 - `dsht-prompt-template render` `{template, context, messages?}`；`check` `{messages}`。
 
+### 设备能力（`device_*`，仅在迁移确实需要看屏幕时用）
+
+本宿主另有四个**设备能力工具**（W-3 交付面，走 Shizuku uid 2000）：
+
+| 工具 | 档位 | 用途 |
+|---|---|---|
+| `device_screenshot` | read-only | 截当前屏，返回产物 PNG 路径 |
+| `device_status` | read-only | 读电量 / 网络 / 显示 / 存储 |
+| `device_notifications` | workspace-write | 读通知摘要（系统默认遮蔽验证码等敏感字段） |
+| `device_input` | **danger-full-access** | 模拟点击 / 滑动 / 输入 / 按键 |
+
+**迁移中的唯一用途：聊天气泡形态核对。**
+
+ST 的 `mes` 文本与 `swipes` 变体在**页面上**的真实排版（换行、代码块、`<details>` 折叠、
+Markdown 表格宽度）可能与 jsonl 里存的纯文本观感不同。若用户反馈「迁移后气泡长得不对」，
+可截一张屏作为**辅助证据**随迁移报告附上：
+
+```
+device_screenshot()                       → 拿到 PNG 路径，把它写进迁移报告的「遗留事项」
+device_status({what: "storage"})          → 迁移前确认磁盘余量够放整包（大聊天记录常见数百 MB）
+```
+
+**硬约束（违反会卡死整个迁移）**：
+
+- `device_input` 属 **danger 档**，调用会**挂起等用户批准**（超时 60s 自动拒绝）。
+  迁移是无人值守的批处理 —— **不要调用它**，否则会挂起整条流水线。
+- 这四个工具**当前执行层未接线**（`DeviceBridge.EXEC_WIRED=false`）：调用会**如实返回
+  `NOT_IMPLEMENTED`**（「命令构造已就绪…执行层待 UserService 真机验证后接入」），
+  **不会**产出截图。故：
+  - **不要把 device_* 的结果写进迁移的必需步骤**——它们是可选增强，缺了不影响迁移正确性；
+  - 拿到 `NEED_SHIZUKU` / `NOT_IMPLEMENTED` / `DENIED_BY_POLICY` 时**照常继续**，
+    在迁移报告的「遗留事项」里如实记一行即可（**不要**重试、**不要**申请提权）。
+- 迁移的**正确性**永远不依赖设备工具：分类、转换、校验全部走 `dsht_bridge` 与文件工具。
+
+---
+
 ### 工作区/会话注册
 
 本会话（适配工作区）已由开工链路完成 `workspace.create` + `workspace.rename`——你不用管。
