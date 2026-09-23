@@ -36,6 +36,6 @@
     "dsh": ">=0.1.5-rc.1 <0.1.6"
   },
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test \"test/*.test.mjs\""
   }
 }
