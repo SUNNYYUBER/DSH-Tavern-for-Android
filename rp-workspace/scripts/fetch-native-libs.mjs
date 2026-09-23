@@ -67,6 +67,13 @@ const TARGETS = [
   // 在用的 libnode.so（MIT；SHA256 钉在下表）。deb 字段保留仅为档案记录。
   { so: 'libnode.so', deb: { x86_64: 'nodejs_x86_64.deb', aarch64: 'nodejs_aarch64.deb' }, inner: 'lib/libnode.so', lic: 'MIT',
     asset: { x86_64: 'libnode-x86_64.so', aarch64: 'libnode-arm64.so' } },
+  // 【W-1 2026-09-21】node 头（构建期依赖，不进 APK）：node-pty 交叉编译要 node_api.h，
+  // 而它只随 Termux nodejs deb 分发；本仓 downloads/ 被 gitignore ⇒ CI 净环境缺它
+  // ⇒ build-node-pty.mjs 报「✗ 找不到 node_api.h」⇒ 构建链断（v0.2.3 的 CI 实测）。
+  // 与上面 libnode 用**同一个 deb**（该 deb 已不含 libnode.so，但 include/node 仍在），
+  // 走 dir 型：解出 `usr/include/node/` 平铺到部署目录。
+  // ★ 头与架构无关 ⇒ 两轮 arch 循环产出同一份（第二次 destReady 命中即跳过，幂等）。
+  { dir: true, deb: { x86_64: 'nodejs_x86_64.deb', aarch64: 'nodejs_aarch64.deb' }, inner: 'include/node', dest: 'node-headers', lic: 'MIT' },
   { so: 'libproot.so', deb: { x86_64: 'proot_5.1.107.92_x86_64.deb', aarch64: 'proot_5.1.107.92_aarch64.deb' }, inner: 'bin/proot', lic: 'GPLv2' },
   { so: 'libbusybox.so', deb: { x86_64: 'busybox_1.38.0-1_x86_64.deb', aarch64: 'busybox_1.38.0-1_aarch64.deb' }, inner: 'bin/busybox', lic: 'GPLv2' },
   { so: 'libcares.so', deb: { x86_64: 'c-ares_x86_64.deb', aarch64: 'c-ares_1.34.8_aarch64.deb' }, inner: 'lib/libcares.so', lic: 'MIT' },
@@ -199,6 +206,16 @@ export function destDirFor (spec, archKey) {
     case 'runtime-lib': return path.join(a.runtimeRoot, 'lib')
     case 'runtime-bin': return path.join(a.runtimeRoot, 'bin')
     case 'git-core': return path.join(a.runtimeRoot, 'git-core')
+    // 【W-1 2026-09-21】node 头（node_api.h 等）——**构建期**依赖，不进 APK。
+    // 为什么需要它：node-pty 是 C++ addon，交叉编译要 `node_api.h`；而它**只随
+    // Termux nodejs deb 分发**，本仓的 `downloads/` 被 gitignore ⇒ CI 净环境没有
+    // ⇒ `build-node-pty.mjs` 报「✗ 找不到 node_api.h」⇒ 整条构建链失败
+    // （实测：v0.2.3 的 CI 两次都死在这里，第一次还叠加了 NDK 缺失）。
+    // ★ 头文件**与架构无关**（N-API 头是同一份）⇒ 落到共享目录，不按 arch 分。
+    // 该路径正是 build-node-pty.mjs 的 NODE_HEADER_CANDIDATES[0]（其判定是
+    // `<dir>/node_api.h` 存在）。cpSync 把 `include/node/` 的内容**平铺**到该目录，
+    // 故路径末尾必须是 `.../include/node`（不是 `.../include`）。
+    case 'node-headers': return path.join(WS, 'downloads', 'node-deb', 'data', 'data', 'com.termux', 'files', 'usr', 'include', 'node')
     default: throw new Error(`未知部署面：${spec.dest}`)
   }
 }
