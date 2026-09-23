@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📖 15 分钟上手（想改代码看这个）
+    url: https://github.com/SUNNYYUBER/DSH-Tavern-for-Android/blob/main/docs/ONBOARDING-15MIN.md
+    about: 从 clone 到你的第一个 PR，不需要真机、不需要 Android SDK
+  - name: 🏗️ 架构入门（想懂代码看这个）
+    url: https://github.com/SUNNYYUBER/DSH-Tavern-for-Android/blob/main/docs/ARCHITECTURE.md
+    about: 六段消息链路 + 「我想改 XX 该动哪个文件」查表
+  - name: ⚖️ 兼容分级（判断是不是 bug）
+    url: https://github.com/SUNNYYUBER/DSH-Tavern-for-Android/blob/main/docs/V0.3-FREEZE.md
+    about: Tier 3 的不兼容是预期行为，报了会被关闭

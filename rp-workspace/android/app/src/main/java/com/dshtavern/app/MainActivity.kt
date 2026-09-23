@@ -1420,6 +1420,8 @@ class MainActivity : AppCompatActivity() {
         actions += { syncExchangeDir() }
         items += "自检与一键修补…"
         actions += { showSelfCheckDialog() }
+        items += "导出诊断包（报 bug 时用）…"
+        actions += { exportDiagPack() }
         items += "关于（版本信息）"
         actions += { showAboutDialog() }
         android.app.AlertDialog.Builder(this)
@@ -1471,6 +1473,55 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---- W-B 备份 ----
+
+    /**
+     * 导出诊断包（2026-09-23，接 `DiagPack`）。
+     *
+     * 【为什么要有这个入口】本项目的 bug 大量只在别人的设备上复现
+     * （机型/系统版本/时区/鸿蒙/Shizuku 状态），维护者无法复现时只能来回追问。
+     * 这个入口把「来回追问」变成「用户点一下、交一个文件」。
+     *
+     * 【为什么落地是「交换目录」而不是直接分享】两条考虑：
+     *   ① 本项目无任何遥测 —— 绝不自动上传；
+     *   ② 用户**交之前能自己打开看**（隐私可控），这与 `ExchangeDir` 的既有定位一致。
+     * 完成后弹窗提示文件位置与「可自行检查」这一事实。
+     */
+    private fun exportDiagPack() {
+        val where = ExchangeDir.externalLabel(this)
+        android.app.AlertDialog.Builder(this)
+            .setTitle("导出诊断包")
+            .setMessage(
+                "把一个纯文本诊断文件保存到：\n\n$where\n\n" +
+                    "里面包含：版本号 / 机型 / Android 版本 / 时区 / 自检结果 / 运行日志尾部。\n\n" +
+                    "· **不含**你的聊天记录、角色卡、世界书正文\n" +
+                    "· **不含** API Key、令牌（命中的日志行会被整行丢弃并计数）\n" +
+                    "· 不会自动上传，保存在本机，你可以先自己打开检查再决定是否交出去\n\n" +
+                    "报 bug 时把这个文件拖进 GitHub Issue 即可。",
+            )
+            .setPositiveButton("导出") { _, _ ->
+                Thread {
+                    val r = DiagPack.export(this)
+                    runOnUiThread {
+                        val msg = if (r.ok) {
+                            "已导出：\n${r.file?.name}\n\n位置：${r.locationLabel}\n" +
+                                "大小：${r.bytes} 字节\n" +
+                                "过滤掉的行数：${r.droppedLines}（含凭据/路径形态，已整行丢弃）\n\n" +
+                                "你可以先打开看一眼再决定是否交出去。"
+                        } else {
+                            "导出失败：${r.error}\n\n" +
+                                "可尝试：设置 → 自检与一键修补，看是否有可修项。"
+                        }
+                        android.app.AlertDialog.Builder(this)
+                            .setTitle(if (r.ok) "诊断包已导出" else "导出失败")
+                            .setMessage(msg)
+                            .setPositiveButton("好", null)
+                            .show()
+                    }
+                }.start()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
 
     /**
      * W-6：交换目录同步（与文件管理器互拷）。

@@ -1,4 +1,4 @@
-﻿# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
+# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
 # 用法：
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.8        # 完整流程：装新版本 DSH → 平台适配 → 验证 → 打包 → APK
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.7 -SkipInstall  # runtime 已就绪，只跑后半段（打包/APK/sentinel）
@@ -387,7 +387,18 @@ $auditNode = @(
     # 后人据它**重复排查**，且让「矩阵清零」（E-B）看起来永远做不完（P-1 的口径不一致形态）。
     # ⚠️ 诚实边界：本闸门只查「残余描述的结构完整性」，**不查残余是否真的还在**
     # （后者须逐个真跑）—— 它是降低复发率的护栏，**不替代人工复核**。
-    'audit-matrix-residuals.mjs'
+    'audit-matrix-residuals.mjs',
+    # 【2026-09-23 新增】诊断包隐私不变量审计。
+    # 守：`DiagPack`（导出诊断包）是本项目**唯一一个主动把用户设备信息交出去**的功能，
+    # 天生与隐私对立。它现在是对的（白名单收集 / 凭据整行丢弃 / 会话正文一律不读），
+    # 但**此前没有任何机器守着它**。腐化路径非常具体：
+    #   「这次排查需要看看会话里到底发生了什么」⇒ 顺手加一行读 session.jsonl
+    #   ⇒ 从此每个报 bug 的用户都在不知情中交出自己的 RP 正文。
+    # 而本项目的 bug 有相当比例**只在别人的设备上复现**（机型/系统/时区/鸿蒙），
+    # 这个功能会被频繁使用 ⇒ 上述诱惑真实存在。故固化为常驻门禁（同 audit-native-deps 的动机）。
+    # 4 条判据 + 6 项 selftest（含「拒绝名单里出现凭据词不报红」这条**关键负控**——
+    # 否则判据会把正确实现误判为违规）。
+    'audit-diagpack-privacy.mjs'
 )
 foreach ($a in $auditNode) {
     $p = Join-Path $ws "scripts\$a"

@@ -1,0 +1,73 @@
+name: 🐛 报 bug
+description: 报告一个问题（不需要懂技术，按提示填即可）
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报 bug！**你不需要懂技术**，按下面填就行。
+
+        > ⚠️ 先看两件事，可能直接省掉你一次等待：
+        > 1. [README 的「兼容分级」](https://github.com/SUNNYYUBER/DSH-Tavern-for-Android#兼容分级坏了报不报看这里)
+        >    —— **Tier 3 的不兼容是预期行为，不是 bug**（在那里报会被关闭）
+        > 2. [已知限制](https://github.com/SUNNYYUBER/DSH-Tavern-for-Android#alpha-限制务必读完)
+        >    —— 尤其**第 4 条时区**：「发消息完全没反应」通常是设备时区不是 IANA 名
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么？
+      description: 用大白话说。什么现象、什么时候开始的、你原本期望怎样。
+      placeholder: |
+        例：点「导入」选了 data.zip，预览确认后开了适配会话，
+        agent 跑到「世界书」那一步就不动了，等了半小时。
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 怎么复现？
+      description: 一步一步写，越具体越好。如果每次都出现，请写「必现」。
+      placeholder: |
+        1. 侧栏 → 角色扮演 → 导入
+        2. 选「完整数据包」，选 data.zip
+        3. 点确认 → 跳转到「ST 数据适配」会话
+        4. 停在第 2 步不再前进
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: App 版本
+      description: 设置 → 关于，或者你下载的 APK 文件名（如 0.2.6）
+      placeholder: "0.2.6"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: 手机型号与系统版本
+      placeholder: "小米 11 Pro / Android 14；或 鸿蒙 HarmonyOS 6 + 卓易通"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: diagpack
+    attributes:
+      label: 诊断包（强烈建议，但非必须）
+      description: |
+        这是**最有用的一步**，能把「来回追问」变成「一次解决」。
+
+        App 内：**设置 → 导出诊断包（报 bug 时用）→ 导出**，
+        然后到 `Documents/dsht-exchange/` 找到 `dsht-diag-*.txt`，把它拖进下面的输入框。
+
+        · 里面**不含**你的聊天记录、角色卡、世界书正文
+        · 里面**不含** API Key、令牌
+        · **不会自动上传** —— 你可以先自己打开看一遍再决定交不交
+      options:
+        - label: 我已附上诊断包文件
+        - label: 我没有附（说明原因，如导出失败）

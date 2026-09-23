@@ -1,0 +1,42 @@
+name: 💡 提想法 / 想参与
+description: 讨论功能、提想法，或表示你想参与这个项目
+title: "[Idea] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **如果你是想参与开发**，先说一句：非常欢迎。
+
+        「想当共同开发者」不必先证明什么——本项目的现状是**一个人推不动**，
+        缺口很大且分得很细。可以看：
+
+        - [CONTRIBUTING.md 的「五类可以认领的活」](https://github.com/SUNNYYUBER/DSH-Tavern-for-Android/blob/main/CONTRIBUTING.md)
+          —— 每类都标了「从哪下手」，**不需要先读完整套文档**
+        - [docs/ONBOARDING-15MIN.md](https://github.com/SUNNYYUBER/DSH-Tavern-for-Android/blob/main/docs/ONBOARDING-15MIN.md)
+          —— 15 分钟从 clone 到第一个 PR
+
+        下面直接说你想做什么就行。
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 这是哪一类？
+      options:
+        - 我想参与开发（想认领某块工作）
+        - 我有一台设备可以帮验证（真机/模拟器/鸿蒙）
+        - 我有功能建议
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: detail
+    attributes:
+      label: 具体说说
+      description: |
+        如果是「想参与」：你想做什么、大概能投入多少精力、有没有特别想学的部分。
+        如果是「想帮验证」：你的设备型号 / 系统版本（真机验证是当前**最大的欠账**）。
+        如果是「功能建议」：你想解决什么问题、现在的做法哪里不舒服。
+    validations:
+      required: true

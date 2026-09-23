@@ -113,6 +113,13 @@
 **Q：我的数据会被上传吗？**
 不会。网络请求只发往你自己配置的模型 API 端点。
 
+**Q：遇到 bug 怎么帮你排查？**
+App 内 **设置 → 导出诊断包（报 bug 时用）**，会生成一个纯文本文件到
+`Documents/dsht-exchange/`，把它拖进 Issue 即可。里面含版本 / 机型 / 系统版本 /
+时区 / 自检结果 / 运行日志尾部，**不含**你的聊天记录、角色卡、世界书正文，也**不含**
+API Key 与令牌（命中凭据形态的日志行会被**整行丢弃**并计数）。它**不会自动上传**——
+你可以先自己打开检查再决定是否交出去。
+
 **Q：能商用吗？**
 可以（MIT 授权）。但注意生态上游的商业限制（见下方「法律边界」第 4 条）。
 
@@ -254,6 +261,7 @@ DSH RolePlay/
 
 | 想了解 | 看这里 |
 |---|---|
+| **15 分钟上手（想改代码从这里开始）** | [ONBOARDING-15MIN.md](docs/ONBOARDING-15MIN.md) |
 | **架构入门（外部贡献者从这里开始）** | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | 现状与背景 | [MASTER_TODO.md](MASTER_TODO.md) |
 | 兼容契约 | [ST-COMPAT-PACT.md](rp-workspace/docs/ST-COMPAT-PACT.md) |
@@ -270,9 +278,10 @@ DSH RolePlay/
 
 **Issue 与 Pull Request 都欢迎提。**
 
-- **Issue**：报 bug（请附设备型号、Android 版本、复现步骤）或讨论想法
+- **Issue**：报 bug 请**用 App 内的「导出诊断包」附上诊断文件**（设备型号、系统版本、复现步骤仍请在模板里填）
 - **PR**：直接提即可。评审与合并由维护者负责，合并前可能请你改几轮
-- 想当共同开发者 → 提 Issue 说明你打算做什么，由我指定后加为 collaborator（直接提交权限）
+- **想改代码不知道从哪下手** → [15 分钟上手](docs/ONBOARDING-15MIN.md)（不需要真机、不需要 Android SDK）
+- **想当共同开发者** → 提 Issue 说明你打算做什么；也可以直接看 [CONTRIBUTING 的「五类可以认领的活」](CONTRIBUTING.md)
 
 落在 Tier 3 范围的不兼容是预期行为，不算 bug。
 
@@ -425,6 +434,14 @@ No. But in-card scripts (Tavern Helper ecosystem) have a compat layer — see "W
 **Q: Will my data be uploaded?**
 No. Network requests go only to the model API endpoint you configured.
 
+**Q: How can I help you debug a bug?**
+In-app **Settings → Export diagnostic pack**, which writes a plain-text file to
+`Documents/dsht-exchange/` — drag it into the Issue. It contains version / model /
+Android version / timezone / self-check results / runtime log tail, and contains
+**none** of your chat logs, character cards, or world books, nor any API key or token
+(log lines matching credential patterns are **dropped whole** and counted). It is
+**never uploaded automatically** — open it and check before deciding to share.
+
 **Q: Commercial use?**
 Yes (MIT). But note the upstream commercial restriction (item 4 in "Legal boundaries").
 
@@ -566,6 +583,7 @@ DSH RolePlay/
 
 | Topic | Where |
 |---|---|
+| **15-minute onboarding (start here to code)** | [ONBOARDING-15MIN.md](docs/ONBOARDING-15MIN.md) |
 | **Architecture primer (start here as a contributor)** | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Status & background | [MASTER_TODO.md](MASTER_TODO.md) |
 | Compat contract | [ST-COMPAT-PACT.md](rp-workspace/docs/ST-COMPAT-PACT.md) |
@@ -582,9 +600,10 @@ DSH RolePlay/
 
 **Issues and Pull Requests are both welcome.**
 
-- **Issues**: report bugs (include device model, Android version, repro steps) or discuss ideas
+- **Issues**: for bug reports please attach the diagnostic pack from the app (the template still asks for device model, OS version, repro steps)
 - **PRs**: open them directly. Maintainers review and merge; you may be asked for a few rounds of changes
-- Want to be a co-developer → open an Issue describing what you plan to do; once approved I'll add you as a collaborator (direct commit access)
+- **Want to code but unsure where to start** → [15-minute onboarding](docs/ONBOARDING-15MIN.md) (no device, no Android SDK needed)
+- **Want to become a co-developer** → open an Issue describing what you plan to do, or read the five claimable workstreams in [CONTRIBUTING.md](CONTRIBUTING.md)
 
 Tier 3 incompatibilities are expected behavior, not bugs.
 
