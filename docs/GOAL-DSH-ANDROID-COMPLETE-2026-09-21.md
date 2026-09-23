@@ -189,6 +189,67 @@ DSH 在桌面端 = agent + 终端 + 文件系统 + 系统命令。安卓端彻�
 
 ---
 
+## 发版记录：v0.2.6（2026-09-21）
+
+**版本**：`versionName 0.2.6` / `versionCode 8`；runtime sentinel **v382**
+
+**为什么必须有这一版（v0.2.5 是一次**不可用**的发布）**：
+
+v0.2.5 发布后在模拟器上做真机实证，发现 **两个架构的 APK 都完全无法启动核心功能**：
+
+```
+CANNOT LINK EXECUTABLE ".../lib/x86_64/libnode.so":
+  library "libz.so.1" not found: needed by main executable
+```
+
+⇒ `NodeService` 无限重启（模拟器实录第 **253** 次），DSH 永远停在「正在启动 DSH 运行时」。
+**App 装得上、图标点得开，但核心功能为零。**
+
+**根因（一条从来没被验证过的注释）**：[fetch-native-libs.mjs](file:///d:/DSH%20RolePlay/rp-workspace/scripts/fetch-native-libs.mjs) 里
+`libdsht-bash.so` 那行的注释写着
+
+> 「libpcre2-8 / libz.so.1 / libcrypto.so.3 已在 runtime/lib，不重复打包」
+
+—— 但 TARGETS 里**从来没有过** zlib / openssl / pcre2 的条目，那三个库**从未被部署过**。
+**注释把「预期」写成了「事实」**，而这个错误从 `f43bef6` 起潜伏至今。
+
+**为什么全部既有门禁都没抓到**（这是本条最值得记录的部分）：
+
+| 门禁 | 为什么不可见 |
+|---|---|
+| 编译期链接检查 | 只查 `.so` 之间的符号，不查「这些 `.so` 是否随包分发」 |
+| `audit-pty-prebuilt.mjs` | 只查 `pty.node` 自己的 NEEDED |
+| `verify-apk-payload.py`（M4） | 查「标记文件在不在」，不查动态依赖 |
+| `audit-artifact-freshness.mjs` | 查「产物与源码一致」，而**源码本身就是错的** |
+
+⇒ **一切绿灯，只有真机才炸**。这是 P-30 家族最贵的一种：**绿灯与可用性完全无关**。
+
+**修复**：
+1. `fetch-native-libs.mjs` 的 TARGETS 补齐 **7 个库**（含 SHA256 钉死）：
+   `libz.so.1` · `libcrypto.so.3` · `libssl.so.3` · `libicuuc.so.78` · `libicui18n.so.78` · `libicudata.so.78` · `libpcre2-8.so`
+   （实测 `libnode.so` 有 **13** 个 DT_NEEDED，而修复前包内只能解析 **5** 个）
+2. **新增常驻门禁** [audit-native-deps.mjs](file:///d:/DSH%20RolePlay/rp-workspace/scripts/audit-native-deps.mjs)：
+   对每个打包的 ELF 读 DT_NEEDED，逐个要求在包内（jniLibs / runtime-lib）或系统白名单内可解析。
+   **selftest 6/6**（2 正控 + 3 负控 + 1 零控），**经决定性负控**：删掉 `runtime/lib/libz.so.1` ⇒
+   精确点名 **4 个**依赖它的 ELF（`libnode.so` / `libdsht-git.so` / `libdsht-zstd.so` / `libsqlite3.so`）
+   并 exit 2；还原即转绿。
+
+**模拟器终局实证（x86_64，本轮）**：装 v0.2.6 后 node **一次启动成功**（`attempt 1`，零重启）——
+`dsh web: http://127.0.0.1:3080/?token=…` / `web token captured (43 chars)` /
+`libnode.so` 进程存活 / 端口 3080 **PORT_OPEN** / **boot loop 计数 0**；
+全部插件加载并通过自检（`dsht-mvu variables registered` / `dsht-th macros/expand` /
+`dsht-rp register-workspaces: workspaces=1 errors=0`）；**W-3 部署面实证**：
+`dsht-plugin-device` 已进 `profiles/web/node_modules/` 且 `lib/index.js` 在场。
+
+**顺带完成的 W-3/W-4 真机行为实证**（补齐上表 ③ 的诚实标注）：
+- **fail-closed 实证**：对设备桥发无 token 请求 ⇒ `{"ok":false,"error":"BAD_ARGS","detail":"鉴权失败"}`
+  （模拟器实录，非单测 mock）；
+- **诚实降级实证**：模拟器未装 Shizuku，四工具走 `NEED_SHIZUKU` 路径返回可读文案与启动指引，
+  **不会**静默假装成功。
+
+---
+
+
 ## 六、完成定义逐条终局审计（2026-09-21）
 
 > 审计原则：**以当前工作区的实际状态为准**，逐条给出可复核的证据，不以「意图 / 阶段性进展 / 记忆」充当完成证明。

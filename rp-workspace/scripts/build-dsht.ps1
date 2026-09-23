@@ -354,6 +354,22 @@ $auditNode = @(
     # 本判据把这个状态做成机器可读且**下游必须与之对账**的单源，接线后自动翻转。
     # selftest 10/10（正控 + 8 负控 + 1 零控），且负控③ 修过一次假绿（注释里含同名字符串）。
     'audit-device-honesty.mjs',
+    # 【2026-09-21 v0.2.5 事故防回归】原生库依赖闭合性（DT_NEEDED 必须包内可解析）。
+    # 守：对每个打包的 ELF（jniLibs 的 lib*.so + runtime/lib 的 lib*.so*）读 DT_NEEDED，
+    #     逐个要求在包内或系统白名单里可解析；解析不到即报红并点名「谁需要谁」。
+    # 理由（真实事故）：v0.2.5 双架构在设备上 node 完全起不来 ——
+    #     CANNOT LINK EXECUTABLE ".../libnode.so": library "libz.so.1" not found
+    #   ⇒ NodeService 无限重启（实录第 253 次），App 停在「正在启动 DSH 运行时」。
+    #   根因是 fetch-native-libs.mjs 里一条**从来没被验证过的注释**：
+    #   「libpcre2-8/libz.so.1/libcrypto.so.3 已在 runtime/lib，不重复打包」——
+    #   而 TARGETS 里从来没有过这三个包的条目，它们**从未被部署**。
+    #   注释把「预期」写成了「事实」（P-30 家族最贵形态：绿灯与可用性无关）。
+    #   为什么既有门禁全漏：编译期只查符号不查分发；audit-pty-prebuilt 只查 pty.node 自己；
+    #   verify-apk-payload(M4) 查标记文件在不在；audit-artifact-freshness 查产物与源码一致
+    #   ——而源码本身就是错的。只有真机才炸。
+    # 经决定性负控：删掉 runtime/lib/libz.so.1 ⇒ 精确点名 4 个依赖它的 ELF（含 libnode.so）
+    #   并 exit 2；还原即转绿。selftest 6/6（2 正控 + 3 负控 + 1 零控）。
+    'audit-native-deps.mjs',
     # 【第二十五轮 W4 新增】「单测装置 vs 真机」脚本语义一致性闸门。
     # 守：卡脚本在真机以 <script type="module"> 注入（th-shim.ts 锚点断言）⇒ **严格模式**；
     # 而单测用 node:vm **经典脚本**语义。两者**不是同一套语义**（实证：同一段带 with 的代码
@@ -376,6 +392,10 @@ $auditNode = @(
 foreach ($a in $auditNode) {
     $p = Join-Path $ws "scripts\$a"
     if (-not (Test-Path $p)) { throw "门禁脚本缺失：$p（常驻审计不得缺项）" }
+    # 把当前构建架构经 env 交给门禁（`audit-native-deps.mjs` 用它选 jniLibs/runtime 目录）。
+    # 【为什么不给循环特化参数形态】门禁循环统一 `node $p`；加 per-script 参数会引出
+    # 「哪些脚本吃哪些参数」的第二张表（P-1）。env 是一处声明、所有脚本可读。
+    $env:DSHT_ARCH = $Arch
     # 有 --selftest 的必须先自检（防「闸门本身失效却报 PASS」——A11 的教训）
     $hasSelftest = (Select-String -Path $p -Pattern '--selftest' -Quiet)
     if ($hasSelftest) {

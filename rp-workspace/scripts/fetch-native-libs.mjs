@@ -107,6 +107,46 @@ const TARGETS = [
   // （init/add/commit/diff/log/branch/tag）由主二进制直接运行，不 exec helpers。
   // 远程 clone 会如实报「无法加载 git-remote-https」（R8 出声）。
   { so: 'libdsht-git.so', deb: { x86_64: 'git_2.55.0_x86_64.deb', aarch64: 'git_2.55.0_aarch64.deb' }, inner: 'bin/git', lic: 'GPL-2.0' },
+
+  // ───────────────────────────────────────────────────────────────────────
+  // 【2026-09-21 真实事故修复】libnode.so 的 DT_NEEDED 闭合补全
+  // ───────────────────────────────────────────────────────────────────────
+  // 事故现象：v0.2.5 的**两个架构**在真机/模拟器上 node 均**无法启动**——
+  //   CANNOT LINK EXECUTABLE ".../lib/x86_64/libnode.so":
+  //     library "libz.so.1" not found: needed by main executable
+  //   ⇒ NodeService 连续重启（实录第 253 次），DSH 永远停在「正在启动 DSH 运行时」。
+  //
+  // 根因（一条**从来没被验证过的注释**）：`libdsht-bash.so` 那行的注释写着
+  //   「libpcre2-8/libz.so.1/libcrypto.so.3 已在 runtime/lib，不重复打包」
+  // —— 但 TARGETS 里**从来没有过 zlib/openssl/pcre2 的条目**，那三个库
+  //   **从未被部署过**。注释把「预期」写成了「事实」。
+  //
+  // 为什么潜伏至今才炸：v0.2.4 及更早的 libnode.so 恰好**不 NEEDED libz**；
+  //   W-1 换用 Termux 上游 node 后 libnode 的依赖面变宽（实测 13 个 DT_NEEDED，
+  //   而包内只能解析 5 个）⇒ 一启动就链接失败。
+  //
+  // 补的门禁：`audit-native-deps.mjs` —— 用 llvm-readelf 读**包内每个** .so 的
+  //   DT_NEEDED，逐个要求在包内可解析（jniLibs 或 runtime/lib），否则报红。
+  //   这类「依赖不闭合」在编译期与全部既有门禁**完全不可见**，只有真机才炸。
+  //
+  // 说明：以下库一律进 `runtime-lib`（dlopen 路径，LD_LIBRARY_PATH 已含），
+  //   不进 jniLibs —— 它们不是可执行体，无需 exec 权限，也不必占用 nativeLibraryDir。
+  // -----------------------------------------------------------------------
+  // zlib：libnode / libdsht-git / libdsht-zstd 三者共同 NEEDED libz.so.1
+  { so: 'libz.so.1', dest: 'runtime-lib', deb: { x86_64: 'zlib_1.3.2_x86_64.deb', aarch64: 'zlib_1.3.2_aarch64.deb' }, inner: 'lib/libz.so.1.3.2', lic: 'Zlib' },
+  // OpenSSL 3：libnode 需要 libssl.so.3 + libcrypto.so.3；libdsht-git 需要 libcrypto.so.3
+  // （两者必须同包同版本 —— 否则会与系统 libcrypto 混版导致符号错配）
+  // 【命名注意】Termux pool 里这两个包的 x86_64 文件名**不带版本号**（openssl_x86_64.deb），
+  //   与 zlib/libicu 的带版本号形态不同 —— 这是上游实际命名，照抄即正解。
+  { so: 'libcrypto.so.3', dest: 'runtime-lib', deb: { x86_64: 'openssl_x86_64.deb', aarch64: 'openssl_1%3A3.6.3_aarch64.deb' }, inner: 'lib/libcrypto.so.3', lic: 'Apache-2.0' },
+  { so: 'libssl.so.3', dest: 'runtime-lib', deb: { x86_64: 'openssl_x86_64.deb', aarch64: 'openssl_1%3A3.6.3_aarch64.deb' }, inner: 'lib/libssl.so.3', lic: 'Apache-2.0' },
+  // ICU：libnode 需要 icuuc/icui18n（Node 的 Intl 实现）。
+  // libicui18n NEEDED libicuuc NEEDED libicudata —— 三角必须齐全，缺一即链接失败。
+  { so: 'libicuuc.so.78', dest: 'runtime-lib', deb: { x86_64: 'libicu_78.3_x86_64.deb', aarch64: 'libicu_78.3_aarch64.deb' }, inner: 'lib/libicuuc.so.78.3', lic: 'Unicode-3.0' },
+  { so: 'libicui18n.so.78', dest: 'runtime-lib', deb: { x86_64: 'libicu_78.3_x86_64.deb', aarch64: 'libicu_78.3_aarch64.deb' }, inner: 'lib/libicui18n.so.78.3', lic: 'Unicode-3.0' },
+  { so: 'libicudata.so.78', dest: 'runtime-lib', deb: { x86_64: 'libicu_78.3_x86_64.deb', aarch64: 'libicu_78.3_aarch64.deb' }, inner: 'lib/libicudata.so.78.3', lic: 'Unicode-3.0' },
+  // pcre2：libdsht-git 的 NEEDED（与 bash 无关 —— bash 只走 libreadline/libiconv）
+  { so: 'libpcre2-8.so', dest: 'runtime-lib', deb: { x86_64: 'pcre2_10.47_x86_64.deb', aarch64: 'pcre2_10.47_aarch64.deb' }, inner: 'lib/libpcre2-8.so.0.14.0', lic: 'BSD-3-Clause' },
 ]
 
 // deb 级 SHA256（本机缓存实算；上游换版时**必须**同步本表 —— 校验不通过即报错）
@@ -130,6 +170,16 @@ const SHA256 = {
   'ripgrep_15.2.0_x86_64.deb': '2eb50ab2e378436767975b072ce7118decf6444d6d6ed178bc89979b5f150f2a',
   'zstd_1.5.7-1_aarch64.deb': 'e1b4a5113648da8de189620ba1fce74c48b2d0833d9043391b9a1c91fb606fd3',
   'zstd_1.5.7-1_x86_64.deb': 'a76ba6c3d8742819bf4fff7780eb2e022269412700fc8f4471f530cc0d81833f',
+  // ---- DT_NEEDED 闭合补全（2026-09-21 真实事故修复；本机缓存实算）----
+  'zlib_1.3.2_aarch64.deb': '75e7d0af17fcc3b40004309fdc00a1ddb9ae08346dce5e269902c34ac3966ac9',
+  'zlib_1.3.2_x86_64.deb': 'c61b089dd30981452f5953b2bad4c4e7857062b2abd971f87fb0aec441bc02f4',
+  // openssl：注意 x86_64 文件名不带版本号（上游 Termux pool 实际命名）
+  'openssl_1%3A3.6.3_aarch64.deb': '86760e9ce736f463236f2c15b1eb3a3fdcfc5778d0fd7077a917448dcc90f3aa',
+  'openssl_x86_64.deb': 'b58fedf8d3accda418b69b636bb1f8b789a5a75a375bda4a1c4fccb2c6e30380',
+  'libicu_78.3_aarch64.deb': 'f536403f65a08fe0df6e7304184e902d54def77d5c3bd5edfd9109d57601d276',
+  'libicu_78.3_x86_64.deb': '19fa8c4d828719f465d523983b1e0d833e4130bb22790104638965d97e27fe60',
+  'pcre2_10.47_aarch64.deb': '51f915d22de639bfca6ec029ae613987bbe3bc73626eede13319fd2e95f50b63',
+  'pcre2_10.47_x86_64.deb': '8e4fb14ba014f9b2d5e07b6ed9c519b31d00a6e7ddeb5804c3b076a6c841c2fb',
   // ---- 既有 ----
   'nodejs_aarch64.deb': 'eaf3ed8a6e4b72ebaa8c2cb3bad778c577cdf9ea87ca91761213d8a3940fc090',
   'nodejs_x86_64.deb': 'd3a0e7b8e110ba87969a56f45a8fa63730100e9faec413a6f377ebc76c5b616e',
