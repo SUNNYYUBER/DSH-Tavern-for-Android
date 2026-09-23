@@ -138,3 +138,23 @@ jobs:
           name: DSH-Tavern-x86_64-debug-apk
           path: DSH-Tavern-*-x86_64-debug.apk
           retention-days: 30
+
+      # 【2026-09-21 W-3 发版】把 CI 产出的 x86_64 包**直接挂到对应 release**。
+      # 为什么必须由 CI 上传：本机上行实测只有 ~15 KB/s，而 GitHub 的 uploads 端点会在
+      # ~270s / ~12MB 处重置连接 ⇒ 140MB 的 APK **本地永远传不完**（连续 5 次实测同形态）。
+      # 而 CI runner 在 GitHub 内网侧，上传是秒级。tag 触发时才有 release 可挂（workflow_dispatch
+      # 不带 tag ⇒ 跳过）。
+      # ⚠️ arm64 release 包不在本 workflow（需签名密钥 secrets）⇒ 只上传 x86_64 自测包。
+      - name: Attach x86_64 APK to release (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
+          $apk = (Get-ChildItem "DSH-Tavern-*-x86_64-debug.apk" | Select-Object -First 1).Name
+          if (-not $apk) { throw "找不到 x86_64 APK" }
+          Write-Host "上传 $apk → release $tag"
+          # --clobber：重跑同 tag 时可覆盖（幂等）
+          gh release upload $tag $apk --clobber
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload 失败：$LASTEXITCODE" }
