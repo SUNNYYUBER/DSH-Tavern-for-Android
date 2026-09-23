@@ -150,8 +150,18 @@ describeMaybe('T-02b 会话写入契约：我方事件必须通过官方迁移�
       { type: 'turn/end', seq: 7, time: 8, data: { turn: 1, reason: { kind: 'completed' } } },
     ].map(o => JSON.stringify(o)).join('\n')
     const r = runProbe('migrate', bad)
+    // ★ 断言①（不变）：**必须被拒** —— 这是本用例的立意（assistant/message 不得做 replace 节点）
     expect(r.ok).toBe(false)
-    expect(r.out).toMatch(/chunk provenance|sourceEventSeqs|invalid replace/)
+    // ★ 断言②（★ 2026-09-23 DSH 升级轮 · 阶段 E 修）：**拒绝理由按代次分家**
+    //   0.1.5：在 `decodeRow` 阶段被拒，理由是 `chunk provenance / sourceEventSeqs / invalid replace`。
+    //   ★ 0.1.7：**拒绝得更早** —— 在 `sessionFormatCatalog.createRestore(header, …)` 就抛：
+    //     `V3 catalog migration requires explicit historical child facts,
+    //      including an empty array for a parent without children`
+    //     （= 附录 A.2 记录的「迁移硬约束①：需要子级证据，空数组才表示确无子级」）。
+    //   ⇒ 「被拒」这个**事实**没变；变的是**被谁在哪一步拒**。
+    //   ★ 纪律：断言理由时必须**两种代次的写法都认** —— 否则升级后会把
+    //     「拒绝理由变了」误报成「约束失效了」（**P-45**：判据口径必须与真目标对齐）。
+    expect(r.out).toMatch(/chunk provenance|chunk references|sourceEventSeqs|invalid replace|explicit historical child facts/)
   })
 
   it('planAssistantRewrite：idle 开新 turn / busy 续 step（assistant 只能落在打开的 step）', () => {
