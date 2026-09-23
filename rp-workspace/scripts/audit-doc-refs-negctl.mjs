@@ -65,6 +65,8 @@ import { reportSelftest } from './selftest-summary.mjs'
 
 const WS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const ROOT = path.resolve(WS, '..')
+/** 本脚本所在目录（fixture 目录以它为基准，避免落到会被清理的公共 tmp/） */
+const HERE = path.dirname(fileURLToPath(import.meta.url))
 const AUDIT = path.join(WS, 'scripts', 'audit-doc-refs.mjs')
 /** ★ 用**真实 E-H 文档之一**做注入底本（方法论份量最大、引用最多 ⇒ 最能暴露口径问题） */
 const SRC = path.join(ROOT, 'docs', 'MOBILE-TEST-METHODOLOGY.md')
@@ -103,10 +105,23 @@ if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true })
 //   CI 净环境不存在 ⇒ 判据① 先抓到（报「可执行引用悬空」而非「不在版本控制内」
 //   ⇒ 负控 D/E 两条假红，36/38 vs 38/38）。⇒ fixture 由负控**自造**（B11：测试前提
 //   不得依赖环境氛围）。
-const FIXTURE_TMP_PROBE = path.join(TMP_DIR, 'w32-all-projectable.mjs')
-if (!fs.existsSync(FIXTURE_TMP_PROBE)) {
-  fs.writeFileSync(FIXTURE_TMP_PROBE, '// 判据⑤ 负控 fixture：真实存在但不应被文档引用（tmp/ 不入版本控制）\n')
-}
+//
+// ★★ 【2026-09-23 DSH 升级轮 · 第三形态：fixture 位置被"邻居"清理】上一条修的是
+//   「fixture 不存在」，**本轮实测的是它的变体**：fixture 放在了**公共的 `tmp/`**，
+//   而 `tmp/` 是本仓所有一次性探针的落脚地、**任何时候都可能被清理**。
+//   实测症状：连跑 5 次，**4 次 FAIL / 1 次 PASS**（`负控D/E` 交替「注入后必须报红」失败，
+//   证据串 `exit=0` + `(无 ✗ 行)`）—— 因为注入路径指向的文件**在两次运行之间被删了**，
+//   于是判据① 先命中「悬空」而判据⑤ 的追问前提不成立（`relExists=false` ⇒ 走①的豁免）。
+//   ★ 这仍是 **B11 的同一母题**（测试前提不得依赖环境氛围），只是从「文件不存在」
+//     升级为「文件的存在**不稳定**」。
+//   ⇒ 修法：fixture 放进**负控独占**的目录（`scripts/.docrefs-negctl-fixture/`），
+//     该目录不在任何清理流程的作用域内；并**不删除**（幂等重写），使前提恒成立。
+//   ⚠️ 诚实边界：该目录必须在**版本控制之外**（否则判据⑤ 会因为「在库」而放行）——
+//     故同时写进 .gitignore（见该文件末尾的 DSH 升级轮条目）。
+const FIXTURE_DIR = path.join(HERE, '.docrefs-negctl-fixture')
+const FIXTURE_TMP_PROBE = path.join(FIXTURE_DIR, 'w32-all-projectable.mjs')
+if (!fs.existsSync(FIXTURE_DIR)) fs.mkdirSync(FIXTURE_DIR, { recursive: true })
+fs.writeFileSync(FIXTURE_TMP_PROBE, '// 判据⑤ 负控 fixture：真实存在但不应被文档引用（本目录不入版本控制）\n')
 
 const ORIG = fs.readFileSync(SRC, 'utf8')
 const lines = ORIG.split('\n')
@@ -201,15 +216,19 @@ const dC = drillGoal('负控C（可执行引用悬空）', (ls) => {
   return ls[i].includes('nope')
 }, '可执行引用')
 
+/** 负控 D/E 注入的引用路径（**必须与 `FIXTURE_TMP_PROBE` 的真实位置一致**） */
+const FIXTURE_REF = 'rp-workspace/scripts/.docrefs-negctl-fixture/w32-all-projectable.mjs'
+
 // ---- D：★★ 引用目标**不在版本控制内**（**W49 的真实缺陷形态**）----
-//   ★ 关键：注入成 `` `node rp-workspace/tmp/xxx.mjs` `` —— 该文件**本机磁盘上真实存在**
-//     （`tmp/` 里有大量历史探针）⇒ 判据① **放行**（这正是 ①②③ 结构性看不见它的原因），
-//     只有**判据⑤** 能抓到（读者照抄 ⇒ 别人克隆后扑空，P-53）。
+//   ★ 关键：注入成 `` `node rp-workspace/scripts/.docrefs-negctl-fixture/xxx.mjs` `` ——
+//     该文件**本机磁盘上真实存在**（负控自造，见上）⇒ 判据① **放行**
+//     （这正是 ①②③ 结构性看不见它的原因），只有**判据⑤** 能抓到
+//     （读者照抄 ⇒ 别人克隆后扑空，P-53）。
 const dD = drillGoal('负控D（引用目标不在版本控制内）', (ls) => {
   const i = ls.findIndex(l => l.includes('`node rp-workspace/scripts/ef-journey-all.mjs --auto --yes`'))
   if (i < 0) return false
-  ls[i] = ls[i].replace('`node rp-workspace/scripts/ef-journey-all.mjs --auto --yes`', '`node rp-workspace/tmp/w32-all-projectable.mjs`')
-  return ls[i].includes('tmp/w32-all-projectable')
+  ls[i] = ls[i].replace('`node rp-workspace/scripts/ef-journey-all.mjs --auto --yes`', `\`node ${FIXTURE_REF}\``)
+  return ls[i].includes('.docrefs-negctl-fixture')
 }, '不在版本控制内')
 
 // ---- E/F：★★ 史实区 mask 的杠杆（**W49 新增**；底本与 `drillGoal` 定义见上文 GOAL 块）----
@@ -223,10 +242,10 @@ const dD = drillGoal('负控D（引用目标不在版本控制内）', (ls) => {
 //     ⑵ ★★ **注入文本自身不得含豁免词**（「负控」「示例」「举例」…）—— 判据的豁免窗口是
 //        **±40 字**，注入句里写「本行由负控注入」会把**自己的注入**豁免掉（本轮实测第二次踩到）。
 //        ⇒ 注入文本一律写成**中性的普通句子**。
-const dE = drillGoal('负控E（GOAL §3.1 新增一行引用 tmp/ ⇒ 判据⑤ 报红）', (ls) => {
+const dE = drillGoal('负控E（GOAL §3.1 新增一行引用 fixture ⇒ 判据⑤ 报红）', (ls) => {
   const i = ls.findIndex(l => /^### 3\.1/.test(l) || /^## 三、/.test(l))
   if (i < 0) return false
-  ls.splice(i + 1, 0, '跑 `node rp-workspace/tmp/w32-all-projectable.mjs` 即可看到读数。')
+  ls.splice(i + 1, 0, `跑 \`node ${FIXTURE_REF}\` 即可看到读数。`)
   return true
 }, '不在版本控制内')
 

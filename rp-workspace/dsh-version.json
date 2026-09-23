@@ -1,13 +1,16 @@
-{
+﻿{
   "_comment": "DSH 运行时版本 = 单一事实来源（SSOT）。见 docs/GOAL.md §七 R21 / §11.1 W25。",
   "_why": "此前「当前锁定版本」散落在三处 package.json（其中一处已过期写成 0.1.2-rc.1）+ 四份叙述文档，且没有任何机器判据。第二十七轮 W24c 因照抄上一轮命令 -DshVersion 0.1.2-rc.1 而把 runtime 静默降级：0.1.2 世代的 dsh-session.isReplaceOp 要求 op+start+end，而设备上 1747 处真实数据是 op+startSeq+endSeq ⇒ 装出去历史会话全部打不开（由契约探针 BLOCK 才拦下）。",
   "_howToChange": "升级 runtime 时必须同步改本文件（dshVersion + sessionReplaceOpFields），然后跑 node rp-workspace/scripts/audit-dsh-version.mjs 复核；构建期 Step 0.7 会断言 -DshVersion 与本文件一致。",
 
-  "dshVersion": "0.1.5-rc.1",
-  "_dshVersionNote": "★ 2026-09-23 审计修正：本字段**必须与顶层 @deepseek-ai/dsh 的版本一致**。历史说明写「子包由 caret 解析，实际可能落到更小的 rc」——该描述已过期：实测顶层 pin 为 0.1.5-rc.1 时，全部 231 个 dsh* 子包**已解析到 0.1.5-rc.3**（即「更大的 rc」），形成「顶层旧、子包新」的版本分裂。分裂影响面覆盖几乎整个运行时，且 audit-dsh-version.mjs 的判据②只比对顶层主包版本、**看不见子包漂移**（判据盲区）。详见 docs/DSH-UPGRADE-AUDIT-2026-09-23.md §2.2 与 §4 阶段 0。",
+  "dshVersion": "0.1.5-rc.3",
+  "_dshVersionNote": "★ 2026-09-23（DSH 升级轮 · 阶段 0）已完成版本分裂修复。历史形态：顶层 pin 0.1.5-rc.1 而 230 个 dsh* 子包由 caret 解析到 0.1.5-rc.3（「顶层旧、子包新」，覆盖几乎整个运行时）。本轮动作：① 本字段与 dsh-runtime-src/package.json 的 pin 同步改为 0.1.5-rc.3（消除隐式漂移面）；② audit-dsh-version.mjs 新增判据⑤『子包版本一致性』（带 5 项正负控，含『同线 rc 漂移放行但出声』与『跨代分裂 FAIL』两种形态），补齐判据②只比对顶层主包的**覆盖面盲区**。详见 docs/DSH-UPGRADE-AUDIT-2026-09-23.md §2.2 与 §4 阶段 0。",
 
   "sessionReplaceOpFields": ["op", "startSeq", "endSeq"],
   "_sessionReplaceOpFieldsNote": "★ 这是**数据兼容的真正判据**（比版本号更本质）：设备上真实会话数据的 replace surfaceOp 字段名。dsh-session 的 isReplaceOp 是**严格三键**断言（Object.keys(op).length === 3），字段名换代 ⇒ 官方 loader 直接拒绝既有日志 ⇒ 会话打不开。审计脚本会读构建产物核对此形态。",
+
+  "sessionFormatKnownGenerations": [3],
+  "_sessionFormatKnownGenerationsNote": "★ 2026-09-23（DSH 升级轮新增）：我方解析器**实际覆盖的会话格式代次**。这是升级验收判据⑥ 的输入 —— 判据读官方 dsh-session-format-catalog 的 currentVersion，与本表比对：**不在表内即 BLOCK**（我方解析器读不懂该代次 ⇒ 老会话打不开）；**本表为空则判 UNKNOWN**（不是放行！未声明 = 无法判定，P-17）。当前只声明 [3]（0.1.5 线）。升级到 0.1.7（格式 v4）时必须：① 接入 dsh-session-format-v3-to-v4 迁移；② 复核我方 session-repair / session-surgery / session-write 对 v4 形态（tool/result 的 role:'tool'、kind 命名表）的处理；③ 完成后方可把 4 加入本表。",
 
   "sessionReplaceOpKnownGenerations": {
     "startSeq-endSeq": "0.1.5+（当前世代；设备上 1747 处真实数据即此形态）",
@@ -15,6 +18,6 @@
     "_note": "只作对照参考；判据以上面的 sessionReplaceOpFields 为准。"
   },
 
-  "updatedAt": "2026-09-16",
-  "_updatedBy": "第二十七轮 W24c/W25（runtime 0.1.2-rc.1 → 0.1.5-rc.1 复原）"
+  "updatedAt": "2026-09-23",
+  "_updatedBy": "DSH 升级轮 · 阶段 0（修复版本分裂：顶层 pin 0.1.5-rc.1 → 0.1.5-rc.3，与已解析的子包对齐；并给 audit-dsh-version.mjs 补判据⑤ 子包一致性）"
 }

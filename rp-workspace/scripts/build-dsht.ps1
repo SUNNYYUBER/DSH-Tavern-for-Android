@@ -1,4 +1,4 @@
-# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
+﻿# build-dsht.ps1 — DSHTavern 版本构建固定流程（UPDATE-SOP.md 的自动化实现）
 # 用法：
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.8        # 完整流程：装新版本 DSH → 平台适配 → 验证 → 打包 → APK
 #   .\build-dsht.ps1 -DshVersion 0.1.0-rc.7 -SkipInstall  # runtime 已就绪，只跑后半段（打包/APK/sentinel）
@@ -234,6 +234,8 @@ $readingGates = @{
     'audit-nodeservice-deploy.mjs'    = @{ Exe = 'node'; Pattern = '部署集（\d+）'; Label = 'NodeService 部署契约（W-3 事故防回归）' }
     # 【W-8 系统轻入口】分享面成对 + 磁贴四件套 + 落点存在（全是「破了不报错、只有真机手点才发现」的形态）
     'audit-system-entry.mjs'          = @{ Exe = 'node'; Pattern = '分享面：manifest 声明'; Label = '系统轻入口契约（W-8）' }
+    # 【DSH 升级轮】升级验收六段判据的汇总读数（六段各一行；取汇总行）
+    'audit-upgrade-readiness.mjs'     = @{ Exe = 'node'; Pattern = '\d+ OK / \d+ BLOCK / \d+ UNKNOWN'; Label = 'DSH 升级验收六段（附录 D.0）' }
 }
 
 <#
@@ -398,7 +400,22 @@ $auditNode = @(
     # 这个功能会被频繁使用 ⇒ 上述诱惑真实存在。故固化为常驻门禁（同 audit-native-deps 的动机）。
     # 4 条判据 + 6 项 selftest（含「拒绝名单里出现凭据词不报红」这条**关键负控**——
     # 否则判据会把正确实现误判为违规）。
-    'audit-diagpack-privacy.mjs'
+    'audit-diagpack-privacy.mjs',
+    # 【2026-09-23 DSH 升级轮新增】升级验收六段判据（附录 D.0 的机器化）。
+    # 守：DSH 版本升级的**六层耦合面** —— ① 版本（单源/产物顶层/数据形态/子包一致性）
+    #     ② 补丁面（命中 + 幂等，且**显式看 pending**——`--check` 对「锚点命中但未打」
+    #        计入 pending 且**不报红**，只看退出码会漏）③ 原生面（DT_NEEDED + pty）
+    #     ④ 壳面（CLI 入口 / `dsh web:` 就绪信号 / 启动参数）⑤ 装配面（slot 名对账 +
+    #        external 包名）⑥ 数据面（官方格式代次 vs 我方解析器覆盖）。
+    # 为什么必须常驻：升级的失败有**六种**，且失效方式完全不同 ——
+    #   L2 补丁断在构建期（有声）· L4 壳断在真机 boot loop（有声但代价大）·
+    #   **L6 数据断最安静**（编译过、门禁绿、APK 装得上、node 也起得来，只是老会话打不开）。
+    #   ⇒ 一套判据打天下必然漏。2026-09-23 实测：`settings.plugin.item`（0.1.7 已移除）
+    #     挂着我方三个预适配插件的设置入口 —— `slots.inject` 语义是「等声明出现再注册」
+    #     ⇒ 声明永不出现 ⇒ **不报错、功能整块消失**（这类"静默消失"此前零判据）。
+    # 退出码与常规闸门**不同**：0=全过 / 1=有 BLOCK / 2=有 UNKNOWN（**UNKNOWN 同样禁止**：
+    #   P-17「测不出」≠「没问题」）/ 3=selftest 失败。
+    'audit-upgrade-readiness.mjs'
 )
 foreach ($a in $auditNode) {
     $p = Join-Path $ws "scripts\$a"

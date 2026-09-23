@@ -518,28 +518,69 @@ export function resolveUnder (rel) {
  *
  * ★ 非 git 环境（无 `.git` / 无 git 命令）⇒ 返回 `null`，调用方**只出声不报红**
  *   （判据⑤ 无判据力时不得判 FAIL —— **P-43**）。
+ *
+ * ## ★★ 【2026-09-23 DSH 升级轮 · 实测的环境级 flaky 与它的处置】
+ * `git check-ignore` 在本机（Windows + Node 24）**约 25% 的调用会返回
+ * `3221225786`（= `0xC000013A` = `STATUS_CONTROL_C_EXIT`）** —— 实测 40 次里 **10 次**。
+ * 该码**不是 git 的错误码**（git 只有 0=命中 / 1=未命中），而是**子进程被控制台
+ * CTRL_C 事件波及**后退出。同一现象也出现在 `undo.spec.ts`（那里表现为 3~4 个用例假失败，
+ * 见 `docs/KNOWN-DEBT-undo-git-flaky-2026-09-23.md`）。
+ *
+ * **它对本判据的危害（实测到的真实形态）**：原实现把「非 1 的异常」判为 `null`
+ * （无法判定）⇒ **判据⑤ 静默放行** ⇒ 于是
+ *   · `audit-doc-refs-negctl.mjs` 的负控 D/E **交替假通过**（实测连跑 5 次：4 FAIL / 1 PASS）；
+ *   · 真实仓库上，一条真缺陷也可能因这一次瞬时故障而**被放过**。
+ *
+ * **处置**：对**可恢复的瞬时故障**（非 0 非 1 的退出码）**重试至多 3 次**；
+ * 三次仍失败才判 `null`（并出声）。⇒ 既恢复判据力，又不掩盖真实的「非 git 环境」。
+ * ★ 这不是「加重试掩盖问题」：该退出码**与被判事实无关**（git 的输出是正确的，
+ *   只是退出码被控制台事件污染）⇒ 重试是**恢复真值**，不是绕过（P-30 的反面）。
  */
 export function makeVcsChecker () {
   const cache = new Map()
   let usable = null
+  /** 可恢复的瞬时故障（控制台 CTRL_C 波及子进程）—— 与被判事实无关 */
+  const TRANSIENT = 3221225786
+  const MAX_TRY = 3
   return {
     /** @returns {boolean|null} true=被忽略 / false=在版本控制内 / null=无法判定 */
     ignored (rel) {
       const r = String(rel).replace(/\\/g, '/')
       if (cache.has(r)) return cache.get(r)
       if (usable === null) {
-        try {
-          execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-          usable = true
-        } catch { usable = false }
+        // ★★ 【2026-09-23】`rev-parse` 与 `check-ignore` **同样**会被控制台事件波及
+        //   （实测 30 次里 6 次返回 0xC000013A）⇒ 这里**也必须重试**。
+        //   首版只给 check-ignore 加了重试，而本处一旦被波及 ⇒ `usable=false`
+        //   ⇒ **整个判据⑤ 判「非 git 环境」而永久静音**（比单次漏报更严重：
+        //   它会静默地让**所有**路径都返回 null）—— 这正是负控剩余 flaky 的真因。
+        let usableTry = null
+        for (let attempt = 0; attempt < MAX_TRY; attempt += 1) {
+          try {
+            execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+            usableTry = true
+            break
+          } catch (e) {
+            if (e.status === TRANSIENT) { usableTry = null; continue }  // 瞬时 ⇒ 重试
+            usableTry = false; break                                     // 真·非 git 环境
+          }
+        }
+        // ★ 三次都被瞬时故障波及 ⇒ `usableTry` 仍为 null ⇒ **保持 `usable = null`**
+        //   （不判 false —— 那会把判据永久静音）；下次调用会再探测。
+        if (usableTry === null) { cache.set(r, null); return null }
+        usable = usableTry
       }
       if (!usable) { cache.set(r, null); return null }
-      let v
-      try {
-        execFileSync('git', ['check-ignore', r], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-        v = true   // exit 0 = 命中忽略规则
-      } catch (e) {
-        v = e.status === 1 ? false : null   // exit 1 = 未命中；其它 ⇒ 无法判定
+      let v = null
+      for (let attempt = 0; attempt < MAX_TRY; attempt += 1) {
+        try {
+          execFileSync('git', ['check-ignore', r], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+          v = true   // exit 0 = 命中忽略规则
+          break
+        } catch (e) {
+          if (e.status === 1) { v = false; break }         // exit 1 = 未命中（正常结论）
+          if (e.status === TRANSIENT) { v = null; continue } // ★ 瞬时故障 ⇒ 重试
+          v = null; break                                    // 其它 ⇒ 无法判定（不重试）
+        }
       }
       cache.set(r, v)
       return v

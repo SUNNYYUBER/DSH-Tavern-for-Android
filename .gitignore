@@ -120,3 +120,12 @@ rp-workspace/android/app/src/main/jniLibs/**/*.so
 # 【2026-09-21 W-3 发版】模拟器验证的调试 dump（DSML 出站报文，仅排障用）
 #   由 ef-*/emu-preset-* 探针脚本产出，随时可重跑再生 ⇒ 不必入库。
 rp-workspace/out/emu-verify/
+
+# 【2026-09-23 DSH 升级轮】`audit-doc-refs-negctl.mjs` 的判据⑤ 负控 fixture。
+#   ★ 为什么必须出库：该负控要证明「路径**在磁盘上真实存在**但**不在版本控制内** ⇒
+#     判据⑤ 报红」。若该 fixture 被入库 ⇒ 「在版本控制内」成立 ⇒ **判据⑤ 会放行**
+#     ⇒ 负控变成**假负控**（测的不是判据，是 gitignore 规则）。
+#   ★ 为什么不放公共 `tmp/`：`tmp/` 是本仓所有一次性探针的落脚地、**任何时候都可能被清理**
+#     ⇒ 实测「连跑 5 次，4 FAIL / 1 PASS」的 flaky（注入路径指向的文件在两次运行之间被删，
+#     于是判据① 先命中「悬空」而判据⑤ 的追问前提不成立）。⇒ fixture 移到负控独占目录。
+rp-workspace/scripts/.docrefs-negctl-fixture/

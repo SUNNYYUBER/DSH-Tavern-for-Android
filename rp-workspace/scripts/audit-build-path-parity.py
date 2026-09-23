@@ -650,6 +650,13 @@ def marker_substring_collisions(markers):
 # 而是每次编辑都可能发生**的系统性行为。这正是「凡构建链最上游的事实都必须机器化」的实证：
 # 若只靠记性，本轮至少有 4 次会以「语法错误指向远处行号」的形式浪费时间并被误诊。
 #
+# 【2026-09-23 DSH 升级轮 · 第 5 次实证】给 `$readingGates` 表加一行新闸门登记后，
+# 判据五**再次当场报红**（前 3 字节实测 `35,32,98` = `"5 b"`，BOM 被剥）。
+# 本轮的特别之处：**这次是判据自己在构建脚本启动的第一时间拦下的** ——
+# 若没有它，`build-dsht.ps1` 会在解析期抛 54 处语法错误，而报错指向第 49 行的
+# 字符串拼接（与真因相距 100+ 行），极易被误诊为"我改坏了字符串"。
+# ⇒ 频次从 4 次升到 **5 次**，且**每一次都是同一种工具行为**。
+#
 # ⇒ 与判据一~四同族（静默/误导型），必须机器化。
 #
 # ## 口径（诚实登记）
@@ -661,6 +668,9 @@ def marker_substring_collisions(markers):
 #   自动发现的代价：若将来真有个「故意不带 BOM」的 ps1（例如纯 ASCII、无需中文），
 #   它会误报 ⇒ 那时在 PS1_BOM_EXEMPT 里写明理由豁免（**必须写理由**，与其它豁免同规矩）。
 # · **不修 BOM**：本判据只报红（P-40：判据不改状态，免得掩盖谁在剥 BOM）。
+#   ⚠️ **但这意味着"改完必须自己补"** —— 本轮的两条补 BOM 命令（PS7 一行）：
+#     `$t=[IO.File]::ReadAllText($f); [IO.File]::WriteAllText($f,$t,[Text.UTF8Encoding]::new($true))`
+#   记录在此，供下次（必然还会发生）直接取用。
 PS1_BOM_EXEMPT = {
     # 键 = 文件名。必须写明理由，否则不得加入。
 }
@@ -974,28 +984,37 @@ def selftest():
 
     # ★ **真实仓库负控**：临时剥掉 build-dsht.ps1 的 BOM ⇒ 必须报红；然后逐字节还原 ⇒ 回绿。
     #   （L144：负控要改真实对象才有说服力 —— 合成文件证明不了「扫的是真文件」。）
+    # 【2026-09-23 补】与「判据五续」同款前提断言：文件**必须确有 BOM**，否则
+    #   `orig[3:]` 会剥掉内容字符 ⇒ 碰巧报红 + 还原后仍报红（假 FAIL 掩盖真缺陷）。
     real = os.path.join(HERE, "build-dsht.ps1")
     if os.path.exists(real):
         with io.open(real, "rb") as f:
             orig = f.read()
-        try:
-            with io.open(real, "wb") as f:
-                f.write(orig[3:])                       # 剥掉 BOM（前半句是事实：本文件确有 BOM）
-            broke = len(ps1_bom_violations(["build-dsht.ps1"]))
-        finally:
-            with io.open(real, "wb") as f:
-                f.write(orig)                           # 逐字节还原
-        with io.open(real, "rb") as f:
-            byte_identical = (f.read() == orig)
-        restored = len(ps1_bom_violations(["build-dsht.ps1"]))
-        good = (broke == 1 and restored == 0 and byte_identical)
-        total += 1
-        print(("[ok] " if good else "[FAIL] ") +
-              "判据五（真实仓库负控）剥 BOM ⇒ 报红；还原 ⇒ 回绿、逐字节一致"
-              "（剥后违约=%d 期望=1 · 还原后=%d 期望=0 · 逐字节一致=%s）"
-              % (broke, restored, byte_identical))
-        if good:
-            npass += 1
+        if orig[:3] != b"\xef\xbb\xbf":
+            total += 1
+            print("[FAIL] 判据五（真实仓库负控）**前提不成立**：build-dsht.ps1 当前"
+                  "**没有** BOM（前 3 字节=%r）⇒ 剥 BOM 无意义且会破坏文件。"
+                  "★ 这本身说明**主判据（判据五）在真实仓库上是 FAIL**。本负控不做写入。"
+                  % (orig[:3],))
+        else:
+            try:
+                with io.open(real, "wb") as f:
+                    f.write(orig[3:])                       # 剥掉 BOM（前半句是事实：本文件确有 BOM）
+                broke = len(ps1_bom_violations(["build-dsht.ps1"]))
+            finally:
+                with io.open(real, "wb") as f:
+                    f.write(orig)                           # 逐字节还原
+            with io.open(real, "rb") as f:
+                byte_identical = (f.read() == orig)
+            restored = len(ps1_bom_violations(["build-dsht.ps1"]))
+            good = (broke == 1 and restored == 0 and byte_identical)
+            total += 1
+            print(("[ok] " if good else "[FAIL] ") +
+                  "判据五（真实仓库负控）剥 BOM ⇒ 报红；还原 ⇒ 回绿、逐字节一致"
+                  "（剥后违约=%d 期望=1 · 还原后=%d 期望=0 · 逐字节一致=%s）"
+                  % (broke, restored, byte_identical))
+            if good:
+                npass += 1
 
     # ---- 判据五续：被 PS 读取的数据文件（含中文）必须带 BOM ----
     # 【为什么不能只判真实仓库】同 P-30：若 data_bom_violations 写成恒返 []，
@@ -1032,28 +1051,46 @@ def selftest():
         npass += 1
     # ★ 真实仓库负控：剥 dsh-version.json 的 BOM ⇒ 必须报红；还原 ⇒ 回绿、逐字节一致
     #   （这正是 W28 真实踩到的形态 —— 构建 Step 0.7 被它中断过）
+    #
+    # 【2026-09-23 修复 · 判据自身的假绿】原实现**不检查前提**就无条件 `orig[3:]`。
+    # 实测（本轮）：真实仓库该文件**当时已缺 BOM**（前 3 字节 = `{\n `）。于是：
+    #   · 「剥 BOM」实际剥掉的是 `{\n ` 三个**内容字符** ⇒ 文件被破坏 ⇒ 碰巧报红；
+    #   · `finally` 用 orig 逐字节还原 ⇒ 但文件本来就没 BOM ⇒ `restored` 仍 = 1；
+    #   · ⇒ 本负控长期 FAIL（37/38），而**真实缺陷（主判据 `缺 BOM 1`）被这个 FAIL 掩盖**
+    #     —— 报红的原因看起来是「负控写坏了」，不是「dsh-version.json 真的缺 BOM」（P-30）。
+    # ⇒ 修法：先断言**前提**（该文件确有 BOM）。前提不成立 ⇒ 直接判 FAIL 并**明确说
+    #   「前提不成立 + 主判据才是真缺陷」**，且**不做任何写入**（不得破坏真实文件）。
     dv = os.path.join(os.path.dirname(HERE), "dsh-version.json")
     if os.path.exists(dv):
         with io.open(dv, "rb") as f:
             dv_orig = f.read()
-        try:
-            with io.open(dv, "wb") as f:
-                f.write(dv_orig[3:])
-            broke = len(data_bom_violations(["dsh-version.json"]))
-        finally:
-            with io.open(dv, "wb") as f:
-                f.write(dv_orig)
-        with io.open(dv, "rb") as f:
-            dv_same = (f.read() == dv_orig)
-        restored = len(data_bom_violations(["dsh-version.json"]))
-        good = (broke == 1 and restored == 0 and dv_same)
-        total += 1
-        print(("[ok] " if good else "[FAIL] ") +
-              "判据五续（真实仓库负控）剥 dsh-version.json 的 BOM ⇒ 报红；还原 ⇒ 回绿、逐字节一致"
-              "（剥后违约=%d 期望=1 · 还原后=%d 期望=0 · 逐字节一致=%s）"
-              % (broke, restored, dv_same))
-        if good:
-            npass += 1
+        has_bom = dv_orig[:3] == b"\xef\xbb\xbf"
+        if not has_bom:
+            total += 1
+            print("[FAIL] 判据五续（真实仓库负控）**前提不成立**：dsh-version.json 当前"
+                  "**没有** BOM（前 3 字节=%r）⇒ 剥 BOM 这个动作没有意义，且会破坏文件内容。"
+                  "★ 这本身说明**主判据（判据五续）在真实仓库上是 FAIL**（该文件缺 BOM）"
+                  "—— 修法见上方主判据的输出。本负控不做任何写入。"
+                  % (dv_orig[:3],))
+        else:
+            try:
+                with io.open(dv, "wb") as f:
+                    f.write(dv_orig[3:])
+                broke = len(data_bom_violations(["dsh-version.json"]))
+            finally:
+                with io.open(dv, "wb") as f:
+                    f.write(dv_orig)
+            with io.open(dv, "rb") as f:
+                dv_same = (f.read() == dv_orig)
+            restored = len(data_bom_violations(["dsh-version.json"]))
+            good = (broke == 1 and restored == 0 and dv_same)
+            total += 1
+            print(("[ok] " if good else "[FAIL] ") +
+                  "判据五续（真实仓库负控）剥 dsh-version.json 的 BOM ⇒ 报红；还原 ⇒ 回绿、逐字节一致"
+                  "（剥后违约=%d 期望=1 · 还原后=%d 期望=0 · 逐字节一致=%s）"
+                  % (broke, restored, dv_same))
+            if good:
+                npass += 1
 
     # ★ W48：接入**单源自证分数输出契约**（`selftest_summary.py`）。
     #   为什么：W44 建立的契约只覆盖 `.mjs` 闸门 ⇒ 本脚本（以及另 4 个 `.py` 闸门）

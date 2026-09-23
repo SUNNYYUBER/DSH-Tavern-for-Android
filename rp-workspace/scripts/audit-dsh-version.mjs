@@ -159,6 +159,77 @@ export function tallySurfaceOpFields (jsonl) {
   return { tally, withStartSeq, withStartEnd, total }
 }
 
+/**
+ * ★ 汇总子包版本分布 —— **判据②的补盲**（2026-09-23 DSH 升级轮新增）。
+ *
+ * ## 为什么必须有它（P-11 元级：判据的覆盖面本身就是缺陷）
+ * 判据② 只比对**顶层** `@deepseek-ai/dsh` 的版本。而顶层对子包用的是 **caret**
+ * （`"…dsh-session": "^0.1.5-rc.1"`）⇒ **子包实际解析到哪一代，判据②看不见**。
+ * 2026-09-23 实测的形态：顶层 pin `0.1.5-rc.1`，而 **230 个子包已解析到 `0.1.5-rc.3`**
+ * ——「顶层旧、子包新」的**版本分裂**，覆盖几乎整个运行时，而全仓判据零感知。
+ *
+ * ## 判据设计（为什么是「同代」而不是「等于顶层」）
+ * 官方允许 rc 内迭代：顶层 `0.1.5-rc.1` 的子包依赖写 caret，解析到 `rc.3` 是**合法**的。
+ * 真正要拦的是**跨代**（如顶层 0.1.5 而子包落到 0.1.2）——那正是 W24c 事故的形态。
+ * ⇒ 判据：**所有 `dsh*` 子包的主版本线（major.minor）必须与单源声明一致**；
+ *    caret 在**同一 rc 线内**漂移只出声（ⓘ），**跨 major.minor 即 FAIL**。
+ *
+ * @param {string} nmDir node_modules/@deepseek-ai 目录
+ * @param {(p:string)=>string} readPkg 读 package.json 文本的函数（selftest 注入）
+ * @returns {{ total:number, dist:Map<string,number>, offLine:string[], evidence:string }}
+ */
+export function tallySubpackageVersions (nmDir, readPkg) {
+  const out = { total: 0, dist: new Map(), offLine: [], evidence: '' }
+  let names = []
+  try { names = fs.readdirSync(nmDir) } catch { out.evidence = '读不到 node_modules/@deepseek-ai'; return out }
+  const lineOf = (v) => String(v).split('-')[0]          // 0.1.5-rc.3 → 0.1.5
+  for (const n of names) {
+    if (!n.startsWith('dsh')) continue
+    let txt = null
+    try { txt = readPkg(path.join(nmDir, n, 'package.json')) } catch { txt = null }
+    if (txt === null) continue
+    let v = null
+    try { v = JSON.parse(txt).version } catch { continue }
+    if (typeof v !== 'string') continue
+    out.total += 1
+    out.dist.set(v, (out.dist.get(v) ?? 0) + 1)
+    out.offLine.push(`${n}@${v}`)
+  }
+  out.evidence = [...out.dist.entries()].map(([v, c]) => `${v}×${c}`).join(' · ')
+  return { ...out, lineOf }
+}
+
+/**
+ * 判据：子包版本是否**全部落在单源声明的主版本线内**。
+ * @returns {{ ok:boolean, note:string, offLine:string[] }}
+ */
+export function checkSubpackageLine (declaredVersion, dist, total) {
+  if (total === 0) return { ok: false, note: '未扫到任何 dsh* 子包（runtime 未就绪？）', offLine: [] }
+  const want = String(declaredVersion).split('-')[0]
+  const off = []
+  for (const v of dist.keys()) {
+    if (String(v).split('-')[0] !== want) off.push(v)
+  }
+  if (off.length === 0) {
+    const distinct = [...dist.keys()]
+    if (distinct.length === 1 && distinct[0] === declaredVersion) {
+      return { ok: true, note: `全部 ${total} 个子包 == 单源 ${declaredVersion}（无漂移）`, offLine: [] }
+    }
+    return {
+      ok: true,
+      note: `全部 ${total} 个子包落在 ${want} 线内，但存在 rc 级漂移（${distinct.join(' / ')}）；` +
+        `单源顶层 ${declaredVersion} —— caret 同线漂移属合法，但**应显式记录**`,
+      offLine: [],
+    }
+  }
+  return {
+    ok: false,
+    note: `**跨代分裂**：单源声明主版本线 ${want}，而有子包落在 ${off.join(' / ')} ⇒ ` +
+      `装出去可能与既有会话数据不兼容（W24c 事故形态）`,
+    offLine: off,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // selftest（P-30：静态/结构判据必须自带合成正负控 ——「真实仓库 0 命中」不是证据）
 // ---------------------------------------------------------------------------
@@ -210,6 +281,34 @@ if (process.argv.includes('--selftest')) {
   // 负控 5：空/无 surfaceOp ⇒ 全 0（不得把「没有」当成「有」）
   const t3 = tallySurfaceOpFields('{"x":1}\n')
   ok(t3.total === 0, `负控5 无 surfaceOp ⇒ total=0（实得 ${t3.total}）`)
+
+  // ★ 判据⑤ 子包版本漂移（2026-09-23 新增）：这是判据② 的**覆盖面补盲**，
+  //   必须自带正负控 —— 否则「真实仓库全绿」可能只是因为它恒返 ok（P-30）。
+  //   正控 1：跨代分裂（顶层 0.1.5 线，子包落 0.1.2 线）⇒ 必须 FAIL
+  const distCross = new Map([['0.1.2-rc.1', 5], ['0.1.5-rc.3', 226]])
+  const rCross = checkSubpackageLine('0.1.5-rc.3', distCross, 231)
+  ok(rCross.ok === false, `正控6 跨代分裂（0.1.5 线 vs 0.1.2 线）⇒ FAIL：${rCross.note.slice(0, 60)}`)
+
+  //   正控 2（★ 真实事故形态）：顶层 0.1.5-rc.1 + 子包全 0.1.5-rc.3 ⇒ **同线，放行**
+  //   —— 这正是 2026-09-23 实测到的形态（判据② 完全看不见，判据⑤ 必须看见但**不误报**）
+  const distSameLine = new Map([['0.1.5-rc.3', 230], ['0.1.5-rc.1', 1]])
+  const rSame = checkSubpackageLine('0.1.5-rc.1', distSameLine, 231)
+  ok(rSame.ok === true && /漂移/.test(rSame.note),
+    `正控7 同线 rc 漂移（顶层 rc.1 / 子包 rc.3）⇒ 放行但**出声**：${rSame.note.slice(0, 50)}`)
+
+  //   负控 6：完全一致 ⇒ 必须 ok 且 note 明确说「无漂移」
+  const distClean = new Map([['0.1.5-rc.3', 231]])
+  const rClean = checkSubpackageLine('0.1.5-rc.3', distClean, 231)
+  ok(rClean.ok === true && /无漂移/.test(rClean.note), `负控6 全都一致 ⇒ ok 且报「无漂移」`)
+
+  //   负控 7：扫不到子包 ⇒ 必须 FAIL（不得因「读不到」而放行 —— P-17）
+  const rEmpty = checkSubpackageLine('0.1.5-rc.3', new Map(), 0)
+  ok(rEmpty.ok === false, `负控7 扫不到子包 ⇒ FAIL（不得把「测不出」当通过）`)
+
+  //   杠杆：同一份 dist，换一个单源主版本线 ⇒ 结论必须翻转（证明判据真的有区分力）
+  const rLever = checkSubpackageLine('0.1.2-rc.1', distCross, 231)
+  ok(rLever.ok === false && rCross.ok === false && rClean.ok === true,
+    '★杠杆 同一 dist 换单源版本线 ⇒ 跨代 FAIL / 同代 PASS（判据能区分世代）')
 
   // ★ 单源输出契约（W44 建立）：W45 第二轮实测发现本闸门**未接入**（收尾是旧形态
   //   `[audit-dsh-version selftest] 9/9 PASS`）⇒ 而文档声明着它的分数 ⇒ **无法被证伪**（P-50 纪律①）。
@@ -268,6 +367,24 @@ if (parsed.fields === null) {
   const cmp = compareFields(ssot.sessionReplaceOpFields, parsed.fields)
   rec('③ 数据兼容形态（isReplaceOp 字段名）', cmp.ok ? 'OK' : 'FAIL',
     cmp.ok ? `${parsed.evidence} —— 与单源一致` : `${cmp.note}　⇒ **装出去会让既有会话打不开**（官方 loader 严格三键校验）`)
+}
+
+// ---- ⑤ ★ 子包版本一致性（2026-09-23 新增：判据② 的覆盖面补盲） ----
+//
+// 【为什么单列一条而不是并进判据②】② 的语义是「产物**顶层**主包版本 == 单源」；
+// 本条的语义是「**全部 dsh\* 子包**都落在单源的主版本线内」。两者**失败动作不同**：
+// ② 失败 = 顶层装错了版本；⑤ 失败 = 顶层对了但**子树落到别的代次**（caret 漂移/registry 变了）。
+// 合在一起会让「哪一种错了」变得不可分辨（P-1：诊断信息必须可分辨）。
+{
+  const nm = path.join(RT, 'node_modules', '@deepseek-ai')
+  const tb = tallySubpackageVersions(nm, (p) => fs.readFileSync(p, 'utf8'))
+  if (tb.total === 0) {
+    rec('⑤ 子包版本一致性', 'SKIP', `runtime 未就绪（${nm} 下无 dsh* 子包）—— SkipInstall 首次构建属正常，**不冒充通过**`)
+  } else {
+    const r5 = checkSubpackageLine(ssot.dshVersion, tb.dist, tb.total)
+    rec('⑤ 子包版本一致性', r5.ok ? 'OK' : 'FAIL',
+      `${tb.total} 个子包：${tb.evidence}　⇒ ${r5.note}`)
+  }
 }
 
 // ---- ④ 设备对照 ----
