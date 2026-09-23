@@ -116,24 +116,40 @@ export const realReadDir = (p) => {
 export const realReadFile = (p) => { try { return fs.readFileSync(p, 'utf8') } catch { return null } }
 
 /**
- * 【C.1 装配层】官方 slot **改名映射表** —— 我方 inject 的旧名 ⇒ 官方新名。
+ * 【C.1 装配层】官方 slot 改名映射 —— 我方 inject 的旧名 ⇒ 官方**语义等价**的新名。
  *
  * ## 为什么需要「映射」而不是「改名就完了」
  * `slots.inject(name, cb)` 的语义是「**等该 slot 的声明出现再注册**」。
  * 官方改槽位名后，旧名的声明**永不出现** ⇒ 回调**永不执行** ⇒
  * **不报错、不抛异常，功能整块消失**（附录 C.1 的静默失效族）。
- * ⇒ 判据必须同时认**两种名**：旧名（我方尚未迁移时）与新名（官方当下）。
+ * ⇒ 判据必须同时认**两种名**：旧名（我方尚未迁移）与新名（官方当下）。
  *
- * ## 本表的来源（不是猜的）
- * 2026-09-23 实测：`settings.plugin.item` 在 0.1.7-rc.1 的官方 SlotMap 里**已不存在**，
- * 取而代之的是 `settings.pluginInventory` / `settings.plugins.tab`（探针 `probe-017rc.mjs` 实测）。
+ * ## ★★ 诚实登记：本表**当前为空**，因为 0.1.7 **没有语义等价的替代品**
  *
- * ★ 认旧名**不是**「放行」——它是「**已知的待迁移项**」：调用方会把「命中旧名」
- *   单独报成 `migrate` 状态（出声要求迁移），而不是混进 OK（P-30：不许让代理量与事实脱钩）。
+ * 2026-09-23 两次实测（`probe-slot-diff.mjs` 逐包抽 SlotMap 后做集合差）纠正了一个误判：
+ *
+ * | 版本 | `settings.plugin.item` | `settings.pluginInventory` | 语义 |
+ * |---|---|---|---|
+ * | 0.1.5-rc.3 | ✅ **存在** | ✅ 已存在 | 前者 = `settings-plugins` 的**可配置插件卡片**槽位；<br>后者 = **只读清单的本地化命名空间** |
+ * | 0.1.7-rc.1 | ❌ **已删除** | ✅ 仍在 | 后者**语义未变**（仍是命名空间，**不是**卡片槽位） |
+ *
+ * ★ 我先前把映射写成 `settings.plugin.item → settings.pluginInventory` 是**错的**
+ *   （把「本地化命名空间」当成了「卡片槽位」）。实测推翻了它，故本表**保持为空**。
+ *
+ * ## 0.1.7 的实际模型（`PluginsSettingsSection.d.ts` 原文）
+ * ```
+ * /** One tab projected from a `settings.plugins.tab` contribution. *\/
+ * export interface PluginsSettingsTabEntry { id: string; order: number; label: string }
+ * ```
+ * ⇒ Plugins 设置区已重构为「**本地化 tab + feature-owned 整页**」：
+ *   `settings.plugins.tab`（`kind:'list'`, `scope:'root'`）每项是**一整页**，
+ *   而**「卡片行」这一层被取消了**（`settings.plugin.item` 无等价物）。
+ * ⇒ 我方那 4 张「中文辨识卡」（`<li>` 行）在新模型下**没有直接落点**——
+ *   要么改成 4 个 tab（UX 变化大），要么把内容并入 RP 自己的设置面板（RP overlay）。
+ *   ★ 这是**设计决策**，不是机械改名 ⇒ 记入 E 的 D.2，**不在本表里假装有映射**
+ *     （P-30：不许让代理量（映射表）与事实（官方无该槽位）脱钩）。
  */
-export const SLOT_RENAMES = {
-  'settings.plugin.item': 'settings.pluginInventory',
-}
+export const SLOT_RENAMES = {}
 
 /**
  * slot 名对账（支持**改名映射**）。
@@ -372,22 +388,38 @@ if (process.argv.includes('--selftest')) {
   }
 
   // ---- C.1 slot 改名映射（2026-09-23 新增）----
+  //   ★ 本表当前**为空**（0.1.7 无等价槽位，见 SLOT_RENAMES 头注）⇒ 正控改用**合成映射**
+  //     （注入式：临时把一条加进表，验证机制本身有杠杆；再还原）。
+  //     这比「断言真实表里有某条」更本质：**判据的机制**与**当前数据**是两件事。
   {
-    // 正控 4：旧名不在、映射后的新名在 ⇒ 必须归 migrated（**不是** missing，也**不是** hit）
-    const official = new Set(['settings.pluginInventory', 'conversation.chat.node'])
-    const s1 = classifySlots(official, ['settings.plugin.item', 'conversation.chat.node'])
-    ok(s1.migrated.length === 1 && s1.migrated[0].from === 'settings.plugin.item' && s1.migrated[0].to === 'settings.pluginInventory'
-      && s1.hit.length === 1 && s1.missing.length === 0,
-      `正控4 slot 改名归 migrated（hit=${s1.hit.length} migrated=${s1.migrated.length} missing=${s1.missing.length}）`)
+    // 正控 4：合成映射下，旧名不在、新名在 ⇒ 必须归 migrated
+    const saved = SLOT_RENAMES['synthetic.old']
+    SLOT_RENAMES['synthetic.old'] = 'synthetic.new'
+    try {
+      const official = new Set(['synthetic.new', 'conversation.chat.node'])
+      const s1 = classifySlots(official, ['synthetic.old', 'conversation.chat.node'])
+      ok(s1.migrated.length === 1 && s1.migrated[0].from === 'synthetic.old' && s1.migrated[0].to === 'synthetic.new'
+        && s1.hit.length === 1 && s1.missing.length === 0,
+        `正控4 合成映射 ⇒ 归 migrated（hit=${s1.hit.length} migrated=${s1.migrated.length} missing=${s1.missing.length}）`)
 
-    // ★ 杠杆：官方**两个名都没有** ⇒ 必须归 missing（否则映射表会把真失效洗成「待迁移」= 假绿）
-    const s2 = classifySlots(new Set(['unrelated.slot']), ['settings.plugin.item'])
-    ok(s2.missing.length === 1 && s2.migrated.length === 0,
-      '★杠杆 映射表不得把「新名也不在」洗成待迁移（必须 missing ⇒ BLOCK）')
+      // ★ 杠杆：官方**两个名都没有** ⇒ 必须归 missing（否则映射表会把真失效洗成「待迁移」= 假绿）
+      const s2 = classifySlots(new Set(['unrelated.slot']), ['synthetic.old'])
+      ok(s2.missing.length === 1 && s2.migrated.length === 0,
+        '★杠杆 映射表不得把「新名也不在」洗成待迁移（必须 missing ⇒ BLOCK）')
+    } finally {
+      if (saved === undefined) delete SLOT_RENAMES['synthetic.old']
+      else SLOT_RENAMES['synthetic.old'] = saved
+    }
 
     // 负控 4：名字本来就在 ⇒ 归 hit，不得误判
     const s3 = classifySlots(new Set(['a.b']), ['a.b'])
     ok(s3.hit.length === 1 && s3.migrated.length === 0 && s3.missing.length === 0, '负控4 原名在 ⇒ hit（不误判）')
+
+    // 负控 7（★ 真实数据）：`settings.plugin.item` 在 0.1.7 **既无原名也无映射**
+    //   ⇒ 必须归 missing（**不得**因为它「看起来像 pluginInventory」而被放过）
+    const s4 = classifySlots(new Set(['settings.pluginInventory', 'settings.plugins.tab']), ['settings.plugin.item'])
+    ok(s4.missing.length === 1 && s4.migrated.length === 0,
+      '负控7 settings.plugin.item 无等价物 ⇒ missing（不得假装映射到 pluginInventory）')
   }
 
   // ---- E.1 插件 peer 声明（2026-09-23 新增）----
@@ -498,7 +530,13 @@ const run = (file, args = []) => {
     const need = ['--no-open', '--port', '--trusted-host'].filter(k => probes[k].length === 0)
     if (ready === 0) rec('④ 壳面（CLI 入口 / 就绪信号 / 启动参数）', 'BLOCK', `★ 就绪信号 [dsh web:] **0 命中** ⇒ NodeService 的 TOKEN_LINE_PREFIX 永不匹配 ⇒ 页面会卡在「正在启动」（扫了 ${scanned} 个文件）`)
     else if (need.length) rec('④ 壳面（CLI 入口 / 就绪信号 / 启动参数）', 'BLOCK', `就绪信号在（${ready} 处：${probes['dsh web:'].join(', ')}），但参数缺失：${need.join(', ')} ⇒ NodeService 传参会被拒`)
-    else rec('④ 壳面（CLI 入口 / 就绪信号 / 启动参数）', 'OK', `就绪信号 ${ready} 处（${probes['dsh web:'].join(', ')}）· 三个参数齐备 · --expose-internals ${probes['--expose-internals'].length} 处（0 = 官方已移除，需同步 NodeService）`)
+    else rec('④ 壳面（CLI 入口 / 就绪信号 / 启动参数）', 'OK', `就绪信号 ${ready} 处（${probes['dsh web:'].join(', ')}）· 三个参数齐备 · --expose-internals ${probes['--expose-internals'].length} 处`)
+    // ★ 关于 --expose-internals 的诚实说明（2026-09-23 实测纠错）：
+    //   它**不是** CLI 参数（不在 dsh-web-app 的 argv 里），而是 **node 运行时 flag**，
+    //   由 HMR 插件用到（0.1.5 是 cordis-plugin-hmr，0.1.7 是 dsh-hmr）。
+    //   ⚠️ 探针只在 dsh/dsh-web-app/dsh-app-boot 三包里搜 ⇒ 这里是 0 或 2 **都不代表**
+    //     「官方已移除」—— 我曾据此误判过一次（见 E.2 的 B4 撤销）。
+    //   它的**真判据**在 `audit-shell-contract`（待建）：扫**全部**官方包。
   }
 }
 

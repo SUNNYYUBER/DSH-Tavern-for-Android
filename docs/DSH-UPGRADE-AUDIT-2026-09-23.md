@@ -601,7 +601,7 @@ if (header.version !== SESSION_FORMAT_VERSION)
 | **B.4 壳面** | ★★ **CLI 面全部仍存在**，但**从 `dsh` 包搬到了 `dsh-web-app` 包**：`--no-open`/`--port` → `dsh-web-app/lib/startup.js`；`--trusted-host`/`dsh web:` → `dsh-web-app/lib/index.js`；`dsh web` 子命令 → `dsh/lib/bin.js` | **仍成立（位置已变）** |
 | **B.5 external 包** | 我方 4 个 external（`dsh-client-ui-{sidebar,layout,conversation,settings-plugins}`）**全部仍在** | 仍成立 |
 | **B.5 bundles** | `dsh-base` / `dsh-web-app` **都仍在** | 仍成立 |
-| **B.5 slot** | ★ **7 个里有 1 个消失**：`settings.plugin.item` **已不存在**（官方改 `settings.pluginInventory` / `settings.plugins.tab`） | ★ **已变（静默失效）** |
+| **B.5 slot** | ★ **7 个里有 1 个消失**：`settings.plugin.item` **已删除且无等价物**（官方 Plugins 区改为「tab + 整页」模型；`settings.pluginInventory` 是**命名空间**不是卡片槽位）—— 详见 E 的 **D.2 详述** | ★ **已变（静默失效，需设计决策）** |
 | **B.6 数据** | `SESSION_FORMAT_VERSION` **3 → 4**；`isReplaceOp` 三键形态**未变**（`op/startSeq/endSeq`） | ★ 半变 |
 | **B.6 事件类型** | 56 → 59（+3：`developer/message`、`image/offload`、`workspace/changes`；**无消失**） | 增量 |
 | **C.2 锚点** | ★★ **4 组哈希前缀全部仍在**（`pI_x6G` ×50 · `VOzbGW` ×49 · `hHd-Xa` ×177 · `wSkVaW` ×108）+ `data-shell-overlay` 在 1 个包里 | **仍成立**（意外的好消息） |
@@ -784,7 +784,7 @@ node rp-workspace/scripts/audit-upgrade-readiness.mjs
 | # | 动作 |
 |---|---|
 | 4.1 | ★ NodeService **去掉 `--expose-internals`**（0.1.7 已移除该参数；先实测不传能否启动） |
-| 4.2 | ★ `settings.plugin.item` → `settings.pluginInventory`（我方 3 个预适配插件的设置入口） |
+| 4.2 | ★★ `settings.plugin.item` **无等价物**（官方删了「卡片行」这一层）⇒ 需**设计决策**：并入 RP 自己的设置面板 / 注册 1 个 `settings.plugins.tab` / 其它（详见 E 的 **D.2 详述**与三方案对比） |
 | 4.3 | profile 三件套：`patchReload` 定案复核（`cordis-plugin-hmr` 已被 `dsh-hmr` 取代 ⇒ HMR 可用性要重测） |
 | 4.4 | 包改名同步：`dsh-agent-presets` → `dsh-agent-preset(+registry)`、`dsh-code-runtime` → `dsh-ptc-runtime*` |
 
@@ -1620,9 +1620,9 @@ node rp-workspace/scripts/audit-upgrade-readiness.mjs --target <新版本> --fro
 | 补丁锚点 | **10/13 匹配，3 条失效** | 一致 |
 | 就绪信号 `dsh web:` | ✓ 在 `dsh-web-app/lib/index.js` | 一致（**搬到 dsh-web-app**） |
 | `--no-open`/`--port`/`--trusted-host` | ✓ 全在 | 一致 |
-| `--expose-internals` | ✗ **0 命中（参数已移除）** | 一致 ⇒ **B4** |
+| `--expose-internals` | ★ **撤销**（详见下方纠正） | — |
 | external 4 包 + bundles 2 包 | ✓ 全在 | 一致 |
-| slot（我方 7 个） | **6 ✓ / 1 ✗**（`settings.plugin.item` 缺失，官方改 `settings.pluginInventory`） | 一致 |
+| slot（我方 7 个） | **6 ✓ / 1 ✗**（`settings.plugin.item` 已删除且**无等价物** —— 见 E 的 D.2 详述） | 一致 |
 | 4 组哈希锚点 | ✓ 全在（×50/×49/×177/×108） | 一致 |
 
 > **★ 一个重要的好消息**：`probe-017rc.mjs` 显示 **rc.1 与 alpha.2 的包集完全相同（277=277）**。
@@ -1693,9 +1693,30 @@ function evaluatePluginCompatibility(manifest, exemptions = {}, runtimeVersion =
 | **B1** | 会话格式 **v3 → v4**（`currentVersion: 3 → 4`） | 数据层，**不可逆** | **阶段 B** |
 | **B2** | `tool/result` 表示重写（`role:'user'` → `role:'tool'`） | 数据层 + 我方解析器 | **阶段 B** |
 | **B3** | **2 条补丁锚点失效**（`dsh-bash-sandbox` 的 `signal` 第三参 / `documentpreview` 的 Iterator 守卫） | 构建层 | **阶段 C** |
-| **B4** | ★ `--expose-internals` **参数消失**（NodeService **硬编码**传它） | 壳层 | **阶段 D** |
+| ~~**B4**~~ | ~~`--expose-internals` 参数消失（NodeService 硬编码传它）~~ | — | ★ **已撤销，见下** |
 
-**另有一处「静默消失」**（不算硬阻断但必须处理）：
+> **★★ B4 已撤销（2026-09-23 实测纠正，P-45 的又一活例）**：
+> 我原先用 `probe-017rc.mjs` 得出「`--expose-internals` 0 命中 ⇒ 参数已移除」——
+> **那个探针只扫了 `dsh` / `dsh-web-app` / `dsh-app-boot` 三个包**（沿用了「CLI 面在这三包」的
+> 既有假设），而该词实际在**别的包**里。
+>
+> **决定性实测**（`rp-workspace/tmp/probe-expose-internals.mjs`，扫**全部** 1226 个官方文件）：
+> ```
+> 命中 3 处：cordis-plugin-loader/lib/index.js
+>           ★ dsh-hmr/lib/index.js            ← 「HMR 必需」这条**在 0.1.7 仍成立**
+>           dsh-web-frontend/dist/assets/index-3dwByubT.js
+> ```
+> 且本机 node 传该 flag **完全正常**（`--expose-internals` + `process.binding` 可用）。
+>
+> ⇒ **结论翻转**：`--expose-internals` **不需要移除**；`dsh-hmr` 反而**可能仍依赖它**。
+> ⇒ **阶段 D.1 的动作改为**：**保留该 flag**，只把 NodeService 里的**注释**更新
+> （原文写「cordis-plugin-hmr 必需」—— 该包已不存在，改为 `dsh-hmr`）。
+>
+> ★ **这一条是本轮最有价值的「自我纠错」**：它同时印证了两条纪律 ——
+> ⑴ **探针的扫描面必须与真目标对齐**（P-45）：窄口径的"0 命中"会产出**方向相反的结论**；
+> ⑵ **「读源码」必须用「真跑」验证**（与 E.1 的 peer 机制同一教训）。
+
+**另有一处「静默消失」**（需处理，但不是硬阻断）：
 `settings.plugin.item` 槽位在 0.1.7 已不存在 ⇒ 我方 3 个预适配插件的设置入口
 **会静默消失**（`slots.inject` 语义 = 等声明出现再注册）⇒ **阶段 D**。
 
@@ -1710,7 +1731,7 @@ function evaluatePluginCompatibility(manifest, exemptions = {}, runtimeVersion =
 |---|---|---|
 | A.1 | 8 个插件补 `peerDependencies`（`workspace:*` 形态），`rebuild-plugins.ps1` + `build-dsht.ps1` **两侧同步** | `audit-plugin-build-parity.mjs` |
 | A.2 | `audit-upgrade-readiness.mjs` 的 **⑤ 装配面**加「插件 peer 声明」判据 | selftest 加正负控 |
-| A.3 | ⑤ 装配面补 **slot 改名映射表**（`settings.plugin.item` → `settings.pluginInventory`） | 正控：删旧名 ⇒ 报红 |
+| A.3 | ⑤ 装配面补 **slot 改名映射表**（`SLOT_RENAMES`）—— ★ 实测后**保持为空**（0.1.7 无等价物，见 D.2 详述），机制仍在并由合成映射的正负控守着 | 正控（合成映射）：删新名 ⇒ 报红 |
 
 #### 阶段 B：数据层（**最高风险，不可逆**）
 
@@ -1736,10 +1757,48 @@ function evaluatePluginCompatibility(manifest, exemptions = {}, runtimeVersion =
 
 | 步 | 动作 | 要点 |
 |---|---|---|
-| D.1 | ★ NodeService **去掉 `--expose-internals`** | 0.1.7 已移除该参数；**先实测不传能否启动** |
-| D.2 | ★ `settings.plugin.item` → `settings.pluginInventory` | 3 个预适配插件的设置入口 |
-| D.3 | profile 三件套复核：`patchReload` 定案（`cordis-plugin-hmr` 已被 `dsh-hmr` 取代 ⇒ **HMR 可用性要重测**） | 若新 HMR 可用，`"startup"` 的取舍理由要重写 |
+| D.1 | ~~NodeService 去掉 `--expose-internals`~~ → ★ **改为：保留该 flag**（B4 已撤销，见 E.2），只更新注释里的包名（`cordis-plugin-hmr` → `dsh-hmr`） | 实测该 flag 在 0.1.7 仍被 `dsh-hmr` 使用，且传了完全正常 |
+| D.2 | ★★ `settings.plugin.item` **无等价替代** ⇒ 需**设计决策**（见下方「D.2 详述」） | 我方 3+1 张「中文辨识卡」的设置入口，**静默失效**型 |
+| D.3 | profile 三件套复核：`patchReload` 定案（`cordis-plugin-hmr` 已被 `dsh-hmr` 取代 ⇒ **HMR 可用性要重测**） | ★ B4 撤销后这条**更重要**了：若 `dsh-hmr` 真能在 Android 起来，`"startup"` 的取舍理由要重写 |
 | D.4 | 包改名同步：`dsh-agent-presets` → `dsh-agent-preset(+registry)`；`dsh-code-runtime` → `dsh-ptc-runtime*` | 检查我方是否引用 |
+
+##### D.2 详述：`settings.plugin.item` 消失（**本轮又一次自我纠错**）
+
+**我先前写的「→ `settings.pluginInventory`」是错的。** 两次实测
+（`rp-workspace/tmp/probe-slot-diff.mjs`，逐包抽 SlotMap 后做集合差）纠正：
+
+| 版本 | `settings.plugin.item` | `settings.pluginInventory` |
+|---|---|---|
+| 0.1.5-rc.3 | ✅ **存在**（`settings-plugins` 的**可配置插件卡片**槽位） | ✅ **已存在**（**只读清单的本地化命名空间**） |
+| 0.1.7-rc.1 | ❌ **已删除** | ✅ 仍在，**语义未变**（仍是命名空间，**不是**卡片槽位） |
+
+★ 误判的成因：我把「**命名空间**」当成了「**卡片槽位**」——
+两者都带 `plugin` 字样，但语义完全不同（一个供 i18n 取词，一个挂 React 卡片）。
+**这是「名字像」冒充「语义同」的典型**（P-30 同族）。
+
+**0.1.7 的实际模型**（`PluginsSettingsSection.d.ts` 原文）：
+
+```ts
+/** One tab projected from a `settings.plugins.tab` contribution. */
+export interface PluginsSettingsTabEntry { id: string; order: number; label: string }
+```
+
+⇒ Plugins 设置区重构为「**本地化 tab + feature-owned 整页**」：
+`settings.plugins.tab`（`kind:'list'`, `scope:'root'`）的每项贡献是**一整页**，
+**而「卡片行」这一层被取消了** —— 我方那 4 张 `<li>` 卡在新模型下**没有直接落点**。
+
+**可选方案（需你定；我不擅自改 UX）**：
+
+| 方案 | 做法 | 代价 |
+|---|---|---|
+| **A（推荐）** | 把 4 张卡的内容**并入 RP 自己的设置面板**（`RpOverlay` 已有「预设」等 tab） | UX 自洽（RP 的设置都在 RP 里）；**但要写 4 个面板** |
+| B | 注册 1 个 `settings.plugins.tab`（`id:'dsht'`, `label:'DSHTavern'`），整页放这 4 张卡 | 改动最小（4 张卡原样搬进一个 tab 页）；但用户要从官方 Plugins 区进入 |
+| C | 注册 4 个 `settings.plugins.tab`（每插件一个 tab） | **不建议**：4 个 tab 挤占官方 Plugins 区，且与「一页 = 一个 feature」的官方语义不符 |
+
+> **判据已就位**（`audit-upgrade-readiness.mjs` 的 ⑤ 装配面）：
+> `SLOT_RENAMES` 表**保持为空**（诚实登记「无等价物」），并有负控 7 断言
+> 「`settings.plugin.item` 必须判 missing，**不得**假装映射到 `pluginInventory`」。
+> ⇒ 升级到 0.1.7 时，⑤ 会**如实报 BLOCK**，直到 D.2 选定方案并落地。
 
 #### 阶段 E：构建与门禁
 

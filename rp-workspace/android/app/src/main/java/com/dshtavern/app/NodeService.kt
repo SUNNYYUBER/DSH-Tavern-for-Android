@@ -917,7 +917,14 @@ class NodeService : Service() {
                     // 本机各 IPv4 的代理地址（DSH 官方 flag，不动上游源码）
                     val args = mutableListOf(
                         nodeBin.absolutePath,
-                        // --expose-internals：cordis-plugin-hmr 必需（缺它启动即崩）
+                        // --expose-internals：HMR 插件所需（缺它启动即崩）
+                        // 【2026-09-23 DSH 升级轮】包名更新：0.1.5 时是 `cordis-plugin-hmr`，
+                        // 0.1.7 已被 `dsh-hmr` 取代。★ 该 flag **仍需要**——实测
+                        // （tmp/probe-expose-internals.mjs，扫全部 1226 个官方文件）：
+                        // `dsh-hmr/lib/index.js` 里**仍有** `expose-internals` 的引用，
+                        // 且本机 node 传该 flag 完全正常（`process.binding` 可用）。
+                        // ⇒ 早期审计曾判「0.1.7 已移除该参数」是**探针扫描面过窄**导致的误判
+                        //   （只扫了 dsh / dsh-web-app / dsh-app-boot 三包），已撤销。
                         "--expose-internals",
                         entry.absolutePath, "web", "--no-open",
                         "--port", activePort.toString(),
