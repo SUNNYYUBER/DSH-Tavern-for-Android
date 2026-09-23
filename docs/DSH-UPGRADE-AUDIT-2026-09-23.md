@@ -1931,11 +1931,44 @@ export interface PluginsSettingsTabEntry { id: string; order: number; label: str
 
 | 步 | 动作 |
 |---|---|
-| E.1 | `-DshVersion 0.1.7-rc.1` + 单源同步 + **lockfile 显式更新并提交**（B1-3 修正） |
-| E.2 | 重装 runtime（`--no-frozen-lockfile`）→ 重跑补丁（13 条） |
-| E.3 | **全量门禁**（Step 0.5 全项 + Step 0.55 + Step 5.4 + Step 6.5/6.6） |
-| E.4 | `audit-upgrade-readiness.mjs` 六段全过（**含 UNKNOWN 禁止**） |
-| E.5 | vitest：基线 **1835 passed / 4 failed**（那 4 个是 `undo.spec.ts` 的既有 git flaky，见 KNOWN-DEBT）⇒ 升级后**不得多于** 4 |
+| E.1 | `-DshVersion 0.1.7-rc.1` + 单源同步 + **lockfile 显式更新并提交**（B1-3 修正） | ✅ 单源已改（含 `dsh-runtime-src/package.json`） |
+| E.2 | 重装 runtime（`--no-frozen-lockfile`）→ 重跑补丁（13 条） | ⏳ 进行中 |
+| E.3 | **全量门禁**（Step 0.5 全项 + Step 0.55 + Step 5.4 + Step 6.5/6.6） | ⏳ |
+| E.4 | `audit-upgrade-readiness.mjs` 六段全过（**含 UNKNOWN 禁止**） | ⏳ |
+| E.5 | vitest：基线 **1841 passed / 4 failed**（那 4 个是 `undo.spec.ts` 的既有 git flaky，见 KNOWN-DEBT）⇒ 升级后**不得多于** 4 | ⏳ |
+
+##### E 执行记录（2026-09-23 · **换版本构建的一个必然失败点**）
+
+★★ **本轮实测的构建阻断（结构性，非偶发）**：`audit-dsh-version.mjs` 跑在 **Step 0.7**，
+而 **Step 1 才装 runtime** ⇒ 在「**换版本**构建」场景下产物**必然是上一代的** ⇒
+判据 ② / ⑤ **hard FAIL** ⇒ `throw` ⇒ **构建走不到 Step 1**。
+⇒ ★ 该闸门**在它最该发挥作用的那一次构建上必然失败**（**P-40③**：判据必须跑在
+  它所判对象状态**已确定之后**；**P-45**：扫描面与真目标对齐）。
+同一因果还波及 `audit-upgrade-readiness.mjs`（它的 ① 段**内调** `audit-dsh-version`）。
+
+**修法（两段式，**不是放宽判据**）**：
+
+| 时机 | 被审对象 | flag | 语义 |
+|---|---|---|---|
+| **Step 0.7 / 0.5**（重装前） | `dsh-runtime-android`（上一代） | `--expect-reinstall` | ② / ⑤ 记 **SKIP 并出声**（「本次构建预期重装，Step 1 之后必须复核」）—— **不冒充通过**（P-17/P-30） |
+| **★ Step 1.4**（`pnpm install` 后、Step 3 复制前） | **`dsh-runtime-src`**（刚装好的树） | **不传** | ② / ⑤ 不一致即 **hard FAIL** ⇒ **fail-closed 不变** |
+
+★ 为此新增两个形参（均在头注「用法」行声明，受 W77 判据守）：
+`audit-dsh-version.mjs` 的 **`--expect-reinstall`** 与 **`--runtime <dir>`**；
+`audit-upgrade-readiness.mjs` 的 **`--expect-reinstall`**（**逐字透传**给前者 —— P-1：不重写实现）。
+
+★★ **新建的 Step 1.4 当场抓到它自己的第一个缺陷（诚实留痕）**：
+首版写成 `& node $verAudit`（**默认目录 = `$RT`**）⇒ 此刻 `$RT` 还是上一代 ⇒
+报「**不一致**：单源 0.1.7-rc.1 vs 产物 0.1.5-rc.3」。
+★ 取证后确认**是假红**：`dsh-runtime-src/node_modules/@deepseek-ai/dsh/package.json`
+实测 **0.1.7-rc.1**，且 **267 个子包全部 0.1.7-rc.1（零漂移）**。
+⇒ 真因是**判据审错了目录**（**P-45**）⇒ 加 `--runtime <dir>` 显式指定，修后：
+`✓ ② 实得 0.1.7-rc.1（与单源一致）· ✓ ⑤ 267 个子包全部 0.1.7-rc.1（无漂移）· ③ 形态一致`。
+★ **元教训**：**「新判据报红」必须先取证它审的是不是那个对象** ——
+若不做这一步，就会把「判据审错目录」记成「版本没装上」，然后去"修"一个不存在的安装问题。
+
+★ **另一处被这条链连带修掉的**：`build-dsht.ps1` 的门禁循环里
+`audit-upgrade-readiness.mjs` 也需要在重装前带 `--expect-reinstall`（同上因果，P-1）。
 
 #### 阶段 F：模拟器实测（**不可省**）
 

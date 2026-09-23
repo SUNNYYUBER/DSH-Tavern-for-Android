@@ -3,8 +3,8 @@
   "_why": "此前「当前锁定版本」散落在三处 package.json（其中一处已过期写成 0.1.2-rc.1）+ 四份叙述文档，且没有任何机器判据。第二十七轮 W24c 因照抄上一轮命令 -DshVersion 0.1.2-rc.1 而把 runtime 静默降级：0.1.2 世代的 dsh-session.isReplaceOp 要求 op+start+end，而设备上 1747 处真实数据是 op+startSeq+endSeq ⇒ 装出去历史会话全部打不开（由契约探针 BLOCK 才拦下）。",
   "_howToChange": "升级 runtime 时必须同步改本文件（dshVersion + sessionReplaceOpFields），然后跑 node rp-workspace/scripts/audit-dsh-version.mjs 复核；构建期 Step 0.7 会断言 -DshVersion 与本文件一致。",
 
-  "dshVersion": "0.1.5-rc.3",
-  "_dshVersionNote": "★ 2026-09-23（DSH 升级轮 · 阶段 0）已完成版本分裂修复。历史形态：顶层 pin 0.1.5-rc.1 而 230 个 dsh* 子包由 caret 解析到 0.1.5-rc.3（「顶层旧、子包新」，覆盖几乎整个运行时）。本轮动作：① 本字段与 dsh-runtime-src/package.json 的 pin 同步改为 0.1.5-rc.3（消除隐式漂移面）；② audit-dsh-version.mjs 新增判据⑤『子包版本一致性』（带 5 项正负控，含『同线 rc 漂移放行但出声』与『跨代分裂 FAIL』两种形态），补齐判据②只比对顶层主包的**覆盖面盲区**。详见 docs/DSH-UPGRADE-AUDIT-2026-09-23.md §2.2 与 §4 阶段 0。",
+  "dshVersion": "0.1.7-rc.1",
+  "_dshVersionNote": "★ 2026-09-23（DSH 升级轮 · 阶段 E1）升级到 0.1.7-rc.1。历史：阶段 0 曾修复版本分裂（顶层 pin 0.1.5-rc.1 而 230 个 dsh* 子包由 caret 解析到 0.1.5-rc.3），对齐到 0.1.5-rc.3。本轮从 0.1.5-rc.3 → 0.1.7-rc.1：dist-tags 的 `next` 即此版本，与 `alpha`(0.1.7-alpha.2) 的**包集完全相同（277 = 277，零差异）**，故附录 A 对 alpha.2 的逐项审计结论直接适用。★ 本轮已完成的破坏性变更处置见 docs/DSH-UPGRADE-AUDIT-2026-09-23.md 附录 E 的阶段 B/C/D（会话格式 v4、plugin source 代次无关识别、三处补丁锚点、patchReload 键消失、preset 面消失）。",
 
   "sessionReplaceOpFields": ["op", "startSeq", "endSeq"],
   "_sessionReplaceOpFieldsNote": "★ 这是**数据兼容的真正判据**（比版本号更本质）：设备上真实会话数据的 replace surfaceOp 字段名。dsh-session 的 isReplaceOp 是**严格三键**断言（Object.keys(op).length === 3），字段名换代 ⇒ 官方 loader 直接拒绝既有日志 ⇒ 会话打不开。审计脚本会读构建产物核对此形态。",
@@ -19,5 +19,5 @@
   },
 
   "updatedAt": "2026-09-23",
-  "_updatedBy": "DSH 升级轮 · 阶段 0（修复版本分裂：顶层 pin 0.1.5-rc.1 → 0.1.5-rc.3，与已解析的子包对齐；并给 audit-dsh-version.mjs 补判据⑤ 子包一致性）"
+  "_updatedBy": "DSH 升级轮 · 阶段 E1（0.1.5-rc.3 → 0.1.7-rc.1；含 §阶段 0 的版本分裂修复与 §阶段 B/C/D 的破坏性变更处置）"
 }

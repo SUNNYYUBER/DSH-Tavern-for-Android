@@ -165,7 +165,18 @@ if ($ssotJson.dshVersion -ne $DshVersion) {
 }
 Write-Host "  [gate] -DshVersion=$DshVersion 与单源 dsh-version.json 一致"
 # ③④ 形态与设备对照（非 SkipInstall 时 runtime 还没装，③ 会自动 SKIP 并出声）
-& node $verAudit
+#
+# ★★ 2026-09-23 DSH 升级轮 · 阶段 E1：**本次构建会重装 ⇒ 传 `--expect-reinstall`**。
+#   【为什么必须有（本轮实测的构建阻断）】本审计跑在 Step 0.7，而 **Step 1 才装 runtime** ⇒
+#   在「**换版本**构建」场景下产物**必然是上一代的**（本轮实测：单源已 0.1.7-rc.1
+#   而 `dsh-runtime-android` 还是 0.1.5-rc.3）⇒ 判据② / ⑤ **hard FAIL** ⇒ `throw` ⇒
+#   **构建根本走不到 Step 1** ⇒ 该闸门**在它最该发挥作用的那一次构建上必然失败**
+#   （**P-40③**：判据必须跑在它所判对象状态**已确定之后**）。
+#   ⇒ 非 SkipInstall 时传该 flag：② / ⑤ 对「预期会变」记 **SKIP 并出声**（不冒充通过）；
+#     重装完成后由 **Step 1.5** 的**不传 flag** 复核点做**真判据**（fail-closed 不变）。
+$verAuditArgs = @($verAudit)
+if (-not $SkipInstall) { $verAuditArgs += '--expect-reinstall' }
+& node @verAuditArgs
 if ($LASTEXITCODE -ne 0) { throw "DSH 版本审计未通过：audit-dsh-version.mjs（详见输出；1=不一致，2=单源非法）" }
 Write-Host "  [gate] OK audit-dsh-version.mjs"
 
@@ -431,6 +442,14 @@ foreach ($a in $auditNode) {
         if ($LASTEXITCODE -ne 0) { throw "门禁自检失败：$a --selftest（闸门本身不可信）" }
     }
     & node $p | Out-Null
+    # ★★ 2026-09-23 阶段 E1：`audit-upgrade-readiness.mjs` 的 ① 段会**内调**
+    #   `audit-dsh-version.mjs` ⇒ 在「换版本构建」时产物仍是上一代 ⇒ 那段会 BLOCK 掉构建。
+    #   它与 Step 0.7 是**同一处因果关系**（Step 1 才装 runtime）⇒ 必须同样带
+    #   `--expect-reinstall`（P-1：同一因果只许一处口径）。
+    #   ★ 重装后的**真判据**在 Step 1.4（不带 flag）。
+    if ($LASTEXITCODE -ne 0 -and $a -eq 'audit-upgrade-readiness.mjs' -and -not $SkipInstall) {
+        & node $p --expect-reinstall | Out-Null
+    }
     if ($LASTEXITCODE -ne 0) { throw "门禁未通过：$a（详见 node scripts/$a 输出）" }
     Write-Host "  [gate] OK $a"
     # ★ W62：**改为调用全脚本唯一的 `Show-Reading`**（P-1：读数机制只许一处实现）。
@@ -925,6 +944,27 @@ if (-not $SkipInstall) {
     $binOk = Test-Path "$runtimeSrc\node_modules\@deepseek-ai\dsh\lib\bin.js"
     if (-not $binOk) { throw "dsh lib/bin.js 不存在（安装异常）" }
     Write-Host "  安装完成，bin.js 就位"
+
+    # -----------------------------------------------------------------------
+    # ★★ Step 1.4 重装后**真判据**复核（2026-09-23 DSH 升级轮 · 阶段 E1 新增）
+    #   【为什么必须有】**Step 0.7** 那次审计传了 `--expect-reinstall`（产物还是上一代，
+    #   属"预期会变"⇒ 记 SKIP）。若**只有那一次**，则「重装到底装成哪一代」**没有任何判据**
+    #   ⇒ 正是 **P-30**（失效与通过同貌）：装错了版本、或子包 caret 漂移到别的代次，
+    #   报告上都会是"SKIP 已出声"，而**没有人会去看**。
+    #   ⇒ 此处**不传** `--expect-reinstall`（产物已由 Step 1 确定）：
+    #     ② / ⑤ 不一致即 **hard FAIL** ⇒ fail-closed（与 Step 0.7 判据②/⑤ 同一实现，P-1）。
+    #   ★ 位置纪律（**P-40③**：判据必须跑在它所判对象状态**已确定之后**）：
+    #     必须在 `pnpm install` 之后、**且在 Step 3 复制到 $runtimeDst 之前** ——
+    #     早一步产物没装好（假红），晚一步则错误版本已被复制进产物目录。
+    #   ★★ **必须指向 `$runtimeSrc`**（不是 `$verAudit` 默认的 `$RT`）：
+    #     `audit-dsh-version.mjs` 默认审 `dsh-runtime-android`，而**此刻刚装好的是
+    #     `dsh-runtime-src`**（Step 3 才把它复制过去）⇒ 若用默认目录，
+    #     它看到的是**上一代的 `$RT`** ⇒ 报「产物 0.1.5-rc.3」**假红**
+    #     （★ 本轮实测踩到：install 明明已装成 0.1.7-rc.1，却被判"不一致"）。
+    #     该脚本新增 `--runtime <dir>` 形参以指定被审 runtime。
+    & node $verAudit --runtime $runtimeSrc
+    if ($LASTEXITCODE -ne 0) { Pop-Location; throw "重装后复核失败：runtime 与单源不一致（audit-dsh-version.mjs 未传 --expect-reinstall）" }
+    Write-Host "  [gate] OK 重装后复核（audit-dsh-version.mjs --runtime dsh-runtime-src）"
 
     # -----------------------------------------------------------------------
     # Step 1.5 自编译 node-pty 就位（W-1）——【必须在 Step 1 之后、Step 3 之前】

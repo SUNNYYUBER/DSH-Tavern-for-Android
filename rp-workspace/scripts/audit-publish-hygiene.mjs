@@ -212,15 +212,34 @@ function trackedFiles() {
   //   ⇒ git 不可用 / 不在 git 仓库时，`execFileSync` 抛异常 ⇒ Node 未捕获 ⇒ 退出码 **1**，
   //     与「检出命中」**同一个码**（**P-75 / P-46 的反面**：两种不同事实必须有两个读数）。
   //   ⇒ 按 P-75 的第一种修法**让实现兑现头注承诺**：显式 fail-closed 返回 2。
-  let out
-  try {
-    out = execFileSync('git', ['ls-files', '-z'], { cwd: REPO, maxBuffer: 1 << 28 })
-  } catch (e) {
-    console.error(`[publish-hygiene] 环境失败：无法执行 git ls-files（${String((e && e.message) || e).slice(0, 140)}）`)
-    console.error('  ⇒ fail-closed：**扫描器没跑起来** ≠ 「六类全清」，不许静默给结论（exit 2）')
-    process.exit(2)
+  //
+  // ★★ 2026-09-23 DSH 升级轮 · 阶段 E：**对可恢复的瞬时故障重试**。
+  //   实测（本轮构建被它拦下）：`git ls-files -z` 偶发返回 `0xC000013A`
+  //   （= `STATUS_CONTROL_C_EXIT`，**与 docs/KNOWN-DEBT-undo-git-flaky-2026-09-23.md
+  //   记的第一形态同源**）⇒ 该闸门 fail-closed 退 2 ⇒ **构建中止**。
+  //   量化：连跑 5 次，**4 通过 / 1 环境失败**（≈20%，与 KNOWN-DEBT 的 ~20% 一致）。
+  //   ★ **判据（为什么重试是"恢复真值"而不是"掩盖问题"）**：该退出码**与被判事实无关**
+  //     —— git 会重新执行并正常返回；重试**不改变任何被判内容**（六类判据照跑）。
+  //   ★ 与 KNOWN-DEBT 的纪律一致：**闸门处的假阴性会静默放行真缺陷 ⇒ 必须修**；
+  //     而**测试处的假阳性只是噪音 ⇒ 不得用重试掩盖**（那 4 个 undo.spec 仍如实登记）。
+  const MAX_TRY = 5
+  let lastErr = null
+  for (let attempt = 1; attempt <= MAX_TRY; attempt++) {
+    try {
+      const out = execFileSync('git', ['ls-files', '-z'], { cwd: REPO, maxBuffer: 1 << 28 })
+      return out.toString('utf8').split('\0').filter(Boolean)
+    } catch (e) {
+      lastErr = e
+      // 仅对**可恢复的瞬时故障**重试：npm/Node 在 Windows 下的 0xC000013A（3221225786）。
+      // 其它错误（不在 git 仓库 / 无 git 命令）**立刻** fail-closed，不浪费 5 次重试。
+      const code = e && e.status
+      if (code !== 3221225786) break
+      if (attempt < MAX_TRY) continue
+    }
   }
-  return out.toString('utf8').split('\0').filter(Boolean)
+  console.error(`[publish-hygiene] 环境失败：无法执行 git ls-files（重试 ${MAX_TRY} 次仍失败：${String((lastErr && lastErr.message) || lastErr).slice(0, 140)}）`)
+  console.error('  ⇒ fail-closed：**扫描器没跑起来** ≠ 「六类全清」，不许静默给结论（exit 2）')
+  process.exit(2)
 }
 
 // ---------------------------------------------------------------- 扫描

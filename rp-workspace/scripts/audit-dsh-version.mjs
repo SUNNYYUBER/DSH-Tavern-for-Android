@@ -42,6 +42,8 @@
  *   node rp-workspace/scripts/audit-dsh-version.mjs            # 审计（含设备对照，尽力而为）
  *   node rp-workspace/scripts/audit-dsh-version.mjs --no-device # 跳过设备（CI / 无 adb）
  *   node rp-workspace/scripts/audit-dsh-version.mjs --selftest  # 判据自身正/负控（P-30）
+ *   node rp-workspace/scripts/audit-dsh-version.mjs --expect-reinstall # 本次构建会重装 ⇒ ②/⑤ 记 SKIP 并出声（不是放行）
+ *   node rp-workspace/scripts/audit-dsh-version.mjs --runtime <dir>    # 指定被审 runtime（默认 dsh-runtime-android）
  * 退出码：0=通过（或仅 SKIP）；1=不一致（fail-closed）；2=单源缺失/格式非法；3=selftest 失败
  */
 import fs from 'node:fs'
@@ -53,7 +55,24 @@ import { reportSelftest } from './selftest-summary.mjs'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const WS = path.resolve(HERE, '..')            // rp-workspace
 const SSOT = path.join(WS, 'dsh-version.json')
-const RT = path.join(WS, 'dsh-runtime-android')
+/**
+ * ★★ 被审的 runtime 目录（**2026-09-23 阶段 E1 起可指定**）。
+ *
+ * ## 为什么必须有这个形参
+ * `build-dsht.ps1` 有**两个时刻**要审版本，两者**对象不同**：
+ *   · **Step 0.7 / 0.5**（重装前）：审 `$RT`（`dsh-runtime-android`，**上一代产物**）
+ *     ⇒ 那时传 `--expect-reinstall`（产物预期会变，记 SKIP）；
+ *   · **Step 1.4**（`pnpm install` 之后、Step 3 复制**之前**）：要被审的是
+ *     **`dsh-runtime-src`**（刚装好的那棵树）—— 此刻 `$RT` **还是上一代的**
+ *     ⇒ 若仍审默认目录，**必然报「不一致」假红**（★ 本轮实测踩到：
+ *      `dsh-runtime-src` 里装的确实是 0.1.7-rc.1，却被判"产物 0.1.5-rc.3"）。
+ * ★ 纪律（**P-45**）：**判据的扫描面必须与真目标对齐** ——
+ *   「审哪个 runtime」必须由调用方**显式说出**，不能靠默认值蒙。
+ */
+const rtIdx = process.argv.indexOf('--runtime')
+const RT = rtIdx >= 0 && process.argv[rtIdx + 1]
+  ? path.resolve(process.argv[rtIdx + 1])
+  : path.join(WS, 'dsh-runtime-android')
 const ADB = process.env.DSHT_ADB ?? 'C:\\Users\\Administrator\\.android\\sdk\\platform-tools\\adb.exe'
 const PKG = 'com.dshtavern.app'
 
@@ -345,10 +364,28 @@ if (typeof ssot.dshVersion !== 'string' || !Array.isArray(ssot.sessionReplaceOpF
 rec('① 单源合法', 'OK', `${path.relative(WS, SSOT)}：dshVersion=${ssot.dshVersion} · 期望字段=[${ssot.sessionReplaceOpFields.join(', ')}]`)
 
 // ---- ② 声明与产物一致（dsh 主包版本） ----
+// ★★ 2026-09-23 DSH 升级轮 · 阶段 E1：**新增 `--expect-reinstall`**。
+//
+// ## 为什么必须有（本轮实测的构建阻断）
+// 本审计跑在 `build-dsht.ps1` 的 **Step 0.7**，而 **Step 1 才装 runtime**。
+// ⇒ 在「**换版本**构建」这一场景下，产物**必然是上一代的**：
+//     · 本轮的实测：单源已改 0.1.7-rc.1，而 `dsh-runtime-android` 还是 0.1.5-rc.3
+//     · ⇒ 判据② / ⑤ **hard FAIL** ⇒ `throw` ⇒ **构建根本走不到 Step 1**
+//   ⇒ 该闸门**在它最该发挥作用的那一次构建上必然失败**（P-40③：判据必须跑在
+//     它所判对象状态**已确定之后**）。
+//
+// ## 处置（不是放宽判据，而是**把「预期会变」这一事实显式声明出来**）
+//   传 `--expect-reinstall` ⇒ ② / ⑤ 在「产物与单源不一致」时记 **SKIP 并出声**
+//   （措辞明确：「runtime 待重装，Step 1 之后必须复核」），**不冒充通过**（P-17/P-30）。
+//   ★ 而 **Step 1 之后**（脚本内二次调用，见 build-dsht.ps1 的重装后复核点）
+//     **不传**该 flag ⇒ 那时产物已确定 ⇒ 不一致就是**真 FAIL**（fail-closed 不变）。
+const EXPECT_REINSTALL = process.argv.includes('--expect-reinstall')
+
 const dshPkgPath = path.join(RT, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
 if (fs.existsSync(dshPkgPath)) {
   const ver = JSON.parse(fs.readFileSync(dshPkgPath, 'utf8')).version
   if (ver === ssot.dshVersion) rec('② 产物 dsh 主包版本', 'OK', `实得 ${ver}（与单源一致）`)
+  else if (EXPECT_REINSTALL) rec('② 产物 dsh 主包版本', 'SKIP', `产物是 ${ver} 而单源 ${ssot.dshVersion} —— **本次构建预期重装**（Step 1 之后必须复核；不出声就冒充通过了）`)
   else rec('② 产物 dsh 主包版本', 'FAIL', `**不一致**：单源 ${ssot.dshVersion} vs 产物 ${ver}`)
 } else {
   rec('② 产物 dsh 主包版本', 'SKIP', `runtime 未就绪（${dshPkgPath} 不存在）——SkipInstall 首次构建属正常，**不冒充通过**`)
@@ -382,8 +419,12 @@ if (parsed.fields === null) {
     rec('⑤ 子包版本一致性', 'SKIP', `runtime 未就绪（${nm} 下无 dsh* 子包）—— SkipInstall 首次构建属正常，**不冒充通过**`)
   } else {
     const r5 = checkSubpackageLine(ssot.dshVersion, tb.dist, tb.total)
-    rec('⑤ 子包版本一致性', r5.ok ? 'OK' : 'FAIL',
-      `${tb.total} 个子包：${tb.evidence}　⇒ ${r5.note}`)
+    if (!r5.ok && EXPECT_REINSTALL) {
+      rec('⑤ 子包版本一致性', 'SKIP', `${tb.total} 个子包：${tb.evidence} —— **本次构建预期重装**（Step 1 之后必须复核；不出声就冒充通过了）`)
+    } else {
+      rec('⑤ 子包版本一致性', r5.ok ? 'OK' : 'FAIL',
+        `${tb.total} 个子包：${tb.evidence}　⇒ ${r5.note}`)
+    }
   }
 }
 

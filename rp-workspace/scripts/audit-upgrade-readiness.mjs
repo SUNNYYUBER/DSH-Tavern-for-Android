@@ -24,6 +24,7 @@
  *   node scripts/audit-upgrade-readiness.mjs --target <新版本>   # 声明目标版本（做前置断言）
  *   node scripts/audit-upgrade-readiness.mjs --selftest         # 判据自身正负控
  *   node scripts/audit-upgrade-readiness.mjs --no-device        # 跳过设备对照（CI）
+ *   node scripts/audit-upgrade-readiness.mjs --expect-reinstall # 本次构建会重装 ⇒ ① 段的产物对比记 SKIP 并出声
  *
  * ## 退出码（★ 与常规闸门不同，「测不出」也禁止升级）
  *   0 = 六段全过（可以进入正式升级 / 可以发版）
@@ -462,6 +463,9 @@ if (process.argv.includes('--selftest')) {
 const NO_DEVICE = process.argv.includes('--no-device')
 const tIdx = process.argv.indexOf('--target')
 const TARGET = tIdx >= 0 ? process.argv[tIdx + 1] : null
+// ★ 2026-09-23 阶段 E1：透传给 `audit-dsh-version.mjs`（见 ① 段注释）——
+//   「本次构建预期重装，产物还是上一代」是**正常的**，不该 BLOCK 掉构建。
+const EXPECT_REINSTALL = process.argv.includes('--expect-reinstall')
 
 const rows = []
 const rec = (seg, status, note) => {
@@ -484,11 +488,22 @@ const run = (file, args = []) => {
 
 // ---- ① 版本面 ----
 {
-  const w = run('audit-dsh-version.mjs', NO_DEVICE ? ['--no-device'] : [])
+  // ★★ 2026-09-23 DSH 升级轮 · 阶段 E1：**把 `--expect-reinstall` 透传给 audit-dsh-version**。
+  //   【为什么必须有（本轮实测的构建阻断）】本闸门跑在 `build-dsht.ps1` 的 **Step 0.5**，
+  //   而 **Step 1 才装 runtime** ⇒ 在「**换版本**构建」场景下产物**必然还是上一代的** ⇒
+  //   ① 段报 **BLOCK** ⇒ 构建走不到 Step 1（**P-40③**：判据必须跑在对象状态已确定之后）。
+  //   ⇒ 本脚本接受同名 flag 并**逐字透传**（P-1：不在本脚本里重写那条判据的实现）。
+  //     Step 0.5 时调用方会传它；重装后由 build 的 **Step 1.4** 用**不带 flag** 的真判据复核。
+  const args = []
+  if (NO_DEVICE) args.push('--no-device')
+  if (EXPECT_REINSTALL) args.push('--expect-reinstall')
+  const w = run('audit-dsh-version.mjs', args)
   const bad = /⛔|✗/.test(w.out) || w.code !== 0
   const ver = /dshVersion=([^\s·]+)/.exec(w.out)?.[1] ?? '(读不到)'
   rec('① 版本面（单源 + 产物顶层 + 数据形态 + 子包一致性）', bad ? 'BLOCK' : 'OK',
-    bad ? `单源=${ver}；**有失败项** —— 见 node scripts/audit-dsh-version.mjs 输出` : `单源=${ver}；四项判据全过`)
+    bad
+      ? `单源=${ver}；**有失败项** —— 见 node scripts/audit-dsh-version.mjs 输出`
+      : `单源=${ver}；四项判据全过${EXPECT_REINSTALL ? '（★ 本次带 --expect-reinstall：产物层面的 ②/⑤ 记 SKIP 并出声，由重装后复核点做真判据）' : ''}`)
   if (TARGET && ver !== '(读不到)' && ver !== TARGET) {
     rec('① 版本面 · 目标断言', 'BLOCK', `单源声明 ${ver}，而 --target 传的是 ${TARGET} ⇒ 两者必须一致（Step 0.7 同款纪律）`)
   }
