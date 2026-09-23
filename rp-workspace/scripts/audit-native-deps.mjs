@@ -205,19 +205,40 @@ if (!fs.existsSync(JNI_LIBS) && !fs.existsSync(RT_LIB)) {
 }
 
 function findReadelf () {
-  const sdkNdk = 'C:/Users/' + (process.env.USERNAME ?? '') + '/.android/sdk/ndk'
-  const roots = [process.env.ANDROID_NDK_HOME, process.env.NDK_HOME, sdkNdk,
-    'C:/Users/Administrator/.android/sdk/ndk'].filter(Boolean)
+  // 候选根：环境变量优先（CI 与手动构建都能给），再退回本机 SDK 常见位置。
+  // 【不写死用户名】本文件是**受控发布面**（会被 publish-hygiene 扫），
+  // 写死 `C:/Users/<name>/...` 会被判为「本机绝对路径泄漏」——故一律用 env 拼。
+  const home = process.env.USERPROFILE ?? process.env.HOME ?? ''
+  const roots = [
+    process.env.ANDROID_NDK_HOME,
+    process.env.NDK_HOME,
+    process.env.ANDROID_NDK_ROOT,
+    process.env.ANDROID_HOME ? path.join(process.env.ANDROID_HOME, 'ndk') : null,
+    process.env.ANDROID_SDK_ROOT ? path.join(process.env.ANDROID_SDK_ROOT, 'ndk') : null,
+    home ? path.join(home, '.android', 'sdk', 'ndk') : null,
+  ].filter(Boolean)
+
+  const names = process.platform === 'win32'
+    ? ['llvm-readelf.exe']
+    : ['llvm-readelf']
+  const hosts = process.platform === 'win32'
+    ? ['windows-x86_64']
+    : ['linux-x86_64', 'darwin-x86_64']
+
   for (const r of roots) {
     if (!fs.existsSync(r)) continue
-    // NDK 根本身也可能就是版本目录
-    const candidates = []
-    for (const e of fs.readdirSync(r)) {
-      candidates.push(path.join(r, e, 'toolchains', 'llvm', 'prebuilt', 'windows-x86_64', 'bin', 'llvm-readelf.exe'))
-      candidates.push(path.join(r, e, 'toolchains', 'llvm', 'prebuilt', 'linux-x86_64', 'bin', 'llvm-readelf'))
+    // r 可能已经**就是**某个 NDK 版本目录（ANDROID_NDK_HOME 的语义），
+    // 也可能是包含多个版本目录的 ndk/ 根 —— 两种都要能命中。
+    const cands = [r]
+    for (const e of fs.readdirSync(r)) cands.push(path.join(r, e))
+    for (const c of cands) {
+      for (const h of hosts) {
+        for (const n of names) {
+          const p = path.join(c, 'toolchains', 'llvm', 'prebuilt', h, 'bin', n)
+          if (fs.existsSync(p)) return p
+        }
+      }
     }
-    candidates.push(path.join(r, 'toolchains', 'llvm', 'prebuilt', 'windows-x86_64', 'bin', 'llvm-readelf.exe'))
-    for (const c of candidates) if (fs.existsSync(c)) return c
   }
   return null
 }
