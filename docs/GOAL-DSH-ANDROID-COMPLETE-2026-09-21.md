@@ -247,6 +247,27 @@ CANNOT LINK EXECUTABLE ".../lib/x86_64/libnode.so":
 - **诚实降级实证**：模拟器未装 Shizuku，四工具走 `NEED_SHIZUKU` 路径返回可读文案与启动指引，
   **不会**静默假装成功。
 
+**最终实证（用 CI 产出的、用户实际下载的那个文件）**：
+- 从 release 下载 `DSH-Tavern-0.2.6-x86_64-debug.apk`（146,739,195 B）并安装到模拟器；
+- **boot loop 计数 0**（v0.2.5 为 253+）；**无任何 `CANNOT LINK`**；
+- `dsh web: http://127.0.0.1:3080/?token=…` + `web token captured (43 chars)`；
+- 该 APK 的 `assets/dsh-runtime.zip` 内 `lib/` 实测含 **17 个库** ——
+  7 个新补的（`libz.so.1` / `libcrypto.so.3` / `libssl.so.3` / `libicuuc.so.78` /
+  `libicui18n.so.78` / `libicudata.so.78` / `libpcre2-8.so`）+ 4 个 proot 依赖
+  （`libbusybox.so.1.38.0` / `libtalloc.so.2` / `libandroid-shmem.so` / `libandroid-selinux.so`）
+  **全部在场**；
+- CI 在 v0.2.6 tag 上**全绿**（`Fetch native libs` ⇒ `Build x86_64` ⇒ `Attach to release`）。
+
+**v0.2.6 期间暴露并修掉的第二处同族缺陷（**由新门禁在 CI 上抓到**）**：
+门禁在 CI 净 checkout 上报红 3 项 —— `libbusybox.so.1.38.0` / `libtalloc.so.2` /
+`libandroid-shmem.so` 缺失。根因与 libz **完全同族**：`build-dsht.ps1` 的 proot 步骤
+**注释里**声明了这份库清单，却**从没进过 `fetch-native-libs` 的 TARGETS**，
+一直靠本机历史缓存在场。⇒ 修法 = 把 4 个库提升为 TARGETS 一等条目（deb 名 + SHA256 + inner 路径）。
+**净环境决定性验证**：删掉这 4 个库模拟 CI 净 checkout ⇒ 重跑自动从 Termux 下载并通过 SHA256
+⇒ 双架构闭合审计均过。
+**这正说明新门禁的价值**：它把「注释里的承诺 vs 事实」这族缺陷从「真机才炸」提前到
+「构建期报红」，且在 CI 上抓到了**本机缓存掩盖的第二例** —— 即本机全绿、净环境必炸的那类。
+
 ---
 
 
