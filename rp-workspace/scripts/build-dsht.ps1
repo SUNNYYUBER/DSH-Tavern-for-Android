@@ -232,6 +232,8 @@ $readingGates = @{
     'audit-plugin-build-parity.mjs'   = @{ Exe = 'node'; Pattern = '构建循环包集（\d+）'; Label = '插件构建路径包集（W-3 事故防回归）' }
     # 【W-3 事故防回归】NodeService 的 profile 部署契约（部署集≡patch集 / patchReload≠live / 守卫覆盖）
     'audit-nodeservice-deploy.mjs'    = @{ Exe = 'node'; Pattern = '部署集（\d+）'; Label = 'NodeService 部署契约（W-3 事故防回归）' }
+    # 【W-8 系统轻入口】分享面成对 + 磁贴四件套 + 落点存在（全是「破了不报错、只有真机手点才发现」的形态）
+    'audit-system-entry.mjs'          = @{ Exe = 'node'; Pattern = '分享面：manifest 声明'; Label = '系统轻入口契约（W-8）' }
 }
 
 <#
@@ -330,6 +332,14 @@ $auditNode = @(
     #      （被 ① 掩盖，修好 ① 后才暴露）。
     # 该判据经决定性负控：移除 device 拷贝 / 回退 live 都能被精确点名，还原即转绿。
     'audit-nodeservice-deploy.mjs',
+    # 【2026-09-21 W-8 新增】系统轻入口契约。
+    # 守：① 分享面**成对**（manifest 声明的 mimeType ↔ handleIncomingIntent 的分派分支，
+    #      双向都查）；② 快速设置磁贴**四件套**齐全（exported / BIND_QUICK_SETTINGS_TILE /
+    #      QS_TILE filter / TOGGLEABLE_TILE 元数据）；③ 磁贴调用的 NodeService 入口真的存在。
+    # 理由：这三条**破了都不报错**，只表现为真机上「分享面板里点进去什么都不发生」或
+    # 「快捷面板里根本没有这个磁贴」—— 而编译、单测、其它门禁全绿（P-30/P-59 家族）。
+    # 经决定性负控：删 TOGGLEABLE_TILE 即被精确点名，还原即转绿。selftest 7/7。
+    'audit-system-entry.mjs',
     # 【第二十五轮 W4 新增】「单测装置 vs 真机」脚本语义一致性闸门。
     # 守：卡脚本在真机以 <script type="module"> 注入（th-shim.ts 锚点断言）⇒ **严格模式**；
     # 而单测用 node:vm **经典脚本**语义。两者**不是同一套语义**（实证：同一段带 with 的代码

@@ -40,6 +40,13 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/zip" />
                 <data android:mimeType="application/octet-stream" />
+                <!-- 【W-8 2026-09-21 系统轻入口】分享 sheet 接收扩展到文本/链接与图片：
+                     · text/plain —— 浏览器/其它 App 分享 URL 用的就是它（EXTRA_TEXT 载 URL）
+                     · image/*    —— 角色卡头像 / 参考图
+                     分发逻辑见 MainActivity.handleIncomingIntent（按 intent.type 分派，
+                     三类都落 filesDir/inbox/ 并通知前端）。 -->
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="image/*" />
             </intent-filter>
             <!-- §4.16.2 B 类：通知/外部深链 dsht://session/<id> → 打开对应会话
                  （MainActivity onNewIntent/onCreate 派发 locate-session 给前端消费） -->
@@ -85,5 +92,24 @@
         <receiver
             android:name=".GateReceiver"
             android:exported="false" />
+
+        <!-- 【W-8 2026-09-21 系统轻入口】快速设置磁贴「DSH 局域网」。
+             必须 exported=true 且带 ACTION_QS_TILE intent-filter，并声明 TOGGLEABLE_TILE 元数据
+             —— 这是系统「快捷设置」发现磁贴的唯一途径（由 SystemUI 拉起，非本 App）。
+             权限 BIND_QUICK_SETTINGS_TILE 确保只有 SystemUI 能绑定它。
+             为何只做「切 LAN」不做「回会话」：见 LanTileService 头注（点图标即回前台，多做无增量）。 -->
+        <service
+            android:name=".LanTileService"
+            android:exported="true"
+            android:label="DSH 局域网"
+            android:icon="@mipmap/ic_launcher"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+                android:value="true" />
+        </service>
     </application>
 </manifest>

@@ -211,6 +211,32 @@ class NodeService : Service() {
             instance?.restartNodeNow()
         }
 
+        /**
+         * 【W-8 系统轻入口】快速设置磁贴切 LAN 后的落地动作。
+         *
+         * 与 [restartNode] 的区别：**服务可能根本没在跑**（用户下拉快捷面板时 App 可能不在前台、
+         * 甚至进程已被回收）。而 `lanEnabled` 是在 `onStartCommand`（:270）读 pref 的
+         * ⇒ 「服务没起」时**拉起服务本身就是正确的落地**（它会读到刚写入的新值）。
+         * 只有服务已在跑时才需要重启才能让 env `DSHT_LAN_MODE` 生效。
+         *
+         * 为什么必须有这个入口（而不是让磁贴直接 `startForegroundService`）：`instance` 是
+         * 本类的私有静态引用，磁贴拿不到 ⇒ 判「是否已在跑」这件事只能由本类自己做。
+         */
+        fun restartForLanToggle(ctx: android.content.Context) {
+            val inst = instance
+            if (inst != null) {
+                inst.restartNodeNow()
+                return
+            }
+            // 服务未运行：拉起即生效（onStartCommand 会重读 lan_enabled）
+            val i = Intent(ctx, NodeService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                ctx.startForegroundService(i)
+            } else {
+                ctx.startService(i)
+            }
+        }
+
         /** 自检（W-D）：返回 {checks:[{id,name,ok,detail,repairable}]}；实例缺席时报单条失败 */
         fun selfCheckJson(): String = instance?.runSelfCheck()
             ?: org.json.JSONObject().put("checks", org.json.JSONArray().put(

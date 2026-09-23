@@ -716,9 +716,47 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 通道 1：分享进来的 zip（ACTION_SEND）→ content resolver 读流 → filesDir/inbox/shared-<ts>.zip → 通知前端 */
+    /**
+     * 通道 1：分享进来的内容（ACTION_SEND）→ 落盘 filesDir/inbox/ → 通知前端。
+     *
+     * 【W-8 2026-09-21 扩展】原先只接 zip（ST 数据包）。现按 intent.type 分派三类：
+     *   · application/zip 与 application/octet-stream → 原路径（导入中心 → ST 数据迁移）
+     *   · text 开头的类型（含**链接**——浏览器/其它 App 分享 URL 时用的就是它）→ 写 .txt，
+     *     前端可读文本并把它带进 RP 会话（「把这段话/这个链接拿去用」）
+     *   · 图片类型 → 原样存成图片文件（角色卡头像/参考图）
+     * 三类都落同一个 inbox 目录、都走 dispatchShareChanged() 通知，前端只需按扩展名分流。
+     *
+     * 【为什么链接不能只取 EXTRA_TEXT 就丢】EXTRA_TEXT 既是「纯文本」也是「URL」的载体
+     * （系统分享 URL 时 text 就是那串 URL）。刻意**不做 URL 识别**——那是前端的语义判断，
+     * 原生层只负责「原样落盘 + 通知」，避免在两处各写一套识别逻辑（P-1 单源）。
+     *
+     * ⚠️ 本文档注释**不得出现斜杠星号**（Kotlin 块注释可嵌套，那个序列会开新嵌套层
+     * 导致注释永不闭合 —— 本轮实测踩过：报 Unclosed comment + Missing '}'）。
+     */
     private fun handleIncomingIntent(intent: Intent?) {
         if (intent?.action != Intent.ACTION_SEND) return
+        val mime = intent.type ?: "application/octet-stream"
+
+        // 文本 / 链接：没有 EXTRA_STREAM，内容在 EXTRA_TEXT 里
+        if (mime.startsWith("text/")) {
+            val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+            Thread {
+                try {
+                    val out = File(
+                        File(filesDir, "inbox").apply { mkdirs() },
+                        "shared-${System.currentTimeMillis()}-share.txt",
+                    )
+                    out.writeText(text, Charsets.UTF_8)
+                    android.util.Log.d("DSHTavern", "share(text) saved: ${out.name} (${out.length()} B)")
+                    handler.post { dispatchShareChanged(openImportTab = true) }
+                } catch (e: Exception) {
+                    android.util.Log.e("DSHTavern", "share(text) save failed", e)
+                }
+            }.start()
+            return
+        }
+
+        // 文件/图片：走 EXTRA_STREAM（图片与 zip 同路径，仅落盘名不同）
         val uri: Uri? = if (Build.VERSION.SDK_INT >= 33) {
             intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
         } else {
@@ -727,7 +765,8 @@ class MainActivity : AppCompatActivity() {
         if (uri == null) return
         Thread {
             try {
-                val displayName = queryDisplayName(uri) ?: "tauritavern-export.zip"
+                val displayName = queryDisplayName(uri)
+                    ?: if (mime.startsWith("image/")) "shared-image" else "tauritavern-export.zip"
                 val out = File(
                     File(filesDir, "inbox").apply { mkdirs() },
                     "shared-${System.currentTimeMillis()}-${sanitizeFileName(displayName, 60)}",
@@ -735,7 +774,7 @@ class MainActivity : AppCompatActivity() {
                 contentResolver.openInputStream(uri)?.use { ins ->
                     out.outputStream().use { ins.copyTo(it) }
                 } ?: throw java.io.IOException("无法读取分享内容")
-                android.util.Log.d("DSHTavern", "share saved: ${out.name} (${out.length()} B)")
+                android.util.Log.d("DSHTavern", "share saved: ${out.name} (${out.length()} B, mime=$mime)")
                 handler.post { dispatchShareChanged(openImportTab = true) }
             } catch (e: Exception) {
                 android.util.Log.e("DSHTavern", "share save failed", e)
