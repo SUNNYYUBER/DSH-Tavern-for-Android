@@ -59,7 +59,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { execFileSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { reportSelftest } from './selftest-summary.mjs'
 
@@ -85,16 +85,31 @@ const t = (name, ok, detail = '') => { total += 1; if (!ok) fail += 1; console.l
  *   ⇒ `HISTORY_SECTION_RE` 查不到 ⇒ **不 mask** ⇒ 史实区里的旧引用报红
  *   ⇒ 本负控的「基线必须绿」**当场失败**（看起来像「闸门坏了」，实际是**负控没传身份**）。
  *   ★ 这正是 **P-45** 的又一形态：**判据口径依赖输入的身份，而调用方没把身份传进去**。
+ *
+ * ★★ **【2026-09-23 DSH 升级轮 · 第四形态：子进程执行方式使读数不稳定】**
+ *   症状：本负控连跑 6 次只过 2 次，**每次失败的负控不同**（A / C / D / H2 / I2 / J 轮换），
+ *   读数在 **33/38 ~ 37/38** 之间波动。★ 而**单独用同一份逻辑写探针跑 8 次全绿**。
+ *   ⇒ 排除「判据坏了」与「并行争用」（实测**串行独占**同样只过 2/6）。
+ *   ★★ **根因**：`execFileSync` 在**同一进程内被高频连续调用**时，
+ *     子进程 stdout 的**捕获会偶发缺失**（本机 Windows + Node 24 实测）⇒
+ *     `r.out` 只含部分输出 ⇒ `r.out.includes(wantKind)` **落空** ⇒
+ *     报出「注入后必须报红：失败」**而退出码其实是对的**（`exit=1`）。
+ *     ★ **识别特征**：失败行的证据串里**同时**出现「报红理由正确」与「未报红」——
+ *     即 `r.code !== 0` 成立、而 `includes` 不成立 ⇒ **两者矛盾**就说明是**读数**丢的，不是判据丢的。
+ *   ⇒ **修法**：改用 **`spawnSync`（同步、显式取 `stdout`/`stderr`、不经 `execFileSync` 的拼接路径）**
+ *     —— 实测 **12/12 全绿**（修前 2/6）。
+ *   ⚠️ **诚实边界（R7）**：这是**环境级**的执行方式问题（与
+ *     `docs/KNOWN-DEBT-undo-git-flaky-2026-09-23.md` 记的 `0xC000013A` 同族 ——
+ *     都是本机 Node 24 子进程层的不可靠），**不是判据口径问题**；
+ *     故**只改执行方式，不动任何判据**（口径一字未动）。
  */
 function runAudit (docPath, asName) {
   const args = [AUDIT, '--file', docPath]
   if (asName) args.push('--as', asName)
-  try {
-    const out = execFileSync(process.execPath, args, { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] })
-    return { code: 0, out }
-  } catch (e) {
-    return { code: e.status ?? -1, out: `${e.stdout ?? ''}${e.stderr ?? ''}` }
-  }
+  // ★★ 用 `spawnSync` 而非 `execFileSync`（见头注「第四形态」）：
+  //   高频连续调用时 `execFileSync` 的 stdout 捕获会偶发缺失 ⇒ 读数不稳（实测 2/6 vs 12/12）。
+  const r = spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 120000 })
+  return { code: r.status ?? -1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` }
 }
 
 if (!fs.existsSync(AUDIT)) { console.error(`✗ 找不到 ${AUDIT}`); process.exit(2) }
@@ -298,20 +313,18 @@ const dG = drillGoal('负控G（受守面清单与 GOAL §八 E-H 分叉）', (l
     t('负控G2 前置：源码副本的清单注入必须真的发生', false, '替换未生效')
   } else {
     fs.writeFileSync(PROBE_AUDIT, patched, 'utf8')
-    let out = '', code = 0
-    try {
-      out = execFileSync(process.execPath, [PROBE_AUDIT], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] })
-    } catch (e) { code = e.status ?? -1; out = `${e.stdout ?? ''}${e.stderr ?? ''}` }
+    // ★ 同样改用 `spawnSync`（见头注「第四形态」）—— 执行方式与 `runAudit` 同源（P-1）。
+    const r1 = spawnSync(process.execPath, [PROBE_AUDIT], { encoding: 'utf8', timeout: 120000 })
+    const code = r1.status ?? -1
+    const out = `${r1.stdout ?? ''}${r1.stderr ?? ''}`
     const hit = code !== 0 && /受守面单源|受守面清单与 GOAL/.test(out)
     t('★★负控G2（W65 · 代码侧删一份受守文档 ⇒ 修前**静默 exit=0**）：**必须报红**', code !== 0, `exit=${code}`)
     t('★负控G2：报红理由正确（点名「声称的单源不成立」）', hit,
       out.split('\n').find(l => /✗/.test(l))?.slice(0, 120) ?? '(无 ✗ 行)')
     // ★ 杠杆 G2：把源码副本改回 ⇒ 必须回绿
     fs.writeFileSync(PROBE_AUDIT, SRC_AUDIT, 'utf8')
-    let out2 = '', code2 = 0
-    try {
-      out2 = execFileSync(process.execPath, [PROBE_AUDIT], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] })
-    } catch (e) { code2 = e.status ?? -1; out2 = `${e.stdout ?? ''}${e.stderr ?? ''}` }
+    const r2 = spawnSync(process.execPath, [PROBE_AUDIT], { encoding: 'utf8', timeout: 120000 })
+    const code2 = r2.status ?? -1
     t('★杠杆G2：源码副本改回原样 ⇒ **必须回绿**（证明负控G2 不是恒定红）', code2 === 0, `exit=${code2}`)
     fs.unlinkSync(PROBE_AUDIT)
   }
