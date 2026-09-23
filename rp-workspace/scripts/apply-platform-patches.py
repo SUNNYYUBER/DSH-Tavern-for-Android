@@ -60,14 +60,22 @@ def die(msg):
     sys.exit(1)
 
 
-def patch(path, marker, pattern, repl, expected, label):
+def patch(path, marker, pattern, repl, expected, label, expected_min=None):
     """精确补丁：marker 幂等检测 + 命中数断言 + 替换。
 
     path     目标文件绝对路径
     marker   幂等标记（已打补丁时文件中应存在 expected 个）
     pattern  正则（匹配目标代码）
     repl     替换文本（字面量，不走正则反向引用）
-    expected 期望命中数
+    expected 期望命中数（= 该形态在当前代的**全部**处数）
+    expected_min  ★ 2026-09-23 阶段 C.3 新增：**可接受的下限**。
+             当官方**合并/删除**了产生该形态的宿主方法时，处数会**合法地**变少
+             （实例：`dsh-bash-local` 0.1.5 有 `run()`+`start()` 两处，
+             0.1.7 合并成单个 `execute()` ⇒ 只剩 1 处）。
+             传了它 ⇒ 命中数落在 `[expected_min, expected]` 内都算成功，
+             且**替换全部命中**（不是只换 expected 个）—— 语义由「数个数」
+             改成「**凡是这个形态的都要改**」（P-41：锚到决定结果的事实）。
+             不传 ⇒ 维持原严格相等语义（既有 12 条行为不变）。
     """
     if not os.path.isfile(path):
         log("  ✗ %s：目标不存在 %s" % (label, path))
@@ -77,8 +85,9 @@ def patch(path, marker, pattern, repl, expected, label):
     with open(path, "r", encoding="utf-8", newline="") as f:
         text = f.read()
 
+    lo = expected if expected_min is None else expected_min
     marker_hits = text.count(marker)
-    if marker_hits >= expected:
+    if marker_hits >= lo:
         log("  · %s：已打补丁，跳过" % label)
         STATS["skipped"] += 1
         STATS["patched"] += 1
@@ -95,20 +104,23 @@ def patch(path, marker, pattern, repl, expected, label):
 
     hits = len(re.findall(pattern, text))
     if CHECK_ONLY:
-        ok = hits == expected
+        ok = lo <= hits <= expected
         STATS["checked"] += 1
         if ok:
             # 锚点命中≠补丁已生效：这类补丁（如 F2 flock）的锚点在补丁前后都存在，
             # 必须**显式**报成「未打」，不能与「已打」共用一个 ✓。
-            log("  ⚠ %s：**未打补丁**（锚点命中 %d/%d，apply 模式会补上）" % (label, hits, expected))
+            log("  ⚠ %s：**未打补丁**（锚点命中 %d/%d%s，apply 模式会补上）"
+                % (label, hits, expected, ("，下限 %d" % lo) if lo != expected else ""))
             STATS["pending"] += 1
             return True
-        log("  ✗ %s：锚点形态不符（期望 %d 处，实际 %d 处）——DSH 升级后产物形态变了？" % (label, expected, hits))
+        log("  ✗ %s：锚点形态不符（期望 %d~%d 处，实际 %d 处）——DSH 升级后产物形态变了？"
+            % (label, lo, expected, hits))
         STATS["failed"] += 1
         return False
 
-    if hits != expected:
-        log("  ✗ %s：命中数不符（期望 %d，实际 %d）—— DSH 升级后产物形态变了？" % (label, expected, hits))
+    if not (lo <= hits <= expected):
+        log("  ✗ %s：命中数不符（期望 %d~%d，实际 %d）—— DSH 升级后产物形态变了？"
+            % (label, lo, expected, hits))
         STATS["failed"] += 1
         return False
 
@@ -117,8 +129,8 @@ def patch(path, marker, pattern, repl, expected, label):
 
     with open(path, "w", encoding="utf-8", newline="") as f:
         f.write(new_text)
-    log("  ✓ %s：%d 处已打补丁" % (label, expected))
-    STATS["applied"] += expected
+    log("  ✓ %s：%d 处已打补丁" % (label, hits))
+    STATS["applied"] += hits
     return True
 
 
@@ -300,6 +312,11 @@ print("\n--- Step 3.5: Android shell / sandbox / rg 补丁 ---")
 SH_EXPR = 'process.platform === "android" ? "/system/bin/sh" : "bash"'
 
 # --- P0-1a  dsh-bash-local run()/start() 的 bash argv（2 处）
+# ★ 2026-09-23 DSH 升级轮 · 阶段 C.3：**期望处数按代次变少是合法的**。
+#   0.1.5 有 `run()` + `start()` 两个宿主方法（各 1 处 ⇒ 2 命中）；
+#   0.1.7 把它们**合并成单个 `execute()`**（实测 `dsh-bash-local@0.1.7-alpha.1`
+#   的 `lib/index.js:140-146` 只剩 1 处；`run`/`start` 已不存在）。
+#   ⇒ 传 `expected_min=1`：命中落在 [1, 2] 都算成功，且**替换全部命中**。
 patch(
     os.path.join(NM, "dsh-bash-local", "lib", "index.js"),
     "DSHT-ANDROID-SH",
@@ -307,14 +324,23 @@ patch(
     '\t\t\t' + SH_EXPR + ', /* DSHT-ANDROID-SH */\n\t\t\t"-c",\n\t\t\tspec.command',
     2,
     "P0-1a bash-local run/start argv",
+    expected_min=1,
 )
 
 # --- P0-1b  dsh-bash-sandbox confine() 的内层 bash argv
+# ★ 2026-09-23 DSH 升级轮 · 阶段 C.1：**锚点必须容忍可选的第三参 `signal`**。
+#   0.1.7 起官方把 `confine(command, policy)` 扩成 `confine(command, policy, signal)`
+#   （实测 `@deepseek-ai/dsh-bash-sandbox@0.1.7-alpha.1` 的 `lib/index.js:161-167`），
+#   旧锚点尾部写死 `], policy\);` ⇒ **在 0.1.7 上一条都匹配不到**（实测命中 0，补丁静默丢失）。
+#   ⇒ 尾部改为 `\], policy(?:, signal)?\);`：**新旧两代都命中**，
+#     且**替换文本保留原参数列表**（用 `\1` 回填，不写死"两参"形态 ——
+#     否则会把 0.1.7 的 `, signal` 吃掉，反而制造出"参数少一个"的坏代码）。
+#   ★ 纪律：补丁的**替换文本**也必须代次无关，不只是锚点（只改锚点 = 把 0.1.7 改回 0.1.5 形态）。
 patch(
     os.path.join(NM, "dsh-bash-sandbox", "lib", "index.js"),
     "DSHT-ANDROID-SH",
-    r'\t\t\t"bash",\r?\n\t\t\t"-c",\r?\n\t\t\tcommand\r?\n\t\t\], policy\);',
-    '\t\t\t' + SH_EXPR + ', /* DSHT-ANDROID-SH */\n\t\t\t"-c",\n\t\t\tcommand\n\t\t], policy);',
+    r'\t\t\t"bash",\r?\n\t\t\t"-c",\r?\n\t\t\tcommand\r?\n\t\t\], policy(, signal)?\);',
+    '\t\t\t' + SH_EXPR + ', /* DSHT-ANDROID-SH */\n\t\t\t"-c",\n\t\t\tcommand\n\t\t], policy\\1);',
     1,
     "P0-1b bash-sandbox confine argv",
 )
@@ -656,14 +682,39 @@ ITERATOR_NEW = (
     '\t\tif (typeof Iterator === "undefined") { /* 跳过 polyfill */ }\n'
     '\t\telse if (typeof Iterator.prototype.join !== "function")'
 )
-patch(
-    os.path.join(NM, "dsh-client-ui-sidebar-documentpreview", "lib", "client.js"),
-    "DSHT-ANDROID-ITERATOR",
-    r'if \(typeof Iterator\.prototype\.join !== "function"\)',
-    ITERATOR_NEW,
-    1,
-    "P0-5 Iterator Helpers 守卫（旧 WebView 整页加载失败）",
-)
+# ★★ 2026-09-23 DSH 升级轮 · 阶段 C.2：**目标文件不是常量 —— 必须自动发现**。
+#   0.1.7 起官方把内嵌 PDF.js 从 `lib/client.js` **拆到了 `lib/client.pdf.js`**
+#   （实测 `@deepseek-ai/dsh-client-ui-sidebar-documentpreview@0.1.7-alpha.1`：
+#     `client.js` 里该形态 **0 命中**，`client.pdf.js:1668` **1 命中**）。
+#   ⇒ 旧实现把文件名写死成 `client.js` ⇒ **在 0.1.7 上补丁静默丢失**
+#     （而 `Dsht-Patch`/`patch` 对「锚点 0 命中」只出声不报红 ⇒ **P-30：失效与通过同貌**）。
+#   ★ **实证纠正审计原文的推测**：附录 A.4 曾判「官方新产物已不用该 API ⇒ 可删补丁」——
+#     **实测不成立**：该 `typeof Iterator.prototype.join` 守卫**仍在**，只是换了文件。
+#   ⇒ 修法 = 在**该包的 lib/ 下自动发现**含该形态的文件（而不是猜文件名，P-41）。
+INNER_ITERATOR_RE = r'if \(typeof Iterator\.prototype\.join !== "function"\)'
+ITERATOR_CANDIDATES = [
+    os.path.join(NM, "dsh-client-ui-sidebar-documentpreview", "lib", f)
+    for f in ("client.js", "client.pdf.js")
+]
+# ★ 判「哪个候选文件含该形态」用**字面量子串**（不是正则）——
+#   它是「文件里有没有这句话」的事实判据，用正则只是把同一个串再解释一次（P-41）。
+_ITER_LITERAL = 'if (typeof Iterator.prototype.join !== "function")'
+ITERATOR_TARGETS = [
+    p for p in ITERATOR_CANDIDATES
+    if os.path.exists(p) and _ITER_LITERAL in open(p, encoding="utf-8", errors="ignore").read()
+]
+if not ITERATOR_TARGETS:
+    # 一个都没有 ⇒ **只出声不报红**（该版本可能真的不用该 API；不是本补丁的职责去判它是缺陷）
+    print("  ⓘ P0-5 Iterator：候选文件里均无该形态（可能官方已换产物）——跳过，出声不报红（P-43）")
+for _t in ITERATOR_TARGETS:
+    patch(
+        _t,
+        "DSHT-ANDROID-ITERATOR",
+        INNER_ITERATOR_RE,
+        ITERATOR_NEW,
+        1,
+        "P0-5 Iterator Helpers 守卫（旧 WebView 整页加载失败）",
+    )
 
 # ============================================================ 汇总
 print("\n" + "=" * 72)

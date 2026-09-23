@@ -1266,11 +1266,19 @@ Step 3.5 'Android shell/sandbox/rg 补丁（真机实测 4 缺陷；SkipInstall 
 # 替换前断言目标串存在（计数不符即 throw，防官方更新后补丁失效无感知）。
 # 注意：$runtimeDst 只有一个（dsh-runtime-android）；dsh-runtime-x64 仅是 x64 的 lib/*.so 存放处，
 # Step 5.5 按 -Arch 换 lib，两个架构 APK 共用同一份 node_modules —— 补丁打这里即双架构生效。
-function Dsht-Patch([string]$Path, [string]$Marker, [string]$RegexPattern, [string]$Replacement, [int]$Expected, [string]$Label, [string]$Already = '') {
+function Dsht-Patch([string]$Path, [string]$Marker, [string]$RegexPattern, [string]$Replacement, [int]$Expected, [string]$Label, [string]$Already = '', [int]$MinExpected = 0) {
     if (-not (Test-Path $Path)) { throw "补丁目标不存在：$Path（$Label）" }
+    # ★ 2026-09-23 DSH 升级轮 · 阶段 C.3：**可接受下限**（`$MinExpected`）。
+    #   官方**合并/删除**产生该形态的宿主方法时，处数会**合法地**变少
+    #   （实例：`dsh-bash-local` 0.1.5 有 `run()`+`start()` 两处，0.1.7 合并成 `execute()` ⇒ 1 处）。
+    #   ⇒ 不传（0）时下限 = `$Expected`（**维持原严格相等语义**，既有调用点行为不变）；
+    #     传了 ⇒ 命中落在 `[MinExpected, Expected]` 都算成功，且替换**全部**命中
+    #     （语义由「数个数」改成「凡是这个形态的都要改」—— P-41）。
+    #   ★ 与 apply-platform-patches.py 的 `expected_min` **同源同值**（P-1）。
+    $lo = if ($MinExpected -gt 0) { $MinExpected } else { $Expected }
     $text = [IO.File]::ReadAllText($Path)
     $markerHits = [regex]::Matches($text, [regex]::Escape($Marker)).Count
-    if ($markerHits -ge $Expected) { Write-Host "  ${Label}：已打补丁，跳过"; return }
+    if ($markerHits -ge $lo) { Write-Host "  ${Label}：已打补丁，跳过"; return }
     if ($markerHits -gt 0) { throw "${Label}：补丁处于半打状态（标记 $markerHits/$Expected 处），请检查 $Path" }
     # 【2026-09-16 W25 · P-41】幂等判据的**第二形态**：`$Already`（补丁已生效的产物形态）。
     #
@@ -1290,29 +1298,33 @@ function Dsht-Patch([string]$Path, [string]$Marker, [string]$RegexPattern, [stri
     # 已在下面 P2-1b 处传入旧形态的 `$Already`（兼容「上一轮用旧脚本打过的 runtime」）。
     if ($Already -ne '') {
         $alreadyHits = [regex]::Matches($text, $Already).Count
-        if ($alreadyHits -ge $Expected) { Write-Host "  ${Label}：已打补丁（形态匹配），跳过"; return }
+        if ($alreadyHits -ge $lo) { Write-Host "  ${Label}：已打补丁（形态匹配），跳过"; return }
         if ($alreadyHits -gt 0) { throw "${Label}：补丁处于半打状态（形态 $alreadyHits/$Expected 处），请检查 $Path" }
     }
     $hits = [regex]::Matches($text, $RegexPattern).Count
-    if ($hits -ne $Expected) { throw "${Label}：补丁未命中目标（期望 $Expected 处，实际 $hits 处）：$Path —— DSH 升级后产物形态变了？" }
+    if ($hits -lt $lo -or $hits -gt $Expected) { throw "${Label}：补丁未命中目标（期望 $lo~$Expected 处，实际 $hits 处）：$Path —— DSH 升级后产物形态变了？" }
     $evaluator = [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $Replacement }
     $text = [regex]::Replace($text, $RegexPattern, $evaluator)
     [IO.File]::WriteAllText($Path, $text)
-    Write-Host "  ${Label}：$Expected 处已打补丁"
+    Write-Host "  ${Label}：$hits 处已打补丁"
 }
 $nmDst = "$runtimeDst\node_modules\@deepseek-ai"
 $shExpr = 'process.platform === "android" ? "/system/bin/sh" : "bash"'
 
-# P0-1a. dsh-bash-local run()/start() 的 bash argv（2 处，同构一起换）
+# P0-1a. dsh-bash-local run()/start() 的 bash argv（0.1.5 = 2 处；0.1.7 合并成单个 execute() = 1 处）
+# ★ 2026-09-23 阶段 C.3：末尾传 MinExpected=1（与 apply-platform-patches.py 的 expected_min 同源同值）。
 Dsht-Patch "$nmDst\dsh-bash-local\lib\index.js" 'DSHT-ANDROID-SH' `
     '\t\t\t"bash",\r?\n\t\t\t"-c",\r?\n\t\t\tspec\.command' `
     ("`t`t`t" + $shExpr + ', /* DSHT-ANDROID-SH */' + "`n`t`t`t`"-c`",`n`t`t`tspec.command") `
-    2 'P0-1a bash-local run/start argv'
+    2 'P0-1a bash-local run/start argv' '' 1
 
 # P0-1b. dsh-bash-sandbox confine() 的内层 bash argv
+# ★ 2026-09-23 DSH 升级轮 · 阶段 C.1：锚点容忍可选第三参 `signal`（0.1.7 起官方加了它），
+#   且替换文本用 `$1` 回填原参数列表（不写死"两参"形态 —— 否则会把 0.1.7 的 `, signal` 吃掉）。
+#   与 apply-platform-patches.py 的 P0-1b **必须同源同值**（P-1）；两侧由 audit-build-path-parity.py 守。
 Dsht-Patch "$nmDst\dsh-bash-sandbox\lib\index.js" 'DSHT-ANDROID-SH' `
-    '\t\t\t"bash",\r?\n\t\t\t"-c",\r?\n\t\t\tcommand\r?\n\t\t\], policy\);' `
-    ("`t`t`t" + $shExpr + ', /* DSHT-ANDROID-SH */' + "`n`t`t`t`"-c`",`n`t`t`tcommand`n`t`t], policy);") `
+    '\t\t\t"bash",\r?\n\t\t\t"-c",\r?\n\t\t\tcommand\r?\n\t\t\], policy(, signal)?\);' `
+    ("`t`t`t" + $shExpr + ', /* DSHT-ANDROID-SH */' + "`n`t`t`t`"-c`",`n`t`t`tcommand`n`t`t], policy`$1);") `
     1 'P0-1b bash-sandbox confine argv'
 
 # P0-2. dsh-sandbox-local confine() 拒绝分支 → android 降级：warn + 原 argv 直通（无进程隔离，fs 层做工作区边界）
@@ -1537,8 +1549,22 @@ if (Test-Path $ocRoot36) {
 #   处置：改为「先判 Iterator 是否存在」——语义等价（不存在时无法给 prototype 挂方法，
 #   跳过 polyfill 是唯一可行分支）。不改业务逻辑、不改 PDF.js 其它代码。
 #   ⚠️ marker 与 python 侧**同串**（DSHT-ANDROID-ITERATOR），保证两路幂等互认。
-$iteratorJs = "$nmDst\dsh-client-ui-sidebar-documentpreview\lib\client.js"
-if (Test-Path $iteratorJs) {
+#   ★★ 2026-09-23 DSH 升级轮 · 阶段 C.2：**目标文件不是常量 —— 自动发现**
+#     0.1.7 起官方把内嵌 PDF.js 从 `lib/client.js` 拆到 `lib/client.pdf.js`
+#     （实测：client.js 0 命中 / client.pdf.js:1668 1 命中）⇒ 写死文件名会让补丁**静默丢失**。
+#     与 apply-platform-patches.py 的候选表**必须同源同值**（P-1）。
+$iteratorLiteral = 'if (typeof Iterator.prototype.join !== "function")'
+$iteratorCandidates = @(
+    "$nmDst\dsh-client-ui-sidebar-documentpreview\lib\client.js",
+    "$nmDst\dsh-client-ui-sidebar-documentpreview\lib\client.pdf.js"
+)
+$iteratorTargets = @($iteratorCandidates | Where-Object {
+    (Test-Path $_) -and ((Get-Content -Raw -LiteralPath $_) -like "*$iteratorLiteral*")
+})
+if ($iteratorTargets.Count -eq 0) {
+    Write-Host "  · P0-5 Iterator：候选文件里均无该形态（可能官方已换产物）——跳过，出声不报红（P-43）" -ForegroundColor DarkGray
+}
+foreach ($iteratorJs in $iteratorTargets) {
     Dsht-Patch $iteratorJs 'DSHT-ANDROID-ITERATOR' `
         'if \(typeof Iterator\.prototype\.join !== "function"\)' `
         ('/* DSHT-ANDROID-ITERATOR: 旧 WebView 无 ES2025 Iterator Helpers；' +
@@ -1547,8 +1573,6 @@ if (Test-Path $iteratorJs) {
          "`t`tif (typeof Iterator === `"undefined`") { /* 跳过 polyfill */ }`n" +
          "`t`telse if (typeof Iterator.prototype.join !== `"function`")") `
         1 'P0-5 Iterator Helpers 守卫（旧 WebView 整页加载失败）'
-} else {
-    Write-Host "  · P0-5 Iterator：$iteratorJs 不在（该 DSH 版本无此包）——跳过" -ForegroundColor DarkGray
 }
 
 # ---------------------------------------------------------------------------

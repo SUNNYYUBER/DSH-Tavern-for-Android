@@ -1785,10 +1785,62 @@ plugin source 双向识别含**反向不得误认** / v4 形态自定义键仍�
 
 | 步 | 动作 |
 |---|---|
-| C.1 | `dsh-bash-sandbox` 锚点正则容忍**可选第三参 `signal`**（或改更稳的锚定方式） |
-| C.2 | `dsh-client-ui-sidebar-documentpreview`：先判定「旧 WebView 的 ES2025 Iterator 守卫是否仍需要」；不需要 ⇒ **删补丁**（净简化） |
-| C.3 | 其余 11 条逐条确认**语义未变**（匹配 ≠ 行为正确） |
-| C.4 | 新增**锚点指纹**判据（B.2 提议）：命中数相同但指纹变 ⇒ 报「锚点漂移」 |
+| C.1 | `dsh-bash-sandbox` 锚点正则容忍**可选第三参 `signal`** | ✅ **已完成** |
+| C.2 | `dsh-client-ui-sidebar-documentpreview`：先判定「旧 WebView 的 ES2025 Iterator 守卫是否仍需要」；不需要 ⇒ **删补丁**（净简化） | ✅ **已完成**（结论与审计原文**相反**，见下） |
+| C.3 | 其余 11 条逐条确认**语义未变**（匹配 ≠ 行为正确） | ✅ **已完成** |
+| C.4 | 新增**锚点指纹**判据（B.2 提议）：命中数相同但指纹变 ⇒ 报「锚点漂移」 | ⏳ 未做（下轮） |
+
+##### C 执行记录（2026-09-23 —— **三处结论被实测推翻**）
+
+**取证方式**：`npm install @deepseek-ai/dsh@0.1.7-alpha.1` 到**隔离目录**
+（`rp-workspace/tmp/rt017/`，**不碰项目 node_modules**）
++ `npm pack` 单包抽取，然后**对真实文件逐条实跑锚点正则**。
+
+★★ **审计原文 A.4/A.5 的结论有三处需要更正**（全部是「按文档/按印象推测」的产物）：
+
+| # | 审计原文 | 实测 | 性质 |
+|---|---|---|---|
+| 1 | 「`DSHT-ANDROID-ITERATOR`：官方新产物**已不用该 API** ⇒ **可删补丁**」 | ★ **仍需要**！守卫 `typeof Iterator.prototype.join` **原样存在**，只是从 `lib/client.js` **搬到了 `lib/client.pdf.js`**（`client.js` 0 命中 · `client.pdf.js:1668` 1 命中） | **文件搬家**（不是 API 消失） |
+| 2 | 「3 条锚点失效」（C 阶段只有 2 条 + 1 条） | ★ **实际 0 条失效**：11 条锚点在新旧两代**全部可达**（见下表） | **期望值过期**被误读成「锚点失效」 |
+| 3 | 「`DSHT-ANDROID-SH`（bash-local）锚点仍匹配」 | ★ 匹配**但处数从 2 变 1**：0.1.5 的 `run()`+`start()` 在 0.1.7 **合并成单个 `execute()`** ⇒ `patch()` 的 `hits != expected` 断言会 **hard FAIL 并中止构建** | ★ **新发现的第三类风险**：锚点可达 ≠ 期望数不变 |
+
+★ **元教训**：这三处**都不是"判断错误"**，而是**"拿推测当取证的必然结果"**——
+A.4 的表格是**读 README 推出来的**，而 README 只讲**格式规范**，不讲**产物文件布局**。
+⇒ **纪律：凡结论涉及「产物里有没有某段代码」，必须对真实产物跑一次**（P-19/P-52 的推广）。
+
+**11 条锚点在 0.1.7 上的实跑结果（全部可达）**：
+
+| marker | 目标 | 0.1.5 命中 | 0.1.7 命中 | 处置 |
+|---|---|---|---|---|
+| `DSHT-SIM` ×3 | storage-json / credentials-local / session-persistence-jsonl | 1 / 1 / 1 | 1 / 1 / 1 | 无需改 |
+| `DSHT-ANDROID-SH` | bash-local | **2** | **1** | ★ 加 `expected_min` |
+| `DSHT-ANDROID-SH` | bash-sandbox | 1 | 1 | ★ 锚点尾部容忍 `, signal` |
+| `DSHT-ANDROID-UNSANDBOXED` | sandbox-local | 1 | 1 | 无需改 |
+| `DSHT-ANDROID-JS-SEARCH` | tool-fs-search | 1 | 1 | 无需改 |
+| `DSHT-ANDROID-TERM-SHELL` / `-ARGS` | terminal-bash | 1 / 1 | 1 / 1 | 无需改 |
+| `DSHT-TITLE-DETAG` | session-title | 1 | 1 | 无需改 |
+| `DSHT-ANDROID-ITERATOR` | documentpreview | 1（client.js） | 1（**client.pdf.js**） | ★ 改自动发现 |
+| `DSHT-ANDROID-FLOCK` | node-addon-system | 1 | 1 | 无需改 |
+
+**三处改动（两路同源，各 1 对）**：
+
+| 项 | `apply-platform-patches.py` | `build-dsht.ps1` |
+|---|---|---|
+| **C.1** bash-sandbox | 锚点尾部 `\], policy(, signal)?\);` + 替换用 `\1` **回填原参数列表** | 同（`$1`） |
+| **C.2** Iterator | 在 `lib/` 下**自动发现**含该形态的文件（候选 `client.js` / `client.pdf.js`） | 同（`Where-Object` 过滤） |
+| **C.3** bash-local | `patch(..., expected_min=1)` 新参数：命中落在 `[min, expected]` 即成功，且**替换全部命中** | `Dsht-Patch` 加 `-MinExpected` 形参，同语义 |
+
+★ **C.1 的关键细节**：只改锚点、不改替换文本 = **把 0.1.7 的 `, signal` 吃掉** ⇒
+制造出「参数少一个」的坏代码（比不打补丁更糟）。⇒ 用**反向引用回填**原参数列表。
+
+★ **C.3 的关键细节**：`expected_min` 的语义不是「放宽判据」，而是
+**把「数个数」改成「凡是这个形态的都要改」**（P-41：锚到决定结果的事实）——
+命中 2 处时两处都改（0.1.5 行为不变），命中 1 处时改那 1 处（0.1.7 正确）。
+**不传该参数 ⇒ 维持原严格相等语义**（既有 11 条行为**零变化**）。
+
+**验收**：`audit-build-path-parity.py` **38/38 全过**（两条路径等价 + marker 17 共同 + BOM 全过）·
+python `ast.parse` OK · PowerShell `Parser::ParseFile` **0 语法错误** ·
+11 条锚点在 0.1.7 上**逐条实跑：11 通过 / 0 越界**。
 
 #### 阶段 D：壳层 / 装配层
 
