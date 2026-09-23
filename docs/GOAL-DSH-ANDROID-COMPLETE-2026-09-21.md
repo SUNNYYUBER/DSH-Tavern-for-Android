@@ -171,6 +171,24 @@ DSH 在桌面端 = agent + 终端 + 文件系统 + 系统命令。安卓端彻�
 
 ---
 
+## 发版记录：v0.2.5（2026-09-21）
+
+**版本**：[v0.2.5](https://github.com/SUNNYYUBER/DSH-Tavern-for-Android/releases/tag/v0.2.5)（`versionName 0.2.5` / `versionCode 7`；runtime sentinel **v380**）——**GitHub 标记 Latest、非 draft、非 prerelease**。
+
+**产物**（均已通过 M4 内容级核验）：
+
+| 文件 | 架构 | 大小 | 来源 |
+|---|---|---|---|
+| `DSH-Tavern-0.2.5-arm64-release.apk` | arm64（**真机**） | 145,950,983 B | 本机构建（`build-dsht.ps1`，全门禁绿） |
+| `DSH-Tavern-0.2.5-x86_64-debug.apk` | x86_64（PC 模拟器自测） | 128,692,583 B | **CI 构建并自动挂载**（tag 构建，`success`） |
+
+**本版增量**：**W-3 设备执行层接线（根因修复）** —— 见下表 W-3 行的「本轮补齐」。
+这一版的存在本身是二次审计的产物：v0.2.4 曾把 W-3 标为 ✅，而 `exec()` 实为恒返 `NOT_IMPLEMENTED`。
+
+**发布说明**：[release-notes-v0.2.5.md](file:///d:/DSH%20RolePlay/rp-workspace/out/release-notes-v0.2.5.md)
+
+---
+
 ## 六、完成定义逐条终局审计（2026-09-21）
 
 > 审计原则：**以当前工作区的实际状态为准**，逐条给出可复核的证据，不以「意图 / 阶段性进展 / 记忆」充当完成证明。
