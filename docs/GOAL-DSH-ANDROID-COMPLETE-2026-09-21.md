@@ -117,7 +117,33 @@ DSH 在桌面端 = agent + 终端 + 文件系统 + 系统命令。安卓端彻�
 | W-5 原生模块清零 | ✅ | **路线实证后定案**：sharp 官方 prebuild **无 android**（npm registry 实测缺 `@img/sharp-libvips-android-*`），bionic 与 glibc 不兼容；但 **sharp 主包自带 wasm 兜底分支**（`dist/sharp.cjs:102-108`，官方帮助文案亦明示 `npm install sharp @img/sharp-wasm32`）⇒ 接入 `@img/sharp-wasm32@0.35.4`，**不写任何转发层**。**spike 19/19 PASS**（[证据脚本](file:///d:/DSH%20RolePlay/rp-workspace/tmp/sharp-wasm-spike/)）：metadata 字段契约完整（`space=srgb`/`depth=uchar`/`hasAlpha`）/ jpeg+webp 编码 / raw 全解码 / clone+resize+rotate+toColourspace / png-jpeg-webp-gif 四格式（= DSH MEDIA_TYPES 白名单）/ **libvips 8.18.6**（正好满足 DSH `>=8.18.6`）/ 单份产物覆盖双架构。**并修一处潜伏静默失败**：原 stub 的 `toBuffer/toFile/resize` 是静默空实现，已收紧为**纯受控报错**（对齐本项目「宁可真错，不返假图」纪律） |
 | W-6 共享交换目录 | ✅ | [ExchangeDir.kt](file:///d:/DSH%20RolePlay/rp-workspace/android/app/src/main/java/com/dshtavern/app/ExchangeDir.kt)：`/sdcard/Documents/dsht-exchange/` ↔ `$DSH_HOME/exchange/` 显式双向通道（冷启动 + 手动同步，不用 FileObserver——FUSE 跨挂载不可靠）；冲突判定 mtime 新者胜 → 同 mtime size 大者胜 → 否则 SKIP。**凭据永不参与**：`NEVER_MIRROR` 清单（`.credentials.yaml` / `dsht-token` / `.dsht-alive` / `device-audit.jsonl`）在**两个方向**都过 `isBlocked()`（**双向拒绝**，不是只挡出向）。**新门禁** [audit-exchange-guards.mjs](file:///d:/DSH%20RolePlay/rp-workspace/scripts/audit-exchange-guards.mjs)（三判据：清单非空且含凭据项 / 与 `MainActivity.BACKUP_EXCLUDE` 一致〔两处都是「凭据不出去」的实现，漂移意味着漏一处〕/ 拒绝必须双向），selftest 5/5，接入 Step 0.5。**模拟器正反控实证**：`进 App 1 · 出到文件管理器 1 · 拒绝凭据 2 个` |
 | W-7 能力-权限看板 | ✅（代码）/ ⚠️（UI 未逐屏实测） | [MainActivity.kt](file:///d:/DSH%20RolePlay/rp-workspace/android/app/src/main/java/com/dshtavern/app/MainActivity.kt)：自检面板升级为**能力-权限矩阵看板**——`CapRow` 数据结构 + `parseSelfCheck` 解析 + `formatBoard` 三分组渲染 + `actionFor` 一键跳转（每行 = 能力 / 状态 / 原因 / 可执行动作）+ `showSelfCheckDialog` 可点列表；**Shizuku 五态进矩阵**（未配对/已配对/未连接/不支持/就绪，取自 `ShizukuBridge.currentState()`）。不新增守护进程。**实证面（诚实标注）**：Kotlin 编译通过 + 全门禁绿；看板 UI 的逐屏视觉与一键跳转的落点**未在设备上逐项实测**（按项目口径交社区众包回填，见 B-DEVICE 清单） |
-| W-8 系统轻入口 | ⬜ | |
-| W-9 敏感数据落盘调研 | ⬜ | |
-| W-10 插件安装通道 | ⬜ | |
+| W-8 系统轻入口 | ⬜ 未交付 | 分享 sheet 接收（文本/链接/图片）+ 快速设置磁贴 —— **本轮未做**。如实记录：v0.2.3 已随包发出（不含该项） |
+| W-9 敏感数据落盘调研 | ⬜ 未交付 | 三问（jsonl 标记字段不落盘的注入点 / Keystore 静态加密开销实测 / 维持现状的威胁模型）—— **本轮未做** |
+| W-10 插件安装通道调研 | ⬜ 未交付 | App 内从 ZIP/GitHub URL 装 RP 插件的注入点调研 —— **本轮未做**（相关机制部分已在 W-3 事故诊断中摸清：loader 的包名解析基准是 profile 目录，见下方「事故与修复」） |
 | W-11 导入适配流程的用户文档 | ✅ | [README 快速开始](file:///d:/DSH%20RolePlay/README.md#L33-L55)（中英双语同步）：补入**导入链路上最关键的一环**——点确认后 App **自动新建「ST 数据适配」会话并跳转**、替你发开工消息、agent 读 `st-migration` skill 完成「AI 翻译」式迁移（卡→工作区 / 书→技能 / 聊天→会话 / 预设→RP 预设）、产出 `migration-report.md`，**用户必须等待**。并明确：第 2 步填的模型**要用来跑迁移**（建议最强）；耗时量级；**中断可断点续跑**；修正原「角色卡=生成工作区」的误导（实为 agent 产出）。依据：`import-center.html` 的「导入适配原理」折叠块（App 内本已讲清，README 却缺失） |
+
+---
+
+## 发版记录：v0.2.3（2026-09-21）
+
+**版本**：[v0.2.3](https://github.com/SUNNYYUBER/DSH-Tavern-for-Android/releases/tag/v0.2.3)（`versionName 0.2.3` / `versionCode 5`；runtime sentinel **v376**，双架构同代次）
+
+**产物**（均已通过 M4 内容级核验「169 项标记、缺失 0」）：
+
+| 文件 | 架构 | 大小 | 来源 |
+|---|---|---|---|
+| `DSH-Tavern-0.2.3-arm64-release.apk` | arm64（**真机**） | 145,932,983 B | 本机构建（`build-dsht.ps1`，全门禁绿） |
+| `DSH-Tavern-0.2.3-x86_64-debug.apk` | x86_64（PC 模拟器自测） | 128,669,551 B | **CI 构建**（`build-apk.yml`，17m35s 全绿） |
+
+**为什么 x86_64 由 CI 产出**（重要·可复现的环境结论）：本机到 GitHub `uploads.github.com` 的上行实测仅 **~15 KB/s**，且连接会在 **~270 秒 / ~12 MB** 处被重置（连续 5 次同形态：`curl: (55) Send failure: Connection was aborted/reset`）⇒ 140 MB 的 APK **本地无法传完**。故给 workflow 加了「tag 构建时 `gh release upload` 到对应 release」一步，由 GitHub 内网侧的 runner 上传（秒级）。
+
+**CI 三处缺口（均为 W-1 接入构建链后暴露，本轮修复）**：
+1. **NDK 未装**：`build-node-pty.mjs` 钉死 `NDK_VERSION=29.0.14033849`，workflow 从未装 ⇒ Step 1.5 直接 throw。修 = 加一步 `sdkmanager --install "ndk;<ver>"`。
+2. **node 头缺来源**：交叉编译要 `node_api.h`，它只随 Termux nodejs deb 分发、而 `downloads/` 被 gitignore ⇒ CI 净环境没有。修 = `fetch-native-libs.mjs` 加一条 dir 型目标（从**已缓存的同一个 nodejs deb** 解出 `usr/include/node` 平铺到 `build-node-pty.mjs` 的候选①路径，两边同源）；**经决定性负控**（删掉头目录模拟净环境 ⇒ 自动下载 deb 解出 67 项、`node_api.h` 就位）。
+3. **release 上传权限**：默认 `GITHUB_TOKEN` 只读 ⇒ `HTTP 403 Resource not accessible by integration`。修 = 给 job 加最小授权 `permissions: contents: write`。
+
+**发版前真机实证**（模拟器，**老用户升级路径** = 保留数据 + 旧 `patchReload: live`）：安装新包后 NodeService 自动把 `patchReload` 修复为 `startup`；单次启动 `attempt 1` **零重启**，HTTP 服务在线（未带令牌返回 401 = 鉴权栅栏正常），`DSHT-Device: device bridge listening on 127.0.0.1:3100`，部署面含 `dsht-plugin-device`，全程无 `plugin tree failed` / `did not activate` / HMR 报错。
+
+**测试与门禁**：vitest **86 文件 / 1835 通过 / 0 失败**；常驻门禁全绿（含本轮新增两条）；`audit-selftest-claims` **136/136**；双架构 APK 内嵌 runtime 版本与数据兼容形态核验通过。
+
+**未交付项（诚实标注）**：W-8（系统轻入口）、W-9（敏感数据落盘调研）、W-10（插件安装通道调研）—— 见上表，v0.2.3 **不含**这三项。
