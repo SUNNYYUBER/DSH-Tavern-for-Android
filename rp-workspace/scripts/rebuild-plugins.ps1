@@ -25,11 +25,46 @@ if (-not (Test-Path $nm))  { throw "runtime node_modules 不存在: $nm" }
 
 function Say($m) { Write-Host "[plugins] $m" }
 
+# ============================================================================
+# 【2026-09-23 DSH 升级轮 · 阶段 A】插件 `peerDependencies` 声明（**单源，唯一实现点**）
+#
+# ## 为什么必须声明（0.1.7-rc.1 新引入的「插件版本号机制」）
+# `dsh-app-boot` 的 `evaluatePluginCompatibility(manifest)` 会在
+# **`dsh plugin add` / 带 spec 的 `install`**（pnpm 运行**前**）检查插件 manifest：
+#   · 只检 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` 的 peer；
+#   · **未声明 `peerDependencies` ⇒ 直接放行**（我方此前就是这种「恰好通过」）；
+#   · `workspace:*` / `workspace:^` / `workspace:~` ⇒ **替换成当前 runtime 版本**⇒ 永远满足；
+#   · 其余 range 参与 semver 匹配 ⇒ 不满足即 **`incompatible-version` 拒绝安装**。
+#
+# ## ★ 实测（`rp-workspace/tmp/probe-peer-effect.mjs`，喂真函数看返回）
+#   不声明            ⇒ ✅ 放行
+#   `workspace:*`     ⇒ ✅ 放行（且语义正确：声明了「我依赖当前 runtime」）
+#   `^0.1.5`          ⇒ ✅ 放行（0.1.7 ≥ 0.1.5，同主版本）
+#   `^0.1.7`          ⇒ ⛔ **拒绝**（`0.1.7-rc.1` 是**预发布**，不满足 `^` 正式版语义）
+#   `^0.2.0`          ⇒ ⛔ 拒绝
+#   ⇒ 结论：**任何写死的 range 都有风险**（尤以「看起来最对的 `^0.1.7`」最危险），
+#     `workspace:*` 是唯一稳妥写法。
+#
+# ## 为什么不是「不声明就完了」
+# 不声明确实放行，但：① 语义缺失（我方插件**确实**强依赖官方 client-ui 包，
+# 现在官方**帮助不了我们**——升级时不会提示不兼容）；② 一旦有人「顺手」补个
+# `^0.1.7`（最自然的写法）⇒ 插件**在安装期被拒**，表现为「装不上」而非「跑不起来」，
+# 排查方向完全不同。⇒ 主动用正确形态声明。
+#
+# ## ★ 单源纪律（P-1）
+# 本表是**唯一实现点**：本脚本 4 处 package.json 写入点全部引用它。
+# `build-dsht.ps1` 与 `NodeService.kt` 的对应硬编码必须**同字段同值**——
+# 由 `audit-plugin-build-parity.mjs` / `audit-nodeservice-deploy.mjs` 守。
+# ============================================================================
+# 我方插件共同依赖的官方包（= `dsh.client.external` 那 4 个 client-ui 包 +
+# 顶层 dsh 本体）。用 `workspace:*` ⇒ 官方会替换成当前 runtime 版本。
+$DSHT_PEER = '{"@deepseek-ai/dsh":"workspace:*","@deepseek-ai/dsh-client-ui-layout":"workspace:*","@deepseek-ai/dsh-client-ui-sidebar":"workspace:*","@deepseek-ai/dsh-client-ui-conversation":"workspace:*","@deepseek-ai/dsh-client-ui-settings-plugins":"workspace:*"}'
+
 # 通用：node 侧 esm 插件（cwd 固定 $pkg）
 function Build-NodePlugin($name, $entry) {
     $dir = "$nm\$name"
     New-Item -ItemType Directory -Force -Path "$dir\lib" | Out-Null
-    [IO.File]::WriteAllText("$dir\package.json", "{`"name`":`"$name`",`"version`":`"1.0.0`",`"type`":`"module`",`"main`":`"lib/index.js`"}")
+    [IO.File]::WriteAllText("$dir\package.json", "{`"name`":`"$name`",`"version`":`"1.0.0`",`"type`":`"module`",`"main`":`"lib/index.js`",`"peerDependencies`":$DSHT_PEER}")
     Push-Location $pkg
     $ErrorActionPreference = 'Continue'
     & $node $esb $entry --bundle --format=esm --platform=node --outfile="$dir\lib\index.js" --log-level=warning 2>&1 | Out-Null
@@ -112,7 +147,7 @@ $ErrorActionPreference = 'Stop'
 Pop-Location
 if ($rc -ne 0) { throw 'build-rp-ui.mjs 失败' }
 Copy-Item "$pkg\src\dsht-rp-ui\lib\client.js" "$rp\lib\client.js" -Force
-[IO.File]::WriteAllText("$rp\package.json", '{"name":"dsht-rp-plugin","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"dsh":{"bundle":{"patch":"./cordis.patch.yml"},"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-sidebar","@deepseek-ai/dsh-client-ui-layout","@deepseek-ai/dsh-client-ui-conversation","@deepseek-ai/dsh-client-ui-settings-plugins"]}}}')
+[IO.File]::WriteAllText("$rp\package.json", '{"name":"dsht-rp-plugin","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"peerDependencies":' + $DSHT_PEER + ',"dsh":{"bundle":{"patch":"./cordis.patch.yml"},"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-sidebar","@deepseek-ai/dsh-client-ui-layout","@deepseek-ai/dsh-client-ui-conversation","@deepseek-ai/dsh-client-ui-settings-plugins"]}}}')
 Say ("  OK client.js {0} KB 已并入" -f [math]::Round((Get-Item "$rp\lib\client.js").Length / 1KB, 1))
 # 【T-88】bundle 层文件随包分发（`dsh plugin add` 靠它把本包补进 dsh.profile.bundles）
 # patch 源文件随主插件源码（src/dsh-plugin/cordis.patch.yml；T-87 的 src/dsht-rp/ 已退役）
@@ -132,7 +167,7 @@ $r10Ids = @{
 foreach ($r10 in $r10Ids.Keys) {
     $dir = "$nm\$r10"
     $id = $r10Ids[$r10]
-    [IO.File]::WriteAllText("$dir\package.json", "{`"name`":`"$r10`",`"version`":`"1.0.0`",`"type`":`"module`",`"main`":`"lib/index.js`",`"dsh`":{`"bundle`":{`"patch`":`"./cordis.patch.yml`"}}}")
+    [IO.File]::WriteAllText("$dir\package.json", "{`"name`":`"$r10`",`"version`":`"1.0.0`",`"type`":`"module`",`"main`":`"lib/index.js`",`"peerDependencies`":$DSHT_PEER,`"dsh`":{`"bundle`":{`"patch`":`"./cordis.patch.yml`"}}}")
     [IO.File]::WriteAllText("$dir\cordis.patch.yml", "- insert:`n    - id: $id`n      name: '$r10'`n")
 }
 
@@ -149,7 +184,7 @@ $mb = "$nm\dsht-plugin-mobile"
 New-Item -ItemType Directory -Force -Path "$mb\lib" | Out-Null
 Copy-Item "$pkg\src\dsht-plugin-mobile\lib\index.js"  "$mb\lib\index.js" -Force
 Copy-Item "$pkg\src\dsht-plugin-mobile\lib\client.js" "$mb\lib\client.js" -Force
-[IO.File]::WriteAllText("$mb\package.json", '{"name":"dsht-plugin-mobile","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"dsh":{"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-layout"]}}}')
+[IO.File]::WriteAllText("$mb\package.json", '{"name":"dsht-plugin-mobile","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"peerDependencies":' + $DSHT_PEER + ',"dsh":{"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-layout"]}}}')
 Say ("  OK dsht-plugin-mobile（client {0} KB）" -f [math]::Round((Get-Item "$mb\lib\client.js").Length / 1KB, 1))
 
 # 8. app.js（导入引擎）—— 必须在 assets 同步之后

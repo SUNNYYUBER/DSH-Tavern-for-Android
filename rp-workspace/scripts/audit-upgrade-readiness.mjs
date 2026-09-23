@@ -116,6 +116,94 @@ export const realReadDir = (p) => {
 export const realReadFile = (p) => { try { return fs.readFileSync(p, 'utf8') } catch { return null } }
 
 /**
+ * 【C.1 装配层】官方 slot **改名映射表** —— 我方 inject 的旧名 ⇒ 官方新名。
+ *
+ * ## 为什么需要「映射」而不是「改名就完了」
+ * `slots.inject(name, cb)` 的语义是「**等该 slot 的声明出现再注册**」。
+ * 官方改槽位名后，旧名的声明**永不出现** ⇒ 回调**永不执行** ⇒
+ * **不报错、不抛异常，功能整块消失**（附录 C.1 的静默失效族）。
+ * ⇒ 判据必须同时认**两种名**：旧名（我方尚未迁移时）与新名（官方当下）。
+ *
+ * ## 本表的来源（不是猜的）
+ * 2026-09-23 实测：`settings.plugin.item` 在 0.1.7-rc.1 的官方 SlotMap 里**已不存在**，
+ * 取而代之的是 `settings.pluginInventory` / `settings.plugins.tab`（探针 `probe-017rc.mjs` 实测）。
+ *
+ * ★ 认旧名**不是**「放行」——它是「**已知的待迁移项**」：调用方会把「命中旧名」
+ *   单独报成 `migrate` 状态（出声要求迁移），而不是混进 OK（P-30：不许让代理量与事实脱钩）。
+ */
+export const SLOT_RENAMES = {
+  'settings.plugin.item': 'settings.pluginInventory',
+}
+
+/**
+ * slot 名对账（支持**改名映射**）。
+ *
+ * @param {Set<string>} official 官方 SlotMap 键集
+ * @param {string[]} wanted 我方 inject 的 slot 名
+ * @returns {{ hit:string[], migrated:Array<{from:string,to:string}>, missing:string[] }}
+ *   hit      = 官方仍有该名（OK）
+ *   migrated = 官方已改名，而新名在（待迁移；出声）
+ *   missing  = 既无原名、也无映射后的新名（**真失效** ⇒ BLOCK）
+ */
+export function classifySlots (official, wanted) {
+  const hit = []
+  const migrated = []
+  const missing = []
+  for (const w of wanted) {
+    if (official.has(w)) { hit.push(w); continue }
+    const to = SLOT_RENAMES[w]
+    if (to !== undefined && official.has(to)) { migrated.push({ from: w, to }); continue }
+    missing.push(w)
+  }
+  return { hit, migrated, missing }
+}
+
+/**
+ * 【E.1 装配层】插件 `peerDependencies` 声明检查（0.1.7-rc.1 的「插件版本号机制」）。
+ *
+ * ## 判据（守什么）
+ * 0.1.7-rc.1 的 `dsh-app-boot.evaluatePluginCompatibility()` 会在
+ * **`dsh plugin add` / 带 spec 的 `install`**（pnpm 运行**前**）检查插件 manifest 的
+ * `peerDependencies`：
+ *   · **未声明 ⇒ 直接放行**（我方此前正是这种「恰好通过」）；
+ *   · `workspace:*` / `workspace:^` / `workspace:~` ⇒ 替换成当前 runtime 版本 ⇒ **永远满足**；
+ *   · 写死的 range 参与 semver 匹配 ⇒ 不满足即 `incompatible-version` **拒绝安装**。
+ *
+ * ★ **实测（`tmp/probe-peer-effect.mjs` 喂官方真函数）**：
+ *   `^0.1.5` ⇒ 放行 · **`^0.1.7` ⇒ 拒绝**（`0.1.7-rc.1` 是预发布，不满足 `^` 正式版语义）·
+ *   `^0.2.0` ⇒ 拒绝 ⇒ **任何写死 range 都有坑，`workspace:*` 是唯一稳妥写法**。
+ *
+ * ## 为什么「未声明」也算 FAIL（而不是放行）
+ * 未声明确实不会被拒，但：① 语义缺失（我方插件**确实**强依赖官方 client-ui 包，
+ * 官方**帮助不了我们** —— 升级时不会提示不兼容）；② 一旦有人「顺手」补个 `^0.1.7`
+ * （最自然的写法）⇒ 插件**在安装期被拒**，表现为「装不上」而非「跑不起来」。
+ * ⇒ 判据要求**显式声明**，且**值必须是 `workspace:` 形态**。
+ *
+ * @param {Array<{name:string, peer:(Record<string,string>|null)}>} plugins
+ * @returns {{ ok:string[], badPeerVal:string[], notWorkspace:string[], missingPeer:string[] }}
+ */
+export function classifyPluginPeers (plugins) {
+  const ok = []
+  const badPeerVal = []      // 声明了 peer，但含**写死 range** 的官方包（有被拒风险）
+  const notWorkspace = []    // 声明了 peer，但**用了非 workspace 形态**
+  const missingPeer = []     // 完全未声明 peerDependencies
+  const OFFICIAL = (n) => n === '@deepseek-ai/dsh' || n.startsWith('@deepseek-ai/dsh-')
+  for (const p of plugins) {
+    if (p.peer === null) { missingPeer.push(p.name); continue }
+    const officialPeers = Object.entries(p.peer).filter(([k]) => OFFICIAL(k))
+    if (officialPeers.length === 0) { missingPeer.push(p.name); continue }
+    const hard = officialPeers.filter(([, v]) => !/^workspace:/.test(String(v)))
+    if (hard.length > 0) {
+      notWorkspace.push(`${p.name}(${hard.map(([k, v]) => `${k}@${v}`).join(', ')})`)
+      badPeerVal.push(p.name)
+      continue
+    }
+    ok.push(p.name)
+  }
+  return { ok, badPeerVal, notWorkspace, missingPeer }
+}
+
+/**
  * 【C.1/B.5 装配层】slot 名对账。
  * 我方 `ctx.slots.inject('<name>')` 的每个名字，必须在官方 SlotMap 键名集里存在。
  *
@@ -283,6 +371,54 @@ if (process.argv.includes('--selftest')) {
     ok(r7.pI_x6G.status === 'UNKNOWN', '负控3 读不到官方产物 ⇒ UNKNOWN（P-17：区分测不出与否证）')
   }
 
+  // ---- C.1 slot 改名映射（2026-09-23 新增）----
+  {
+    // 正控 4：旧名不在、映射后的新名在 ⇒ 必须归 migrated（**不是** missing，也**不是** hit）
+    const official = new Set(['settings.pluginInventory', 'conversation.chat.node'])
+    const s1 = classifySlots(official, ['settings.plugin.item', 'conversation.chat.node'])
+    ok(s1.migrated.length === 1 && s1.migrated[0].from === 'settings.plugin.item' && s1.migrated[0].to === 'settings.pluginInventory'
+      && s1.hit.length === 1 && s1.missing.length === 0,
+      `正控4 slot 改名归 migrated（hit=${s1.hit.length} migrated=${s1.migrated.length} missing=${s1.missing.length}）`)
+
+    // ★ 杠杆：官方**两个名都没有** ⇒ 必须归 missing（否则映射表会把真失效洗成「待迁移」= 假绿）
+    const s2 = classifySlots(new Set(['unrelated.slot']), ['settings.plugin.item'])
+    ok(s2.missing.length === 1 && s2.migrated.length === 0,
+      '★杠杆 映射表不得把「新名也不在」洗成待迁移（必须 missing ⇒ BLOCK）')
+
+    // 负控 4：名字本来就在 ⇒ 归 hit，不得误判
+    const s3 = classifySlots(new Set(['a.b']), ['a.b'])
+    ok(s3.hit.length === 1 && s3.migrated.length === 0 && s3.missing.length === 0, '负控4 原名在 ⇒ hit（不误判）')
+  }
+
+  // ---- E.1 插件 peer 声明（2026-09-23 新增）----
+  {
+    const WS = { '@deepseek-ai/dsh': 'workspace:*' }
+    // 正控 5：全部用 workspace: ⇒ ok
+    const p1 = classifyPluginPeers([
+      { name: 'p1', peer: WS },
+      { name: 'p2', peer: { '@deepseek-ai/dsh-client-ui-layout': 'workspace:*' } },
+    ])
+    ok(p1.ok.length === 2 && p1.missingPeer.length === 0 && p1.notWorkspace.length === 0,
+      `正控5 workspace: 形态 ⇒ 全 ok（${p1.ok.length}）`)
+
+    // ★ 杠杆（真实坑）：写死 `^0.1.7` ⇒ 必须被点名（实测该范围会被官方拒）
+    const p2 = classifyPluginPeers([{ name: 'p3', peer: { '@deepseek-ai/dsh': '^0.1.7' } }])
+    ok(p2.notWorkspace.length === 1 && p2.ok.length === 0,
+      '★杠杆 写死 ^0.1.7 ⇒ 点名 notWorkspace（实测该 range 会被官方拒）')
+
+    // 负控 5：完全未声明 ⇒ missingPeer
+    const p3 = classifyPluginPeers([{ name: 'p4', peer: null }])
+    ok(p3.missingPeer.length === 1 && p3.ok.length === 0, '负控5 未声明 peer ⇒ missingPeer')
+
+    // 负控 6：peer 里只有**非官方**包 ⇒ 官方不检 ⇒ 仍算「未声明官方 peer」
+    const p4 = classifyPluginPeers([{ name: 'p5', peer: { 'third-party': '^1.0.0' } }])
+    ok(p4.missingPeer.length === 1, '负控6 只有非官方 peer ⇒ missingPeer（官方不检非 dsh* 包）')
+
+    // 零控：空清单 ⇒ 四组全空（调用方据此判「没有判据力」）
+    const p5 = classifyPluginPeers([])
+    ok(p5.ok.length === 0 && p5.missingPeer.length === 0, '零控 空清单 ⇒ 全空（不冒充通过）')
+  }
+
   console.log(`\n[selftest] ${pass}/${pass + fail.length} PASS`)
   if (fail.length) { console.log('失败项：' + fail.join('；')); process.exit(3) }
   process.exit(0)
@@ -367,6 +503,12 @@ const run = (file, args = []) => {
 }
 
 // ---- ⑤ 装配面 ----
+//
+// 【2026-09-23 阶段 A 扩面】原 ⑤ 只查「slot 名 ⊆ 官方 SlotMap」+「external 包在不在」。
+// 新增两面（都是**静默失效族**，且都由 0.1.7 实测触发）：
+//   · **slot 改名映射**：官方把 `settings.plugin.item` 换成 `settings.pluginInventory`，
+//     而 `slots.inject` 语义是「等声明出现再注册」⇒ 不报错、功能整块消失；
+//   · **插件 peer 声明**：0.1.7-rc.1 的插件版本号机制 ⇒ 见 `classifyPluginPeers` 头注。
 {
   // 我方 inject 的 slot 名（真值来源 = 我方源码，不硬编码在判据里以免两处漂移）
   const uiIdx = path.join(WS, 'packages', 'src', 'dsht-rp-ui', 'src', 'client', 'index.tsx')
@@ -379,16 +521,52 @@ const run = (file, args = []) => {
   const externals = ['dsh-client-ui-sidebar', 'dsh-client-ui-layout', 'dsh-client-ui-conversation', 'dsh-client-ui-settings-plugins', 'dsh-base', 'dsh-web-app']
   const missPkg = externals.filter(p => !fs.existsSync(path.join(NM, p)))
 
-  if (wanted.length === 0) rec('⑤ 装配面（slot 名 + external 包名 + 契约）', 'UNKNOWN', '读不到我方 slots.inject 清单 ⇒ 测不出（不得当通过）')
+  // ---- 我方插件的 peerDependencies（从**产物**读；产物不存在 ⇒ 该包不计）----
+  const PLUGIN_NAMES = ['dsht-rp-plugin', 'dsht-plugin-mvu', 'dsht-plugin-tavern-helper',
+    'dsht-plugin-prompt-template', 'dsht-plugin-memory', 'dsht-plugin-device',
+    'dsht-plugin-mobile', 'dsht-preflight', 'dsht-plugin-undo']
+  const peerProbe = []
+  for (const n of PLUGIN_NAMES) {
+    const pj = path.join(RT, 'node_modules', n, 'package.json')
+    const txt = realReadFile(pj)
+    if (txt === null) continue          // 产物不存在（如 SkipInstall 首次构建）⇒ 不臆断
+    let j = null
+    try { j = JSON.parse(txt) } catch { continue }
+    peerProbe.push({ name: n, peer: Object.hasOwn(j, 'peerDependencies') ? j.peerDependencies : null })
+  }
+  const peers = classifyPluginPeers(peerProbe)
+
+  if (wanted.length === 0) rec('⑤ 装配面（slot 名 + external + 插件 peer）', 'UNKNOWN', '读不到我方 slots.inject 清单 ⇒ 测不出（不得当通过）')
   else {
     const sl = collectSlotNames(NM, wanted, realReadFile, realReadDir)
-    if (sl.official.size === 0) rec('⑤ 装配面（slot 名 + external 包名 + 契约）', 'UNKNOWN', '抽不到官方 SlotMap ⇒ 测不出')
-    else if (sl.missing.length || missPkg.length) {
+    if (sl.official.size === 0) rec('⑤ 装配面（slot 名 + external + 插件 peer）', 'UNKNOWN', '抽不到官方 SlotMap ⇒ 测不出')
+    else {
+      const cls = classifySlots(sl.official, wanted)
       const parts = []
-      if (sl.missing.length) parts.push(`★ 我方引用了官方**不存在**的 slot：${sl.missing.join(', ')} ⇒ 该功能会**静默消失**`)
-      if (missPkg.length) parts.push(`★ external 包名缺失：${missPkg.join(', ')}`)
-      rec('⑤ 装配面（slot 名 + external 包名 + 契约）', 'BLOCK', parts.join(' ｜ '))
-    } else rec('⑤ 装配面（slot 名 + external 包名 + 契约）', 'OK', `${sl.hit.length} 个 slot 全部存在（官方 SlotMap ${sl.official.size} 键）· external 6 包齐备`)
+      let status = 'OK'
+      if (cls.missing.length) {
+        status = 'BLOCK'
+        parts.push(`★ 我方引用了官方**不存在**的 slot（且无改名映射）：${cls.missing.join(', ')} ⇒ 该功能会**静默消失**`)
+      }
+      if (missPkg.length) { status = 'BLOCK'; parts.push(`★ external 包名缺失：${missPkg.join(', ')}`) }
+      // 插件 peer：missingPeer / notWorkspace 都算 BLOCK（理由见 classifyPluginPeers 头注）
+      if (peers.missingPeer.length || peers.notWorkspace.length) {
+        status = 'BLOCK'
+        if (peers.missingPeer.length) parts.push(`★ 插件未声明 peerDependencies：${peers.missingPeer.join(', ')}`)
+        if (peers.notWorkspace.length) parts.push(`★ 插件 peer 用了非 workspace 形态（有被 0.1.7 插件版本号机制**拒绝安装**的风险）：${peers.notWorkspace.join(', ')}`)
+      }
+      if (peerProbe.length === 0) parts.push('（ⓘ 插件产物不存在 ⇒ peer 面**无判据力**，守 P-17 不当通过）')
+
+      if (status === 'OK') {
+        const migNote = cls.migrated.length
+          ? `　★ 待迁移（官方已改名，我已认新名）：${cls.migrated.map(x => `${x.from}→${x.to}`).join(', ')}`
+          : ''
+        rec('⑤ 装配面（slot 名 + external + 插件 peer）', 'OK',
+          `${cls.hit.length}/${wanted.length} 个 slot 命中（官方 SlotMap ${sl.official.size} 键）· external 6 包齐备 · 插件 peer ${peers.ok.length}/${peerProbe.length} 合规${migNote}`)
+      } else {
+        rec('⑤ 装配面（slot 名 + external + 插件 peer）', 'BLOCK', parts.join(' ｜ '))
+      }
+    }
   }
 }
 

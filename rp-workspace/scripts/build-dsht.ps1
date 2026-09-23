@@ -1569,9 +1569,31 @@ if (Test-Path $basePatch) {
 Step 4.7 'dsht-rp-plugin 打包进 runtime node_modules（RP 世界书触发插件）'
 # Cordis 插件自包含 bundle（trigger.ts 内联、零 @deepseek-ai 运行时依赖）；
 # profile patch 由 NodeService 启动时幂等写入（insert dsht-rp-plugin 行）
+#
+# ============================================================================
+# 【2026-09-23 DSH 升级轮 · 阶段 A】插件 `peerDependencies`（**与 rebuild-plugins.ps1 同源同值**）
+#
+# ## 为什么（0.1.7-rc.1 新引入的「插件版本号机制」）
+# `dsh-app-boot` 的 `evaluatePluginCompatibility(manifest)` 在 `dsh plugin add` /
+# 带 spec 的 `install`（pnpm 运行**前**）检查插件 manifest 的 `peerDependencies`：
+#   · 只检 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*`；
+#   · **未声明 ⇒ 直接放行**（我方此前正是这种「恰好通过」）；
+#   · `workspace:*` ⇒ 替换成当前 runtime 版本 ⇒ 永远满足；
+#   · 写死的 range 参与 semver 匹配 ⇒ 不满足即 `incompatible-version` **拒绝安装**。
+#
+# ## ★ 实测（`rp-workspace/tmp/probe-peer-effect.mjs`，喂官方真函数）
+#   不声明 ⇒ ✅ · `workspace:*` ⇒ ✅ · `^0.1.5` ⇒ ✅（同主版本）
+#   ★ `^0.1.7` ⇒ ⛔ **拒绝**（`0.1.7-rc.1` 是预发布，不满足 `^` 正式版语义）
+#   ⇒ 任何写死 range 都有风险，**`workspace:*` 是唯一稳妥写法**。
+#
+# ## ★ 单源纪律（P-1）
+# 本变量必须与 `rebuild-plugins.ps1` 的 `$DSHT_PEER` **逐字同值**，
+# 并由 `audit-plugin-build-parity.mjs` 守「两条构建路径等价」。
+# ============================================================================
+$DSHT_PEER = '{"@deepseek-ai/dsh":"workspace:*","@deepseek-ai/dsh-client-ui-layout":"workspace:*","@deepseek-ai/dsh-client-ui-sidebar":"workspace:*","@deepseek-ai/dsh-client-ui-conversation":"workspace:*","@deepseek-ai/dsh-client-ui-settings-plugins":"workspace:*}'
 $pluginDir = "$runtimeDst\node_modules\dsht-rp-plugin"
 New-Item -ItemType Directory -Force -Path "$pluginDir\lib" | Out-Null
-[IO.File]::WriteAllText("$pluginDir\package.json", '{"name":"dsht-rp-plugin","version":"1.0.0","type":"module","main":"lib/index.js"}')
+[IO.File]::WriteAllText("$pluginDir\package.json", '{"name":"dsht-rp-plugin","version":"1.0.0","type":"module","main":"lib/index.js","peerDependencies":' + $DSHT_PEER + '}')
 Push-Location "$ws\packages"
 # PS5.1 坑：EAP=Stop 下原生命令（npx/gradle）stderr 经 2>&1 会被误判为终止错误——临时降级
 $ErrorActionPreference = 'Continue'
@@ -1612,7 +1634,7 @@ foreach ($r10 in $r10Plugins) {
     $r10Dir = "$runtimeDst\node_modules\$r10"
     New-Item -ItemType Directory -Force -Path "$r10Dir\lib" | Out-Null
     # 【T-88】dsh.bundle.patch 声明 + 各自 insert 行（PC 端 `dsh plugin add` 自动进 profile 层栈）
-    [IO.File]::WriteAllText("$r10Dir\package.json", "{`"name`":`"$r10`",`"version`":`"1.0.0`",`"type`":`"module`",`"main`":`"lib/index.js`",`"dsh`":{`"bundle`":{`"patch`":`"./cordis.patch.yml`"}}}")
+    [IO.File]::WriteAllText("$r10Dir\package.json", "{`"name`":`"$r10`",`"version`":`"1.0.0`",`"type`":`"module`",`"main`":`"lib/index.js`",`"peerDependencies`":$DSHT_PEER,`"dsh`":{`"bundle`":{`"patch`":`"./cordis.patch.yml`"}}}")
     [IO.File]::WriteAllText("$r10Dir\cordis.patch.yml", "- insert:`n    - id: $($r10Ids[$r10])`n      name: '$r10'`n")
     $ErrorActionPreference = 'Continue'
     & npx esbuild "src/$r10/index.ts" --bundle --format=esm --platform=node --outfile="$r10Dir\lib\index.js" 2>&1 | Out-Null
@@ -1655,7 +1677,7 @@ Copy-Item "$ws\packages\src\dsht-rp-ui\lib\client.js" "$rpPluginDir\lib\client.j
 # external (0.1.2 pitfall #15): strict slot declaration checks; the external dependency edges
 # force official client modules (sidebar/layout/conversation/settings-plugins) to apply FIRST,
 # so our immediate slots.register calls find their slots already declared.
-[IO.File]::WriteAllText("$rpPluginDir\package.json", '{"name":"dsht-rp-plugin","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"dsh":{"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-sidebar","@deepseek-ai/dsh-client-ui-layout","@deepseek-ai/dsh-client-ui-conversation","@deepseek-ai/dsh-client-ui-settings-plugins"]}}}')
+[IO.File]::WriteAllText("$rpPluginDir\package.json", '{"name":"dsht-rp-plugin","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"peerDependencies":' + $DSHT_PEER + ',"dsh":{"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-sidebar","@deepseek-ai/dsh-client-ui-layout","@deepseek-ai/dsh-client-ui-conversation","@deepseek-ai/dsh-client-ui-settings-plugins"]}}}')
 # 旧布局清理：runtime 里不再产独立 dsht-rp-ui 包
 if (Test-Path "$runtimeDst\node_modules\dsht-rp-ui") { Remove-Item "$runtimeDst\node_modules\dsht-rp-ui" -Recurse -Force }
 $rpUiKB = [math]::Round((Get-Item "$rpPluginDir\lib\client.js").Length / 1KB, 1)
@@ -1673,7 +1695,7 @@ $mobileDir = "$runtimeDst\node_modules\dsht-plugin-mobile"
 New-Item -ItemType Directory -Force -Path "$mobileDir\lib" | Out-Null
 Copy-Item "$ws\packages\src\dsht-plugin-mobile\lib\index.js" "$mobileDir\lib\index.js" -Force
 Copy-Item "$ws\packages\src\dsht-plugin-mobile\lib\client.js" "$mobileDir\lib\client.js" -Force
-[IO.File]::WriteAllText("$mobileDir\package.json", '{"name":"dsht-plugin-mobile","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"dsh":{"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-layout"]}}}')
+[IO.File]::WriteAllText("$mobileDir\package.json", '{"name":"dsht-plugin-mobile","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"peerDependencies":' + $DSHT_PEER + ',"dsh":{"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-layout"]}}}')
 $mobileKB = [math]::Round((Get-Item "$mobileDir\lib\client.js").Length / 1KB, 1)
 Write-Host "  dsht-plugin-mobile：client.js $mobileKB KB 已就位（node_modules/dsht-plugin-mobile）"
 

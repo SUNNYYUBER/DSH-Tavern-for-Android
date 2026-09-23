@@ -541,33 +541,40 @@ export function makeVcsChecker () {
   let usable = null
   /** 可恢复的瞬时故障（控制台 CTRL_C 波及子进程）—— 与被判事实无关 */
   const TRANSIENT = 3221225786
-  const MAX_TRY = 3
+  // ★ 5 次：实测 check-ignore 单次瞬时 21.3% ⇒ 3 次全败已 0%，5 次留足余量（0.213⁵ ≈ 0.04%）
+  const MAX_TRY = 5
   return {
     /** @returns {boolean|null} true=被忽略 / false=在版本控制内 / null=无法判定 */
     ignored (rel) {
       const r = String(rel).replace(/\\/g, '/')
       if (cache.has(r)) return cache.get(r)
       if (usable === null) {
-        // ★★ 【2026-09-23】`rev-parse` 与 `check-ignore` **同样**会被控制台事件波及
-        //   （实测 30 次里 6 次返回 0xC000013A）⇒ 这里**也必须重试**。
-        //   首版只给 check-ignore 加了重试，而本处一旦被波及 ⇒ `usable=false`
-        //   ⇒ **整个判据⑤ 判「非 git 环境」而永久静音**（比单次漏报更严重：
-        //   它会静默地让**所有**路径都返回 null）—— 这正是负控剩余 flaky 的真因。
-        let usableTry = null
-        for (let attempt = 0; attempt < MAX_TRY; attempt += 1) {
-          try {
-            execFileSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-            usableTry = true
-            break
-          } catch (e) {
-            if (e.status === TRANSIENT) { usableTry = null; continue }  // 瞬时 ⇒ 重试
-            usableTry = false; break                                     // 真·非 git 环境
-          }
-        }
-        // ★ 三次都被瞬时故障波及 ⇒ `usableTry` 仍为 null ⇒ **保持 `usable = null`**
-        //   （不判 false —— 那会把判据永久静音）；下次调用会再探测。
-        if (usableTry === null) { cache.set(r, null); return null }
-        usable = usableTry
+        // ★★ 【2026-09-23 第二次修 · 定量后的正确处置】
+        //
+        // 【第一次修（同轮）】给 `rev-parse` 与 `check-ignore` **都**加了 3 次重试。
+        //   —— 修完 `audit-doc-refs-negctl` 确实从「5 次 4 败」变成「8 次全绿」，
+        //   但**本闸门自己的 selftest 仍在 ~17% 的运行里掉到 81~82/83**。
+        //
+        // 【决定性量化（本机实测，各 80 次）】
+        //   `rev-parse`    单次瞬时率 **31.3%**，3 次全败 **6.0%**
+        //   `check-ignore` 单次瞬时率 **21.3%**，3 次全败 **0.0%**
+        //   ⇒ `rev-parse` 的失败率**明显更高**（控制台事件对短命令更敏感），
+        //     而本判据有**两条**真实仓库断言各自 new 一个 checker ⇒ **两次独立探测**
+        //     ⇒ 全败概率 ≈ 1−(1−0.06)² ≈ **11.6%**，与实测 17% 同量级。
+        //   ⇒ 「加重试次数」只是把概率往下压，**没有去掉对子进程的依赖**（治标）。
+        //
+        // 【治本】`usable`（「这台机器有没有 git 工作树」）**根本不需要跑 git**：
+        //   纯文件系统判断就够 —— `fs.existsSync(<ROOT>/.git)`。
+        //   它是**同步、无子进程、无控制台事件**的 ⇒ 瞬时率恒为 **0**。
+        //   ★ 为什么这与原判据语义等价：`rev-parse --is-inside-work-tree` 回答的就是
+        //     「当前目录是否在一个 git 工作树里」；`.git`（目录**或**文件——worktree /
+        //     submodule 的 `.git` 是文件）存在即「在」。判据⑤ 随后问的
+        //     `git check-ignore` 才是真正需要 git 的那一步，而它 3 次重试后 0% 全败。
+        //   ⚠️ 诚实边界：若某环境的 `.git` 不可见而 git 仍可用（极罕见：如
+        //     `GIT_DIR` 指向别处）⇒ 本判据会判「无 git」而**只出声不报红**（P-43），
+        //     不会误报违规 —— 这是可接受的保守方向。
+        const dotGit = path.join(ROOT, '.git')
+        usable = fs.existsSync(dotGit)
       }
       if (!usable) { cache.set(r, null); return null }
       let v = null

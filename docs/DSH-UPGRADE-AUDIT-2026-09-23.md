@@ -1663,6 +1663,29 @@ function evaluatePluginCompatibility(manifest, exemptions = {}, runtimeVersion =
 （官方明确：该形态会被替换成当前 runtime 版本 ⇒ **永远满足**，且语义正确地声明了依赖）。
 并加判据（见 E.7）。
 
+**★★ 实测验证（2026-09-23，`rp-workspace/tmp/probe-peer-effect.mjs`）**
+—— **源码读出的结论必须用运行结果验证**，本轮正好抓到一处我的误判：
+
+直接 import 官方 `evaluatePluginCompatibility` 并**显式传 `runtimeVersion='0.1.7-rc.1'`**：
+
+| peer range | 判定 | 说明 |
+|---|---|---|
+| （不声明 `peerDependencies`） | ✅ 放行 | 我方现状 |
+| `workspace:*` / `workspace:^` | ✅ 放行 | 被替换成当前 runtime 版本 |
+| **`^0.1.5`** | ✅ **放行** | ★ 0.1.7 ≥ 0.1.5，**同主版本 ⇒ 满足**（我原先误以为会拒） |
+| **`^0.1.7`** | ⛔ **拒绝** | ★ `0.1.7-rc.1` 是**预发布**，而 `^0.1.7` 语义要求 ≥ 正式版 ⇒ **不满足** |
+| `^0.2.0` | ⛔ 拒绝 | 主版本更高 |
+| 非 `@deepseek-ai/dsh*` 的 peer | ✅ 忽略 | 只检官方包 |
+
+> **★ 由此得到两条比"读源码"更可靠的结论**：
+> 1. **`runtimeVersion` 的来源是 `dsh-app-boot` 自己的 `package.json` version**
+>    （`getDshRuntimeVersion()` 读 `../package.json`），不是顶层 `dsh` 的版本 ——
+>    两者在官方树里通常同值，但**判据应锚在 app-boot 上**；
+> 2. **`workspace:*` 是唯一稳妥写法**：写死任何具体 range 都有风险，
+>    而 **`^0.1.7` 这种"看起来最对"的写法反而会被拒**（预发布不满足 `^` 正式版语义）
+>    ⇒ 如果将来有人"顺手"把 peer 写成 `^0.1.7`，插件会**在安装期被拒**。
+>    **这正是阶段 A 必须做的理由**（不是"补个声明更好看"，而是"防一个具体的坑"）。
+
 ### E.2 四条硬阻断（A.9.2 的结论在 rc.1 上**全部复现**）
 
 | # | 阻断 | 性质 | 本计划对应阶段 |

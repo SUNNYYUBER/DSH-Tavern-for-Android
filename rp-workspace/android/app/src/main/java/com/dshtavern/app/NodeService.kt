@@ -450,7 +450,19 @@ class NodeService : Service() {
             //    + lib/client.js（浏览器 wire 契约，dsh.client 声明进 boot graph）
             // 0.1.2 pitfall #15: strict slot declaration checks; external edges force official
             // client modules to apply first (keep in sync with build-dsht.ps1).
-            val rpMergedPkgJson = "{\"name\":\"dsht-rp-plugin\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"exports\":{\".\":\"./lib/index.js\",\"./client\":\"./lib/client.js\",\"./package.json\":\"./package.json\"},\"dsh\":{\"client\":{\"platform\":\"web\",\"external\":[\"@deepseek-ai/dsh-client-ui-sidebar\",\"@deepseek-ai/dsh-client-ui-layout\",\"@deepseek-ai/dsh-client-ui-conversation\",\"@deepseek-ai/dsh-client-ui-settings-plugins\"]}}}"
+            //
+            // 【2026-09-23 DSH 升级轮 · 阶段 A】`peerDependencies`（0.1.7-rc.1 的插件版本号机制）
+            //   `dsh-app-boot.evaluatePluginCompatibility()` 在 `dsh plugin add` / 带 spec 的
+            //   `install`（pnpm 运行**前**）检查插件 manifest：只检 `@deepseek-ai/dsh` 与
+            //   `@deepseek-ai/dsh-*` 的 peer；**未声明 ⇒ 放行**；`workspace:*` ⇒ 替换成当前
+            //   runtime 版本 ⇒ 永远满足；写死 range ⇒ 不满足即 `incompatible-version` **拒绝安装**。
+            //   ★ 实测（tmp/probe-peer-effect.mjs 喂官方真函数）：`^0.1.5` 放行，而
+            //     **`^0.1.7` 反而被拒**（`0.1.7-rc.1` 是预发布，不满足 `^` 正式版语义）
+            //     ⇒ 任何写死 range 都有坑，`workspace:*` 是唯一稳妥写法。
+            //   ★ 本值必须与 build-dsht.ps1 / rebuild-plugins.ps1 的 `$DSHT_PEER` **逐字同值**
+            //     （P-1 单源 + 防两侧漂移；由 audit-nodeservice-deploy.mjs 守）。
+            val dshtPeer = "{\"@deepseek-ai/dsh\":\"workspace:*\",\"@deepseek-ai/dsh-client-ui-layout\":\"workspace:*\",\"@deepseek-ai/dsh-client-ui-sidebar\":\"workspace:*\",\"@deepseek-ai/dsh-client-ui-conversation\":\"workspace:*\",\"@deepseek-ai/dsh-client-ui-settings-plugins\":\"workspace:*\"}"
+            val rpMergedPkgJson = "{\"name\":\"dsht-rp-plugin\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"exports\":{\".\":\"./lib/index.js\",\"./client\":\"./lib/client.js\",\"./package.json\":\"./package.json\"},\"peerDependencies\":$dshtPeer,\"dsh\":{\"client\":{\"platform\":\"web\",\"external\":[\"@deepseek-ai/dsh-client-ui-sidebar\",\"@deepseek-ai/dsh-client-ui-layout\",\"@deepseek-ai/dsh-client-ui-conversation\",\"@deepseek-ai/dsh-client-ui-settings-plugins\"]}}}"
             copyPackage(webProfile, "dsht-rp-plugin", "lib/index.js", rpMergedPkgJson)
             copyPackage(webProfile, "dsht-rp-plugin", "lib/client.js", rpMergedPkgJson)
             // T2.11：dsht-rp-plugin 的 assets（嵌入导入中心 iframe 页面 + 引擎 bundle）随插件拷贝——
@@ -476,15 +488,15 @@ class NodeService : Service() {
             //   的姊妹判据，NodeService 侧由 tests 的 device 部署契约用例守）。
             for (pkg in listOf("dsht-plugin-mvu", "dsht-plugin-tavern-helper", "dsht-plugin-prompt-template", "dsht-plugin-memory", "dsht-plugin-device")) {
                 copyPackage(webProfile, pkg, "lib/index.js",
-                    "{\"name\":\"$pkg\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"dsh\":{\"bundle\":{\"patch\":\"./cordis.patch.yml\"}}}")
+                    "{\"name\":\"$pkg\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"peerDependencies\":$dshtPeer,\"dsh\":{\"bundle\":{\"patch\":\"./cordis.patch.yml\"}}}")
             }
             // 【T-88 补】prompt-template 的 EJS worker 必须随包拷贝（workerPath = 与 lib/index.js 同目录；
             // 缺失时 Worker 构造失败 ⇒ **静默**退化为同步渲染——此前总包/独立包两种形态下都漏拷）
             copyPackage(webProfile, "dsht-plugin-prompt-template", "lib/ejs-worker.js",
-                "{\"name\":\"dsht-plugin-prompt-template\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"dsh\":{\"bundle\":{\"patch\":\"./cordis.patch.yml\"}}}")
+                "{\"name\":\"dsht-plugin-prompt-template\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"peerDependencies\":$dshtPeer,\"dsh\":{\"bundle\":{\"patch\":\"./cordis.patch.yml\"}}}")
             // dsht-plugin-mobile（Step 4.77 双面形态）：patch 行在 pluginRows 里，缺拷贝会导致
             // loader 启动即崩（Cannot find package 'dsht-plugin-mobile'）
-            val mobilePkgJson = "{\"name\":\"dsht-plugin-mobile\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"exports\":{\".\":\"./lib/index.js\",\"./client\":\"./lib/client.js\",\"./package.json\":\"./package.json\"},\"dsh\":{\"client\":{\"platform\":\"web\",\"external\":[\"@deepseek-ai/dsh-client-ui-layout\"]}}}"
+            val mobilePkgJson = "{\"name\":\"dsht-plugin-mobile\",\"version\":\"1.0.0\",\"type\":\"module\",\"main\":\"lib/index.js\",\"exports\":{\".\":\"./lib/index.js\",\"./client\":\"./lib/client.js\",\"./package.json\":\"./package.json\"},\"peerDependencies\":$dshtPeer,\"dsh\":{\"client\":{\"platform\":\"web\",\"external\":[\"@deepseek-ai/dsh-client-ui-layout\"]}}}"
             copyPackage(webProfile, "dsht-plugin-mobile", "lib/index.js", mobilePkgJson)
             copyPackage(webProfile, "dsht-plugin-mobile", "lib/client.js", mobilePkgJson)
             // dsh-preset-enhance（bychv，MIT）：完整 npm 包形态（lib/ web/ agent-mode/ + 原样 package.json），
