@@ -473,20 +473,89 @@ print("\n--- P2 / P3: client-ui-chat 折叠行 + session-title 剥标签 ---")
 
 # --- P2  dsh-client-ui-chat：TurnProcessNodeView 折叠行大会话不可见修复
 _chat = os.path.join(NM, "dsh-client-ui-chat", "lib", "client.js")
-patch(
-    _chat,
-    "DSHT-CHAT-FOLD-OLDEST",
-    r'historyIncomplete: hasMore,',
-    "historyIncomplete: hasMore,\n"
-    "\t\t\t\t\t\tdshtOldestSeq: firstSeq, /* DSHT-CHAT-FOLD-OLDEST: 最老已加载节点 seq（本轮折叠放行判定） */",
-    1,
-    "P2-1a ChatNodeList 传入 firstSeq",
-)
-# --- P2-1b（自定义块：必须同时兼容「未打」与「已打但缺 marker」两种形态）
-# 背景：本补丁原先的 marker `DSHT-CHAT-FOLD-SEAT** 没有出现在替换串里 →
-# 打上之后 marker 恒为 0 → 幂等检测永久失效（--check 永远报「期望 1 处、实际 0 处」，
-# 而实际代码早就改好了）。这是**补丁框架自身的缺陷**，已另建
-# `audit-patch-markers.py` 做全量静态审计（AST 解析，防同类问题再犯）。
+#
+# ★★ 2026-09-23 DSH 升级轮 · 阶段 E：**三条锚点全部按 0.1.7 的形态重写**。
+#
+# ## 0.1.5 → 0.1.7 的形态变化（实测 dsh-client-ui-chat@0.1.7 的 lib/client.js）
+#   ① `ChatNodeSeat` 的**签名整个换了**：
+#        0.1.5：`function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess,
+#                                     historyIncomplete, compactTranscript, …`
+#        0.1.7：`const ChatNodeSeat = react.memo(function ChatNodeSeat({ nodeKey, groupPart,
+#                                     useChatNode, useChatNodeProcess, usePresentation, cwd,
+#                                     openFile, … })`
+#        ⇒ `historyIncomplete` **不再是 seat 的 prop**（该名字在 0.1.7 里 0 命中）。
+#   ② `processWindowReady` 的判据也换了：0.1.5 是
+#        `… && processPresentation.turnClosed && !historyIncomplete;`
+#      ★ 而 0.1.7 是
+#        `… && (processPresentation.turnStarted || processPresentation.turnClosed);`
+#        ⇒ **0.1.7 已经不再要求 `!historyIncomplete`**（官方自己放宽了）。
+#
+# ## ★★ 关键判断：本补丁在 0.1.7 上**仍需存在的语义只剩"放宽 ready 判据"这一半**
+#   我方原意图 =「本轮窗口完整落在**已加载**区间即可折叠，不要求全会话历史加载完」。
+#   0.1.7 的 `turnStarted || turnClosed` **仍不检查**「窗口是否在已加载区间」
+#   ⇒ 大会话（`hasMore === true`、`firstSeq > processStartSeq`）**仍会**被误折叠
+#   ⇒ 我方那一半判据**仍然必要**。
+#   ⇒ 但**传递面变了**：0.1.5 靠 `historyIncomplete` 这个 prop 传下去；
+#     0.1.7 里 seat 拿不到它 ⇒ 必须**新开一条 prop**（`dshtOldestSeq` + `dshtHasMore`）
+#     从 `ChatView` 内经 `ChatNodeList` 透传到 `ChatNodeSeat`。
+#   ★ `firstSeq`（= 最老已加载节点 seq）与 `hasMore` **在 0.1.7 的调用点已在作用域内**
+#     （`lib/client.js:5106` 与 `:5117`）⇒ 透传是纯机械改动。
+_chat_017 = False
+if os.path.isfile(_chat):
+    with open(_chat, "r", encoding="utf-8", newline="") as _f:
+        _chat_017 = "processPresentation.turnStarted || processPresentation.turnClosed" in _f.read()
+
+if _chat_017:
+    # ---- 0.1.7 形态：三条锚点全部重写 ----
+    # ①（新 a）把 firstSeq / hasMore 传进 ChatNodeList（调用点的 seat props 列表里）
+    patch(
+        _chat,
+        "DSHT-CHAT-FOLD-OLDEST",
+        r'(\t\t\t\t\t\t\t\t\t\t\tfileMentions,\r?\n\t\t\t\t\t\t\t\t\t\t\trenderSlot,)',
+        '\t\t\t\t\t\t\t\t\t\t\tfileMentions,\n'
+        '\t\t\t\t\t\t\t\t\t\t\tdshtOldestSeq: firstSeq, /* DSHT-CHAT-FOLD-OLDEST: 最老已加载节点 seq（本轮折叠放行判定） */\n'
+        '\t\t\t\t\t\t\t\t\t\t\tdshtHasMore: hasMore, /* DSHT-CHAT-FOLD-OLDEST: 是否还有更老的历史未加载 */\n'
+        '\t\t\t\t\t\t\t\t\t\t\trenderSlot,',
+        1,
+        "P2-1a ChatNodeList 传入 firstSeq/hasMore（0.1.7 形态）",
+    )
+    # ②（新 b）ChatNodeSeat 接收这两个新 prop（签名尾部插入）
+    patch(
+        _chat,
+        "DSHT-CHAT-FOLD-SEAT",
+        r'(function ChatNodeSeat\(\{ nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation, cwd, openFile, openSkill, inspectCall, forkAt, loadImage, renderMessageImages, fileMentions, useStore, actions, renderSlot, t \}\) \{)',
+        'function ChatNodeSeat({ nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation, cwd, openFile, openSkill, inspectCall, forkAt, loadImage, renderMessageImages, fileMentions, useStore, actions, renderSlot, dshtOldestSeq, dshtHasMore /* DSHT-CHAT-FOLD-SEAT */, t }) {',
+        1,
+        "P2-1b ChatNodeSeat 接收 dshtOldestSeq/dshtHasMore（0.1.7 形态）",
+    )
+    # ③（新 c）在 processWindowReady 里补上「窗口必须落在已加载区间」那一半
+    patch(
+        _chat,
+        "DSHT-CHAT-FOLD-READY",
+        r'processPresentation\.turn === processSpec\.turn && \(processPresentation\.turnStarted \|\| processPresentation\.turnClosed\);',
+        'processPresentation.turn === processSpec.turn && (processPresentation.turnStarted || processPresentation.turnClosed) '
+        '&& (!dshtHasMore || (typeof dshtOldestSeq === "number" && processSpec.processStartSeq >= dshtOldestSeq)); '
+        '/* DSHT-CHAT-FOLD-READY: 0.1.7 官方已去掉 !historyIncomplete，但**仍不检查**窗口是否落在已加载区间'
+        ' ⇒ 大会话仍会误折叠 → 此处补回那一半判据（历史全加载完 或 本轮起点不早于最老已加载 seq） */',
+        1,
+        "P2-1c processWindowReady 补回已加载区间判据（0.1.7 形态）",
+    )
+else:
+    # ---- 0.1.5 形态：原三条锚点（保持原样，跨代兼容） ----
+    patch(
+        _chat,
+        "DSHT-CHAT-FOLD-OLDEST",
+        r'historyIncomplete: hasMore,',
+        "historyIncomplete: hasMore,\n"
+        "\t\t\t\t\t\tdshtOldestSeq: firstSeq, /* DSHT-CHAT-FOLD-OLDEST: 最老已加载节点 seq（本轮折叠放行判定） */",
+        1,
+        "P2-1a ChatNodeList 传入 firstSeq",
+    )
+# --- P2-1b/P2-1c 的 **0.1.5 形态**分支（0.1.7 已在上面 `if _chat_017` 里处理）---
+#   背景：本补丁原先的 marker `DSHT-CHAT-FOLD-SEAT** 没有出现在替换串里 →
+#   打上之后 marker 恒为 0 → 幂等检测永久失效（--check 永远报「期望 1 处、实际 0 处」，
+#   而实际代码早就改好了）。这是**补丁框架自身的缺陷**，已另建
+#   `audit-patch-markers.py` 做全量静态审计（AST 解析，防同类问题再犯）。
 _CS_ORIG = ('function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess, '
             'historyIncomplete, compactTranscript,')
 _CS_LEGACY = ('function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess, '
@@ -494,44 +563,43 @@ _CS_LEGACY = ('function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess,
 _CS_DONE = ('function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess, '
             'historyIncomplete, dshtOldestSeq, /* DSHT-CHAT-FOLD-SEAT */ compactTranscript,')
 
-
-def _patch_chatnode_seat():
-    if not os.path.isfile(_chat):
-        log("  ✗ P2-1b：目标不存在 %s" % _chat)
-        STATS["failed"] += 1
-        return
-    with open(_chat, "r", encoding="utf-8", newline="") as f:
-        t = f.read()
-    if "DSHT-CHAT-FOLD-SEAT" in t:
-        log("  · P2-1b：已打补丁，跳过")
-        STATS["skipped"] += 1
-        return
-    # 三种形态：① 原始（需要 patch）② 已打但缺 marker（历史缺陷遗留，需回填 marker）
-    for legacy, what in ((_CS_LEGACY, True), (_CS_ORIG, False)):
-        if t.count(legacy) != 1:
-            continue
-        if CHECK_ONLY:
-            log("  ✓ P2-1b：%s" % ("已打但缺 marker（待回填）" if what else "未打，锚点就位"))
-            STATS["checked"] += 1
+if not _chat_017:
+    def _patch_chatnode_seat():
+        if not os.path.isfile(_chat):
+            log("  ✗ P2-1b：目标不存在 %s" % _chat)
+            STATS["failed"] += 1
             return
-        with open(_chat, "w", encoding="utf-8", newline="") as f:
-            f.write(t.replace(legacy, _CS_DONE))
-        log("  ✓ P2-1b：%s" % ("marker 回填完成" if what else "已打补丁"))
-        STATS["applied"] += 1
-        return
-    log("  ✗ P2-1b：既非已打、锚点也不匹配（DSH 升级后产物形态变了？）")
-    STATS["failed"] += 1
+        with open(_chat, "r", encoding="utf-8", newline="") as f:
+            t = f.read()
+        if "DSHT-CHAT-FOLD-SEAT" in t:
+            log("  · P2-1b：已打补丁，跳过")
+            STATS["skipped"] += 1
+            return
+        # 三种形态：① 原始（需要 patch）② 已打但缺 marker（历史缺陷遗留，需回填 marker）
+        for legacy, what in ((_CS_LEGACY, True), (_CS_ORIG, False)):
+            if t.count(legacy) != 1:
+                continue
+            if CHECK_ONLY:
+                log("  ✓ P2-1b：%s" % ("已打但缺 marker（待回填）" if what else "未打，锚点就位"))
+                STATS["checked"] += 1
+                return
+            with open(_chat, "w", encoding="utf-8", newline="") as f:
+                f.write(t.replace(legacy, _CS_DONE))
+            log("  ✓ P2-1b：%s" % ("marker 回填完成" if what else "已打补丁"))
+            STATS["applied"] += 1
+            return
+        log("  ✗ P2-1b：既非已打、锚点也不匹配（DSH 升级后产物形态变了？）")
+        STATS["failed"] += 1
 
-
-_patch_chatnode_seat()
-patch(
-    _chat,
-    "DSHT-CHAT-FOLD-READY",
-    r'processPresentation\.turn === processSpec\.turn && processPresentation\.turnClosed && !historyIncomplete;',
-    'processPresentation.turn === processSpec.turn && processPresentation.turnClosed && (!historyIncomplete || (typeof dshtOldestSeq === "number" && processSpec.processStartSeq >= dshtOldestSeq)); /* DSHT-CHAT-FOLD-READY: 本轮窗口完整在已加载区间即可折叠，不要求全会话历史加载完 */',
-    1,
-    "P2-1c processWindowReady 放宽",
-)
+    _patch_chatnode_seat()
+    patch(
+        _chat,
+        "DSHT-CHAT-FOLD-READY",
+        r'processPresentation\.turn === processSpec\.turn && processPresentation\.turnClosed && !historyIncomplete;',
+        'processPresentation.turn === processSpec.turn && processPresentation.turnClosed && (!historyIncomplete || (typeof dshtOldestSeq === "number" && processSpec.processStartSeq >= dshtOldestSeq)); /* DSHT-CHAT-FOLD-READY: 本轮窗口完整在已加载区间即可折叠，不要求全会话历史加载完 */',
+        1,
+        "P2-1c processWindowReady 放宽",
+    )
 
 # --- P3  dsh-session-title：剥 HTML/协议标签
 patch(

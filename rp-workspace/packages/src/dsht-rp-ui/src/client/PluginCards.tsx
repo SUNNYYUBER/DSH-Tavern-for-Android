@@ -472,3 +472,41 @@ export const PLUGIN_CARD_KEYS = [
   'dsht-plugin-prompt-template',
   'dsht-plugin-memory',
 ] as const
+
+/* ===================== 0.1.7：整页 tab（`settings.plugins.tab`）===================== */
+
+/**
+ * ★★ **DSH 0.1.7 的设置入口**（**2026-09-23 DSH 升级轮 · 阶段 D.2**）。
+ *
+ * ## 为什么必须新写这个组件（0.1.5 的做法在 0.1.7 上**静默消失**）
+ * 0.1.5 的官方 Plugins 区有一个 **`settings.plugin.item` 卡片槽位** —— 每个可配置插件
+ * 贡献一张 `<li>` 卡，我们那 4 张中文辨识卡就挂在那里。
+ * ★ 0.1.7 **删除了该槽位且无等价物**：官方把它改成「**本地化 tab + feature-owned 整页**」模型
+ *   （`settings.plugins.tab`，`kind:'list'` / `scope:'root'`），
+ *   **「卡片行」这一层被取消了**（实测 `PluginsSettingsSection.d.ts`：
+ *   `interface PluginsSettingsTabEntry { id; order; label }`）。
+ * ⇒ 若沿用旧写法，4 张卡在 0.1.7 上**没有任何落点**（不报错、不显示 —— **静默失效**）。
+ *
+ * ## 本组件的形态（**方案 B**：一个 tab 承载全部 4 张卡）
+ * 注册**一个** `settings.plugins.tab`（`id: 'dsht'`，`label: 'DSHTavern'`），
+ * 整页按原样渲染那 4 张卡（**卡片组件本身零改动** —— `NativePluginCard` 的结构与交互全保留）。
+ *
+ * ★ 为什么不是「4 个 tab」：官方语义是「**一页 = 一个 feature**」，
+ *   4 个 tab 会挤占官方 Plugins 区且语义不符（详见审计文档 E.3 的 D.2 方案对比）。
+ * ★ 与 0.1.5 的关系：**两条路径并存**（`index.tsx` 按官方槽位是否存在自动选），
+ *   这样同一份产物既能跑 0.1.5 也能跑 0.1.7（跨代兼容）。
+ */
+export function DshtPluginsTabPage(): JSX.Element {
+  return (
+    <div className="dsht-npc-rows" data-dsht-plugins-tab="1">
+      <NoteRow text="DSHTavern 插件设置：下列四张卡分别对应酒馆助手、提示词模板、变量/状态栏（MVU）与剧情记忆。改动逐卡保存。" />
+      <ul className="dsht-npc-cards">
+        {PLUGIN_CARD_KEYS.map(key => {
+          const Card = CARDS[key]
+          return Card === undefined ? null : <Card key={key} />
+        })}
+      </ul>
+    </div>
+  )
+}
+

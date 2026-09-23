@@ -1472,21 +1472,49 @@ Dsht-Patch "$nmDst\dsh-terminal-bash\lib\index.js" 'DSHT-ANDROID-TERM-ARGS' `
 # 永不渲染（「查无此人」）。语义修正：折叠只要求「本轮 process 窗口完整在已加载区间」，
 # 不要求整个会话历史加载完。已加载区间连续 [firstSeq(=order[0].anchorSeq), 最新]，
 # processStartSeq >= firstSeq 即本轮完整 → 放行折叠。firstSeq 为 null 时维持官方行为。
+# P2-1. dsh-client-ui-chat 折叠行大会话不可见修复
+# ★★ 2026-09-23 DSH 升级轮 · 阶段 E：**三条锚点按 0.1.7 形态重写**（0.1.5 形态保留为 else 分支）。
+#   0.1.7 实测变化：① ChatNodeSeat 签名整个换了（historyIncomplete 不再是它的 prop）；
+#   ② processWindowReady 判据变成 `(turnStarted || turnClosed)`（官方去掉了 !historyIncomplete，
+#   **但仍不检查窗口是否落在已加载区间**）⇒ 我方那一半判据仍必要，只是传递面要新开 prop。
+#   ★ 与 apply-platform-patches.py 的 P2-1 系列必须**同源同值**（P-1），两侧由 A14 判据守。
 $chatUi = "$nmDst\dsh-client-ui-chat\lib\client.js"
-Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-OLDEST' `
-    'historyIncomplete: hasMore,' `
-    ("historyIncomplete: hasMore,`n" +
-     "`t`t`t`t`t`tdshtOldestSeq: firstSeq, /* DSHT-CHAT-FOLD-OLDEST: 最老已加载节点 seq（本轮折叠放行判定） */") `
-    1 'P2-1a ChatNodeList 传入 firstSeq'
-Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-SEAT' `
-    'function ChatNodeSeat\(\{ nodeKey, useChatNode, useChatNodeProcess, historyIncomplete, compactTranscript,' `
-    'function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess, historyIncomplete, dshtOldestSeq /* DSHT-CHAT-FOLD-SEAT */, compactTranscript,' `
-    1 'P2-1b ChatNodeSeat 接收 dshtOldestSeq' `
-    'historyIncomplete, dshtOldestSeq,'
-Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-READY' `
-    'processPresentation\.turn === processSpec\.turn && processPresentation\.turnClosed && !historyIncomplete;' `
-    ('processPresentation.turn === processSpec.turn && processPresentation.turnClosed && (!historyIncomplete || (typeof dshtOldestSeq === "number" && processSpec.processStartSeq >= dshtOldestSeq)); /* DSHT-CHAT-FOLD-READY: 本轮窗口完整在已加载区间即可折叠，不要求全会话历史加载完 */') `
-    1 'P2-1c processWindowReady 放宽'
+$chat017 = (Test-Path $chatUi) -and ((Get-Content -Raw -LiteralPath $chatUi) -like '*processPresentation.turnStarted || processPresentation.turnClosed*')
+if ($chat017) {
+    Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-OLDEST' `
+        '(?m)^\t{11}fileMentions,\r?\n\t{11}renderSlot,' `
+        ("`t`t`t`t`t`t`t`t`t`t`tfileMentions,`n" +
+         "`t`t`t`t`t`t`t`t`t`t`tdshtOldestSeq: firstSeq, /* DSHT-CHAT-FOLD-OLDEST: 最老已加载节点 seq（本轮折叠放行判定） */`n" +
+         "`t`t`t`t`t`t`t`t`t`t`tdshtHasMore: hasMore, /* DSHT-CHAT-FOLD-OLDEST: 是否还有更老的历史未加载 */`n" +
+         "`t`t`t`t`t`t`t`t`t`t`trenderSlot,") `
+        1 'P2-1a ChatNodeList 传入 firstSeq/hasMore（0.1.7 形态）'
+    Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-SEAT' `
+        'function ChatNodeSeat\(\{ nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation, cwd, openFile, openSkill, inspectCall, forkAt, loadImage, renderMessageImages, fileMentions, useStore, actions, renderSlot, t \}\) \{' `
+        'function ChatNodeSeat({ nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation, cwd, openFile, openSkill, inspectCall, forkAt, loadImage, renderMessageImages, fileMentions, useStore, actions, renderSlot, dshtOldestSeq, dshtHasMore /* DSHT-CHAT-FOLD-SEAT */, t }) {' `
+        1 'P2-1b ChatNodeSeat 接收 dshtOldestSeq/dshtHasMore（0.1.7 形态）'
+    Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-READY' `
+        'processPresentation\.turn === processSpec\.turn && \(processPresentation\.turnStarted \|\| processPresentation\.turnClosed\);' `
+        ('processPresentation.turn === processSpec.turn && (processPresentation.turnStarted || processPresentation.turnClosed) ' +
+         '&& (!dshtHasMore || (typeof dshtOldestSeq === "number" && processSpec.processStartSeq >= dshtOldestSeq)); ' +
+         '/* DSHT-CHAT-FOLD-READY: 0.1.7 官方已去掉 !historyIncomplete，但**仍不检查**窗口是否落在已加载区间' +
+         ' ⇒ 大会话仍会误折叠 → 此处补回那一半判据（历史全加载完 或 本轮起点不早于最老已加载 seq） */') `
+        1 'P2-1c processWindowReady 补回已加载区间判据（0.1.7 形态）'
+} else {
+    Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-OLDEST' `
+        'historyIncomplete: hasMore,' `
+        ("historyIncomplete: hasMore,`n" +
+         "`t`t`t`t`t`tdshtOldestSeq: firstSeq, /* DSHT-CHAT-FOLD-OLDEST: 最老已加载节点 seq（本轮折叠放行判定） */") `
+        1 'P2-1a ChatNodeList 传入 firstSeq'
+    Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-SEAT' `
+        'function ChatNodeSeat\(\{ nodeKey, useChatNode, useChatNodeProcess, historyIncomplete, compactTranscript,' `
+        'function ChatNodeSeat({ nodeKey, useChatNode, useChatNodeProcess, historyIncomplete, dshtOldestSeq /* DSHT-CHAT-FOLD-SEAT */, compactTranscript,' `
+        1 'P2-1b ChatNodeSeat 接收 dshtOldestSeq' `
+        'historyIncomplete, dshtOldestSeq,'
+    Dsht-Patch "$chatUi" 'DSHT-CHAT-FOLD-READY' `
+        'processPresentation\.turn === processSpec\.turn && processPresentation\.turnClosed && !historyIncomplete;' `
+        ('processPresentation.turn === processSpec.turn && processPresentation.turnClosed && (!historyIncomplete || (typeof dshtOldestSeq === "number" && processSpec.processStartSeq >= dshtOldestSeq)); /* DSHT-CHAT-FOLD-READY: 本轮窗口完整在已加载区间即可折叠，不要求全会话历史加载完 */') `
+        1 'P2-1c processWindowReady 放宽'
+}
 
 # P3-5a. dsh-session-title：标题剥 HTML/协议标签（2026-09-09 实机截图：会话标题显示「<status> [...]」）
 # 官方 normalize（cleanTitleText）只清控制字符/转义序列——RP 场景首条消息/LLM 生成的标题

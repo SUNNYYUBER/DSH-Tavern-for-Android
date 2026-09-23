@@ -125,7 +125,23 @@ export const realReadFile = (p) => { try { return fs.readFileSync(p, 'utf8') } c
  * **不报错、不抛异常，功能整块消失**（附录 C.1 的静默失效族）。
  * ⇒ 判据必须同时认**两种名**：旧名（我方尚未迁移）与新名（官方当下）。
  *
- * ## ★★ 诚实登记：本表**当前为空**，因为 0.1.7 **没有语义等价的替代品**
+ * ## 本表的两类条目（★ 用途不同，别混）
+ *
+ * ### (a) 跨代回退对（cross-generation fallback）—— **本表的当下用途**
+ * 我方源码里对**同一功能**同时保留两处 `slots.inject`（old + new），用 `if/else` 二选一：
+ *   · 0.1.5：旧名有声明 ⇒ 走旧；新名不存在 ⇒ 那支是死代码；
+ *   · 0.1.7：旧名无声明 ⇒ 那支永不执行；新名在 ⇒ 走新。
+ * 两处 inject **都会被 ⑤ 段从我方源码收集到**（判据是文本级抽取，看不见 `if/else`）。
+ * ⇒ 若旧名在官方新版 SlotMap 里已消失，⑤ 段会把它归 `missing` ⇒ **误报 BLOCK**。
+ * ⇒ 正解：把 (旧名 → 新名) 登记进本表 —— `classifySlots` 见旧名不在、
+ *   而**新名在** ⇒ 归 `migrated`（**出声但不 BLOCK**），语义正是
+ *   「这是我方有意保留的跨代回退，不是漂移」。
+ *
+ * ### (b) 机械改名（mechanical rename）—— **当前为空，且必须保持为空**
+ * 若官方**只改名、语义未变**，则旧名 → 新名即机械映射，登记后照常工作。
+ * 但 0.1.7 的 `settings.plugin.item` **不属于此类**（见下）。
+ *
+ * ## ★★ 诚实登记：`settings.plugin.item → settings.pluginInventory` **不是**合法映射
  *
  * 2026-09-23 两次实测（`probe-slot-diff.mjs` 逐包抽 SlotMap 后做集合差）纠正了一个误判：
  *
@@ -135,7 +151,11 @@ export const realReadFile = (p) => { try { return fs.readFileSync(p, 'utf8') } c
  * | 0.1.7-rc.1 | ❌ **已删除** | ✅ 仍在 | 后者**语义未变**（仍是命名空间，**不是**卡片槽位） |
  *
  * ★ 我先前把映射写成 `settings.plugin.item → settings.pluginInventory` 是**错的**
- *   （把「本地化命名空间」当成了「卡片槽位」）。实测推翻了它，故本表**保持为空**。
+ *   （把「本地化命名空间」当成了「卡片槽位」）。实测推翻了它。
+ * ⇒ 若把 (a) 的跨代回退登记成这个「映射」，就等于**用代理量洗掉真失效**：
+ *   0.1.7 下旧支照样是死代码，而 ⑤ 段会因为「migrated」而放行 ⇒ 假绿（P-30）。
+ * ⇒ **唯一诚实的处理**：`settings.plugin.item` 在 0.1.7 **既无原名也无等价新名** ⇒
+ *   让 ⑤ 段照实报 BLOCK（或用 ⑤ 段的有意豁免机制，见下），**不在本表里假装有映射**。
  *
  * ## 0.1.7 的实际模型（`PluginsSettingsSection.d.ts` 原文）
  * ```
@@ -147,10 +167,25 @@ export const realReadFile = (p) => { try { return fs.readFileSync(p, 'utf8') } c
  *   而**「卡片行」这一层被取消了**（`settings.plugin.item` 无等价物）。
  * ⇒ 我方那 4 张「中文辨识卡」（`<li>` 行）在新模型下**没有直接落点**——
  *   要么改成 4 个 tab（UX 变化大），要么把内容并入 RP 自己的设置面板（RP overlay）。
- *   ★ 这是**设计决策**，不是机械改名 ⇒ 记入 E 的 D.2，**不在本表里假装有映射**
- *     （P-30：不许让代理量（映射表）与事实（官方无该槽位）脱钩）。
+ *   ★ 这是**设计决策**，不是机械改名 ⇒ 记入 E 的 D.2。
+ *
+ * ## ★★ 已落地的处置（2026-09-23 · D.2 采用**方案 B**）
+ * 我方 `dsht-rp-ui` 改为**按官方槽位是否存在自动选路径**（见 `index.tsx`）：
+ *   · 有 `settings.plugin.item`（0.1.5）⇒ 4 张独立卡（行为零变化）；
+ *   · 无它、有 `settings.plugins.tab`（0.1.7）⇒ 注册**一个 tab 整页**（`id:'dsht'`，方案 B）。
+ * ⇒ 本表登记 **(a) 跨代回退对**：`settings.plugin.item → settings.plugins.tab`
+ *   （★ 注意：**不是** → `pluginInventory`，那条是错的，见上）。
+ *   语义 =「我方有意保留旧支以兼容 0.1.5；0.1.7 由新名承接」——
+ *   故旧名不在官方 SlotMap 时归 `migrated`（出声）而**不是** `missing`（BLOCK）。
+ *
+ * ⚠️ **诚实边界（R7）**：登记 (a) 的前提是「新名**真的**承接了该功能」——
+ *   这一点由**代码**保证（`else if (hasSlot(...))` 那条支），也可由负控7 的形态检验
+ *   （若新名也不在官方 SlotMap ⇒ 本项目会照实 BLOCK）。
  */
-export const SLOT_RENAMES = {}
+export const SLOT_RENAMES = {
+  // (a) 跨代回退对：0.1.5 的卡片槽位 → 0.1.7 的整页 tab（方案 B，功能由新支承接）
+  'settings.plugin.item': 'settings.plugins.tab',
+}
 
 /**
  * slot 名对账（支持**改名映射**）。
@@ -388,10 +423,10 @@ if (process.argv.includes('--selftest')) {
     ok(r7.pI_x6G.status === 'UNKNOWN', '负控3 读不到官方产物 ⇒ UNKNOWN（P-17：区分测不出与否证）')
   }
 
-  // ---- C.1 slot 改名映射（2026-09-23 新增）----
-  //   ★ 本表当前**为空**（0.1.7 无等价槽位，见 SLOT_RENAMES 头注）⇒ 正控改用**合成映射**
-  //     （注入式：临时把一条加进表，验证机制本身有杠杆；再还原）。
-  //     这比「断言真实表里有某条」更本质：**判据的机制**与**当前数据**是两件事。
+  // ---- C.1 slot 改名映射（2026-09-23 新增；★ D.2 落地后本表**非空**）----
+  //   ★ 本表现有一条**真实**条目（`settings.plugin.item → settings.plugins.tab`，跨代回退对）。
+  //     正控仍用**合成映射** —— 它验的是**机制**（「旧名不在而新名在 ⇒ migrated」），
+  //     与「当前表里恰好有哪条数据」是两件事（P-45：判据机制 vs 当前数据）。
   {
     // 正控 4：合成映射下，旧名不在、新名在 ⇒ 必须归 migrated
     const saved = SLOT_RENAMES['synthetic.old']
@@ -416,11 +451,24 @@ if (process.argv.includes('--selftest')) {
     const s3 = classifySlots(new Set(['a.b']), ['a.b'])
     ok(s3.hit.length === 1 && s3.migrated.length === 0 && s3.missing.length === 0, '负控4 原名在 ⇒ hit（不误判）')
 
-    // 负控 7（★ 真实数据）：`settings.plugin.item` 在 0.1.7 **既无原名也无映射**
-    //   ⇒ 必须归 missing（**不得**因为它「看起来像 pluginInventory」而被放过）
+    // ★★ 真实数据控（**D.2 落地后的形态**）：登记了跨代回退对之后，
+    //   `settings.plugin.item` 在 0.1.7 的 SlotMap 里「无原名、但新名 `settings.plugins.tab` 在」
+    //   ⇒ 必须归 **migrated（出声，不 BLOCK）** —— 这正是「我方有意保留的 0.1.5 兼容支」。
     const s4 = classifySlots(new Set(['settings.pluginInventory', 'settings.plugins.tab']), ['settings.plugin.item'])
-    ok(s4.missing.length === 1 && s4.migrated.length === 0,
-      '负控7 settings.plugin.item 无等价物 ⇒ missing（不得假装映射到 pluginInventory）')
+    ok(s4.migrated.length === 1 && s4.migrated[0].to === 'settings.plugins.tab' && s4.missing.length === 0,
+      `★真实数据控 D.2 落地后：settings.plugin.item ⇒ migrated→settings.plugins.tab（出声不 BLOCK）`)
+
+    // ★★ 负控 7（**必须保留**）：**新名也不在** ⇒ 必须归 missing（BLOCK）。
+    //   它守的是「映射表不得把**真失效**洗成待迁移」—— 也就是
+    //   「若哪天官方连 settings.plugins.tab 也删了，本项目必须照实报 BLOCK」。
+    //   ★ 与上一条是**同一判据的两个方向**（P-58 的两侧纪律）：只做一侧 = 半个盲区。
+    const s5 = classifySlots(new Set(['settings.pluginInventory']), ['settings.plugin.item'])
+    ok(s5.missing.length === 1 && s5.migrated.length === 0,
+      '★负控7 新名也不在 ⇒ missing（映射表不得把真失效洗成待迁移）')
+
+    // ★ 零控：**不得**假装映射到 `settings.pluginInventory`（那是另一个语义，见头注）
+    ok(SLOT_RENAMES['settings.plugin.item'] !== 'settings.pluginInventory',
+      '★零控 不得把 settings.plugin.item 映射到 pluginInventory（命名空间 ≠ 卡片槽位）')
   }
 
   // ---- E.1 插件 peer 声明（2026-09-23 新增）----
@@ -521,9 +569,19 @@ const run = (file, args = []) => {
   if (m === null) rec('② 补丁面（13 条 patch 的命中与幂等）', 'UNKNOWN', '解析不出 --check 汇总行 ⇒ 必须人工看输出（不许当通过）')
   else {
     const [, , , pending, , failed] = m.map(Number)
+    // ★★ 2026-09-23 阶段 E：**与 ① 段同一因果** —— 本段跑在 Step 0.5，而**补丁在 Step 3.5 才打**
+    //   ⇒ 换版本/重装构建时 `pending` **必然 > 0**（本轮实测：重装后待打 10 条）⇒ 不该 BLOCK 掉构建。
+    //   ★ 但它**不能静默放过**（那会让「补丁根本没打上」与「还没轮到打」同貌 —— P-30）
+    //   ⇒ 传 `--expect-reinstall` 时记 **SKIP 并出声**（点名待打条数）；
+    //     真正的判据由**补丁打完之后的**那次审计（构建后期 / 发布前跑本脚本不带 flag）负责。
     const okAll = Number(failed) === 0 && Number(pending) === 0
-    rec('② 补丁面（13 条 patch 的命中与幂等）', okAll ? 'OK' : 'BLOCK',
-      `失败 ${failed} · 待打 ${pending}（★ --check 把「锚点命中但未打」计入 pending 且**不报红**，故必须显式看这个数）`)
+    const skipByReinstall = !okAll && EXPECT_REINSTALL && Number(failed) === 0
+    rec('② 补丁面（13 条 patch 的命中与幂等）', okAll ? 'OK' : (skipByReinstall ? 'SKIP' : 'BLOCK'),
+      okAll
+        ? '失败 0 · 待打 0'
+        : (skipByReinstall
+            ? `失败 0 · **待打 ${pending}** —— ★ 本次构建预期重装，补丁在 **Step 3.5** 才打；本段此刻**无判据力**（出声，不当通过 —— P-17），由补丁打完后的审计负责`
+            : `失败 ${failed} · 待打 ${pending}（★ --check 把「锚点命中但未打」计入 pending 且**不报红**，故必须显式看这个数）`))
   }
 }
 
