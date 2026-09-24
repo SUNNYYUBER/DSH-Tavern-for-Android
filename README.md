@@ -180,7 +180,7 @@ node rp-workspace/scripts/fetch-native-libs.mjs
 
 | 约束 | 表现 | 处置 |
 |---|---|---|
-| ~~无 `bash`~~ ✅ 已补齐 | DSH bash 工具 spawn EACCES | **已内置 Termux bash 5.3.15**（伪装 `libdsht-bash.so` 进 jniLibs + `runtime/bin/bash` symlink，P1 能力包）；保留 `/system/bin/sh` 兜底 |
+| ~~无 `bash`~~ ✅ 已补齐 | DSH bash 工具 spawn EACCES | **已内置 Termux bash 5.3.20**（伪装 `libdsht-bash.so` 进 jniLibs + `runtime/bin/bash` symlink，P1 能力包）；保留 `/system/bin/sh` 兜底 |
 | 无 `flock(2)` | 会话写锁抛错，**消息发不出去** | 单进程运行时按上游对 browser worker 的同款处置：立即成功 |
 | SELinux 禁硬链接 | 会话日志无法 `link()` 发布 | 改 `rename()` |
 | SELinux 只允许从 `nativeLibraryDir` 执行 | 应用目录的二进制无法 exec | 可执行文件改名 `.so` 放 `jniLibs`；runtime bin/ 由 NodeService 解压后补 +x |
@@ -502,7 +502,7 @@ The script verifies per-deb SHA256; the first run needs network, later runs skip
 
 | Constraint | Symptom | Handling |
 |---|---|---|
-| ~~No `bash`~~ ✅ resolved | DSH bash tool spawn EACCES | **Termux bash 5.3.15 bundled** (disguised as `libdsht-bash.so` in jniLibs + `runtime/bin/bash` symlink, P1 capability pack); `/system/bin/sh` kept as fallback |
+| ~~No `bash`~~ ✅ resolved | DSH bash tool spawn EACCES | **Termux bash 5.3.20 bundled** (disguised as `libdsht-bash.so` in jniLibs + `runtime/bin/bash` symlink, P1 capability pack); `/system/bin/sh` kept as fallback |
 | No `flock(2)` | session write-lock throws — **messages can't be sent** | single-process runtime: succeed immediately (same as upstream's browser-worker handling) |
 | SELinux forbids hard links | session logs can't be published via `link()` | use `rename()` |
 | SELinux allows exec only from `nativeLibraryDir` | binaries in the app dir can't exec | rename executables to `.so` under `jniLibs`; NodeService chmods runtime bin/ +x after extraction |

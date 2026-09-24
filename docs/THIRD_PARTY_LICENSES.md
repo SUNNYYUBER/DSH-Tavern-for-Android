@@ -80,9 +80,9 @@
 | **busybox** | GPL-2.0 | Termux deb | ⚠️ **独立可执行文件**，未与我们代码链接（聚合分发）——义务见 §5 |
 | **ICU**（Node 内置） | Unicode License | Node.js | 宽松 |
 | **PDF.js**（经 `dsh-client-ui-sidebar-documentpreview` 内嵌） | Apache-2.0 | DSH 官方包 | 文件头保留完整 license notice |
-| **bash** 5.3.15 | GPL-3.0 | Termux deb | ⚠️ **独立可执行程序**（P1 能力补齐包；DSH bash 工具使用）——义务见 §5 |
+| **bash** 5.3.20 | GPL-3.0 | Termux deb | ⚠️ **独立可执行程序**（P1 能力补齐包；DSH bash 工具使用）——义务见 §5 |
 | **git** 2.55.0（含 libexec/git-core） | GPL-2.0 | Termux deb | ⚠️ **独立可执行程序**（P1；工作区快照/版本操作）——义务见 §5 |
-| **readline** 8.3.3 | GPL-3.0 | Termux deb | ⚠️ bash 私有运行库（仅被 GPL 的 bash 链接，随该独立程序聚合分发）——义务见 §5 |
+| **readline** 8.3.6 | GPL-3.0 | Termux deb | ⚠️ bash 私有运行库（仅被 GPL 的 bash 链接，随该独立程序聚合分发）——义务见 §5 |
 | **libiconv** 1.19 | LGPL-2.1 | Termux deb | bash/git 动态链接库（LGPL 允许动态链接；deb 原样未改，来源见 §5） |
 | **ncurses** 6.5 | MIT (X11) | Termux deb | readline 依赖库 |
 | **libandroid-support** 29 | Apache-2.0 (NDK) | Termux deb | bash 依赖库（bionic 补齐） |
@@ -108,8 +108,8 @@
 | busybox | GPL-2.0 | 独立可执行文件（`jniLibs/*/libbusybox.so` 改名，SELinux 只允许从 `nativeLibraryDir` 执行） |
 | proot | GPL-2.0 | 独立可执行文件（同上，`libproot.so`） |
 | git 2.55.0 | GPL-2.0 | 独立可执行程序（`runtime/bin/git` + `runtime/git-core/`；P1 能力补齐包） |
-| bash 5.3.15 | GPL-3.0 | 独立可执行程序（`runtime/bin/bash`；P1） |
-| readline 8.3.3 | GPL-3.0 | bash 的私有运行库（`runtime/lib/`，仅被 bash 链接） |
+| bash 5.3.20 | GPL-3.0 | 独立可执行程序（`runtime/bin/bash`；P1） |
+| readline 8.3.6 | GPL-3.0 | bash 的私有运行库（`runtime/lib/`，仅被 bash 链接） |
 | libiconv 1.19 | LGPL-2.1 | bash/git 的动态链接库（`runtime/lib/`） |
 
 GPL-2.0 / GPL-3.0 要求随分发**提供对应源码，或提供获取源码的书面要约**；

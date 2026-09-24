@@ -6,7 +6,7 @@
  * （proot / busybox）：
  *
  *   libnode.so        ← nodejs_{arch}.deb        · MIT
- *   libproot.so       ← proot_5.1.107.92_{arch}.deb   · **GPLv2**
+ *   libproot.so       ← proot_5.1.107.94_{arch}.deb   · **GPLv2**
  *   libbusybox.so     ← busybox_1.38.0-1_{arch}.deb   · **GPLv2**
  *   libcares.so       ← c-ares_1.34.8_{arch}.deb · MIT
  *   libc++_shared.so  ← libc++_29_{arch}.deb     · Apache-2.0 WITH LLVM-exception
@@ -74,7 +74,7 @@ const TARGETS = [
   // 走 dir 型：解出 `usr/include/node/` 平铺到部署目录。
   // ★ 头与架构无关 ⇒ 两轮 arch 循环产出同一份（第二次 destReady 命中即跳过，幂等）。
   { dir: true, deb: { x86_64: 'nodejs_x86_64.deb', aarch64: 'nodejs_aarch64.deb' }, inner: 'include/node', dest: 'node-headers', lic: 'MIT' },
-  { so: 'libproot.so', deb: { x86_64: 'proot_5.1.107.92_x86_64.deb', aarch64: 'proot_5.1.107.92_aarch64.deb' }, inner: 'bin/proot', lic: 'GPLv2' },
+  { so: 'libproot.so', deb: { x86_64: 'proot_5.1.107.94_x86_64.deb', aarch64: 'proot_5.1.107.94_aarch64.deb' }, inner: 'bin/proot', lic: 'GPLv2' },
   { so: 'libbusybox.so', deb: { x86_64: 'busybox_1.38.0-1_x86_64.deb', aarch64: 'busybox_1.38.0-1_aarch64.deb' }, inner: 'bin/busybox', lic: 'GPLv2' },
   { so: 'libcares.so', deb: { x86_64: 'c-ares_x86_64.deb', aarch64: 'c-ares_1.34.8_aarch64.deb' }, inner: 'lib/libcares.so', lic: 'MIT' },
   { so: 'libc++_shared.so', deb: { x86_64: 'libc++_29_x86_64.deb', aarch64: 'libc++_29_aarch64.deb' }, inner: 'lib/libc++_shared.so', lic: 'Apache-2.0 WITH LLVM-exception' },
@@ -91,10 +91,10 @@ const TARGETS = [
   //   一直这么工作），保持原部署面。
   // bash（bionic 真 shell，替换 busybox mksh 降级）：本体伪装 .so + 依赖库（SONAME 部署名
   // 与 DT_NEEDED 严格一致——libpcre2-8/libz.so.1/libcrypto.so.3 已在 runtime/lib，不重复打包）
-  { so: 'libdsht-bash.so', deb: { x86_64: 'bash_5.3.15_x86_64.deb', aarch64: 'bash_5.3.15_aarch64.deb' }, inner: 'bin/bash', lic: 'GPL-3.0' },
+  { so: 'libdsht-bash.so', deb: { x86_64: 'bash_5.3.20_x86_64.deb', aarch64: 'bash_5.3.20_aarch64.deb' }, inner: 'bin/bash', lic: 'GPL-3.0' },
   { so: 'libandroid-support.so', dest: 'runtime-lib', deb: { x86_64: 'libandroid-support_29-1_x86_64.deb', aarch64: 'libandroid-support_29-1_aarch64.deb' }, inner: 'lib/libandroid-support.so', lic: 'Apache-2.0 (NDK)' },
   { so: 'libiconv.so', dest: 'runtime-lib', deb: { x86_64: 'libiconv_1.19_x86_64.deb', aarch64: 'libiconv_1.19_aarch64.deb' }, inner: 'lib/libiconv.so', lic: 'LGPL-2.1' },
-  { so: 'libreadline.so.8', dest: 'runtime-lib', deb: { x86_64: 'readline_8.3.3_x86_64.deb', aarch64: 'readline_8.3.3_aarch64.deb' }, inner: 'lib/libreadline.so.8.3', lic: 'GPL-3.0' },
+  { so: 'libreadline.so.8', dest: 'runtime-lib', deb: { x86_64: 'readline_8.3.6_x86_64.deb', aarch64: 'readline_8.3.6_aarch64.deb' }, inner: 'lib/libreadline.so.8.3', lic: 'GPL-3.0' },
   { so: 'libncursesw.so.6', dest: 'runtime-lib', deb: { x86_64: 'ncurses_6.6.20260307+really6.5.20250830_x86_64.deb', aarch64: 'ncurses_6.6.20260307+really6.5.20250830_aarch64.deb' }, inner: 'lib/libncursesw.so.6.5', lic: 'MIT (X11)' },
   // ripgrep（fs-search 真 rg，替换纯 JS 降级）
   { so: 'libdsht-rg.so', deb: { x86_64: 'ripgrep_15.2.0_x86_64.deb', aarch64: 'ripgrep_15.2.0_aarch64.deb' }, inner: 'bin/rg', lic: 'MIT/Unlicense' },
@@ -180,8 +180,10 @@ const TARGETS = [
 // deb 级 SHA256（本机缓存实算；上游换版时**必须**同步本表 —— 校验不通过即报错）
 const SHA256 = {
   // ---- P1 能力补齐包（2026-09-20 实算；downloads/ 缓存）----
-  'bash_5.3.15_aarch64.deb': '15f8fef866dad70f675c520d5f56d718a1b1c0cffe9f14e20fff8f8249377d46',
-  'bash_5.3.15_x86_64.deb': 'cf913f774f9c485a79e935f05f07130249869f71f9464638af250a4499487920',
+  // ★ 2026-09-24 上游 termux 滚动更新：bash 5.3.15→5.3.20 · readline 8.3.3→8.3.6
+  //   （CI v0.2.7 第三跑实测报红，本地重下新包实算，与 CI 报的期望值互证一致）
+  'bash_5.3.20_aarch64.deb': '26b5b3ab5b0ac0e3b372ac1e7ddd89270519c1eb25b88fe4175485c2de8086b2',
+  'bash_5.3.20_x86_64.deb': 'f8c984e68269df3df2efae9f2835a9d9af381a8f80d08b34160772bc16cd0910',
   'git_2.55.0_aarch64.deb': '21b16fa06837e5bf94ad257da532c40eb049c120d21f6cb60a6411c0bcee7197',
   'git_2.55.0_x86_64.deb': '35cf9a5bd6d3b48fa6cb314f41f90f37eb0a9f584d5b8b5b3c57f3de7e12b92e',
   'libandroid-support_29-1_aarch64.deb': 'f2f145d6135ad4843ac9670153be3e3944dc1e6f1736d46d2306c28f2b86f517',
@@ -192,8 +194,8 @@ const SHA256 = {
   'liblzma_5.8.4_x86_64.deb': '100ea7503a0b9ecffa45e1f168d035651f2eb7aedbebe71dd21fc0da4a84ef16',
   'ncurses_6.6.20260307+really6.5.20250830_aarch64.deb': 'f44bbfdc3d42ec0217bffa978309390e59cea5a48a9a83226d4a496c42ad0b99',
   'ncurses_6.6.20260307+really6.5.20250830_x86_64.deb': '3f30f53c6a41c8450d146d4d42611a44be6ba0a8de1e8bb4dc903109a5fc3ff1',
-  'readline_8.3.3_aarch64.deb': 'e50fb67f40753247dbb83efb17c7fbee0ac868ffcb5b5555d44d76ec8d90b4b1',
-  'readline_8.3.3_x86_64.deb': 'e69d768ba81246700c244aea31a1fd728f6cc9698ca3031b6f7b7250ea77f8dd',
+  'readline_8.3.6_aarch64.deb': '616cc73009bc0223f61caed8dd09455714455aa5ea5e180126e2f69c4c775136',
+  'readline_8.3.6_x86_64.deb': 'e9684798d13ede05f785315f68d3ff739563db2abef0e73db4dc9b8e17ded368',
   'ripgrep_15.2.0_aarch64.deb': '38e28bc297000517b24702568a483eca7dc3323eb6bdccc9033f031776bdcc6c',
   'ripgrep_15.2.0_x86_64.deb': '2eb50ab2e378436767975b072ce7118decf6444d6d6ed178bc89979b5f150f2a',
   'zstd_1.5.7-1_aarch64.deb': 'e1b4a5113648da8de189620ba1fce74c48b2d0833d9043391b9a1c91fb606fd3',
@@ -218,8 +220,8 @@ const SHA256 = {
   // ---- 既有 ----
   'nodejs_aarch64.deb': 'eaf3ed8a6e4b72ebaa8c2cb3bad778c577cdf9ea87ca91761213d8a3940fc090',
   'nodejs_x86_64.deb': 'd3a0e7b8e110ba87969a56f45a8fa63730100e9faec413a6f377ebc76c5b616e',
-  'proot_5.1.107.92_aarch64.deb': '1f1c983509701f6826f568482c70673ee453a9ba38c9f5fa445a472d6b7524e9',
-  'proot_5.1.107.92_x86_64.deb': '70236632826c30ec0245082b633bbc7ef1e9fa5531bd51bd4f20231bfcdc999b',
+  'proot_5.1.107.94_aarch64.deb': 'b6fa26884d162f5234b0aba9f8a98971aad793706099464f7bd7eb1e21d63935',
+  'proot_5.1.107.94_x86_64.deb': '826cdf66f9eb04bb9faf7f1eb36078abc75b086c074e937b53d1abbf08ccfb85',
   'busybox_1.38.0-1_aarch64.deb': '1bb7f1d4c00cadd0e1117b6dd7110311b8bf749ef00b486e96cfdc11c98f8fd9',
   'busybox_1.38.0-1_x86_64.deb': '519b57623dd076b4d6cf6d389ed976dd222410e3a0b9b9b58c14d8535b6eef48',
   'c-ares_1.34.8_aarch64.deb': '7681fc23e822d7988ba8b2adf3468f93ae68f724dda365cff1385096a9fa87e6',

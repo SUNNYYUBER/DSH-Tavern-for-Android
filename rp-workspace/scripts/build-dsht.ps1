@@ -1406,14 +1406,14 @@ Dsht-Patch "$nmDst\dsh-sandbox-local\lib\index.js" 'DSHT-ANDROID-UNSANDBOXED' `
 #       -b $DSH_HOME -b <policy.workspaceRoot> -b nativeLibDir -b runtimeLib -b $TMPDIR(+:/tmp) <原 argv>
 # —— 工作区外不可读写（真隔离，不再是 warn）。proot 缺失/probe 失败 → 回退原 warn+fs 边界（降级开关保留）。
 # 依赖资产（双架构，均由本仓库 downloads\proot\ 提供，构建期落位）：
-#   jniLibs/<abi>/libproot.so   = termux proot 5.1.107.92 (bin/proot)
+#   jniLibs/<abi>/libproot.so   = termux proot 5.1.107.94 (bin/proot)
 #   jniLibs/<abi>/libbusybox.so = termux busybox 1.38.0-1 (bin/busybox 启动器)
 #   runtime lib/                = libbusybox.so.1.38.0 + libtalloc.so.2(2.4.3) + libandroid-shmem.so(0.7)
 #                                 + libandroid-selinux.so(14.0.0.11-1) + libpcre2-8.so(10.47) + proot-loader{,32}
 #   来源 https://packages.termux.dev/apt/termux-main/ （索引 Packages-{aarch64,x86_64} 已存 downloads\proot\）
 #   sha256（deb 级，Get-FileHash 已全量校验）：
-#     proot_5.1.107.92_aarch64.deb    1f1c983509701f6826f568482c70673ee453a9ba38c9f5fa445a472d6b7524e9
-#     proot_5.1.107.92_x86_64.deb     70236632826c30ec0245082b633bbc7ef1e9fa5531bd51bd4f20231bfcdc999b
+#     proot_5.1.107.94_aarch64.deb    b6fa26884d162f5234b0aba9f8a98971aad793706099464f7bd7eb1e21d63935
+#     proot_5.1.107.94_x86_64.deb     826cdf66f9eb04bb9faf7f1eb36078abc75b086c074e937b53d1abbf08ccfb85
 #     busybox_1.38.0-1_aarch64.deb    1bb7f1d4c00cadd0e1117b6dd7110311b8bf749ef00b486e96cfdc11c98f8fd9
 #     busybox_1.38.0-1_x86_64.deb     519b57623dd076b4d6cf6d389ed976dd222410e3a0b9b9b58c14d8535b6eef48
 #     libtalloc_2.4.3_aarch64.deb     ac81ad623d74c209718b9f3acb2dd702cc8a88c431e820d212229910b4db29da
