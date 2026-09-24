@@ -1995,6 +1995,57 @@ export interface PluginsSettingsTabEntry { id: string; order: number; label: str
 > 「`settings.plugin.item` 必须判 missing，**不得**假装映射到 `pluginInventory`」。
 > ⇒ 升级到 0.1.7 时，⑤ 会**如实报 BLOCK**，直到 D.2 选定方案并落地。
 
+##### D.2 修正记录（2026-09-23 · **我第一版方案被真机实测证伪**）
+
+**用户裁定**：方案 **B**（注册 1 个 `settings.plugins.tab`，整页放这 4 张卡）。
+
+**我第一版的实现（错的）——「先探测再二选一」**：
+
+```ts
+const hasSlot = (name) => slotsApi?.specDynamic?.(name) !== undefined
+if (hasSlot('settings.plugin.item')) { …0.1.5 路径… }
+else if (hasSlot('settings.plugins.tab')) { …0.1.7 路径… }
+else { console.warn('…没有落点…') }
+```
+
+**为什么错（真机日志实证）**：`settings.plugins.tab` 的 spec 由 **Plugins 分区 owner
+在运行时注册时才声明**，而我方 `apply()` 跑得更早 ⇒ 那一刻 `specDynamic(...)`
+**恒为 `undefined`** ⇒ 两个分支**都不命中** ⇒ 落到 `else`：
+
+```
+[dsht-rp-ui] 未找到 settings.plugin.item / settings.plugins.tab ⇒ 插件设置卡**没有落点**
+```
+
+★ 这是 **P-40③ 的又一例**（判据跑在它所判对象状态**确定之前**），
+且**本地 vitest 全覆盖不到**（那是运行时装配序问题）⇒ 只有真机能抓。
+
+**修法（官方原语，无需探测）**：`ctx.slots.inject(key, cb)` 的**契约原文**
+（`dsh-cordis-client-runner` 对 slots 服务的方法说明）：
+
+> The callback runs synchronously when the declaration **already exists**;
+> otherwise it runs **inside the declaring `register()` call after the declaration is committed**.
+
+⇒ `inject` **本身就是「等声明」的原语**（跟随晚声明 / 重声明 / teardown）。
+所以**两条 inject 都装、无条件**：
+
+| 形态 | 行为 |
+|---|---|
+| 0.1.5（有 `settings.plugin.item`） | 第一条的声明触发 ⇒ 4 张独立卡（**与升级前行为完全一致**） |
+| 0.1.7（有 `settings.plugins.tab`） | 第二条的声明触发 ⇒ 一个 DSHTavern 整页 tab |
+| **某代没有该 key** | 那条 inject 的 callback **永不执行**（挂起等待，随插件卸载取消）⇒ **零副作用** |
+
+**真机验收（F.1/F.2 期间完成）**：
+
+| 判据 | 证据 |
+|---|---|
+| 启动日志中「没有落点」警告**消失** | logcat 干净 |
+| 「设置 → Built-in plugins」出现 **DSHTavern 页签** | `node-*`（`button.pbvGtq_tab` 文本 = `DSHTavern`） |
+| 点开该页 ⇒ **4 张卡全在场** | `[data-dsht-plugins-tab]` 命中 1 个，页内文本含「酒馆助手 / 提示词模板 / 变量·状态栏（MVU）/ 剧情记忆」四组 |
+
+★ **元教训**：**「用探测决定注册路径」在 cordis 的槽位模型里是反模式** ——
+官方给了 `inject` 这个「等声明」原语，**不需要自己判存在性**。
+凡是「我方先于 owner 声明而注册」的槽位，一律**用 inject 无条件装**（P-1：用官方原语，不另造机制）。
+
 #### 阶段 E：构建与门禁
 
 | 步 | 动作 |
@@ -2091,12 +2142,79 @@ createStage() {
 
 #### 阶段 F：模拟器实测（**不可省**）
 
-| 步 | 动作 |
+| 步 | 动作 | 状态 |
+|---|---|---|
+| F.1 | 装 x86_64 APK → node 起来（**0 boot loop**） | ✅ **通过** |
+| F.2 | ★ **打开老会话**（模拟器上是 **v0 代次** ⇒ 走完整迁移链 v0→v1→v2→v3→v4） | ✅ **通过**（+ 前置闸门与备份同时实证） |
+| F.3 | 跑一轮对话（验 LLM 注入链未断） | ⏳ 待做 |
+| F.4 | 验 RP 功能：导入 / 世界书 / 状态栏 / 回退 各一次 | ⏳ 待做 |
+
+##### F 执行记录（2026-09-23 · 模拟器 x86_64，**含一次对自己方案的实测证伪**）
+
+**环境**：`emulator-5554`（Android 15 / API 35）· `DSH-Tavern-0.2.7-x86_64-debug.apk`（sentinel v388）·
+**先 `adb uninstall` 再装**（干净安装 = 验 W-3 那类「只在干净装暴露」的缺陷）。
+
+**F.1 通过（0 boot loop）**：
+
+```
+starting node (attempt 1, port 3080, lan=false)…
+dsh web: http://127.0.0.1:3080/?token=…
+web token captured (43 chars)
+[dsht-rp] data plane on webServer route /dsht-rp/*
+[dsht-rp] register-workspaces: workspaces=1 created=1 adopted=1 errors=0 mode=registry
+[dsht-mvu] variables registered
+[dsht-th] scripts/for-session / macros/expand 正常
+```
+⇒ 8 个自研插件全部装载、端口通、token 捕获、**零 boot loop**。
+
+**★ 但 F.1 当场抓到一个 F.1 判据本身覆盖不到的真缺陷**（这正是「必须真机实测」的理由）：
+
+```
+[dsht-rp-ui] 未找到 settings.plugin.item / settings.plugins.tab
+             ⇒ 插件设置卡**没有落点**（该 DSH 代的设置入口形态又变了，需按新契约适配）
+```
+
+即 **D.2 的「先探测再二选一」方案在真机上是错的**（详见下方 D.2 修正记录）。
+
+**F.2 通过 —— 三步实证**：
+
+**① 迁移前置闸门 + 强制备份（B.2 的运行时行为）**
+
+`.dsh/sessions/.../mig-test/session.jsonl`（**手造 v0 会话**，含一轮真实对话 + 我方 RP 标记）
+⇒ 重启后日志：
+
+```
+W DSHTavern: pre-migration gate: 2 legacy session(s) (max gen 0) ⇒ 强制备份
+I DSHTavern: pre-upgrade backup ok: /sdcard/Documents/dsht-exchange/dsht-prebak-20260924-002329.zip entries=84
+```
+⇒ **备份落共享交换目录**（`/sdcard/Documents/dsht-exchange/`，用户可见、**不在 App 私有区、不入库**）。
+
+**② 备份内容核验**（解开 zip 逐个条目看）：
+
+| 判据 | 结果 |
 |---|---|
-| F.1 | 装 x86_64 APK → node 起来（**0 boot loop**） |
-| F.2 | ★ **打开老会话**（模拟器上是 **v0 代次** ⇒ 走完整迁移链 v0→v1→v2→v3→v4） |
-| F.3 | 跑一轮对话（验 LLM 注入链未断） |
-| F.4 | 验 RP 功能：导入 / 世界书 / 状态栏 / 回退 各一次 |
+| 清单 `kind` | `"pre-upgrade"` ✅ |
+| 会话日志份数 | `sessionLogs: 4` ✅ |
+| **本批待迁移的 v0 会话在包内** | `sessions/.../mig-test/session.jsonl` ✅ |
+| **凭据/令牌混入** | **0 条** ✅（`BACKUP_EXCLUDE` 生效） |
+
+**③ 打开老会话 ⇒ v0 → v4 迁移**
+
+- 迁移前：`mig-test/session.jsonl` — `{"type":"session","version":0,…}`
+- 打开后：`mig-test/session.v4.jsonl` — `{"type":"session","version":4,…}`（**原文件保留**）
+- **UI 实证**：两个旧楼层原样渲染 —— `【迁移测试】请回复一句问候` · `你好，这是迁移前写入的旧楼层。`
+  且 `↩ 回退到此处` / `✎ 编辑` 按钮在位、RP 预设面板与 token 计量条正常。
+- **内容零丢失**：逐行比对迁移产物，**所有 message 事件的 `content` 文本逐字保留**；
+  官方只做了两件加性改动：① 补一条 `system/message`（`system-prompt` 空壳，官方 v2→v3 步骤）；
+  ② `assistant/message` 补 `"stream":[]`。seq 重编号，语义未变。
+
+**⇒ F.2 结论**：v0→v4 全链路（含 0.1.7 新增的 v3→v4 段）**可用、不丢数据**，
+且「不可逆迁移前必有备份」这条用户裁定**在真机上真的成立**。
+
+**已知的测试环境限制（R7 诚实边界）**：`mig-test` 是我**手造**在 `workspace.json` 的
+`sessionIds` 里注册的（DSH 的会话列表**不做目录自动发现**，只认该清单）⇒
+本轮的迁移样本是「**结构真实、内容合成**」的 v0 会话，**不等于**用户真机上的 23+ 份真实会话。
+真机验收仍是必需项（附录 E.8「真机验证」未覆盖项）。
 
 #### 阶段 G：交付
 
