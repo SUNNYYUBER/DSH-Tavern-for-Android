@@ -1740,7 +1740,7 @@ function evaluatePluginCompatibility(manifest, exemptions = {}, runtimeVersion =
 | B.1 | **接入 `dsh-session-format-v3-to-v4` 迁移** | 必须收集**直属 subagent 子会话证据**（官方明示：缺失则拒绝；**已实测证实**，见 E.7）。⚠️ **仍未做** |
 | B.2 | ★ **迁移前强制全量备份**（用户已裁定） | ✅ **已完成** —— 见下方「B.2 执行记录」 |
 | B.3 | 我方解析器按 v4 复核：`session-repair.ts` 的 `ENVELOPE_KEYS` / `STEP_SCOPED`（含 `tool/result`） | ✅ **已完成** —— 见下方「B.3 执行记录」 |
-| B.4 | `pickCurrentSessionFilename` 取最大 N ⇒ 确认认 v4 文件 | v4 文件到来时会自动挑中 |
+| B.4 | `pickCurrentSessionFilename` 取最大 N ⇒ 确认认 v4 文件 | ✅ **已完成** —— 实现本就按「最大 `vN`」泛化取（不硬编码代次），v4 自动命中；★ **本轮补一条显式 v4 控**（见下），40/40 过 |
 | B.5 | 单源 `sessionFormatKnownGenerations` **加 4** | ✅ **已完成**（`[3, 4]`，见状态） |
 | B.6 | **用真实批次数据**跑迁移 + 打开（模拟器上，1 个 v0 会话 + 23+ 真实会话在真机） | 唯一能证明「数据没坏」的判据 |
 
@@ -1811,6 +1811,34 @@ function evaluatePluginCompatibility(manifest, exemptions = {}, runtimeVersion =
 ⇒ ★ **方法论**：Kotlin/K2 的「Unclosed comment / Missing '}'」报错**不可按行号直读**。
 本轮定位手法（可复用）：**把 HEAD 版本单独编一遍确认基线干净** → 再用**差集**把新增块整段摘掉，
 看错误是否跟着走 ⇒ 一步锁定「新增块内部」而非「文件结构」。
+
+##### B.4 执行记录（2026-09-23 · **实现本就对，缺的是「钉住 v4 这一代」的显式控**）
+
+`pickCurrentSessionFilename`（`session-surgery.ts:307`）的实现是**泛化**的：
+
+```ts
+const m = /^session\.v(\d+)\.jsonl$/.exec(name)
+if (v > bestVersion) { bestVersion = v; best = name }
+```
+
+⇒ 它取的是「**最大的 vN**」，**不硬编码任何代次** ⇒ v4 天然命中（v10 也命中）。
+★ 这属于**「正确但没被钉住」**：既有用例证明了「排序对」（`v2/v10/v3` → 取 v10），
+但**没有一条**证明「0.1.7 真的写 v4 时挑得中它」。
+
+**本轮补的控**（`session-generation.spec.ts`）：
+
+```ts
+it('★ v0 与 v4 共存（0.1.7 迁移后的真实形态）→ 必须挑 v4，不得回落到 v0 死文件', () => {
+  expect(pickCurrentSessionFilename(['session.jsonl', 'session.v4.jsonl', 'session.lock']))
+    .toBe('session.v4.jsonl')
+})
+```
+
+★ **这条判据的分量**：挑错文件 = 用户点开老会话**看到的是迁移前的冻结死数据**
+（而非迁移后的活会话），且**全程不报错**（**P-30** 家族）。
+⇒ 它守的不是「排序算法」，而是「**迁移后打开的是迁移产物**」这个用户可见事实。
+
+**验收**：`session-generation.spec.ts` **40/40 通过**。
 
 ##### B.3 执行记录（2026-09-23，**含一次对审计结论的实测纠正**）
 

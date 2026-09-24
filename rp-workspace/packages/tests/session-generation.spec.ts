@@ -46,6 +46,17 @@ describe('pickCurrentSessionFilename（纯函数：目录条目 → 当前世代
       .toBe('session.v10.jsonl')
   })
 
+  // ★ 2026-09-23 DSH 0.1.7 升级轮（B.4）：显式钉住 **v4** 这一代。
+  //   为什么值得单列一条（而不是靠上面的 v10 泛化用例覆盖）：上面那条证明的是
+  //   「**排序**正确」，本条的立意是「**0.1.7 真的写 v4** 时我方挑得中它」——
+  //   即「迁移后打开的必须是迁移产物，不是**冻结的 v0 老文件**」。
+  //   ★ 这条判据的分量：挑错文件 = 用户点开老会话**看到的是迁移前的死数据**
+  //     （而不是迁移后的活会话），且**不报错**（P-30 家族）。
+  it('★ v0 与 v4 共存（0.1.7 迁移后的真实形态）→ 必须挑 v4，不得回落到 v0 死文件', () => {
+    expect(pickCurrentSessionFilename(['session.jsonl', 'session.v4.jsonl', 'session.lock']))
+      .toBe('session.v4.jsonl')
+  })
+
   it('空目录 / 无关文件 → 回落到 session.jsonl（调用方再去 open 失败）', () => {
     expect(pickCurrentSessionFilename([])).toBe('session.jsonl')
     expect(pickCurrentSessionFilename(['.bak', 'session.jsonl.bak'])).toBe('session.jsonl')
