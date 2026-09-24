@@ -20,6 +20,8 @@ build-dsht.ps1 在本环境跑不了，故需此 Bash/Python 可执行版本）�
 import sys
 import os
 import re
+import json
+import hashlib
 import shutil
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -50,6 +52,19 @@ STUBS = os.path.join(WS, "stubs")
 # —— 闸门把「补丁丢了」读成「一切正常」（本项目的假绿族）。
 STATS = {"applied": 0, "skipped": 0, "failed": 0, "checked": 0, "patched": 0, "pending": 0}
 
+# ---------------------------------------------------------------- 锚点指纹（C.4）
+# 【为什么需要它（附录 E.7 判据表「C.4 锚点指纹」）】
+#   「命中数相同」**不等于**「改的是同一处」。官方可能：
+#     · 把锚点所在的那行**语义改了**（例如换个变量名、调整参数顺序）；
+#     · 或把该形态**搬到另一个函数**里（处数仍为 1，但改的东西完全不同）。
+#   ⇒ 这两类漂移**命中数判据抓不到**（都会报 ✓），只有比对「命中的那段原文」才能发现。
+# 口径：对**每一处命中**的原文取 SHA256 前 8 位，排序后拼成该补丁的指纹。
+#   用指纹清单（而非单个）是为了区分「1 处变 2 处」这种既是数量也是形态的变化。
+# ★ 本文件**只负责采集与打印**；「与上一代基线比对、漂移即报红」由
+#   `audit-patch-fingerprints.mjs` 承担 —— 因为本文件跑在**没有历史基线**的构建现场
+#   （P-40③：判据必须跑在它所判对象状态确定之后；基线是另一份输入，不该塞进这里）。
+ANCHOR_FP = {}
+
 
 def log(msg):
     print("[patch] " + msg)
@@ -58,6 +73,18 @@ def log(msg):
 def die(msg):
     print("[patch][FATAL] " + msg, file=sys.stderr)
     sys.exit(1)
+
+
+def anchor_fingerprint(text, pattern):
+    """给 pattern 的**每一处命中原文**取 SHA256 前 8 位；返回排序后的元组。
+
+    空（0 处命中）⇒ 返回空元组 —— 调用方据此区分「没命中」与「命中了但内容不同」。
+    """
+    fps = []
+    for m in re.finditer(pattern, text):
+        raw = m.group(0).encode("utf-8")
+        fps.append(hashlib.sha256(raw).hexdigest()[:8])
+    return tuple(sorted(fps))
 
 
 def patch(path, marker, pattern, repl, expected, label, expected_min=None):
@@ -91,6 +118,24 @@ def patch(path, marker, pattern, repl, expected, label, expected_min=None):
         log("  · %s：已打补丁，跳过" % label)
         STATS["skipped"] += 1
         STATS["patched"] += 1
+        # ★ C.4：**已打补丁**时锚点原文已被替换掉 ⇒ 现在读 `pattern` 采不到原锚点。
+        #   【设计取舍】改采「**marker 之前**固定 160 字符窗口」的指纹 ——
+        #   理由：那一段**完全来自官方产物**（我方替换文本只在 marker 处），
+        #   所以它变了 = 官方那一片代码变了 = 正是 C.4 要抓的「锚点漂移」。
+        #   ★ 为什么不取 marker **之后**：之后紧跟的是我方注入的表达式，不是官方原文，
+        #     取它会把我方模板的改动也算成"漂移"（误报）。
+        #   ★ 为什么用「固定窗口」而不是「整行/整函数」：窗口长度固定 ⇒
+        #     官方在别处加代码**不会**平移窗口内容（只取紧邻的 N 字符，不含行结构）。
+        #
+        #   实现：`patch()` 的 marker 由多个调用方拼写，这里用**首个 marker 命中**的位置
+        #   往前取窗口。若无命中（理论上不该发生，因为上面刚判过 ≥lo）⇒ 记 `[]` 并出声。
+        _pos = text.find(marker)
+        if _pos > 0:
+            _ctx = text[max(0, _pos - 160):_pos]
+            ANCHOR_FP[label] = (hashlib.sha256(_ctx.encode("utf-8")).hexdigest()[:8],)
+        else:
+            ANCHOR_FP[label] = ()
+            log("  ! %s：marker 命中但定位不到位置 ⇒ 指纹记空（C.4 对该项失效）" % label)
         # 【心跳 55 修】「已打补丁」本身就是**一次有效校验**（marker 在 = 该补丁确实生效），
         # 但原实现只加 skipped、不加 checked → `--check` 的汇总恒输出
         # 「0 项检查，0 项失败」：明细行说"检查了 21 项"，汇总说"一项没查"。
@@ -103,6 +148,8 @@ def patch(path, marker, pattern, repl, expected, label, expected_min=None):
         return False
 
     hits = len(re.findall(pattern, text))
+    # ★ C.4：未打补丁 ⇒ 直接对**锚点原文**取指纹（这才是最贴近"锚点有没有漂移"的口径）。
+    ANCHOR_FP[label] = anchor_fingerprint(text, pattern)
     if CHECK_ONLY:
         ok = lo <= hits <= expected
         STATS["checked"] += 1
@@ -117,6 +164,7 @@ def patch(path, marker, pattern, repl, expected, label, expected_min=None):
             % (label, lo, expected, hits))
         STATS["failed"] += 1
         return False
+
 
     if not (lo <= hits <= expected):
         log("  ✗ %s：命中数不符（期望 %d~%d，实际 %d）—— DSH 升级后产物形态变了？"
@@ -826,6 +874,30 @@ for _t in ITERATOR_TARGETS:
         1,
         "P0-5 Iterator Helpers 守卫（旧 WebView 整页加载失败）",
     )
+
+# ============================================================ 锚点指纹落盘（C.4）
+# 【为什么要落盘而不是只打印】判据要判的是「**跨代**是否漂移」——
+#   即「同一补丁在 0.1.5 与 0.1.7 上命中的是不是同一段原文」。
+#   这需要一个**可被下一代比对的持久化基线**，故写成 JSON（随 runtime 目录走）。
+# 【为什么可以 `--check` 时不写】检查模式约定是只读；且 `--check` 时 `ANCHOR_FP`
+#   只含「尚未打补丁」的那些项 ⇒ 不完整，不该覆盖完整基线（P-30：宁可缺，不可假全）。
+# 指纹为空（某补丁那代没命中）⇒ **如实记 `[]`**，不省略键（省略会让比对方误判成「新增项」）。
+if not CHECK_ONLY:
+    fp_path = os.path.join(DST, ".dsht-anchor-fingerprints.json")
+    try:
+        with open(fp_path, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(
+                {
+                    "_comment": "DSH 平台补丁的锚点指纹基线（C.4）。由 apply-platform-patches.py 自动生成；"
+                                "由 audit-patch-fingerprints.mjs 比对。指纹 = 每处命中原文的 SHA256 前 8 位（排序）。",
+                    "anchors": {k: list(v) for k, v in sorted(ANCHOR_FP.items())},
+                },
+                f, ensure_ascii=False, indent=2,
+            )
+            f.write("\n")
+        print("锚点指纹：%d 项已写入 %s" % (len(ANCHOR_FP), os.path.basename(fp_path)))
+    except OSError as e:
+        print("[patch][WARN] 锚点指纹落盘失败：%s（不阻断构建，但 C.4 判据将无基线可比）" % e)
 
 # ============================================================ 汇总
 print("\n" + "=" * 72)

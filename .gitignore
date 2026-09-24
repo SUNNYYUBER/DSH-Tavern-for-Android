@@ -129,3 +129,19 @@ rp-workspace/out/emu-verify/
 #     ⇒ 实测「连跑 5 次，4 FAIL / 1 PASS」的 flaky（注入路径指向的文件在两次运行之间被删，
 #     于是判据① 先命中「悬空」而判据⑤ 的追问前提不成立）。⇒ fixture 移到负控独占目录。
 rp-workspace/scripts/.docrefs-negctl-fixture/
+
+# 【2026-09-23 DSH 升级轮 · C.4】补丁锚点指纹基线（由 apply-platform-patches.py 生成）。
+#   ★ 为什么**当前代基线**要出库：它是「上一代」比对时的输入 —— 换版本升级时
+#     必须有一份**可追溯的上一代基线**才能判「锚点漂不漂移」。
+#     但两棵树（dsh-runtime-src / dsh-runtime-android）都在 .gitignore 里
+#     ⇒ 基线文件必须在这里**显式放行**，否则 C.4 判据永远「缺上一代基线」而空转。
+#   ★ 为什么用 `!` 放行而不是改目录规则：目录整棵不入库是**有意**的（可重建的大体积
+#     vendor 树），不能为一个小 JSON 破例把整棵树放进来。`!` 只放行**这一个文件**。
+#   ★★ git 的 `!` **不能穿透被忽略的父目录**（实测踩到：只写 `!<dir>/<file>` 时
+#     `git check-ignore` 仍报 `.gitignore:5:dsh-runtime-android/` 命中 ⇒ 放行无效）。
+#     ⇒ 必须先 `!` 放行父目录本身，再 `!` 放行文件；父目录的 `!` 会让它「可被 git 看到」，
+#     而它下面的**其它**文件仍被上一层的 `node_modules/` 等规则挡着（不会大量入库）。
+!dsh-runtime-android/
+dsh-runtime-android/*
+!dsh-runtime-android/.dsht-anchor-fingerprints.json
+!rp-workspace/dsh-runtime-prev-fingerprints.json

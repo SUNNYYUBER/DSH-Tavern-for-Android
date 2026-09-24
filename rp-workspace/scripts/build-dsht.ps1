@@ -247,6 +247,8 @@ $readingGates = @{
     'audit-system-entry.mjs'          = @{ Exe = 'node'; Pattern = '分享面：manifest 声明'; Label = '系统轻入口契约（W-8）' }
     # 【DSH 升级轮】升级验收六段判据的汇总读数（六段各一行；取汇总行）
     'audit-upgrade-readiness.mjs'     = @{ Exe = 'node'; Pattern = '\d+ OK / \d+ BLOCK / \d+ UNKNOWN'; Label = 'DSH 升级验收六段（附录 D.0）' }
+    # 【DSH 升级轮 · C.4】补丁锚点指纹跨代比对（命中数相同但原文变了 = 漂移）
+    'audit-patch-fingerprints.mjs'    = @{ Exe = 'node'; Pattern = '比对完成：\d+ 项指纹一致'; Label = '补丁锚点指纹（附录 E.7 判据 C.4）' }
 }
 
 <#
@@ -353,6 +355,14 @@ $auditNode = @(
     # 「快捷面板里根本没有这个磁贴」—— 而编译、单测、其它门禁全绿（P-30/P-59 家族）。
     # 经决定性负控：删 TOGGLEABLE_TILE 即被精确点名，还原即转绿。selftest 7/7。
     'audit-system-entry.mjs',
+    # 【2026-09-23 DSH 升级轮 · C.4 新增】补丁锚点指纹跨代比对。
+    # 守：「命中数相同」≠「改的是同一处」—— 官方可能改了锚点那行的语义、
+    #     或把它搬到另一处（处数仍为 1，命中数判据一律报 ✓ = 假绿）。
+    # 判据：当前代基线与上一代基线的**同标签指纹必须逐元素相等**。
+    # 理由：这类漂移的后果是「补丁打在了形似而非同一的地方」——
+    #     编译/单测/其它门禁全绿，只有真机行为偏离（P-30 家族）。
+    # ⚠ 缺上一代基线 ⇒ **跳过并出声**（不冒充通过）；selftest 9/9。
+    'audit-patch-fingerprints.mjs',
     # 【2026-09-21 W-3 验收未达的防复发】设备能力「诚实声明」对账。
     # 守：`DeviceBridge.EXEC_WIRED`（唯一真相源）与三面一致 ——
     #   ① exec() 的分支与它同源（未接线必须返回 NOT_IMPLEMENTED，不得 ok:true 假装成功）；

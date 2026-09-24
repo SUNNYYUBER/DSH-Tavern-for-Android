@@ -1,0 +1,65 @@
+{
+  "_comment": "DSH 平台补丁的锚点指纹基线（C.4）。由 apply-platform-patches.py 自动生成；由 audit-patch-fingerprints.mjs 比对。指纹 = 每处命中原文的 SHA256 前 8 位（排序）。",
+  "anchors": {
+    "F1-2 defaultFileSystem 暴露 rename": [
+      "ab852cad"
+    ],
+    "F1-3 旧发布路径 link→rename": [
+      "6b8c5d96"
+    ],
+    "F1-4 generation 发布路径 link→rename": [
+      "5236be2f"
+    ],
+    "F2 Android flock 单进程直通": [
+      "1c357b3e"
+    ],
+    "P0-1a bash-local run/start argv": [
+      "f5b4e383"
+    ],
+    "P0-1b bash-sandbox confine argv": [
+      "62120454"
+    ],
+    "P0-2 sandbox-local android 降级": [
+      "a6cfbcba"
+    ],
+    "P0-2b sandbox-local PRoot 真隔离": [
+      "9bd4edad"
+    ],
+    "P0-5 Iterator Helpers 守卫（旧 WebView 整页加载失败）": [
+      "1c5c185a"
+    ],
+    "P1-3b fs-search 降级模块导入": [
+      "0e0f381d"
+    ],
+    "P1-3c runRipgrep android 短路": [
+      "35db2266"
+    ],
+    "P1-4a terminal-bash DEFAULT_BASH_SHELL": [
+      "439b26d8"
+    ],
+    "P1-4b terminal-bash DEFAULT_BASH_ARGS": [
+      "60b39503"
+    ],
+    "P2-1a ChatNodeList 传入 firstSeq/hasMore（0.1.7 形态）": [
+      "3d038ba5"
+    ],
+    "P2-1b ChatNodeSeat 接收 dshtOldestSeq/dshtHasMore（0.1.7 形态）": [
+      "9cc22fe2"
+    ],
+    "P2-1c processWindowReady 补回已加载区间判据（0.1.7 形态）": [
+      "7eab6286"
+    ],
+    "P3-5a session-title 剥协议标签": [
+      "575fab78"
+    ],
+    "sim-1 storage-json fsyncDirectory": [
+      "bffceb54"
+    ],
+    "sim-2 credentials-local assertOwnerOnly": [
+      "b3295a3e"
+    ],
+    "sim-3 session-persistence syncDirPosix": [
+      "6911192b"
+    ]
+  }
+}
