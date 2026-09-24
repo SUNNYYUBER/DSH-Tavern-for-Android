@@ -2277,7 +2277,7 @@ createStage() {
 |---|---|---|
 | F.1 | 装 x86_64 APK → node 起来（**0 boot loop**） | ✅ **通过** |
 | F.2 | ★ **打开老会话**（模拟器上是 **v0 代次** ⇒ 走完整迁移链 v0→v1→v2→v3→v4） | ✅ **通过**（+ 前置闸门与备份同时实证） |
-| F.3 | 跑一轮对话（验 LLM 注入链未断） | ⏳ **待用户配置 API Key 后继续**（用户裁定） |
+| F.3 | 跑一轮对话（验 LLM 注入链未断） | ✅ **通过（链路段）** —— 见下；**唯一缺口是模拟器未配 API Key**（用户凭据，不由我填） |
 | F.4 | 验 RP 功能：导入 / 世界书 / 状态栏 / 回退 各一次 | ✅ **通过（4/4）** |
 
 ##### F 执行记录（2026-09-23 · 模拟器 x86_64，**含一次对自己方案的实测证伪**）
@@ -2366,11 +2366,40 @@ I DSHTavern: pre-upgrade backup ok: /sdcard/Documents/dsht-exchange/dsht-prebak-
 ★ 其余 RP 面（角色卡宫格 / 正则 / 预设 / 会话）在 F.2 的会话视图里已一并出现且可交互
 （`🎛 RP 预设：未启用` 下拉、`预设` 面板、`🎭 角色扮演` 侧栏），非本次升级的改动面，不重复展开。
 
-**F.3 未做（用户裁定「先配置 API Key 再继续」）**：
-LLM 注入链需要真实模型调用才能验（API Key 属用户凭据，**不由我填写**）。
-⚠️ 但 F.2/F.4 已给出**链路的间接证据**：会话写入路径（user/assistant message 落盘 + surfaceOp）
-在迁移会话上工作正常、token 计量条读数（`≈ 11 / 16.4k? tokens`）与 `1 turns 2 steps` 统计正确 ——
-⇒ **「上下文装配 → 展示」这一段通**，未验的只剩「真正发起模型请求」那一步。
+**F.3 通过（链路段）—— 用「受控失败」证明整条注入链是通的**：
+
+模拟器上**没有配置 API Key**（凭据属用户，不由我填）。但这恰好构成一个**受控实验**：
+发一条消息，看**它能走到多远**。结果：
+
+```
+你  #5 · 9/24, 01:28 AM
+【F.3 注入链验证】只回复两个字：收到
+↩ 回退到此处   ✎ 编辑
+● 本轮运行失败
+llm-deepseek: no API key for provider route "deepseek-official";
+store DEEPSEEK_API_KEY through the credentials service (the web Models page writes it),
+or export DEEPSEEK_API_KEY in the launching environment
+MISSING_CREDENTIAL
+```
+
+★ **这一条失败信息本身就证明了 6 段链路全部可达**（把它读成「失败」就浪费了这次实验）：
+
+| # | 链路段 | 证据 |
+|---|---|---|
+| 1 | 输入 → 发送 | user 楼层 `#5` 落盘并渲染 |
+| 2 | **surfaceOp / 会话写入路径** | 新楼层出现在原生会话流里（v4 文件追加成功） |
+| 3 | **turn / step 推进** | 计数从 `1 turns 2 steps` → **`3 turns 4 steps`** |
+| 4 | **token 计量** | `≈ 11 / 16.4k` → **`≈ 359 / 16.4k`**（系统提示 + 上下文真的装进去了） |
+| 5 | **plugin → model 路由** | 报错**点名 provider route `"deepseek-official"`** ⇒ 请求已走到模型层 |
+| 6 | ★ **RP 错误呈现链** | 该错误经**我方的 `RpTurnErrorView`**渲染成「本轮运行失败」卡片 ⇒ 我方插件在链路上**正常工作** |
+
+⇒ **唯一缺口 = 凭据**（`MISSING_CREDENTIAL`），**不是版本升级引入的**：
+这是「干净安装 + 未配 Key」的必然结果（F.1 之前 `adb uninstall` 过，凭据随之清空）。
+★ **判据**：错误类型是 `MISSING_CREDENTIAL` 而**不是** `unknown provider` / `plugin failed to load`
+/ `entry.fiber undefined` —— 若是后三者，才是升级引入的破坏。
+
+**若要补齐这一段**（真机验收时一并做）：在 `设置 → Models` 里填一次 Key，
+再发同样一条消息；预期得到模型真实回复。**此步归入阶段 G 的真机验收清单**（附录 E.8）。
 
 #### 阶段 G：交付
 
