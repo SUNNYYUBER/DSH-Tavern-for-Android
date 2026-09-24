@@ -588,10 +588,23 @@ const run = (file, args = []) => {
 // ---- ③ 原生面 ----
 {
   const a = run('audit-native-deps.mjs')
-  const b = run('audit-pty-prebuilt.mjs')
+  // ★★ 2026-09-23 v0.2.7 发版轮：**把 `--expect-compile` 透传给 audit-pty-prebuilt**。
+  //   【为什么必须有（CI 首跑实测的构建阻断）】本闸门跑在 Step 0.5，而 node-pty 的
+  //   android-* 产物由 **Step 1.5** 交叉编译产出 ⇒ 此刻产物**本就不该在**。
+  //   不带 flag 时，判据会拿「**上一次构建的残留产物**」当对象：本机因此长期假绿；
+  //   **CI 净环境无残留** ⇒ v0.2.7 tag 首跑实测 ③ 段 BLOCK ⇒ 构建失败。
+  //   ⇒ 与 ①/② 段同款纪律（P-40③）：编译前 SKIP 出声，权威判据在 Step 1.5 之后。
+  //   ⚠️ 只在「预期重装」（--expect-reinstall，= 构建会走到 Step 1.5）时透传；
+  //     否则（SkipInstall 构建）产物必须已在场，仍 fail-closed。
+  const b = run('audit-pty-prebuilt.mjs', EXPECT_REINSTALL ? ['--expect-compile'] : [])
   const bad = a.code !== 0 || b.code !== 0
-  rec('③ 原生面（DT_NEEDED 闭合 + pty.node 就位）', bad ? 'BLOCK' : 'OK',
-    bad ? `native-deps exit=${a.code} · pty-prebuilt exit=${b.code}` : '两条判据全过')
+  const bSkipped = /SKIP \d+ 项/.test(b.out)
+  rec('③ 原生面（DT_NEEDED 闭合 + pty.node 就位）', bad ? 'BLOCK' : (bSkipped ? 'SKIP' : 'OK'),
+    bad
+      ? `native-deps exit=${a.code} · pty-prebuilt exit=${b.code}`
+      : (bSkipped
+          ? `DT_NEEDED 闭合通过；**pty.node 记 SKIP** —— ★ 本次构建预期编译（Step 1.5 才产出），本段此刻**无判据力**（出声，不当通过 —— P-17），由 Step 1.5 后的内联调用负责`
+          : '两条判据全过'))
 }
 
 // ---- ④ 壳面 ----

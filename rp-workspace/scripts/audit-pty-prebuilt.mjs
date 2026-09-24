@@ -14,9 +14,23 @@
 // 自研 ELF 解析（不依赖 NDK/llvm-readelf 在场——CI 上 NDK 由 workflow 提供，
 // 但判据本身应能在任何机器上独立跑）。
 //
-// 退出码：0 = 全部通过；1 = 有判据失败（含产物缺失）
+// 【--expect-compile：为什么需要它】本判据在**两个时刻**被调用：
+//   · Step 0.5（门禁前置，经 audit-upgrade-readiness.mjs ③ 段）—— 此刻产物**还没编译**；
+//     android-* 产物由 **Step 1.5** 的 build-node-pty.mjs 交叉编译产出。
+//   · Step 1.5 之后（build-dsht.ps1 内联调用）—— 此刻产物才是**权威现场**。
+//   在 Step 0.5 不带 flag 地跑，会拿「**上一次构建的残留产物**」当判据对象：
+//   本机因此长期假绿，而 **CI 净环境无残留** ⇒ v0.2.7 tag 首跑实测报
+//   「产物缺失 ⇒ audit-upgrade-readiness ③ 段 BLOCK ⇒ 构建失败」。
+//   这是 P-40③ 同族（判据必须跑在它所判对象**状态确定之后**）。
+//   ⇒ 传 `--expect-compile` 时：产物**两处都不存在**记 **SKIP 并出声**（P-17：测不出 ≠ 通过），
+//     其余判据（架构/符号/NEEDED）在产物在场时**照常执行**。
+//     真正的缺失判据由 **Step 1.5 之后**那次不带 flag 的调用负责（fail-closed）。
 //
-// 用法：node scripts/audit-pty-prebuilt.mjs
+// 退出码：0 = 全部通过（含 SKIP，此时 stdout 有 SKIP 出声）；1 = 有判据失败
+//
+// 用法：
+//   node scripts/audit-pty-prebuilt.mjs                  # 权威现场（Step 1.5 之后）
+//   node scripts/audit-pty-prebuilt.mjs --expect-compile # 编译前（Step 0.5 门禁），缺失记 SKIP
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -133,10 +147,17 @@ function parseElf(buf) {
 }
 
 // ---- 判据 ----
+// W77：flag 必须以字面量被「可见地」读（argOf helper 的实参判据认不出）
+const EXPECT_COMPILE = process.argv.includes('--expect-compile')
 let failed = false
+let skipped = 0
 const fail = (msg) => {
   console.error(`  ✗ ${msg}`)
   failed = true
+}
+const skip = (msg) => {
+  console.log(`  ⓘ SKIP ${msg}`)
+  skipped++
 }
 
 console.log('=== node-pty 预编译产物静态断言（W-1）===')
@@ -150,6 +171,12 @@ for (const [dir, expect] of Object.entries(ARCH_EXPECT)) {
   }
   console.log(`\n[${dir}] ${file ?? '(两处均无产物)'}`)
   if (!file) {
+    // ★ 编译前调用（Step 0.5 门禁）：此刻产物**本就不该在** ⇒ SKIP 出声，不做缺失判据。
+    //   权威缺失判据在 Step 1.5 之后那次调用（不带 flag ⇒ fail-closed）。
+    if (EXPECT_COMPILE) {
+      skip(`产物尚未编译（Step 1.5 才产出）—— 本段此刻**无判据力**，由 Step 1.5 后的权威调用负责（P-17 测不出 ≠ 通过）`)
+      continue
+    }
     fail(`产物缺失：${PTY_DIRS.map((b) => path.join(b, dir, 'pty.node')).join(' / ')}`)
     continue
   }
@@ -197,6 +224,8 @@ for (const [dir, expect] of Object.entries(ARCH_EXPECT)) {
 if (failed) {
   console.error('\n✗ node-pty 产物静态断言失败')
   process.exitCode = 1
+} else if (skipped > 0) {
+  console.log(`\nⓘ node-pty 产物静态断言：**SKIP ${skipped} 项**（产物尚未编译）—— 本段此刻无判据力，非通过`)
 } else {
   console.log('\n✓ node-pty 双架构产物静态断言全部通过')
 }
