@@ -117,7 +117,7 @@ jobs:
         run: |
           $src = "rp-workspace/dsh-runtime-src"
           New-Item -ItemType Directory -Force $src | Out-Null
-          [IO.File]::WriteAllText("$src/package.json", "{`"dependencies`": {`"@deepseek-ai/dsh`": `"0.1.5-rc.1`", `"dsh-preset-enhance`": `"0.3.2-rc.1`"}}")
+          [IO.File]::WriteAllText("$src/package.json", "{`"dependencies`": {`"@deepseek-ai/dsh`": `"0.1.7-rc.1`", `"dsh-preset-enhance`": `"0.3.2-rc.1`"}}")
           Push-Location $src
           npx -y pnpm@10 install --node-linker=hoisted --registry=https://registry.npmmirror.com
           if ($LASTEXITCODE -ne 0) { Pop-Location; throw "pnpm install dsh failed: $LASTEXITCODE" }
@@ -132,10 +132,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "fetch-native-libs failed: $LASTEXITCODE" }
 
       # 完整链：不传 -SkipInstall（CI 无既有 runtime）
+      # ⚠️ -DshVersion 必须与单源 dsh-version.json 一致，否则 Step 0.7 版本一致性闸门
+      # fail-closed（v0.2.7 tag 首跑实证：此处仍写 0.1.5-rc.1 ⇒ 与单源 0.1.7-rc.1 冲突即停）。
       - name: Build x86_64 debug APK
         shell: pwsh
         run: |
-          & .\rp-workspace\scripts\build-dsht.ps1 -DshVersion 0.1.5-rc.1 -Arch x86_64
+          & .\rp-workspace\scripts\build-dsht.ps1 -DshVersion 0.1.7-rc.1 -Arch x86_64
           if ($LASTEXITCODE -ne 0) { throw "build-dsht.ps1 failed: $LASTEXITCODE" }
 
       - uses: actions/upload-artifact@v4
