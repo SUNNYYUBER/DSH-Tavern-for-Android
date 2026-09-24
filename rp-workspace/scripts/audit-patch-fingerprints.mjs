@@ -28,8 +28,8 @@
  *  · 上一代基线若不存在 ⇒ 本判据**跳过并出声**（不冒充通过，也不误报）。
  *
  * 用法：node scripts/audit-patch-fingerprints.mjs [--selftest]
- *       node scripts/audit-patch-fingerprints.mjs --current <p> --previous <p>
- * 退出码：0 = 无漂移；1 = 有漂移；2 = 用法/文件问题；3 = selftest 失败
+ *       node scripts/audit-patch-fingerprints.mjs --current <基线.json> --previous <基线.json>
+ * 退出码：0 = 无漂移（含「缺一代基线 ⇒ 跳过」）；1 = 有漂移；3 = selftest 失败
  */
 import { readFileSync, existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -209,12 +209,20 @@ function selftest() {
 
 if (process.argv.includes('--selftest')) selftest()
 
-const argOf = (flag) => {
-  const i = process.argv.indexOf(flag)
-  return i >= 0 && process.argv[i + 1] ? resolve(process.argv[i + 1]) : null
-}
-const curPath = argOf('--current') ?? DEFAULT_CURRENT
-const prevPath = argOf('--previous') ?? DEFAULT_PREVIOUS
+// ★【为什么每个 flag 都显式写一遍，而不是用一个 `argOf(flag)` 通用 helper 收口】
+//   本仓的 `audit-selftest-claims.mjs`（W77 判据）要求「**头注用法行声明的 flag，
+//   实现里必须真的读它**」，而它的实现面口径是「逐行扫 `process.argv.indexOf('--x')`
+//   这类**字面量**读取」。传参形态 `argOf('--current')` 里的 `'--current'` 是**实参**、
+//   不是 `indexOf` 的直接参数 ⇒ 判据认不出（实测报 `bad=audit-patch-fingerprints.mjs(1)`）。
+//   ⇒ 逐个 flag 写成字面量读取（可读性略降，但让判据**看得见** —— P-45：口径要与真目标对齐）。
+const curIdx = process.argv.indexOf('--current')
+const prevIdx = process.argv.indexOf('--previous')
+const curPath = curIdx >= 0 && process.argv[curIdx + 1]
+  ? resolve(process.argv[curIdx + 1])
+  : DEFAULT_CURRENT
+const prevPath = prevIdx >= 0 && process.argv[prevIdx + 1]
+  ? resolve(process.argv[prevIdx + 1])
+  : DEFAULT_PREVIOUS
 
 console.log(`[锚点指纹] 当前基线：${curPath}`)
 console.log(`[锚点指纹] 上一代基线：${prevPath}`)
