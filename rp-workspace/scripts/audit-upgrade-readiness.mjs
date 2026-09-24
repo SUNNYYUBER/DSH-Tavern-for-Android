@@ -559,29 +559,43 @@ const run = (file, args = []) => {
 
 // ---- ② 补丁面 ----
 {
-  const py = process.platform === 'win32' ? 'python' : 'python3'
-  let out = ''
-  let code = 0
-  try {
-    out = execFileSync(py, [path.join(HERE, 'apply-platform-patches.py'), RT, '--check'], { encoding: 'utf8', timeout: 300000 })
-  } catch (e) { out = (e.stdout ?? '') + (e.stderr ?? ''); code = e.status ?? -1 }
-  const m = /检查完成：(\d+) 项检查 —— 已打补丁 (\d+)，未打可打 (\d+)，跳过 (\d+)，失败 (\d+)/.exec(out)
-  if (m === null) rec('② 补丁面（13 条 patch 的命中与幂等）', 'UNKNOWN', '解析不出 --check 汇总行 ⇒ 必须人工看输出（不许当通过）')
-  else {
-    const [, , , pending, , failed] = m.map(Number)
-    // ★★ 2026-09-23 阶段 E：**与 ① 段同一因果** —— 本段跑在 Step 0.5，而**补丁在 Step 3.5 才打**
-    //   ⇒ 换版本/重装构建时 `pending` **必然 > 0**（本轮实测：重装后待打 10 条）⇒ 不该 BLOCK 掉构建。
-    //   ★ 但它**不能静默放过**（那会让「补丁根本没打上」与「还没轮到打」同貌 —— P-30）
-    //   ⇒ 传 `--expect-reinstall` 时记 **SKIP 并出声**（点名待打条数）；
-    //     真正的判据由**补丁打完之后的**那次审计（构建后期 / 发布前跑本脚本不带 flag）负责。
-    const okAll = Number(failed) === 0 && Number(pending) === 0
-    const skipByReinstall = !okAll && EXPECT_REINSTALL && Number(failed) === 0
-    rec('② 补丁面（13 条 patch 的命中与幂等）', okAll ? 'OK' : (skipByReinstall ? 'SKIP' : 'BLOCK'),
-      okAll
-        ? '失败 0 · 待打 0'
-        : (skipByReinstall
-            ? `失败 0 · **待打 ${pending}** —— ★ 本次构建预期重装，补丁在 **Step 3.5** 才打；本段此刻**无判据力**（出声，不当通过 —— P-17），由补丁打完后的审计负责`
-            : `失败 ${failed} · 待打 ${pending}（★ --check 把「锚点命中但未打」计入 pending 且**不报红**，故必须显式看这个数）`))
+  // ★★ 2026-09-24 v0.2.7：**与 ①/③ 段同一病因的第四个切面**。
+  //   `--check` 的对象是 `dsh-runtime-android`，而该目录由 **Step 3** 才建出来
+  //   （Step 1 装 `dsh-runtime-src`、Step 3 复制过去）。本闸门跑在 Step 0.5 ⇒
+  //   **CI 净环境**下目标不存在 ⇒ `--check` 报「失败 22（目标不存在）」⇒ 本段 BLOCK。
+  //   本机假绿同样是残留目录掩盖。⇒ 预期重装且 runtime 未就绪时记 **SKIP 出声**（P-17），
+  //   真判据由构建后期（补丁打完、目录在场）那次审计负责。
+  const rtReady = fs.existsSync(path.join(RT, 'node_modules', '@deepseek-ai'))
+  if (!rtReady) {
+    rec('② 补丁面（13 条 patch 的命中与幂等）', EXPECT_REINSTALL ? 'SKIP' : 'BLOCK',
+      EXPECT_REINSTALL
+        ? `runtime 未就绪（${RT}）—— ★ 本次构建预期重装，该目录由 **Step 3** 才建出；本段此刻**无判据力**（出声，不当通过 —— P-17），由补丁打完后的审计负责`
+        : `runtime 未就绪（${RT}）⇒ 无法做补丁判据（\`--check\` 会把「目标不存在」记 22 条失败）`)
+  } else {
+    const py = process.platform === 'win32' ? 'python' : 'python3'
+    let out = ''
+    let code = 0
+    try {
+      out = execFileSync(py, [path.join(HERE, 'apply-platform-patches.py'), RT, '--check'], { encoding: 'utf8', timeout: 300000 })
+    } catch (e) { out = (e.stdout ?? '') + (e.stderr ?? ''); code = e.status ?? -1 }
+    const m = /检查完成：(\d+) 项检查 —— 已打补丁 (\d+)，未打可打 (\d+)，跳过 (\d+)，失败 (\d+)/.exec(out)
+    if (m === null) rec('② 补丁面（13 条 patch 的命中与幂等）', 'UNKNOWN', '解析不出 --check 汇总行 ⇒ 必须人工看输出（不许当通过）')
+    else {
+      const [, , , pending, , failed] = m.map(Number)
+      // ★★ 2026-09-23 阶段 E：**与 ① 段同一因果** —— 本段跑在 Step 0.5，而**补丁在 Step 3.5 才打**
+      //   ⇒ 换版本/重装构建时 `pending` **必然 > 0**（本轮实测：重装后待打 10 条）⇒ 不该 BLOCK 掉构建。
+      //   ★ 但它**不能静默放过**（那会让「补丁根本没打上」与「还没轮到打」同貌 —— P-30）
+      //   ⇒ 传 `--expect-reinstall` 时记 **SKIP 并出声**（点名待打条数）；
+      //     真正的判据由**补丁打完之后的**那次审计（构建后期 / 发布前跑本脚本不带 flag）负责。
+      const okAll = Number(failed) === 0 && Number(pending) === 0
+      const skipByReinstall = !okAll && EXPECT_REINSTALL && Number(failed) === 0
+      rec('② 补丁面（13 条 patch 的命中与幂等）', okAll ? 'OK' : (skipByReinstall ? 'SKIP' : 'BLOCK'),
+        okAll
+          ? '失败 0 · 待打 0'
+          : (skipByReinstall
+              ? `失败 0 · **待打 ${pending}** —— ★ 本次构建预期重装，补丁在 **Step 3.5** 才打；本段此刻**无判据力**（出声，不当通过 —— P-17），由补丁打完后的审计负责`
+              : `失败 ${failed} · 待打 ${pending}（★ --check 把「锚点命中但未打」计入 pending 且**不报红**，故必须显式看这个数）`))
+    }
   }
 }
 
@@ -610,8 +624,16 @@ const run = (file, args = []) => {
 // ---- ④ 壳面 ----
 {
   const { probes, scanned } = probeCliSurface(NM, realReadFile, realReadDir)
-  if (scanned === 0) rec('④ 壳面（CLI 入口 / 就绪信号 / 启动参数）', 'UNKNOWN', `${NM} 下扫不到官方 js ⇒ runtime 未就绪（不得当通过）`)
-  else {
+  // ★★ 2026-09-24 v0.2.7：**与 ①②③ 同一病因** —— 本段扫的是 `dsh-runtime-android`
+  //   （Step 3 才建出）⇒ CI 净环境扫不到 ⇒ 原先记 UNKNOWN，而 **UNKNOWN 同样禁止升级**
+  //   ⇒ 构建仍被拦住。预期重装时记 **SKIP 出声**（P-17 精神同样适用于「无判据力」），
+  //   真判据由 runtime 在场的那次审计负责。
+  if (scanned === 0) {
+    rec('④ 壳面（CLI 入口 / 就绪信号 / 启动参数）', EXPECT_REINSTALL ? 'SKIP' : 'UNKNOWN',
+      EXPECT_REINSTALL
+        ? `${NM} 下扫不到官方 js —— ★ 本次构建预期重装，该目录由 **Step 3** 才建出；本段此刻**无判据力**（出声，不当通过 —— P-17），由 runtime 在场后的审计负责`
+        : `${NM} 下扫不到官方 js ⇒ runtime 未就绪（不得当通过）`)
+  } else {
     const ready = probes['dsh web:'].length
     const need = ['--no-open', '--port', '--trusted-host'].filter(k => probes[k].length === 0)
     if (ready === 0) rec('④ 壳面（CLI 入口 / 就绪信号 / 启动参数）', 'BLOCK', `★ 就绪信号 [dsh web:] **0 命中** ⇒ NodeService 的 TOKEN_LINE_PREFIX 永不匹配 ⇒ 页面会卡在「正在启动」（扫了 ${scanned} 个文件）`)
@@ -663,8 +685,14 @@ const run = (file, args = []) => {
   if (wanted.length === 0) rec('⑤ 装配面（slot 名 + external + 插件 peer）', 'UNKNOWN', '读不到我方 slots.inject 清单 ⇒ 测不出（不得当通过）')
   else {
     const sl = collectSlotNames(NM, wanted, realReadFile, realReadDir)
-    if (sl.official.size === 0) rec('⑤ 装配面（slot 名 + external + 插件 peer）', 'UNKNOWN', '抽不到官方 SlotMap ⇒ 测不出')
-    else {
+    // ★★ 2026-09-24 v0.2.7：**与 ①②③④ 同一病因** —— 官方 SlotMap 抽自 `dsh-runtime-android`
+    //   （Step 3 才建出）⇒ CI 净环境抽不到 ⇒ UNKNOWN 会拦住构建 ⇒ 预期重装时记 SKIP 出声。
+    if (sl.official.size === 0) {
+      rec('⑤ 装配面（slot 名 + external + 插件 peer）', EXPECT_REINSTALL ? 'SKIP' : 'UNKNOWN',
+        EXPECT_REINSTALL
+          ? `抽不到官方 SlotMap —— ★ 本次构建预期重装，runtime 由 **Step 3** 才建出；本段此刻**无判据力**（出声，不当通过 —— P-17），由 runtime 在场后的审计负责`
+          : '抽不到官方 SlotMap ⇒ 测不出')
+    } else {
       const cls = classifySlots(sl.official, wanted)
       const parts = []
       let status = 'OK'
@@ -710,8 +738,14 @@ const run = (file, args = []) => {
   const cv = t === null ? null : /currentVersion:\s*(\d+)/.exec(t)?.[1]
   const ssot = (() => { try { return readJsonTolerant(path.join(WS, 'dsh-version.json')) } catch { return null } })()
   const known = (ssot?.sessionFormatKnownGenerations ?? []).map(String)
-  if (cv === null) rec('⑥ 数据面（官方格式代次 vs 我方解析器覆盖）', 'UNKNOWN', '抽不到官方 currentVersion ⇒ 测不出')
-  else if (known.length === 0) rec('⑥ 数据面（官方格式代次 vs 我方解析器覆盖）', 'UNKNOWN',
+  // ★★ 2026-09-24 v0.2.7：抽不到官方 currentVersion 也是「runtime 未就绪」同源
+  //   （目录由 Step 3 才建出）⇒ 预期重装时记 SKIP 出声，不拦构建。
+  if (cv === null) {
+    rec('⑥ 数据面（官方格式代次 vs 我方解析器覆盖）', EXPECT_REINSTALL ? 'SKIP' : 'UNKNOWN',
+      EXPECT_REINSTALL
+        ? `抽不到官方 currentVersion —— ★ 本次构建预期重装，runtime 由 **Step 3** 才建出；本段此刻**无判据力**（出声，不当通过 —— P-17），由 runtime 在场后的审计负责`
+        : '抽不到官方 currentVersion ⇒ 测不出')
+  } else if (known.length === 0) rec('⑥ 数据面（官方格式代次 vs 我方解析器覆盖）', 'UNKNOWN',
     `官方 currentVersion=${cv}，但单源**未声明** sessionFormatKnownGenerations ⇒ ` +
     `**无法判定我方解析器是否覆盖该代次**（P-17：测不出 ≠ 没问题；请显式声明覆盖集）`)
   else {
