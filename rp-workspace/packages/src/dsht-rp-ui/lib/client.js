@@ -23980,6 +23980,15 @@ var PLUGIN_CARD_KEYS = [
   "dsht-plugin-prompt-template",
   "dsht-plugin-memory"
 ];
+function DshtPluginsTabPage() {
+  return /* @__PURE__ */ (0, import_jsx_runtime23.jsxs)("div", { className: "dsht-npc-rows", "data-dsht-plugins-tab": "1", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(NoteRow, { text: "DSHTavern \u63D2\u4EF6\u8BBE\u7F6E\uFF1A\u4E0B\u5217\u56DB\u5F20\u5361\u5206\u522B\u5BF9\u5E94\u9152\u9986\u52A9\u624B\u3001\u63D0\u793A\u8BCD\u6A21\u677F\u3001\u53D8\u91CF/\u72B6\u6001\u680F\uFF08MVU\uFF09\u4E0E\u5267\u60C5\u8BB0\u5FC6\u3002\u6539\u52A8\u9010\u5361\u4FDD\u5B58\u3002" }),
+    /* @__PURE__ */ (0, import_jsx_runtime23.jsx)("ul", { className: "dsht-npc-cards", children: PLUGIN_CARD_KEYS.map((key) => {
+      const Card = CARDS[key];
+      return Card === void 0 ? null : /* @__PURE__ */ (0, import_jsx_runtime23.jsx)(Card, {}, key);
+    }) })
+  ] });
+}
 
 // packages/src/dsht-rp-ui/src/client/composer-enter-fix.ts
 function installComposerEnterFix() {
@@ -24295,6 +24304,10 @@ function apply2(ctx) {
       for (const d of disposers) d();
     };
   });
+  ctx.slots.inject("settings.plugins.tab", () => ctx.slots.register(
+    { name: "settings.plugins.tab", id: "dsht", order: 60, label: "DSHTavern" },
+    DshtPluginsTabPage
+  ));
   installComposerEnterFix();
   ctx.effect(() => {
     if (typeof MutationObserver !== "function" || !document.body) return () => {

@@ -452,47 +452,48 @@ export function apply(ctx: {
   // 设置 → 插件 →「可配置」tab：三个预适配插件的中文辨识卡（keyed 槽位，
   // key = host 侧 registerSettingsNamespace 注册的命名空间；对照 ui-settings-plugins/index.ts 的注册形态）
   //
-  // ★★ **2026-09-23 DSH 升级轮 · 阶段 D.2：0.1.7 删除了 `settings.plugin.item` 且无等价物。**
+  // ★★ **2026-09-23 DSH 升级轮 · 阶段 D.2：0.1.7 删除了 `settings.plugin.item`，改用
+  //    「本地化 tab + feature-owned 整页」模型（`settings.plugins.tab`）。**
   //   0.1.5：官方 Plugins 区有「可配置插件卡片」槽位 ⇒ 4 张卡各挂一张 `<li>`。
-  //   0.1.7：改为「**本地化 tab + feature-owned 整页**」模型（`settings.plugins.tab`，
-  //          `kind:'list'` / `scope:'root'`），**「卡片行」这一层被取消**
-  //          ⇒ 沿用旧写法的话 4 张卡在 0.1.7 上**没有任何落点（静默消失）**。
-  //   ⇒ 本处**按官方槽位是否存在自动选路径**（跨代兼容：同一份产物两代都能跑）：
-  //     · 有 `settings.plugin.item`（0.1.5）⇒ 走原路径（4 张独立卡，行为零变化）；
-  //     · 无它、有 `settings.plugins.tab`（0.1.7）⇒ 注册**一个 tab 整页**（方案 B）。
+  //   0.1.7：`settings.plugins.tab`（`kind:'list'` / `scope:'root'`）的每项贡献是**一整页**，
+  //          **「卡片行」这一层被取消** ⇒ 沿用旧写法的话 4 张卡在 0.1.7 上**没有任何落点**。
+  //
+  //   ★★ **为什么不能「先探测再二选一」（我第一版就是这么写的，真机实测证伪）**：
+  //      `settings.plugins.tab` 的 spec 由 **Plugins 分区 owner 在运行时注册时才声明**，
+  //      而我方 `apply()` 跑得更早 ⇒ 那一刻 `specDynamic('settings.plugins.tab')` 恒为
+  //      `undefined` ⇒ 两代分支**都不命中**，落到 else 只出声（真机日志实证：
+  //      「未找到 settings.plugin.item / settings.plugins.tab ⇒ 插件设置卡**没有落点**」）。
+  //      —— 这是 **P-40③ 的又一例**：判据跑在了它所判对象状态确定**之前**。
+  //
+  //   ★ 官方给的正确姿势（`dsh-cordis-client-runner` 对 `slots.inject` 的原文）：
+  //      > Install an effect for each declaration lifetime of a slot. The callback runs
+  //      > synchronously when the declaration **already exists**; otherwise it runs
+  //      > **inside the declaring `register()` call after the declaration is committed**.
+  //     ⇒ `inject` **本身就是「等声明」的原语**，会跟随「晚声明 / 重声明 / teardown」。
+  //     所以**两条 inject 都装**：0.1.5 上 `settings.plugin.item` 的声明触发第一条，
+  //     0.1.7 上 `settings.plugins.tab` 的声明触发第二条 —— **跨代无需探测**。
+  //     ★ 副作用为零：某代里没有该 key ⇒ 那条 inject 的 callback **永不执行**（挂起等待，
+  //       随插件卸载取消），不产生空贡献、不覆盖任何东西。
   //   ★ 判据已就位：`audit-upgrade-readiness.mjs` 的 ⑤ 装配面会在「我方引用了官方不存在的 slot
   //     且无改名映射」时报 BLOCK —— 它正是本轮**先于**这次修复报出该问题的装置。
-  //   ★ 探测口径（实测 0.1.7 的 `dsh-client-ui-slots`）：槽位账本**没有 `has()`**，
-  //     而是 `spec(key)` / `specDynamic(key)`（未声明 ⇒ `undefined`）——
-  //     后者正是为「**只持有字符串的调用方**（泛化分派）」准备的逃生口（其 JSDoc 原文），
-  //     本处正是该形态 ⇒ 用 `specDynamic`（不是静态 keyed 的 `spec`）。
-  const slotsApi = (ctx as unknown as { slots?: { specDynamic?: (k: string) => unknown; inject?: unknown; register?: unknown } }).slots
-  const hasSlot = (name: string): boolean =>
-    typeof slotsApi?.specDynamic === 'function' ? (slotsApi.specDynamic as (k: string) => unknown)(name) !== undefined : false
-  if (hasSlot('settings.plugin.item')) {
-    ctx.slots.inject('settings.plugin.item', () => {
-      // 【心跳 47·T-34】原为**生成器函数** `function* () { … yield ctx.slots.register(...) }`。
-      // 生成器函数返回的是 Generator 对象，而本文件声明的契约为 `factory: () => (() => void)`
-      // （:99），宿主拿它当 disposer：① 函数体在 `.next()` 之前**不执行** → 三张卡从未注册；
-      // ② 卸载时宿主调用该"disposer" → 生成器对象不可调用，抛 TypeError。
-      // 同文件其余 14 处 slots.inject（:175/:237/:246/…）一律是"箭头函数 + 返回清理函数"，
-      // 仅此处例外 → 判定为笔误。改为正常注册并返回合并后的清理函数。
-      const disposers = PLUGIN_CARD_KEYS.map(key =>
-        ctx.slots.register({ name: 'settings.plugin.item', key }, makePluginCard(key)))
-      return () => { for (const d of disposers) d() }
-    })
-  } else if (hasSlot('settings.plugins.tab')) {
-    // 0.1.7 路径：一个 tab 整页（`id` / `order` / `label` 三件套；label 本地化由注册方负责）
-    ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register(
-      { name: 'settings.plugins.tab', id: 'dsht', order: 60, label: 'DSHTavern' },
-      DshtPluginsTabPage,
-    ))
-  } else {
-    // 两代槽位都不在（未知的新版本）⇒ **只出声不静默**
-    // eslint-disable-next-line no-console
-    console.warn('[dsht-rp-ui] 未找到 settings.plugin.item / settings.plugins.tab ⇒ '
-      + '插件设置卡**没有落点**（该 DSH 代的设置入口形态又变了，需按新契约适配）')
-  }
+  ctx.slots.inject('settings.plugin.item', () => {
+    // 【心跳 47·T-34】原为**生成器函数** `function* () { … yield ctx.slots.register(...) }`。
+    // 生成器函数返回的是 Generator 对象，而本文件声明的契约为 `factory: () => (() => void)`
+    // （:99），宿主拿它当 disposer：① 函数体在 `.next()` 之前**不执行** → 三张卡从未注册；
+    // ② 卸载时宿主调用该"disposer" → 生成器对象不可调用，抛 TypeError。
+    // 同文件其余 14 处 slots.inject（:175/:237/:246/…）一律是"箭头函数 + 返回清理函数"，
+    // 仅此处例外 → 判定为笔误。改为正常注册并返回合并后的清理函数。
+    const disposers = PLUGIN_CARD_KEYS.map(key =>
+      ctx.slots.register({ name: 'settings.plugin.item', key }, makePluginCard(key)))
+    return () => { for (const d of disposers) d() }
+  })
+
+  // 0.1.7 路径：一个 tab 整页（`id` / `order` / `label` 三件套；label 本地化由注册方负责）。
+  // 同一条 inject 机制 ⇒ 声明到来时自动生效（见上方长注）。
+  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register(
+    { name: 'settings.plugins.tab', id: 'dsht', order: 60, label: 'DSHTavern' },
+    DshtPluginsTabPage,
+  ))
 
   // ⑦修复（2026-09-05）：手机键盘点「换行」直接发送消息——composer 是 Lexical
   // contenteditable div，KEY_ENTER_COMMAND 无条件提交。插件侧挂 capture 阶段
