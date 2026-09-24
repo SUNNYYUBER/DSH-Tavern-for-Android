@@ -247,7 +247,10 @@ $readingGates = @{
     'audit-system-entry.mjs'          = @{ Exe = 'node'; Pattern = '分享面：manifest 声明'; Label = '系统轻入口契约（W-8）' }
     # 【DSH 升级轮】升级验收六段判据的汇总读数（六段各一行；取汇总行）
     'audit-upgrade-readiness.mjs'     = @{ Exe = 'node'; Pattern = '\d+ OK / \d+ BLOCK / \d+ UNKNOWN'; Label = 'DSH 升级验收六段（附录 D.0）' }
-    # 【DSH 升级轮 · C.4】补丁锚点指纹跨代比对（命中数相同但原文变了 = 漂移）
+    # 【DSH 升级轮 · C.4】补丁锚点指纹跨代比对（命中数相同但原文变了 = 漂移）。
+    # ★ 读数行取「比对完成：N 项指纹一致」（**不再是**「未提供基线」那条 ——
+    #   后者只在缺基线时出现，属异常路径，不该当作正常读数，否则登记会**静默失效**：
+    #   W84 实测 `Pattern 匹配 0 行` ⇒ 由 `audit-selftest-claims.mjs` 当场抓出）。
     'audit-patch-fingerprints.mjs'    = @{ Exe = 'node'; Pattern = '比对完成：\d+ 项指纹一致'; Label = '补丁锚点指纹（附录 E.7 判据 C.4）' }
 }
 
@@ -356,13 +359,18 @@ $auditNode = @(
     # 经决定性负控：删 TOGGLEABLE_TILE 即被精确点名，还原即转绿。selftest 7/7。
     'audit-system-entry.mjs',
     # 【2026-09-23 DSH 升级轮 · C.4 新增】补丁锚点指纹跨代比对。
+    # ★★ **本闸门不在这里跑，而在 Step 5.4**（W84 实测修正）：
+    #   它的输入 `.dsht-anchor-fingerprints.json` 由 **Step 3 打补丁时**才生成，
+    #   而 Step 0.5 在 Step 3 **之前** ⇒ 首次构建（或上一次构建换了 Arch、
+    #   把 runtime 目录重建过）时该文件不存在 ⇒ 本闸门在 **Step 0.5 直接报红**
+    #   （实测：x86_64 构建时 `✗ 未提供当前基线 ⇒ 无法判定漂移`）。
+    #   ⇒ **P-40③**：判据必须跑在它所判对象状态**确定之后** —— 与 Step 5.4
+    #   「产物新鲜度」同一条理由（那里的头注已写明同一纪律）。
     # 守：「命中数相同」≠「改的是同一处」—— 官方可能改了锚点那行的语义、
     #     或把它搬到另一处（处数仍为 1，命中数判据一律报 ✓ = 假绿）。
-    # 判据：当前代基线与上一代基线的**同标签指纹必须逐元素相等**。
     # 理由：这类漂移的后果是「补丁打在了形似而非同一的地方」——
     #     编译/单测/其它门禁全绿，只有真机行为偏离（P-30 家族）。
     # ⚠ 缺上一代基线 ⇒ **跳过并出声**（不冒充通过）；selftest 9/9。
-    'audit-patch-fingerprints.mjs',
     # 【2026-09-21 W-3 验收未达的防复发】设备能力「诚实声明」对账。
     # 守：`DeviceBridge.EXEC_WIRED`（唯一真相源）与三面一致 ——
     #   ① exec() 的分支与它同源（未接线必须返回 NOT_IMPLEMENTED，不得 ok:true 假装成功）；
@@ -1935,6 +1943,28 @@ if (-not (Test-Path $anchorNc)) { throw "负控脚本缺失：$anchorNc（A14 �
 & node $anchorNc | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "A14 锚点负控未通过：entry 可能没从权威脚本读到（详见 node scripts/audit-a14-anchor-negctl.mjs）" }
 Write-Host "  [gate] OK audit-a14-anchor-negctl.mjs（锚点来自权威脚本 + 有区分力）"
+
+# ---------------------------------------------------------------------------
+# Step 5.45 补丁**锚点指纹**跨代比对闸门（C.4）——【2026-09-23 W84 接入】
+#
+# ## 为什么必须在这一层（而不是 Step 0.5）
+# 与上面的 A14 **同一条纪律（P-40③）**：它的输入 `.dsht-anchor-fingerprints.json`
+# 由 **Step 3 打补丁时**才写出，而 Step 0.5 在 Step 3 **之前** ⇒
+# ★ W84 实测踩到：跑 x86_64 构建时（上一次 arm64 构建重建过 runtime 目录）
+#   该文件不存在 ⇒ 闸门在 Step 0.5 报 `✗ 未提供当前基线 ⇒ 无法判定漂移`
+#   ⇒ **卡住一个本可以正常完成的构建**（且报红原因与「锚点漂移」毫无关系 = 误导）。
+# 正确的时机正是这里：Step 3 已打完补丁、基线刚写完，**打 runtime.zip 之前**。
+# ---------------------------------------------------------------------------
+Step 5.45 '补丁锚点指纹跨代比对（C.4；锚点漂移即停）'
+$fpAudit = Join-Path $ws 'scripts\audit-patch-fingerprints.mjs'
+if (-not (Test-Path $fpAudit)) { throw "门禁脚本缺失：$fpAudit（锚点指纹闸门不得缺项）" }
+& node $fpAudit --selftest | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "门禁自检失败：audit-patch-fingerprints.mjs --selftest（闸门本身不可信）" }
+Write-Host "  [gate] OK audit-patch-fingerprints.mjs --selftest"
+& node $fpAudit
+if ($LASTEXITCODE -ne 0) { throw "锚点漂移：有补丁的锚点原文与上一代不一致 —— 补丁可能打在了形似而非同一处（详见 node scripts/audit-patch-fingerprints.mjs）" }
+Write-Host "  [gate] OK audit-patch-fingerprints.mjs（★ C.4：命中数相同 ≠ 改的是同一处；selftest 9/9）"
+Show-Reading -Gate 'audit-patch-fingerprints.mjs' -Path $fpAudit
 
 # ---------------------------------------------------------------------------
 Step 5.5 '打 runtime.zip + sentinel 自动提升（坑 #3 铁律）'

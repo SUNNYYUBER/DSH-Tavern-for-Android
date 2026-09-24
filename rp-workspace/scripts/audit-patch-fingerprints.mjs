@@ -34,6 +34,10 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// ★ W44 单源自证分数契约：**必须**经它输出分数行，否则文档里的声明无法被机器证伪
+// （本脚本首版漏了这一步，立刻被 `audit-selftest-claims.mjs` 抓成
+//  「声明 9/9 但跑不出统一分数行 ⇒ 无法被证伪」—— 留痕）。
+import { reportSelftest } from './selftest-summary.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const WS = resolve(HERE, '..')
@@ -199,7 +203,7 @@ function selftest() {
     console.log(`${good ? '  PASS' : '  FAIL'}  ${name}`)
     if (good) pass++
   }
-  console.log(`selftest: ${pass}/${results.length}`)
+  reportSelftest('patch-fingerprints', pass, results.length)
   process.exit(pass === results.length ? 0 : 3)
 }
 
