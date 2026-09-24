@@ -133,15 +133,11 @@ rp-workspace/scripts/.docrefs-negctl-fixture/
 # 【2026-09-23 DSH 升级轮 · C.4】补丁锚点指纹基线（由 apply-platform-patches.py 生成）。
 #   ★ 为什么**当前代基线**要出库：它是「上一代」比对时的输入 —— 换版本升级时
 #     必须有一份**可追溯的上一代基线**才能判「锚点漂不漂移」。
-#     但两棵树（dsh-runtime-src / dsh-runtime-android）都在 .gitignore 里
-#     ⇒ 基线文件必须在这里**显式放行**，否则 C.4 判据永远「缺上一代基线」而空转。
-#   ★ 为什么用 `!` 放行而不是改目录规则：目录整棵不入库是**有意**的（可重建的大体积
-#     vendor 树），不能为一个小 JSON 破例把整棵树放进来。`!` 只放行**这一个文件**。
-#   ★★ git 的 `!` **不能穿透被忽略的父目录**（实测踩到：只写 `!<dir>/<file>` 时
-#     `git check-ignore` 仍报 `.gitignore:5:dsh-runtime-android/` 命中 ⇒ 放行无效）。
-#     ⇒ 必须先 `!` 放行父目录本身，再 `!` 放行文件；父目录的 `!` 会让它「可被 git 看到」，
-#     而它下面的**其它**文件仍被上一层的 `node_modules/` 等规则挡着（不会大量入库）。
-!dsh-runtime-android/
-dsh-runtime-android/*
-!dsh-runtime-android/.dsht-anchor-fingerprints.json
+#   ★★ 为什么落在**仓库根**（而不再是 runtime 目录）：
+#     原设计写进 `dsh-runtime-android/`，而 `build-dsht.ps1:1033` 在非 SkipInstall 时
+#     会 `Remove-Item $runtimeDst -Recurse -Force` **整棵重建** ⇒ 基线被删 ⇒
+#     C.4 判据在 Step 5.45 报「未提供当前基线」（**报红理由与漂移无关 = 误导**）。
+#     ⇒ 基线是**跨构建的持久事实**，必须落在构建过程不会清空的目录。
+#     （这也顺带去掉了原先 `!` 穿透被忽略父目录的那套三层写法 —— 那本身是脆的。）
+!rp-workspace/.dsht-anchor-fingerprints.json
 !rp-workspace/dsh-runtime-prev-fingerprints.json

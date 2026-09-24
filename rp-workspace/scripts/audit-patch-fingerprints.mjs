@@ -42,20 +42,22 @@ import { reportSelftest } from './selftest-summary.mjs'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const WS = resolve(HERE, '..')
 
-/** 基线文件名（由 apply-platform-patches.py 写在 runtime 目录下）。 */
-const FP_NAME = '.dsht-anchor-fingerprints.json'
-
 /**
  * 默认路径。
- * ★ 【为什么当前基线默认指向 `dsh-runtime-android` 而不是 `dsh-runtime-src`】
- *   两棵树都会在构建中被写基线，但**只有 `dsh-runtime-android` 是最终进 APK 的那棵**
- *   （Step 3 从 src 复制过来、之后才打补丁）。C.4 要判的是「**要发货的那份产物**
- *   的锚点有没有漂移」⇒ 指向它才是对的（P-45：扫描面必须与真目标对齐）。
- *   实测踩过：默认指向 src ⇒ 报「未提供当前基线」（因为基线写在 android 那棵）。
- * 上一代基线：约定放在仓库根 `rp-workspace/dsh-runtime-prev-fingerprints.json`
+ * ★ 【为什么基线落在 `WS`（仓库根）而不是 runtime 目录】
+ *   基线由 `apply-platform-patches.py` 的 apply 模式写出。原设计写进 runtime 目录，
+ *   而 `build-dsht.ps1` 在**非 SkipInstall** 时会 `Remove-Item $runtimeDst -Recurse -Force`
+ *   整棵重建 ⇒ **基线被删** ⇒ 本判据在 Step 5.45 报「未提供当前基线」
+ *   （**报红理由与「锚点漂移」无关 ⇒ 误导**，W84 实测踩到）。
+ *   ⇒ 基线是**跨构建的持久事实**，落在构建过程**不会清空**的目录。
+ * ★ 【为什么不再区分 src / android 两棵树】
+ *   两棵树的**锚点原文相同**（都是官方产物，我方替换文本落在 marker 处）⇒
+ *   基线**与架构无关** ⇒ 一份就够（P-1：同一语义一处读法）。
+ *   上一代基线：约定放在 `rp-workspace/dsh-runtime-prev-fingerprints.json`
  *   （升级换版本时，把上一代的基线文件另存为此名）。
  */
-const DEFAULT_CURRENT = join(WS, 'dsh-runtime-android', FP_NAME)
+const FP_NAME = '.dsht-anchor-fingerprints.json'
+const DEFAULT_CURRENT = join(WS, FP_NAME)
 const DEFAULT_PREVIOUS = join(WS, 'dsh-runtime-prev-fingerprints.json')
 
 /**

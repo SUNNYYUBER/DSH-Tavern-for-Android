@@ -1,5 +1,5 @@
 {
-  "_comment": "DSH 平台补丁的锚点指纹基线（C.4）。由 apply-platform-patches.py 自动生成；由 audit-patch-fingerprints.mjs 比对。指纹 = 每处命中原文的 SHA256 前 8 位（排序）。",
+  "_comment": "DSH 平台补丁的锚点指纹基线（C.4）。由 apply-platform-patches.py 自动生成；由 audit-patch-fingerprints.mjs 比对。指纹 = 每处命中原文的 SHA256 前 8 位（排序）。★ 落在仓库根（不是 runtime 目录）：runtime 目录每次非 SkipInstall 构建都会被整棵重建。",
   "anchors": {
     "F1-2 defaultFileSystem 暴露 rename": [
       "ab852cad"

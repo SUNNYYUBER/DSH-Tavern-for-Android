@@ -2019,6 +2019,9 @@ python `ast.parse` OK · PowerShell `Parser::ParseFile` **0 语法错误** ·
 | 1 | 默认路径报「未提供当前基线」 | 默认指向 `dsh-runtime-src`，而基线写在 `dsh-runtime-android` | 默认改指**最终进 APK 的那棵**（P-45：扫描面与真目标对齐） |
 | 2 | `.gitignore` 的 `!` 放行**无效** | git 的 `!` **不能穿透被忽略的父目录**（`check-ignore` 仍报 `.gitignore:5:dsh-runtime-android/` 命中） | 先 `!` 放行父目录 + `dir/*` + `!dir/该文件`（三层） |
 | 3 | `audit-selftest-claims.mjs` 由 136/136 → **134/136** | 新脚本自身违反 W76（退出码声明）与 W77（用法行 flag 未被实现「可见地」读） | W76：删掉未实现的 exit 2；W77：**逐个 flag 写成 `indexOf('--x')` 字面量**（通用 `argOf(flag)` helper 里的实参判据认不出） |
+| 4 | ★ **x86_64 构建被卡住**：闸门报 `✗ 未提供当前基线` | **接入点选错时机**：基线由 **Step 3 打补丁时**才写出，而 Step 0.5 在 Step 3 **之前** ⇒ 上次构建换过 Arch、runtime 目录被重建过时，该文件不存在（**报红理由与「锚点漂移」毫无关系 ⇒ 误导**） | 移到 **Step 5.45**（Step 3 之后、打 runtime.zip 之前）—— 与同处 Step 5.4「产物新鲜度」**同一条 P-40③ 纪律** |
+| 5 | `Pattern 匹配 0 行 ⇒ 读数静默失效` | 我把读数 Pattern 写成「未提供当前基线」那条 —— 它只在**异常路径**出现 | 改取正常路径行「比对完成：N 项指纹一致」（由 `audit-selftest-claims.mjs` 的 W78 判据当场抓出） |
+| 6 | `声明 9/9 但跑不出统一分数行 ⇒ 无法被证伪` | 新脚本没接 **W44 单源自证分数契约** | 改用 `reportSelftest('patch-fingerprints', pass, total)`（又一处由自证闸门抓出的**我自己的**疏漏） |
 
 **验收**：
 

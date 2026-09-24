@@ -878,24 +878,31 @@ for _t in ITERATOR_TARGETS:
 # ============================================================ 锚点指纹落盘（C.4）
 # 【为什么要落盘而不是只打印】判据要判的是「**跨代**是否漂移」——
 #   即「同一补丁在 0.1.5 与 0.1.7 上命中的是不是同一段原文」。
-#   这需要一个**可被下一代比对的持久化基线**，故写成 JSON（随 runtime 目录走）。
+#   这需要一个**可被下一代比对的持久化基线**。
+# 【★★ 为什么落在 `WS`（rp-workspace 根）而**不是** `DST`（runtime 目录）】
+#   W84 实测踩到：原设计写进 `$DST`，而 `build-dsht.ps1:1033` 在**非 SkipInstall** 时
+#   会 `Remove-Item $runtimeDst -Recurse -Force` **整棵重建** ⇒ 基线被**删掉** ⇒
+#   稍后 Step 5.45 跑比对时报「未提供当前基线」（**报红理由与漂移无关 ⇒ 误导**）。
+#   ⇒ 基线是**跨构建的持久事实**，必须落在**构建过程不会清空的目录**（仓库根）。
+#   ★ 同一教训在 README/GOAL 里的说法：**判据的输入不能放在判据自己要清理的目录里**。
 # 【为什么可以 `--check` 时不写】检查模式约定是只读；且 `--check` 时 `ANCHOR_FP`
 #   只含「尚未打补丁」的那些项 ⇒ 不完整，不该覆盖完整基线（P-30：宁可缺，不可假全）。
 # 指纹为空（某补丁那代没命中）⇒ **如实记 `[]`**，不省略键（省略会让比对方误判成「新增项」）。
 if not CHECK_ONLY:
-    fp_path = os.path.join(DST, ".dsht-anchor-fingerprints.json")
+    fp_path = os.path.join(WS, ".dsht-anchor-fingerprints.json")
     try:
         with open(fp_path, "w", encoding="utf-8", newline="\n") as f:
             json.dump(
                 {
                     "_comment": "DSH 平台补丁的锚点指纹基线（C.4）。由 apply-platform-patches.py 自动生成；"
-                                "由 audit-patch-fingerprints.mjs 比对。指纹 = 每处命中原文的 SHA256 前 8 位（排序）。",
+                                "由 audit-patch-fingerprints.mjs 比对。指纹 = 每处命中原文的 SHA256 前 8 位（排序）。"
+                                "★ 落在仓库根（不是 runtime 目录）：runtime 目录每次非 SkipInstall 构建都会被整棵重建。",
                     "anchors": {k: list(v) for k, v in sorted(ANCHOR_FP.items())},
                 },
                 f, ensure_ascii=False, indent=2,
             )
             f.write("\n")
-        print("锚点指纹：%d 项已写入 %s" % (len(ANCHOR_FP), os.path.basename(fp_path)))
+        print("锚点指纹：%d 项已写入 %s" % (len(ANCHOR_FP), fp_path))
     except OSError as e:
         print("[patch][WARN] 锚点指纹落盘失败：%s（不阻断构建，但 C.4 判据将无基线可比）" % e)
 
