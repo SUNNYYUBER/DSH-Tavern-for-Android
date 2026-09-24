@@ -1737,12 +1737,64 @@ function evaluatePluginCompatibility(manifest, exemptions = {}, runtimeVersion =
 
 | 步 | 动作 | 要点 |
 |---|---|---|
-| B.1 | **接入 `dsh-session-format-v3-to-v4` 迁移** | 必须收集**直属 subagent 子会话证据**（官方明示：缺失则拒绝；**已实测证实**，见 E.7）。⚠️ **仍未做** |
+| B.1 | **接入 `dsh-session-format-v3-to-v4` 迁移** | ✅ **结论：无需我方接入** —— 官方持久化层**自己**收集子级证据（见下「B.1 执行记录」） |
 | B.2 | ★ **迁移前强制全量备份**（用户已裁定） | ✅ **已完成** —— 见下方「B.2 执行记录」 |
 | B.3 | 我方解析器按 v4 复核：`session-repair.ts` 的 `ENVELOPE_KEYS` / `STEP_SCOPED`（含 `tool/result`） | ✅ **已完成** —— 见下方「B.3 执行记录」 |
 | B.4 | `pickCurrentSessionFilename` 取最大 N ⇒ 确认认 v4 文件 | ✅ **已完成** —— 实现本就按「最大 `vN`」泛化取（不硬编码代次），v4 自动命中；★ **本轮补一条显式 v4 控**（见下），40/40 过 |
 | B.5 | 单源 `sessionFormatKnownGenerations` **加 4** | ✅ **已完成**（`[3, 4]`，见状态） |
 | B.6 | **用真实批次数据**跑迁移 + 打开（模拟器上，1 个 v0 会话 + 23+ 真实会话在真机） | 唯一能证明「数据没坏」的判据 |
+
+##### B.1 执行记录（2026-09-23 · **结论翻转：这件事官方自己做，我方不该重复实现**）
+
+**审计原文的要求**（附录 A.9.3 / E.7）：
+「接入 v3→v4 迁移时**必须**收集直属 subagent 子会话证据（缺失则拒绝，官方明示）」。
+E.7 的实跑也确实证实了那个硬约束（`createStage()` 无条件抛）。
+
+**但「谁该收集」这一步，原文没有验证过** —— 我去读了**官方的持久化层**，发现：
+
+`dsh-session-persistence-jsonl/lib/index.js:2685`（**官方产物，非我方代码**）：
+
+```js
+const children = async () => (await this.listArtifacts(signal))
+  .filter((source) => source.header.origin === "subagent" && source.header.parentSession === id);
+const sources = await children();
+const related = await prepareCatalogFacts(id, sources, this.compression, signal);
+...
+createRestore: (header) => createSessionFormatCatalogWithChildren(related.facts).createRestore(header, {...})
+```
+
+⇒ **官方做了三件我方无法做得更好的事**，且都在「打开该会话」的**同一条路径**上：
+
+| # | 官方动作 | 位置 |
+|---|---|---|
+| 1 | `listArtifacts()` 扫全部会话，按 **`origin === "subagent" && parentSession === id`** 精确筛出**直属**子会话 | `:2685` |
+| 2 | `prepareCatalogFacts(id, sources, …)` 把子会话压成**证据事实**（含 `descriptorCount` / `descriptor`，见 v3-to-v4 的 `childCatalogSource` 校验） | `:2201`（定义）· `:2687`（调用） |
+| 3 | 用 `createSessionFormatCatalogWithChildren(related.facts)` 构造**带该父专属子级证据**的 catalog | `:2705` |
+
+★ **还带一个我方做不到的一致性守卫**（`:2690-2697` `validateRelatedSources`）：
+迁移**前**记下子会话集合，迁移后**再查一遍**，两边不一致 ⇒ 抛
+`JsonlGenerationSourceChangedError`（**防「迁移途中子会话变了」导致证据与事实脱节**）。
+
+**⇒ 结论（结论翻转）**：
+
+- **不需要**我方在 `NodeService` 或插件侧「收集子级证据再调迁移」——
+  那是**重复实现**，而且必然更差（我方没有 `listArtifacts` 的全量视图，
+  也没有官方的 TOCTOU 守卫）。
+- **我方要做的**是**不挡路**：即**不要**自己去调 `sessionFormatV3ToV4`（那个静态边恒抛）
+  或自己 `new` catalog —— 让官方持久化层按它自己的路径走。
+- ★ 本轮**实测印证**：模拟器上 0.1.7 打开 **v0** 会话 → 成功升到 **v4**
+  （见 F.2），全过程**我方零介入**。若官方真需要我方补证据，那次迁移**必然失败**
+  （`createStage()` 无条件抛）。
+
+**★ 为什么原文会得出「必须接入」**（方法论留痕）：
+A.9.3 是**读 README 推出来的**（E.7 头部已诚实标注这一层）。
+README 讲的是「**用这个 API 时要提供证据**」—— 那是**给 catalog 调用方**的契约；
+它**没有**回答「在完整运行时里**谁是那个调用方**」。⇒ **P-19/P-52 的又一例**：
+凡结论涉及「产物里有没有某段代码 / 谁在做某件事」，**必须对真实产物跑一次或读一遍**。
+
+**验收**：`grep createSessionFormatCatalogWithChildren` 全仓 ⇒ **仅官方包**（catalog /
+persistence / v3-to-v4 README），**我方零命中** ⇒ 确认无重复实现。
+F.2 的真机 v0→v4 迁移成功 = 该路径**确实被官方走通了**。
 
 ##### B.2 执行记录（2026-09-23 · **「最后一道可退路」落地在启动路径上**）
 
