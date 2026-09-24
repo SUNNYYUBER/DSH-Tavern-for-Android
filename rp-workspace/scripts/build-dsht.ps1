@@ -459,15 +459,20 @@ foreach ($a in $auditNode) {
         & node $p --selftest | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "门禁自检失败：$a --selftest（闸门本身不可信）" }
     }
-    & node $p | Out-Null
-    # ★★ 2026-09-23 阶段 E1：`audit-upgrade-readiness.mjs` 的 ① 段会**内调**
-    #   `audit-dsh-version.mjs` ⇒ 在「换版本构建」时产物仍是上一代 ⇒ 那段会 BLOCK 掉构建。
-    #   它与 Step 0.7 是**同一处因果关系**（Step 1 才装 runtime）⇒ 必须同样带
-    #   `--expect-reinstall`（P-1：同一因果只许一处口径）。
-    #   ★ 重装后的**真判据**在 Step 1.4（不带 flag）。
-    if ($LASTEXITCODE -ne 0 -and $a -eq 'audit-upgrade-readiness.mjs' -and -not $SkipInstall) {
-        & node $p --expect-reinstall | Out-Null
-    }
+    # ★★ 2026-09-23 阶段 E1 / 2026-09-24 v0.2.7：`audit-upgrade-readiness.mjs` 的 ①/③ 段会**内调**
+    #   `audit-dsh-version.mjs`（版本面）与 `audit-pty-prebuilt.mjs`（pty 产物）——
+    #   两者都被 **Step 1 的重装**重置：runtime 换成新版、node-pty 的 android-* 产物由
+    #   **Step 1.5** 重新交叉编译。而本循环跑在 **Step 0.5**（早于两者）⇒ 不带 flag 时
+    #   会拿「上一代 runtime / 上一次构建的残留产物」当判据对象 ⇒ BLOCK 掉构建。
+    #   ★ 本机长期假绿：残留产物一直在场，掩盖了这条因果；**CI 净环境**必然报红
+    #     （v0.2.7 tag 首跑实测：③ 段「pty.node 产物缺失」⇒ 构建失败）。
+    #   ⇒ 只要**本次构建会走重装**（`-not $SkipInstall`），首次调用**就必须带
+    #     `--expect-reinstall`**（与 Step 0.7 同一处因果，P-1：同一因果只许一处口径）。
+    #     它会把 ① 的产物层判据与 ③ 的 pty 判据记 SKIP 并出声（非通过 —— P-17）。
+    #   ★ 重装后的**真判据**在 Step 1.4（版本面）与 Step 1.5 的内联调用（pty）。
+    $readinessArgs = @()
+    if (-not $SkipInstall) { $readinessArgs += '--expect-reinstall' }
+    & node $p @readinessArgs | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "门禁未通过：$a（详见 node scripts/$a 输出）" }
     Write-Host "  [gate] OK $a"
     # ★ W62：**改为调用全脚本唯一的 `Show-Reading`**（P-1：读数机制只许一处实现）。
