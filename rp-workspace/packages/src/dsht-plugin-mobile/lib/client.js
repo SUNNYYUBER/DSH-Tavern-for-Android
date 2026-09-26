@@ -18,7 +18,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/index.tsx
+// src/dsht-plugin-mobile/client/index.tsx
 var index_exports = {};
 __export(index_exports, {
   apply: () => apply,
@@ -26,7 +26,7 @@ __export(index_exports, {
 });
 module.exports = __toCommonJS(index_exports);
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/anchors.ts
+// src/dsht-plugin-mobile/client/anchors.ts
 var ANCHOR_ATTR = "data-dsht-mobile";
 var ANCHOR_DEFS = [
   { anchor: "app-frame", strategy: "overlay-parent", selectors: [".pI_x6G_frame"] },
@@ -104,7 +104,7 @@ function installAnchors(doc) {
   };
 }
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/style.ts
+// src/dsht-plugin-mobile/client/style.ts
 var MOBILE_STYLE_ID = "dsht-plugin-mobile-style";
 function ensureMobileStyle() {
   if (typeof document === "undefined" || document.getElementById(MOBILE_STYLE_ID)) return;
@@ -342,7 +342,7 @@ var MOBILE_CSS = `
 }
 `;
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/file-preview.ts
+// src/dsht-plugin-mobile/client/file-preview.ts
 var PREVIEW_Z = 2200;
 var FETCH_CAP = 256 * 1024;
 function findPreviewTarget(el) {
@@ -471,7 +471,7 @@ function installFilePreview(doc) {
   };
 }
 
-// rp-workspace/packages/src/dsht-plugin-shared/webview-api-guard.ts
+// src/dsht-plugin-shared/webview-api-guard.ts
 function fallbackUuid(g) {
   const c = g.crypto;
   const hex = [];
@@ -561,7 +561,7 @@ function ensureWebviewApiGuard(g = globalThis) {
   return { polyfilled, missing };
 }
 
-// rp-workspace/packages/src/dsht-plugin-mobile/client/index.tsx
+// src/dsht-plugin-mobile/client/index.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
 var booted = false;
 function boot() {
