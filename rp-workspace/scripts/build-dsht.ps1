@@ -444,7 +444,17 @@ $auditNode = @(
     #     ⇒ 声明永不出现 ⇒ **不报错、功能整块消失**（这类"静默消失"此前零判据）。
     # 退出码与常规闸门**不同**：0=全过 / 1=有 BLOCK / 2=有 UNKNOWN（**UNKNOWN 同样禁止**：
     #   P-17「测不出」≠「没问题」）/ 3=selftest 失败。
-    'audit-upgrade-readiness.mjs'
+    'audit-upgrade-readiness.mjs',
+    # 【体检 2026-09-26 新增 · P1-1】受控文件 BOM/行尾形态硬闸。
+    # 守：① BOM「恰好 1 个」—— HEAD 带合法 BOM 的 9 个文件（GOAL.md / dsh-version.json /
+    #     build-dsht.ps1 等，名单从 HEAD 动态枚举）不许丢 BOM（PowerShell 5.1 按 GBK 误读
+    #     中文 = 断链①原形态）也不许双 BOM（解析器 2 处 assignment expression is not valid，
+    #     MEMORY.md 断链① / 体检当天复现）；名单外文本文件不许擅自带 BOM。
+    #   ② 行尾全 LF —— .gitattributes（同次修复引入）已定全仓 eol=lf；工作区 CRLF/mixed
+    #     即 FAIL（autocrlf=true 的机器检出即违例，必须先 renormalize）。
+    # 理由：62 个 audit-* 此前没有一个管 BOM/行尾，而这类断链已复发 6+ 次
+    #     （docs/HEALTHCHECK-D-ASSET-DRIFT-2026-09-26.md H1）—— 在构建最早点拦截最便宜。
+    'audit-bom-eol.mjs'
 )
 foreach ($a in $auditNode) {
     $p = Join-Path $ws "scripts\$a"
