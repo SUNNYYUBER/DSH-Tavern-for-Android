@@ -24,11 +24,17 @@
 git clone https://github.com/SUNNYYUBER/DSH-Tavern-for-Android.git
 cd DSH-Tavern-for-Android/rp-workspace/packages
 npx -y pnpm@10 install --frozen-lockfile
+node ../scripts/vendor-deps.mjs
 ```
 
 > **为什么是 `rp-workspace/packages` 而不是仓库根**：这个目录是个自包含工作区，
 > 有独立的 `pnpm-workspace.yaml`。RP 兼容层的全部源码与测试都在这里。
 > 仓库根目录是 Android 构建链（那才需要 SDK / NDK / 100MB 二进制），**你现在用不到**。
+>
+> **为什么多一步 `vendor-deps.mjs`**：有 7 个构建期 vendor 包（jquery / handlebars /
+> dompurify 等）按设计**不在 lockfile 里**（逐包理由见 `../scripts/vendor-deps.json`），
+> `pnpm install` 不会装它们 —— 跳过这步，下一步测试会报
+> `Failed to resolve import "dompurify"`。这不是你的环境有问题，是文档此前漏了这步。
 
 ---
 
@@ -42,10 +48,11 @@ npx -y pnpm@10 test
 
 ```
 Test Files  86 passed (86)
-     Tests  1839 passed | 2 skipped (1841)
+     Tests  1846 passed | 2 skipped (1848)
 ```
 
-**如果这里不是全绿**：先别往下走，开个 Issue 贴完整输出。——这本身就是一个值得报的 bug。
+**如果这里不是全绿**：先确认上一步 `vendor-deps.mjs` 跑过且输出 `OK — 7 个构建期 vendor 包…`；
+确认过仍红，再开 Issue 贴完整输出。——那才是一个值得报的 bug。
 
 类型检查也一样（可选）：
 

@@ -4,8 +4,10 @@
   "version": "0.1.0",
   "description": "DSHTavern RP plugin workspace (M1: assembly/knowledge/preset/import core)",
   "scripts": {
+    "pretest": "node ../scripts/vendor-deps.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretypecheck": "node ../scripts/vendor-deps.mjs",
     "typecheck": "npm run typecheck:core && npm run typecheck:ui && npm run typecheck:tests",
     "typecheck:core": "tsc -p tsconfig.core.json",
     "typecheck:ui": "tsc -p tsconfig.check.json",
@@ -36,6 +38,9 @@
     "重建 node_modules 就全部消失，构建立刻挂 11 条 `Could not resolve`。即「原机器能过、干净克隆就崩」的",
     "不可复现缺陷。权威版本表 = scripts/vendor-deps.json（含逐包理由），构建前由 scripts/vendor-deps.mjs 自愈复核；",
     "**本处声明必须与那张表逐字一致**，否则会出现『pnpm 按本处装 A 版 → 自愈改回 B 版』的振荡。",
-    "jQuery 锁 3.x：ST 宿主 $ 是 jQuery 3；v4 移除 $.trim/$.type/$.fn.bind 等，第三方脚本兼容风险大。"
+    "jQuery 锁 3.x：ST 宿主 $ 是 jQuery 3；v4 移除 $.trim/$.type/$.fn.bind 等，第三方脚本兼容风险大。",
+    "【体检 2026-09-26】handlebars / dompurify 后来加入 vendor-deps.json 但未同步进本清单 ⇒ 测试路径",
+    "（`vitest run`）不经过 build-rp-ui.mjs 的自愈预检，干净克隆后 test 直接红。修法：pretest/pretypecheck",
+    "挂 vendor-deps.mjs（自愈幂等、锚定版本、只装缺的），文档同步补步骤 —— 三层防线一致。"
   ]
 }

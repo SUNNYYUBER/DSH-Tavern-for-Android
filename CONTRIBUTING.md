@@ -15,14 +15,22 @@
 ```powershell
 cd rp-workspace/packages
 npx -y pnpm@10 install --frozen-lockfile   # 首次，约 1 分钟
+node ../scripts/vendor-deps.mjs            # ★ 必跑：补齐 7 个构建期 vendor 包（不在 lockfile 里）
 npx -y pnpm@10 test                        # 约 10 秒
 ```
 
-预期输出：
+> **为什么多一步 `vendor-deps.mjs`**：兼容层有 7 个构建期 vendor 包
+> （jquery / jquery-ui / zod / yaml / lodash / handlebars / dompurify），
+> 它们按设计**不进 lockfile**（详见 `rp-workspace/scripts/vendor-deps.json` 的逐包理由），
+> 所以 `pnpm install` 不会装它们 —— 缺了这步，`test` 会报
+> `Failed to resolve import "dompurify"` 一类错误。CI 里同样有这一步
+> （`.github/workflows/build-apk.yml`），本地与 CI 口径一致。
+
+预期输出（vendor-deps 那步会先打印 `OK — 7 个构建期 vendor 包版本全部锚定命中`）：
 
 ```
 Test Files  86 passed (86)
-     Tests  1839 passed | 2 skipped (1841)
+     Tests  1846 passed | 2 skipped (1848)
 ```
 
 改逻辑不需要模拟器、不需要 Android SDK、不需要 `jniLibs` 第三方二进制（那 100MB 只在
@@ -128,14 +136,23 @@ regex / preset / macros / MVU / UI logic), one command verifies it:
 ```powershell
 cd rp-workspace/packages
 npx -y pnpm@10 install --frozen-lockfile   # first time only, ~1 min
+node ../scripts/vendor-deps.mjs            # ★ required: installs 7 build-time vendor packages (not in the lockfile)
 npx -y pnpm@10 test                        # ~10 seconds
 ```
 
-Expected:
+> **Why the extra `vendor-deps.mjs` step**: the compat layer has 7 build-time vendor
+> packages (jquery / jquery-ui / zod / yaml / lodash / handlebars / dompurify) that are
+> deliberately **not in the lockfile** (per-package rationale in
+> `rp-workspace/scripts/vendor-deps.json`), so `pnpm install` won't fetch them —
+> without this step `test` fails with something like
+> `Failed to resolve import "dompurify"`. CI runs the same step
+> (`.github/workflows/build-apk.yml`), so local and CI stay aligned.
+
+Expected (the vendor step prints `OK — 7 个构建期 vendor 包版本全部锚定命中` first):
 
 ```
 Test Files  86 passed (86)
-     Tests  1839 passed | 2 skipped (1841)
+     Tests  1846 passed | 2 skipped (1848)
 ```
 
 No emulator, no Android SDK, no `jniLibs` third-party binaries needed (that 100MB is
