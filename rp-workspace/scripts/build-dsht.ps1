@@ -497,6 +497,14 @@ foreach ($a in $auditNode) {
 #   扫源码的闸门失效时，输出与通过**完全相同**）。
 $parityScript = Join-Path $ws 'scripts\audit-build-path-parity.py'
 if (-not (Test-Path $parityScript)) { throw "门禁脚本缺失：$parityScript" }
+# ★【体检 2026-09-26 · P1-5①】Python 门禁的编码前置 —— 本地/CI 对称化（B 分册 §3.1 🔴）。
+# CI（.github/workflows/build-apk.yml）显式设 `PYTHONIOENCODING: utf-8`，而本脚本此前没设
+# ⇒ 同一份源码：CI 38/38 PASS、本机裸跑 UnicodeEncodeError（'\u21d2' 字符 GBK 编不出），
+#   且属 P-30「失效与通过同貌」（GBK 能编大部分中文，只在个别字符上崩）。
+# 修法：本脚本作用域设一次（幂等，不覆盖已有值）—— 两个 python 门禁 + Step 0.55 的
+#   两个 negctl python 脚本全部受益；环境与 CI 对齐后同一判据两侧同结论。
+if (-not $env:PYTHONIOENCODING) { $env:PYTHONIOENCODING = 'utf-8' }
+if (-not $env:PYTHONUTF8) { $env:PYTHONUTF8 = '1' }
 & python $parityScript --selftest | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "门禁自检失败：audit-build-path-parity.py --selftest（闸门本身不可信）" }
 Write-Host "  [gate] OK audit-build-path-parity.py --selftest"

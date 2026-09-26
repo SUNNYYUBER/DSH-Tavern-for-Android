@@ -76,12 +76,18 @@ export function parseStringMap(text, constName) {
  * （L44：枚举器的覆盖边界就是结论边界）。
  */
 export function parseMvuEvents(text) {
-  const m = /var\s+Mvu\s*=\s*\{[\s\S]*?events:\s*\{/.exec(text)
+  // ★ 体检 2026-09-26（P1-5②）修：解析器仍锚**旧形态**（常量内联在 `var Mvu = { … events: { … } }`
+  //   里），而 th-shim.ts 重构后常量已搬出为**独立常量块** `var MVU_EVENT_CONSTANTS = { … }`
+  //   （Mvu.events 里只剩 on/emit 函数）⇒ 实仓解析恒得 0 项，而 selftest 合成语料仍是旧形态
+  //   ⇒ 自证与实仓脱钩（P-30 家族：判据死了输出同貌——本例由体检 B 分册撞破）。
+  //   改锚**现役形态**（MVU_EVENT_CONSTANTS 常量块；权威语义不变：exported.mvu.d.ts 的 5 项）。
+  //   判据只许收紧（B11）：不保留旧形态兼容 —— 旧形态若回来，实仓正控会当场报 0。
+  const m = /var\s+MVU_EVENT_CONSTANTS\s*=\s*\{/.exec(text)
   if (m === null) return null
   const body = text.slice(m.index + m[0].length)
   const out = {}
   for (const line of body.split(/\r?\n/)) {
-    if (/^\s{4}\},?\s*$/.test(line)) break // events 块结束（缩进 4 的右花括号）
+    if (/^\s*\},?\s*$/.test(line)) break // 常量块结束（首个缩进收口到 2/0 的右花括号行）
     const e = /^\s*([A-Z][A-Z0-9_]*)\s*:\s*'([^']*)'\s*,?\s*$/.exec(line)
     if (e !== null) out[e[1]] = e[2]
   }
@@ -215,8 +221,12 @@ export function stripTableBlocks(text) {
   return text
     .replace(/export\s+const\s+TAVERN_EVENTS\b[^=]*=\s*\{[\s\S]*?\n\}/, '')
     .replace(/export\s+const\s+IFRAME_EVENTS\b[^=]*=\s*\{[\s\S]*?\n\}/, '')
-    // 第 4 表：Mvu.events 常量块（不剔除 ⇒ 常量值被当成"我方发射" = 假绿）
-    .replace(/var\s+Mvu\s*=\s*\{[\s\S]*?events:\s*\{[\s\S]*?\n[ \t]{0,4}\},?/, '')
+    // 第 4 表：MVU 常量块（不剔除 ⇒ 常量值被当成"我方发射" = 假绿）。
+    // ★ 体检 2026-09-26（P1-5②）：与 parseMvuEvents 同步改锚现役形态
+    //   `var MVU_EVENT_CONSTANTS = { … }`（th-shim.ts:2339）—— 旧锚 `var Mvu = { … events: … }`
+    //   在常量搬出后结构上再也匹配不到 ⇒ 剔除恒 no-op（幸而实仓该值也无发射路径，
+    //   未造成假绿事故，但判据已死）。两处锚点必须同源同态（P-1）。
+    .replace(/var\s+MVU_EVENT_CONSTANTS\s*=\s*\{[\s\S]*?\n\},?/, '')
 }
 
 /**
@@ -391,7 +401,9 @@ function selftestRun() {
   const stripped = stripTableBlocks(tableText)
   ok(!stripped.includes("'message_updated'"), '发射面: 表定义块未被剔除（会自证为已发射 = 假绿）')
 
-  const mvuTableText = "var Mvu = {\n  getMvuData: function () {},\n  events: {\n    VARIABLE_UPDATE_ENDED: 'mag_variable_update_ended',\n    on: function () {},\n  },\n};\n"
+  // ★ 体检 2026-09-26（P1-5②）：合成语料同步为**现役形态**（MVU_EVENT_CONSTANTS 独立常量块，
+  //   与 th-shim.ts:2339 一致）—— 旧语料（常量内联 Mvu.events）正是解析器悄悄失效的共谋。
+  const mvuTableText = "var MVU_EVENT_CONSTANTS = {\n  VARIABLE_UPDATE_ENDED: 'mag_variable_update_ended',\n  on: function () {},\n};\n"
   const strippedMvu = stripTableBlocks(mvuTableText)
   ok(!strippedMvu.includes("'mag_variable_update_ended'"), '发射面: Mvu.events 常量块未被剔除（会自证为已发射 = 假绿）')
 

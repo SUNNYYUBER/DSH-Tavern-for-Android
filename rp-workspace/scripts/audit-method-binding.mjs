@@ -204,7 +204,16 @@ function selftest() {
 // ---------------------------------------------------------------- 官方库核对（可选）
 
 function verifyLib() {
-  if (!existsSync(SESSION_LIB)) { console.log('[skip] 官方库不在（未 staging）：', SESSION_LIB); return true }
+  // ★ 体检 2026-09-26（P1-5③）修：库不在场时**只出声不判**——
+  //   旧实现 `[skip] … return true` 把「核对前提缺失」与「核对通过」两种状态写成同貌
+  //   （且 --verify-lib 分支不消费返回值）⇒ P-17「测不出 ≠ 通过」的违例形态。
+  //   新实现：显式 `[verify-lib SKIP]` 记号 + 指路（staging 后重跑才算核对过）——
+  //   读日志者能分清两种状态（R7/R8）。
+  if (!existsSync(SESSION_LIB)) {
+    console.log(`[verify-lib SKIP] 官方库不在（未 staging）：${SESSION_LIB}`)
+    console.log('  （核对前提缺失 ≠ 核对通过；staging 官方库后重跑 --verify-lib 才算核对过）')
+    return true
+  }
   const text = readFileSync(SESSION_LIB, 'utf8')
   const lines = text.split('\n')
   let ok = true
