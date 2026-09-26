@@ -28,7 +28,7 @@ interface StatusBatch {
 
 export function MigrationStatusPanel(): JSX.Element {
   const [batch, setBatch] = useState<StatusBatch | null>(null)
-  const [api, setApi] = useState<{ provider: string; model: string } | null>(null)
+  const [api, setApi] = useState<{ provider: string; model: string; credential: { configured: boolean; ref: string } | null } | null>(null)
   const [probeResults, setProbeResults] = useState<ProbeState[] | null>(null)
   const [buildInfo, setBuildInfo] = useState<{ sentinel: string | null; dshVersion: string | null } | null>(null)
   const [buildInfoError, setBuildInfoError] = useState('')
@@ -39,7 +39,7 @@ export function MigrationStatusPanel(): JSX.Element {
     setLoading(true)
     setLoadError('')
     try {
-      const r = await rpApi<{ latestBatch: StatusBatch | null; api: { provider: string; model: string } | null }>('rp/status')
+      const r = await rpApi<{ latestBatch: StatusBatch | null; api: { provider: string; model: string; credential: { configured: boolean; ref: string } | null } | null }>('rp/status')
       setBatch(r.latestBatch ?? null)
       setApi(r.api ?? null)
     } catch (e) {
@@ -81,7 +81,12 @@ export function MigrationStatusPanel(): JSX.Element {
   const okCount = probeResults?.filter(r => r === 'ok').length ?? 0
   const badCount = probeResults?.filter(r => r !== 'ok').length ?? null
   const summaryBits: string[] = []
-  summaryBits.push(api === null ? 'API 未配置' : `API ✓`)
+  // API 摘要同步三态（P0-4）：假绿灯不再出现 —— 未配置/测不出在折叠态也一眼可见
+  summaryBits.push(
+    api === null ? 'API 未配置'
+      : api.credential === null ? 'API 凭据待确认'
+        : api.credential.configured ? 'API ✓' : 'API Key 缺失',
+  )
   if (buildInfo?.sentinel) summaryBits.push(buildInfo.sentinel.replace('.installed-', '构建 '))
   if (probeResults !== null) summaryBits.push(`插件 ${okCount}/${PROBES.length} 正常${badCount !== null && badCount > 0 ? `（${badCount} 项异常）` : ''}`)
 
@@ -148,7 +153,18 @@ export function MigrationStatusPanel(): JSX.Element {
         <div className="dsht-rp-kv">
           <span className="k">API 连接</span>
           <span className="v">
-            {api === null ? '❌ 未配置——到「预设」页检查，或重新导入 ST API 配置' : `✅ 已连接 ${api.provider}（${api.model}）`}
+            {/* 【体检 2026-09-26 · P0-4】三态呈现（原二态是假绿灯：只看「选过模型」不看凭据）：
+                configured ⇒ ✅；已选模型但凭据缺 ⇒ ❌+指路（修「发消息静默无反应」的可自查性）；
+                凭据状态测不出 ⇒ ⚠️ 如实说测不出（P-17：不冒充通过）。 */}
+            {(() => {
+              if (api === null) return '❌ 未配置——到「预设」页检查，或重新导入 ST API 配置'
+              if (api.credential === null) {
+                return `⚠️ 已选 ${api.provider}（${api.model}），但凭据状态测不出（credentials 服务不可用）——发消息前请先到「设置」确认 API Key`
+              }
+              return api.credential.configured
+                ? `✅ 已连接 ${api.provider}（${api.model}）`
+                : `❌ 已选 ${api.provider}（${api.model}），但该路由的 API Key 未配置（凭据 ${api.credential.ref} 不存在）——发消息会无反应，请到「设置」补齐 Key 或重新导入 ST API 配置`
+            })()}
           </span>
         </div>
 

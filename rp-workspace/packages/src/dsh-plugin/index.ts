@@ -226,8 +226,8 @@ interface LikeContext {
   webServer?: { register: (route: { kind: 'exact' | 'prefix'; path: string; handler: (req: unknown, res: unknown) => void | Promise<void> }) => () => void; host?: '127.0.0.1' | '0.0.0.0'; port?: number }
   /** settings seam（dsh-settings-file；R4 API 配置导入直写 llm-pi-ai 用户层，live 生效）。get = 读命名空间解析值（R15 模型补齐合并 models 用；可能不可用）。register = 注册命名空间 Schema（§2.3 ③ 聊天偏好；真实服务形态见 dsht-plugin-memory LikeSettingsSvc） */
   settings?: { update: (ns: string, patch: Record<string, unknown>) => Promise<unknown>; get?: (ns: string) => unknown; register?: (ns: string, schema: unknown, options?: { base?: unknown }) => unknown }
-  /** credentials seam（dsh-credentials-local；写 $DSH_HOME/.credentials.yaml，mode 0600） */
-  credentials?: { set: (ref: string, value: string) => Promise<unknown> }
+  /** credentials seam（dsh-credentials-local；写 $DSH_HOME/.credentials.yaml，mode 0600）。describe = 不暴露值只报配置态（体检 2026-09-26 起用于 /rp/status 的凭据实况；官方 CredentialProvider.describe 形态：{configured, source?, writable}） */
+  credentials?: { set: (ref: string, value: string) => Promise<unknown>; describe?: (ref: string) => Promise<{ configured: boolean; source?: string; writable: boolean }> }
   effect?: (fn: () => () => void, label?: string) => unknown
   /** cordis reflect.get：免 inject 读可选服务（P1#6 读 agentPresets 做能力轴探测；缺席返回 undefined） */
   get?: (name: string, strict?: boolean) => unknown
@@ -2008,6 +2008,39 @@ export function parseStApiConfig(settings: Record<string, unknown>, secrets: Rec
     }
     : { apiKeyEnv: keyRef, ...(baseURL ? { baseURL } : {}) }
   return { provider, baseURL, model, keyRef, keyValue, profile, source }
+}
+
+/**
+ * 【体检 2026-09-26 · P0-4】从路由名解析它的**凭据引用**（CredentialRef）。
+ *
+ * 【为什么必须有（API 假绿灯根因）】/rp/status 旧判据只看
+ * `agentDefaultModel.currentSelection()` 是否返回 provider/model —— 只证明
+ * 「配置过默认模型」，**不证明凭据存在** ⇒ 用户看到「✅ 已连接」而设备上
+ * 凭据 0 条，发消息静默失败，三条线索互相矛盾（体检 C §5）。
+ * 修法：状态面板改锚「凭据存在」这一事实。
+ *
+ * 【ref 怎么定（P-1 单源，不自造命名）】凭据 ref 的**权威写法**是 R4 导入时的
+ * `keyRef`（`ST_<SOURCE>_API_KEY`），它同时被写进该路由 profile 的 `apiKeyEnv`
+ * （见 parseStApiConfig 的 profile 构造）。官方 dsh-llm-pi-ai 每请求经
+ * `ctx.credentials` 解析 `profile.apiKeyEnv`（provider.d.ts 头注）。
+ * ⇒ 判据按**同一映射**反查：优先读 settings `llm-pi-ai.providers[route].apiKeyEnv`
+ * （用户改过也在），读不到再退 `ST_<ROUTE大写>_API_KEY`（R4 对目录路由的缺省形态）。
+ *
+ * @param route 路由名（agentDefaultModel selection 的 provider，如 deepseek / st-custom）
+ * @param section settings.get('llm-pi-ai') 的解析结果（可 undefined）
+ */
+export function credentialRefForRoute (route: string, section?: { providers?: Record<string, { apiKeyEnv?: string }> }): string {
+  const fromProfile = section?.providers?.[route]?.apiKeyEnv
+  if (typeof fromProfile === 'string' && fromProfile.trim() !== '') return fromProfile
+  return `ST_${route.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_API_KEY`
+}
+
+/** /rp/status 的 api 字段形态（P-1：前端与后端共用同一形状声明） */
+export interface RpApiStatus {
+  provider: string
+  model: string
+  /** 凭据实况：null = credentials 服务不在（测不出，如实呈现）；configured = 该路由凭据是否真实存在 */
+  credential: { configured: boolean; ref: string } | null
 }
 
 // ---------------------------------------------------------------------------
@@ -3978,6 +4011,9 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
   /** 【2026-09-10】promptOnly 投影命中记录（诊断用；llm/stream 只读不写，见该钩子头注）。 */
   const projectedPromptHits = new Map<string, { at: number; hits: string[]; chars: number }>()
 
+  /** 【体检 2026-09-26 · P0-5】发送哨兵：最后一次「真实进入生成管线」的心跳（见 agent/pre-step 钩子内注释）。进程内状态即可 —— 哨兵只服务「刚刚提交的这轮」的短窗查询，无需跨重启。 */
+  let lastSendPulse: { at: number; slug: string | null; cwd: string | null; turn: number | null } | null = null
+
   // ---- D-3/D-4 投影层探针 + promptOnly 正则投影（2026-09-10）
   //
   // 【为什么 promptOnly 正则在 llm/stream 而不在 pre-step】
@@ -4072,6 +4108,22 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
 
     const slug = rpSlugFromCwd(readSessionCwd(agent.session), dshHome)
     console.log(`[dsht-rp] pre-step: cwd=${readSessionCwd(agent.session) || '(none)'} slug=${slug ?? '(not-rp)'} turn=${(raw as LikePreStepEvent).turn}`)
+    // ---- 【体检 2026-09-26 · P0-5】发送哨兵：pre-step 是「一次发送真正进入生成管线」的
+    // 最深可观察点。C 组实测发现「输入框清空但服务端零落盘」的静默失败
+    // （HEALTHCHECK-C §4.1：无 user/message、无 turn-error、无 logcat 错误）——
+    // 失败发生在更早的宿主层，turn-error 节点根本不会产生 ⇒ 前端无从呈现。
+    // 修法（不猜宿主内部，只补可观察性）：本钩子记录「最后一次真实发送心跳」，
+    // 前端 composer 提交后延时查询 /rp/send-pulse：
+    //   · 心跳存在（≥ 提交时刻）⇒ 生成管线已接手（成功与否会有 turn-error/楼层呈现）
+    //   · 心跳不存在 ⇒ 提交在宿主层就被吞了 ⇒ toast 出声（R8：失败必须出声）
+    try {
+      lastSendPulse = {
+        at: Date.now(),
+        slug: slug ?? null,
+        cwd: readSessionCwd(agent.session) || null,
+        turn: typeof (raw as LikePreStepEvent).turn === 'number' ? (raw as LikePreStepEvent).turn : null,
+      }
+    } catch { /* 哨兵失败绝不影响主链路 */ }
     // ---- Golden Master 对照（DSHT 侧 dump#2）：**本批真正发给 LLM 的消息序列** ----
     // agent/request 瀑布只有采样参数；消息序列在 pre-step。rp/golden/dsht-ENABLED 存在时落盘，
     // 与 TT/ST 侧 chat_completion_prompt_ready（GENERATE_AFTER_COMBINE_PROMPTS）配对 diff。
@@ -6901,6 +6953,17 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                 origin: cw !== null ? 'model-catalog' : null,
               })
             }
+            // ---- 【体检 2026-09-26 · P0-5】/rp/send-pulse —— 发送哨兵查询（只读）----
+            // 前端 composer 提交后延时调用：afterMs（提交以来的毫秒）+ lastPulse（后端最近一次
+            // pre-step 心跳）。前端据两者判「提交是否被生成管线接手」，未接手 ⇒ toast 出声
+            // （R8）。只报事实不下结论（ heartbeat 是「进入管线」的证据，不是「成功」的证据
+            // —— 成功/失败由楼层 / turn-error 呈现，那是已有通道）。
+            if (sub === '/rp/send-pulse') {
+              return send(200, {
+                lastPulse: lastSendPulse,
+                now: Date.now(),
+              })
+            }
             // ---- 任务 C：/rp/status —— 迁移验收面板的只读聚合（大白话数据源）----
             // 最近批次（meta.json manifest 计数）+ 最新 migration-report.md 资源清单表计数
             // + 当前 API 连接（agentDefaultModel 选择）。插件存活探测由前端各自 ping。
@@ -6938,10 +7001,28 @@ export function apply(ctx: LikeContext & { agents?: LikeAgentRegistry; sessions?
                   break // 只取最新一批
                 }
               } catch { /* 无 rp-import 目录 */ }
-              let api: { provider: string; model: string } | null = null
+              // 【体检 2026-09-26 · P0-4】api 增加 credential 实况 —— 旧判据只看
+              // 「配置过默认模型」（provider/model 非空），不查凭据 ⇒ 假绿灯
+              // （体检实锤：面板显示已连接而设备凭据 0 条）。现在把「凭据存在」
+              // 作为独立事实一起上报，前端三态呈现；测不出（服务不在）也如实标注。
+              let api: RpApiStatus | null = null
               try {
                 const sel = ctx.agentDefaultModel?.currentSelection?.()
-                if (sel?.provider && sel?.model) api = { provider: sel.provider, model: sel.model }
+                if (sel?.provider && sel?.model) {
+                  let credential: { configured: boolean; ref: string } | null = null
+                  try {
+                    const ref = credentialRefForRoute(
+                      sel.provider,
+                      typeof ctx.settings?.get === 'function'
+                        ? (ctx.settings.get as (ns: string) => unknown).call(ctx.settings, 'llm-pi-ai') as { providers?: Record<string, { apiKeyEnv?: string }> } | undefined
+                        : undefined,
+                    )
+                    const desc = await ctx.credentials?.describe?.(ref)
+                    // describe 不在（老版 credentials 服务）⇒ 测不出，如实标 null（P-17：不冒充）
+                    credential = desc ? { configured: desc.configured === true, ref } : null
+                  } catch { /* describe 抛错 ⇒ 测不出，同上 */ }
+                  api = { provider: sel.provider, model: sel.model, credential }
+                }
               } catch { /* 未配置 */ }
               return send(200, { latestBatch, api })
             }

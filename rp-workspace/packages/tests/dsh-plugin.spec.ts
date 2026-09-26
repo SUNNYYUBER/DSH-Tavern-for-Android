@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   agentPresetDirId, applyPromptRegexes, buildPersonaSnapshotMessage, buildVariantSwitchEvent,
-  messageDepth,
+  credentialRefForRoute, messageDepth,
   collectVariantGroups, extractPersonaTextFromAgentYml, findLastUserMessage, findStDataRoot,
   hasDirectUserInput,
+  parseStApiConfig,
   processActivatedEntries, renderWorldInfoSnapshot, repairSessionSeqs, rewriteSessionHeaderCwd,
   rpSlugFromCwd, scanSurfaceHistory, searchLoreEntries, sessionContentMaxTime,
   sessionCwdNeedsRepair, sessionHeaderCwd, sessionRepairNeedsWrite, shouldStripRpTools, spliceDepthInjections,
@@ -672,5 +673,41 @@ describe('dsht-rp-plugin: P0-5 per-turn 闸门（hasDirectUserInput）', () => {
     expect(hasDirectUserInput([msg('plugin'), msg('model')] as never)).toBe(false)
     expect(hasDirectUserInput([])).toBe(false)
     expect(hasDirectUserInput(undefined)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 【体检 2026-09-26 · P0-4】API 假绿灯修复：/rp/status 的凭据 ref 解析
+// 背景：旧判据只看「配置过默认模型」（provider/model 非空），不查凭据 ⇒
+// 面板显示「✅ 已连接」而设备凭据 0 条（体检 C §5 实锤）。
+// credentialRefForRoute 是后端反查凭据的单源映射（与 R4 写入的 keyRef 同构）。
+// ---------------------------------------------------------------------------
+
+describe('dsht-rp-plugin: P0-4 凭据 ref 解析（credentialRefForRoute）', () => {
+  it('profile 里声明了 apiKeyEnv ⇒ 以 profile 为准（用户改过名也跟得上）', () => {
+    const section = { providers: { deepseek: { apiKeyEnv: 'MY_CUSTOM_KEY' } } }
+    expect(credentialRefForRoute('deepseek', section)).toBe('MY_CUSTOM_KEY')
+  })
+  it('profile 未声明 ⇒ 退回 R4 缺省形态 ST_<ROUTE>_API_KEY（与 parseStApiConfig 写入的 keyRef 同构）', () => {
+    expect(credentialRefForRoute('deepseek')).toBe('ST_DEEPSEEK_API_KEY')
+    expect(credentialRefForRoute('st-custom')).toBe('ST_ST_CUSTOM_API_KEY') // R4 对 source=custom 的实际形态
+  })
+  it('apiKeyEnv 为空串/空白 ⇒ 视同未声明（空值不得冒充已配置 —— 凭据层同规则）', () => {
+    const section = { providers: { deepseek: { apiKeyEnv: '  ' } } }
+    expect(credentialRefForRoute('deepseek', section)).toBe('ST_DEEPSEEK_API_KEY')
+  })
+  it('路由名带非常规字符 ⇒ 与 R4 同样的净化规则（非 [A-Z0-9] 归 _）', () => {
+    expect(credentialRefForRoute('openai-compat#gpt')).toBe('ST_OPENAI_COMPAT_GPT_API_KEY')
+  })
+  it('st-custom 路由按 R4 实际 keyRef 形态可回环对上（parseStApiConfig 的 keyRef）', () => {
+    // R4：keyRef = `ST_${source.toUpperCase()…}_API_KEY`，source=custom ⇒ ST_CUSTOM_API_KEY
+    // 但 provider 名是 st-custom ⇒ 缺省形态是 ST_ST_CUSTOM_API_KEY。
+    // 两者不同正是「必须先查 profile」的原因 —— 此测试钉住这个差异，防止有人「优化」掉 profile 优先级。
+    const settings = { oai_settings: { chat_completion_source: 'custom', custom_url: 'https://x/v1', custom_model: 'm' } }
+    const imported = parseStApiConfig(settings as never, {} as never)
+    expect(imported?.keyRef).toBe('ST_CUSTOM_API_KEY')
+    // 装进 settings 后，反查就能拿到真 keyRef（闭环）
+    const section = { providers: { 'st-custom': { apiKeyEnv: imported!.keyRef } } }
+    expect(credentialRefForRoute('st-custom', section)).toBe('ST_CUSTOM_API_KEY')
   })
 })

@@ -35,6 +35,7 @@ import { PLUGIN_CARD_KEYS, makePluginCard, DshtPluginsTabPage } from './PluginCa
 import { dshRpc, rpApi } from './rpc.ts'
 import { clientTimeZoneFields, installClientTimeZonePatch } from './time-zone.ts'
 import { installComposerEnterFix } from './composer-enter-fix.ts'
+import { installRpSendSentinel } from './send-sentinel.ts'
 import { broadcastHostScheme } from './th-shim.ts'
 import type { JSX } from 'react'
 
@@ -499,6 +500,11 @@ export function apply(ctx: {
   // contenteditable div，KEY_ENTER_COMMAND 无条件提交。插件侧挂 capture 阶段
   // keydown 拦截器，把裸 Enter 改 insertLineBreak（发送仍走界面上的发送按钮）。
   installComposerEnterFix()
+
+  // 【体检 2026-09-26 · P0-5】发送哨兵：「发消息没反应」的可观察性补丁（零官方源修改）。
+  // 包装 window.fetch 只记录「/api POST 刚发生」，提交 8 秒后查插件 pre-step 心跳，
+  // 管线没接手 ⇒ toast 出声（R8）。见 send-sentinel.ts 头注。
+  installRpSendSentinel()
 
   // 【L2 穷举 2026-09-14 · P-7/P-3】宿主切主题 → 广播给**全部已存在的 RP 帧**。
   //
