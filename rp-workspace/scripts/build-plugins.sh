@@ -74,10 +74,16 @@ say "  ✓ ejs-worker.js"
 
 # ---------------------------------------------------------------- 6. dsht-plugin-undo
 say "[4/7] dsht-plugin-undo"
+# ★ 体检 2026-09-26（P1-3）：「源码不存在，跳过」改 die（fail-closed）。
+# 理由：T-87 起 dsht-plugin-undo 是**正经构建包**（A14 PAIRS 的非 optional 条目、
+# build-dsht.ps1 Step 0.5 两侧包集对账把它的源码入口列在案）。源码缺失只可能是
+# 结构性事故（误删/检出不完整）—— 静默跳过会产出「看起来构建成功」的**残缺插件树**
+# （与 W-3 事故同型：包集两侧漂移 ⇒ 真机 boot loop，代价 253 次重启）。
+# 构建期拦截最便宜（P-40①）；「跳过」本身也从未被任何判据读出 ⇒ 死分支（P-11）。
 if [ -f "$PKG/src/dsht-plugin-undo/index.ts" ]; then
   build_node_plugin "dsht-plugin-undo" "src/dsht-plugin-undo/index.ts"
 else
-  say "  · 源码不存在，跳过"
+  die "dsht-plugin-undo 源码缺失：$PKG/src/dsht-plugin-undo/index.ts（T-87 起为必需构建包，禁止静默跳过）"
 fi
 
 # ---------------------------------------------------------------- 4b. dsht-preflight（T-67）
