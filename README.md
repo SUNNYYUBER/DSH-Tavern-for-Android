@@ -5,7 +5,7 @@
 把你的 SillyTavern 数据（角色卡 / 世界书 / 预设 / 正则 / 聊天记录）搬进一个安卓 App。
 装上即用，全部本地运行，不上传你的任何数据。
 
-**当前版本**：`0.2.2`（内嵌 DSH `0.1.5-rc.1`）　|　**状态**：v0.2.2 正式版（验证面见下表；个人业余项目，仍请视作早期软件对待）
+**当前版本**：`0.2.7`（内嵌 DSH `0.1.7-rc.1`）　|　**状态**：v0.2.7 正式版（验证面见下表；个人业余项目，仍请视作早期软件对待）
 
 ## ⚠️ 先读这段
 
@@ -16,11 +16,13 @@
 
 | 能力 | x86_64 模拟器 | 真机（小米 11 Pro） | 鸿蒙（卓易通） |
 |---|---|---|---|
-| 首启 / 会话基础 | ✅ 实测 | ✅ 实测（早期版本） | ✅ 实测（2026-09-19，HarmonyOS 6） |
-| 会话迁移（0.1.5） | ✅ 80/80 真实会话 | — 同模拟器面 | ⬜ 未实测 |
+| 首启 / 会话基础 | ✅ 实测（v0.2.7 冷启动 0 boot loop，2026-09-26） | ✅ 实测（早期版本） | ✅ 实测（2026-09-19，HarmonyOS 6） |
+| 会话迁移（0.1.5 → 80/80 真实会话） | ✅ 80/80 真实会话（2026-09-11） | — 同模拟器面 | ⬜ 未实测 |
+| 会话迁移（0.1.7 v3→v4 自动迁移 + 前置备份闸门） | ✅ 机制实测（v3 fixture 迁移 + `dsht-prebak` 生成 + 凭据 0 条，2026-09-26；真实用户数据面待回填） | ⬜ 未实测 | ⬜ 未实测 |
+| 发消息（端到端） | ❌ **实测静默失败**（输入框清空但服务端零落盘、无报错；无凭据场景应显示 MISSING_CREDENTIAL——2026-09-26 发现，待修） | ⬜ 未实测 | ⬜ 未实测 |
 | 预设管线（bychv 单份注入） | ✅ 实测（v368） | ⬜ 未实测（清单已备） | ⬜ 未实测 |
 | MVU direct 卡提取（T2.3b） | ✅ 实测（正控 PASS） | ⬜ 未实测 | ⬜ 未实测 |
-| P1 工具链（bash/rg/git/zstd） | ✅ 实测（v370 自测 rc=0） | ⬜ 未实测（装包后看 logcat `P1 tool self-test`） | ⬜ 未实测 |
+| P1 工具链（bash/rg/git/zstd） | ✅ 实测（v0.2.7 自检 bash/rg/zstd/git 全 rc=0、links 8/8，2026-09-26） | ⬜ 未实测（装包后看 logcat `P1 tool self-test`） | ⬜ 未实测 |
 
 公开它是两个原因：分享「安卓上跑 DSH 运行时」的实现思路；ST 兼容面太长，一个人补不完，欢迎 fork 继续补。
 
@@ -89,7 +91,7 @@
 
 | # | 限制 | 怎么办 |
 |---|---|---|
-| 1 | 升级到 DSH 0.1.5 时历史会话需迁移，**不可逆** | 80/80 真实会话迁移实测通过，但**迁移前请自行备份** |
+| 1 | 升级到 DSH 0.1.7 时历史会话自动迁移（v3→v4），**不可逆** | App 会在迁移前**强制全量备份**到交换目录（`dsht-prebak-*.zip`）；0.1.5 升级时 80/80 真实会话迁移实测通过。**迁移前请自行再留一份备份** |
 | 2 | 旧聊天首次打开要等 | 151MB 会话约 1.7 秒；更大的更久 |
 | 3 | 只有 arm64（真机）与 x86_64（模拟器）两种包 | 其他架构自行构建 |
 | 4 | **设备时区必须是真实 IANA 名** | 若设为 `GMT` 等偏移式时区，表现为「发消息完全没反应」。测试期请设为 `Asia/Shanghai` 等标准时区 |
@@ -326,7 +328,7 @@ DSH RolePlay/
 Move your SillyTavern data (character cards / world books / presets / regexes / chat history) into one Android app.
 Ready to use out of the box, fully local — nothing of yours gets uploaded.
 
-**Current version**: `0.2.2` (bundles DSH `0.1.5-rc.1`)　|　**Status**: v0.2.2 stable (see verification matrix below; still a spare-time project — treat as early software)
+**Current version**: `0.2.7` (bundles DSH `0.1.7-rc.1`)　|　**Status**: v0.2.7 stable (see verification matrix below; still a spare-time project — treat as early software)
 
 ## ⚠️ Read this first
 
@@ -337,11 +339,13 @@ Ready to use out of the box, fully local — nothing of yours gets uploaded.
 
 | Capability | x86_64 emulator | Real device (Mi 11 Pro) | HarmonyOS (EasyConnect) |
 |---|---|---|---|
-| First boot / session basics | ✅ tested | ✅ tested (earlier builds) | ✅ tested (2026-09-19, HarmonyOS 6) |
-| Session migration (0.1.5) | ✅ 80/80 real sessions | — same as emulator | ⬜ untested |
+| First boot / session basics | ✅ tested (v0.2.7 cold start, 0 boot loop, 2026-09-26) | ✅ tested (earlier builds) | ✅ tested (2026-09-19, HarmonyOS 6) |
+| Session migration (0.1.5 → 80/80 real sessions) | ✅ 80/80 real sessions (2026-09-11) | — same as emulator | ⬜ untested |
+| Session migration (0.1.7 v3→v4 auto-migration + pre-backup gate) | ✅ mechanism tested (v3 fixture migration + `dsht-prebak` created + 0 credentials leaked, 2026-09-26; real-user-data surface pending) | ⬜ untested | ⬜ untested |
+| Messaging (end-to-end) | ❌ **tested: fails silently** (input box clears but nothing reaches the server, no error shown; a no-credential send should surface MISSING_CREDENTIAL — found 2026-09-26, fix pending) | ⬜ untested | ⬜ untested |
 | Preset pipeline (single injection via bychv) | ✅ tested (v368) | ⬜ untested (checklist ready) | ⬜ untested |
 | MVU direct-card extraction (T2.3b) | ✅ tested (positive control PASS) | ⬜ untested | ⬜ untested |
-| P1 toolchain (bash/rg/git/zstd) | ✅ tested (v370 self-test rc=0) | ⬜ untested (check logcat `P1 tool self-test` after install) | ⬜ untested |
+| P1 toolchain (bash/rg/git/zstd) | ✅ tested (v0.2.7 self-test: bash/rg/zstd/git all rc=0, links 8/8, 2026-09-26) | ⬜ untested (check logcat `P1 tool self-test` after install) | ⬜ untested |
 
 Why is it public? Two reasons: to share a working approach for running the DSH runtime on Android, and because ST compatibility is a long tail no single person can finish — forks are welcome to keep going.
 
@@ -410,7 +414,7 @@ Why is it public? Two reasons: to share a working approach for running the DSH r
 
 | # | Limitation | What to do |
 |---|---|---|
-| 1 | Upgrading to DSH 0.1.5 migrates old sessions, **irreversibly** | 80/80 real sessions migrated in tests, but **back up first** |
+| 1 | Upgrading to DSH 0.1.7 auto-migrates old sessions (v3→v4), **irreversibly** | The app **forces a full backup** to the exchange dir before migrating (`dsht-prebak-*.zip`); the 0.1.5 upgrade passed with 80/80 real sessions migrated. **Keep your own backup as well** |
 | 2 | First open of an old chat takes time | ~1.7s for a 151MB session; larger ones take longer |
 | 3 | Only arm64 (devices) and x86_64 (emulators) builds | Build other architectures yourself |
 | 4 | **Device timezone must be a real IANA name** | Offset-style zones like `GMT` cause "sending does nothing at all". Use `Asia/Shanghai` or similar during testing |
