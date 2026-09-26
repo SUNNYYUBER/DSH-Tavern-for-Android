@@ -591,6 +591,36 @@ export function checkPair (pair, deps = {}) {
     return { ok: true, reason: anchorNote || undefined }
   }
 
+  // ★【体检 2026-09-26 · P1-6】布局归一化二段比对 —— `.pnpm` 解析布局漂移 ≠ 产物陈旧。
+  //
+  // 真因（体检 D 组定位，Lead 复验确认）：esbuild 把每个模块的路径注释按 **解析时的物理路径**
+  // 写进产物。pnpm 的 `node_modules/.pnpm/<pkg>@<ver>/node_modules/<pkg>/…` 树一旦以
+  // **hoisted 形态**重建（`npm install --no-save` 的 vendor-deps 自愈路径 / 清仓重装 / CI 与
+  // 本机布局差异），同一段源码编译出的路径注释就从
+  //   `// node_modules/.pnpm/process-nextick-args@2.0.1/node_modules/process-nextick-args/index.js`
+  // 变成
+  //   `// node_modules/process-nextick-args/index.js`
+  // —— 字节不同，但**代码语义完全相同**。旧判据一律判「产物陈旧」⇒ 报错与真陈旧同貌（P-30），
+  // 且修不掉（重跑构建只会以当前布局再产出一种形态）——A14 报红率虚高、狼来了。
+  //
+  // 归一化判据：把两侧**路径注释行**都折叠到「不含 `.pnpm/<pkg>@<ver>/node_modules/` 中段」
+  // 的形态再逐字节比。归一后一致 ⇒ 判「仅布局漂移」：**不 FAIL**（P-43：判据无判据力时不判），
+  // 但**出声**记 `layout-drift`（R8），并给出归一路径（让人能看懂两边各是哪种布局）。
+  // 归一后仍不同 ⇒ 真陈旧，照旧 FAIL。
+  const normLayout = (s) => s
+    .toString('utf8')
+    // 形态一：路径注释 `// node_modules/.pnpm/<pkg>@<ver>/node_modules/<rest>`
+    .replace(/(^|\n)(\s*\/\/\s*)node_modules\/\.pnpm\/[^/]+\/node_modules\//g, '$1$2node_modules/')
+    // 形态二：esm 模块注册头的字符串键 `"node_modules/.pnpm/<pkg>@<ver>/node_modules/<rest>"(...) {`
+    .replace(/(["'`])node_modules\/\.pnpm\/[^/]+\/node_modules\//g, '$1node_modules/')
+  if (normLayout(fresh) === normLayout(art)) {
+    return {
+      ok: true,
+      reason: '（仅 `.pnpm` 解析布局漂移：路径注释形态不同、归一后逐字节一致 —— 代码语义相同，不判陈旧）' + anchorNote,
+      layoutDrift: true,
+    }
+  }
+
   // 差异摘要：长度 + 首个不同字节所在行（便于人工定位）
   const a = fresh.toString('utf8').replace(/\r\n/g, '\n').split('\n')
   const b = art.toString('utf8').replace(/\r\n/g, '\n').split('\n')
