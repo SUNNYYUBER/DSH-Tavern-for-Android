@@ -2026,7 +2026,13 @@ Remove-Item "$assets\dsh-runtime.zip" -Force -ErrorAction SilentlyContinue
 Push-Location $runtimeDst
 Remove-Item verify-home -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item pnpm-lock.yaml -Force -ErrorAction SilentlyContinue
-tar -a -c -f "$assets\dsh-runtime.zip" node_modules lib package.json 2>&1 | Select-Object -First 1
+# ★ 体检 2026-09-26（v0.2.8 构建实测）：PATH 里若 MSYS/Git 的 /usr/bin/tar 在前，
+#   它会把 `D:\...` 当远程主机（"Cannot connect to D: resolve failed"）⇒ zip 产出失败。
+#   bsdtar（-a 参数语义）是 Windows 自带（System32\tar.exe）⇒ 用**绝对路径**调用，
+#   不依赖 PATH 顺序（构建脚本自足性；CI 与本机的 PATH 布局可能不同）。
+$TAR = Join-Path $env:SystemRoot 'System32\tar.exe'
+if (-not (Test-Path $TAR)) { $TAR = 'tar' }
+& $TAR -a -c -f "$assets\dsh-runtime.zip" node_modules lib package.json 2>&1 | Select-Object -First 1
 $zipMB = [math]::Round((Get-Item "$assets\dsh-runtime.zip").Length / 1MB, 1)
 Write-Host "  runtime.zip：$zipMB MB（assets）"
 
