@@ -270,36 +270,51 @@ boot loop 判定、TCP/HTTP 探针、迁移/备份核验），这为「验证债
 
 ## P0 —— 先止血：修「照做必踩坑」与「静默失败」（本轮体检直接产出，成本极低）
 
-| # | 动作 | 成本 | 收益 |
-|---|---|---|---|
-| P0-1 | 三份贡献者文档补 `vendor-deps.mjs` 一步；并把自愈挂到 `pretest` | ~10 行 | 消除唯一「照做必失败」路径 |
-| P0-2 | README 版本号回填（中英双语 0.2.2→0.2.7；DSH 0.1.5-rc.1→0.1.7-rc.1） | ~4 行 | 门面与实际一致 |
-| P0-3 | 把 README 纳入版本一致性门禁扫描面（防再次漂移） | 小 | 结构性防复发 |
-| P0-4 | RP 面板 API 判据从「配置存在」改锚到「凭据存在」，并出声显示具体原因 | 中 | 消除假绿灯 + 静默失败叠加 |
-| P0-5 | 发消息路径补错误呈现（对齐历史路径已有的 MISSING_CREDENTIAL 卡片） | 中 | 用户可自查 |
+> ✅ **处置状态（2026-09-26 修复轮）**：P0 全部完成并入库（提交 5a75b7e / bec218a / 85734e5 / 2f7f38d）。
+
+| # | 动作 | 成本 | 收益 | 状态 |
+|---|---|---|---|---|
+| P0-1 | 三份贡献者文档补 `vendor-deps.mjs` 一步；并把自愈挂到 `pretest` | ~10 行 | 消除唯一「照做必失败」路径 | ✅ 已修复（含移走 vendor 包端到端复现自愈） |
+| P0-2 | README 版本号回填（中英双语 0.2.2→0.2.7；DSH 0.1.5-rc.1→0.1.7-rc.1） | ~4 行 | 门面与实际一致 | ✅ 已修复（并随 0.2.8 release 再步进） |
+| P0-3 | 把 README 纳入版本一致性门禁扫描面（防再次漂移） | 小 | 结构性防复发 | ✅ 已修复（audit-dsh-version 判据⑥，selftest 20/20） |
+| P0-4 | RP 面板 API 判据从「配置存在」改锚到「凭据存在」，并出声显示具体原因 | 中 | 消除假绿灯 + 静默失败叠加 | ✅ 已修复（credentialRefForRoute 单源 + 三态 UI + 5 条测试） |
+| P0-5 | 发消息路径补错误呈现（对齐历史路径已有的 MISSING_CREDENTIAL 卡片） | 中 | 用户可自查 | ✅ 已修复（pre-step 心跳 + /rp/send-pulse + 前端发送哨兵 toast） |
 
 **建议顺序**：P0-1 → P0-2 → P0-3（一次提交解决文档面）；P0-4 → P0-5（一次提交解决 UI 诚实性面）。
 
 ## P1 —— 补结构防线（消除复发 6+ 次的根因）
 
+> ✅ **处置状态（2026-09-26 修复轮）**：P1-1/2/3/4/5/6 全部完成并入库
+> （提交 6430807 / 6dda017 / 15390ba / 6af4ccf / 5afc204）。
+
 - **P1-1 建 `.gitattributes`**：`*.ps1 eol=crlf` + `working-tree-encoding=UTF-8`，
   并加「恰好 1 个 BOM」硬闸。
   ⚠️ 注意：`git add --renormalize .` 会产生 316 个文件的「仅换行」diff，**必须独立提交**，
   且按 `MEMORY.md:84` 并发协议（只 add 自己文件、**禁 `git add -A`**）与其他实例协调。
+  ✅ 已修复（全仓 `eol=lf` 与 HEAD 现状一致 ⇒ renormalize 零内容 diff；`audit-bom-eol.mjs`
+  9/9 selftest 接入 Step 0.5；合法 BOM 名单从 HEAD 动态枚举，单源不设第二份清单）。
 - **P1-2 把 `MASTER_TODO.md` 纳入 `audit-doc-refs.mjs` 受守面**（只加清单项，不改判定逻辑）—— 投入产出比最高。
+  ✅ 已修复（SCAN_DOCS 扩至 6 份；史实区 `## 心跳` mask 声明；83/83；实仓悬空 0）。
 - **P1-3 断链⑦ 改硬失败**：`build-plugins.sh` 源码缺失时 `die` 而非 `say "跳过"`。
+  ✅ 已修复（dsht-plugin-undo 源码缺失 → die，fail-closed）。
 - **P1-4 用 pyautogui 重建 `tools-cu/cu.py` 并入库**（`pyautogui 0.9.54` 实测仍可用，
   13 子命令清单齐全，重建成本低）。同时按 D 组建议**只登记、不动 gitignore** 处理 `MEMORY.md` 等
   单点知识资产，改由离线备份解决。
+  ✅ 已修复（13 子命令重建 + --dry-run 烟雾全过 + 真实截图核验；入库并受 .gitattributes 保护）。
 - **P1-5 修 B 组三条门禁缺陷**（来自 [B 分册](HEALTHCHECK-B-GATE-AUDIT-2026-09-26.md)）：
   ① `build-dsht.ps1` 里给 Python 门禁统一设 `PYTHONIOENCODING=utf-8`（对齐 CI，
   消除「本地裸跑必崩 / CI 绿」的编码不对称）；② `audit-card-event-surface.mjs` 三选一：
   修好 selftest 并接入构建 / 从文档移除点名 / 显式标记废弃（现状「坏的+不跑的+被点名」最差）；
   ③ `audit-method-binding` 的 `verifyLib()` 在库不在场时改记 SKIP 出声（对齐
   `audit-pty-prebuilt --expect-compile` 的既有先例），不留「return true 静默放行」。
+  ✅ 全部已修复（①env 前置上移到 auditNode 循环之前——v0.2.8 构建实测首版位置仍会让
+  upgrade-readiness 内调的 python 崩；②双锚点改现役形态 `MVU_EVENT_CONSTANTS`，
+  selftest 全绿、实仓读数恢复 5 项；③`[verify-lib SKIP]` 显式出声）。
 - **P1-6 A14 补「布局漂移」维度**：重编译比对时对 `.pnpm` 路径标注做归一化
   （或在报错文案里区分「源码陈旧」与「依赖布局漂移」两种错因）——
   见 §三.5，本次体检期间一次 `pnpm install` 即触发了「真红但错因」。
+  ✅ 已修复（路径注释两种形态归一二段比对；归一后一致判「仅布局漂移」出声不 FAIL，
+  真陈旧照旧 FAIL；32/32 + 反控 PASS；本轮真陈旧的 2 个产物重建后全表逐字节一致）。
 
 ## P2 —— 回到主战场（项目既定战略）
 
