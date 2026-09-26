@@ -910,8 +910,14 @@ export function probeSelftest (scriptPath, timeoutMs = 180000) {
   // ★ .py ⇒ 用 python / python3；其余（.mjs）⇒ node
   const isPy = /\.py$/i.test(scriptPath)
   const cmd = isPy ? (process.env.PYTHON ?? 'python') : process.execPath
+  // ★ 体检 2026-09-26（P1-5① 同族）：.py 的中文/符号输出在裸环境按 GBK 起会崩
+  //   （实测：parity.py --selftest 的 '⇒'(U+21D2) UnicodeEncodeError）⇒ 分数行拿不到
+  //   ⇒ 声明被误判「未接入契约」。只补编码两项、不覆盖已有（与 build-dsht.ps1/CI 同口径，P-1）。
+  const env = isPy
+    ? { ...process.env, PYTHONIOENCODING: process.env.PYTHONIOENCODING ?? 'utf-8', PYTHONUTF8: process.env.PYTHONUTF8 ?? '1' }
+    : undefined
   try {
-    out = execFileSync(cmd, [scriptPath, '--selftest'], { encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] })
+    out = execFileSync(cmd, [scriptPath, '--selftest'], { encoding: 'utf8', timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'], env })
     exit = 0
   } catch (e) {
     out = `${e.stdout ?? ''}${e.stderr ?? ''}`
@@ -1986,9 +1992,14 @@ if (process.argv.includes('--selftest')) {
       // ⑺ ★★ 真实仓库：11 条登记**全部能取到值**（本轮收口）
       {
         const r = readingValueProblems(fs.readFileSync(BUILD, 'utf8'), (exe, gate) => {
+          // ★ 体检 2026-09-26（P1-5① 同族）：python 子进程补编码 env（与 L2186 runGate 同口径，
+          //   P-1）—— 裸环境直跑本闸门时 .py 的 GBK 崩会让读数匹配 0 行 = 假 bad。
+          const env = exe === 'python'
+            ? { ...process.env, PYTHONIOENCODING: process.env.PYTHONIOENCODING ?? 'utf-8', PYTHONUTF8: process.env.PYTHONUTF8 ?? '1' }
+            : undefined
           try {
             const out = execFileSync(exe === 'python' ? 'python' : process.execPath, [path.join(SCRIPTS, gate)],
-              { cwd: WS, encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] })
+              { cwd: WS, encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'], env })
             return { ok: true, out }
           } catch (e) {
             const out = String(e.stdout ?? '') + String(e.stderr ?? '')
@@ -2185,8 +2196,16 @@ if (isMain) {
   //     而 `Show-Reading` 的兜底**只打黄字警告、不 fail**（`build-dsht.ps1:228`）⇒ 失效与正常几乎同貌（**P-30**）。
   const runGate = (exe, gate) => {
     const bin = exe === 'python' ? (process.env.PY_BIN ?? 'python') : process.execPath
+    // ★ 体检 2026-09-26（P1-5① 同族）：本闸门可能被**裸环境**直跑（无 PYTHONIOENCODING），
+    //   此时 .py 闸门的中文/符号输出按 GBK 编码崩 ⇒ 读数匹配 0 行 = 「静默失效」假象
+    //   （本次构建实测撞上：parity 的 Pattern 匹配 0 行 + 「38/38 跑不出分数行」）。
+    //   execFileSync 不传 env 时继承父进程 ⇒ 在此**只补**编码两项（不覆盖已有），与
+    //   build-dsht.ps1 / CI 的口径对齐（P-1：同一因果一处口径）。
+    const env = exe === 'python'
+      ? { ...process.env, PYTHONIOENCODING: process.env.PYTHONIOENCODING ?? 'utf-8', PYTHONUTF8: process.env.PYTHONUTF8 ?? '1' }
+      : undefined
     try {
-      const out = execFileSync(bin, [path.join(SCRIPTS, gate)], { cwd: WS, encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] })
+      const out = execFileSync(bin, [path.join(SCRIPTS, gate)], { cwd: WS, encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'], env })
       return { ok: true, out }
     } catch (e) {
       // ★ 非 0 退出**不代表跑不起来**（闸门检出违规也是非 0）⇒ 仍用它的 stdout/stderr 判读数
