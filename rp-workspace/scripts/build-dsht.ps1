@@ -456,6 +456,13 @@ $auditNode = @(
     #     （docs/HEALTHCHECK-D-ASSET-DRIFT-2026-09-26.md H1）—— 在构建最早点拦截最便宜。
     'audit-bom-eol.mjs'
 )
+# ★【体检 2026-09-26 · P1-5①（构建实测补正）】Python 门禁编码前置必须在**本循环之前**。
+#   首版把这两行放在循环后（audit-build-path-parity 段），而 `audit-upgrade-readiness.mjs`
+#   在本循环内就会内调 `apply-platform-patches.py --check` ⇒ python 仍按 GBK 起、
+#   '\u2713' 编码崩（v0.2.8 构建实测撞上）。env 是进程级继承，越早设越覆盖面广 ——
+#   放到全脚本**第一个 python 门禁之前**（P-40① 同款：最便宜拦截点）。
+if (-not $env:PYTHONIOENCODING) { $env:PYTHONIOENCODING = 'utf-8' }
+if (-not $env:PYTHONUTF8) { $env:PYTHONUTF8 = '1' }
 foreach ($a in $auditNode) {
     $p = Join-Path $ws "scripts\$a"
     if (-not (Test-Path $p)) { throw "门禁脚本缺失：$p（常驻审计不得缺项）" }
