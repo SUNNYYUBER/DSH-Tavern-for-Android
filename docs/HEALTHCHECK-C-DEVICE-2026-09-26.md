@@ -4,7 +4,7 @@
 - **执行人**：teammate `device-verifier`（task-3）
 - **设备**：`emulator-5554` / x86_64 / Android 15 (API 35) / google_apis / `-no-window`
 - **被测**：`com.dshtavern.app` versionName=`0.2.7` versionCode=`9`（primaryCpuAbi=x86_64，targetSdk=36）
-- **adb**：`C:\Users\Administrator\.android\sdk\platform-tools\adb.exe`
+- **adb**：`<SDK>/platform-tools/adb.exe`（本机 SDK 路径按发布卫生闸门口径脱敏 —— `C:\Users\<用户名>\…` 形态属 LOCALPATH 类）
 - **截图证据**：`tmp/healthcheck/*.png`
 - **纪律**：本报告只写**在设备上真实跑过**的结论；没跑过的一律写「未实测」。无 API Key ⇒ 真实 LLM 对话**未验（缺凭据）**，不计入通过。
 

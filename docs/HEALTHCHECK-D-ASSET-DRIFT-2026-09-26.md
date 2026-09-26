@@ -75,8 +75,8 @@ $ git ls-files tools-cu
 
 **证据 5 —— ★ 能力底座仍在，重建成本低**
 ```bash
-$ ls "C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe"
-C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.exe
+$ ls "<本机>/.workbuddy/binaries/python/versions/3.13.12/python.exe"   # 路径按发布卫生闸门口径脱敏（LOCALPATH）
+<本机>/.workbuddy/binaries/python/versions/3.13.12/python.exe
 $ "…/python.exe" -c "import pyautogui; print('pyautogui OK', pyautogui.__version__)"
 pyautogui OK 0.9.54
 ```
