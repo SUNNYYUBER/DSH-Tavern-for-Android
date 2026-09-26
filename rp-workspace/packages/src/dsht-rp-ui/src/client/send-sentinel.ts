@@ -64,8 +64,11 @@ async function schedulePulseCheck(submittedAt: number): Promise<void> {
   // 期间用户又提交了新消息 ⇒ 本查作废（最新一查会覆盖）
   if (lastApiPostAt !== submittedAt) return
   try {
-    const { rpApi } = await import('./rpc.ts')
-    const r = await rpApi<{ lastPulse: { at: number } | null; now: number }>('send-pulse')
+    // 只读查询走 GET（服务端 /rp/send-pulse 挂在 GET 分发区）。
+    // 不用 rpApi（恒 POST）——audit-route-contract 按「前端 POST ⇒ 服务端 POST 区」对账，
+    // 只读面走 POST 反而把契约对账搅浑（体检 2026-09-26 构建期实测撞上）。
+    const resp = await fetch('/dsht-rp/send-pulse', { method: 'GET' })
+    const r = await resp.json() as { lastPulse: { at: number } | null; now: number }
     if (r.lastPulse !== null && r.lastPulse.at >= submittedAt) return // 管线接手，正常路径
     if (Date.now() - lastNotifiedAt < NOTIFY_GAP_MS) return // 静默期
     lastNotifiedAt = Date.now()

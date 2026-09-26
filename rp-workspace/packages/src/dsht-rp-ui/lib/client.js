@@ -5756,207 +5756,6 @@ var require_handlebars = __commonJS({
   }
 });
 
-// src/dsht-rp-ui/src/client/rpc.ts
-var rpc_exports = {};
-__export(rpc_exports, {
-  DshRpcError: () => DshRpcError,
-  dshRpc: () => dshRpc,
-  humanizeError: () => humanizeError,
-  humanizeErrorCode: () => humanizeErrorCode,
-  humanizeLeakedInternals: () => humanizeLeakedInternals,
-  isServiceUnavailable: () => isServiceUnavailable,
-  memApi: () => memApi,
-  memGet: () => memGet,
-  rpApi: () => rpApi,
-  thApi: () => thApi
-});
-function isServiceUnavailable(e) {
-  return e instanceof DshRpcError && e.code === "gateway/service-unavailable";
-}
-function humanizeError(e) {
-  if (e === null || e === void 0) return "\u672A\u77E5\u9519\u8BEF";
-  const err = e;
-  const raw = err?.message ?? String(e);
-  const code = err?.code ?? "";
-  const byCode = humanizeErrorCode(code, raw);
-  if (byCode !== null) return byCode;
-  const leaked = humanizeLeakedInternals(raw, code);
-  if (leaked !== null) return leaked;
-  if (err?.name === "TypeError" && /fetch|network|failed to fetch/i.test(raw)) {
-    return "\u65E0\u6CD5\u8FDE\u63A5\u5230\u672C\u5730\u670D\u52A1\uFF08DSH \u8FD0\u884C\u65F6\u53EF\u80FD\u5C1A\u672A\u542F\u52A8\u6216\u5DF2\u505C\u6B62\uFF09\u2014\u2014\u8BF7\u7A0D\u5019\u91CD\u8BD5\uFF0C\u82E5\u6301\u7EED\u51FA\u73B0\u8BF7\u5230\u300C\u8BBE\u7F6E \u2192 \u63D2\u4EF6\u300D\u67E5\u770B\u8FD0\u884C\u65F6\u72B6\u6001";
-  }
-  const httpMatch = raw.match(/HTTP\s+(\d{3})/);
-  if (httpMatch) {
-    const s = Number(httpMatch[1]);
-    if (s === 401 || s === 403) return "\u9274\u6743\u5931\u8D25\uFF1A\u8BF7\u68C0\u67E5 API Key \u662F\u5426\u6709\u6548\uFF08\u8BBE\u7F6E \u2192 \u6A21\u578B\uFF09";
-    if (s === 404) return "\u8BE5\u529F\u80FD\u5728\u5F53\u524D\u7248\u672C\u4E0D\u53EF\u7528\uFF08\u63A5\u53E3\u4E0D\u5B58\u5728\uFF09\u2014\u2014\u53EF\u80FD\u662F\u63D2\u4EF6\u7248\u672C\u4E0D\u5339\u914D";
-    if (s === 413) return "\u5185\u5BB9\u8FC7\u5927\u88AB\u670D\u52A1\u62D2\u7EDD\u2014\u2014\u8BF7\u51CF\u5C11\u5355\u6B21\u5BFC\u5165\u7684\u6570\u636E\u91CF";
-    if (s >= 500) return "\u672C\u5730\u670D\u52A1\u5185\u90E8\u9519\u8BEF\uFF08HTTP 5xx\uFF09\u2014\u2014\u8BF7\u91CD\u8BD5\uFF1B\u82E5\u6301\u7EED\u51FA\u73B0\u8BF7\u67E5\u770B\u8FD0\u884C\u65F6\u65E5\u5FD7";
-    if (s >= 400) return `\u8BF7\u6C42\u88AB\u62D2\u7EDD\uFF08HTTP ${s}\uFF09\u2014\u2014\u8BF7\u68C0\u67E5\u8F93\u5165\u540E\u91CD\u8BD5`;
-  }
-  if (/unknown endpoint|not found/i.test(raw) && /endpoint|route/i.test(raw)) {
-    return "\u8BE5\u63A5\u53E3\u5728\u5F53\u524D\u63D2\u4EF6\u7248\u672C\u4E2D\u4E0D\u5B58\u5728\u2014\u2014\u8BF7\u786E\u8BA4\u5DF2\u5B89\u88C5\u6700\u65B0\u7248\u63D2\u4EF6";
-  }
-  const missing = raw.match(/^(\w+)\s+required$/i);
-  if (missing) return `\u7F3A\u5C11\u5FC5\u8981\u53C2\u6570\u300C${missing[1]}\u300D\u2014\u2014\u8FD9\u662F\u5185\u90E8\u9519\u8BEF\uFF0C\u8BF7\u53CD\u9988\u6B64\u63D0\u793A`;
-  if (/JSON|Unexpected token/i.test(raw)) {
-    return "\u6587\u4EF6\u5185\u5BB9\u4E0D\u662F\u5408\u6CD5 JSON\u2014\u2014\u53EF\u80FD\u662F\u6587\u4EF6\u635F\u574F\u6216\u4E0D\u662F\u672C\u529F\u80FD\u652F\u6301\u7684\u6570\u636E\u683C\u5F0F";
-  }
-  return raw;
-}
-function humanizeErrorCode(code, raw = "") {
-  if (code === "") return null;
-  const base = OFFICIAL_ERROR_CODES[code];
-  if (base === void 0) return null;
-  const m = /model\s+"([^"]+)"/i.exec(raw);
-  const name = m?.[1]?.includes("/") === true ? m[1].split("/").pop() : m?.[1];
-  if (name === void 0 || name === "") return base;
-  return `\uFF08\u6A21\u578B ${name}\uFF09${base}`;
-}
-function humanizeLeakedInternals(raw, code = "") {
-  const hay = `${code} ${raw}`;
-  for (const rule of INTERNAL_LEAK_RULES) {
-    if (rule.match.test(hay)) return rule.toUser(raw);
-  }
-  return null;
-}
-async function dshRpc(method, payload = {}) {
-  const wire = method.replace(/\./g, "/");
-  const resp = await fetch(`/api/${wire}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ type: "client-request", rpcId: `dsht-rp-ui-${++rpcSeq}`, method: wire, payload: { args: payload } })
-  });
-  if (!resp.ok) throw new DshRpcError(wire, `http/${resp.status}`, `${method}: HTTP ${resp.status}`);
-  const envelope = await resp.json();
-  const result = envelope.result;
-  if (!result || result.ok === false) {
-    throw new DshRpcError(wire, result?.error?.code, result?.error?.message ?? `${method} failed`);
-  }
-  return result.value;
-}
-async function rpApi(path, payload = {}) {
-  const resp = await fetch(`/dsht-rp/${path.replace(/^\//, "")}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const body = await resp.json();
-  if (body.error) throw new Error(String(body.error));
-  return body;
-}
-async function thApi(path, payload = {}) {
-  const resp = await fetch(`/dsht-tavern-helper/${path.replace(/^\//, "")}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const body = await resp.json();
-  if (body.error) throw new Error(String(body.error));
-  return body;
-}
-async function memApi(path, payload = {}) {
-  const resp = await fetch(`/dsht-memory/${path.replace(/^\//, "")}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const body = await resp.json();
-  if (body.error) throw new Error(String(body.error));
-  return body;
-}
-async function memGet(path, query) {
-  const resp = await fetch(`/dsht-memory/${path.replace(/^\//, "")}${query ? `?${query}` : ""}`);
-  const body = await resp.json();
-  if (body.error) throw new Error(String(body.error));
-  return body;
-}
-var rpcSeq, DshRpcError, OFFICIAL_ERROR_CODES, INTERNAL_LEAK_RULES;
-var init_rpc = __esm({
-  "src/dsht-rp-ui/src/client/rpc.ts"() {
-    "use strict";
-    rpcSeq = 0;
-    DshRpcError = class extends Error {
-      /** gateway 错误码（如 `gateway/service-unavailable`）；信封缺 code 时为 undefined */
-      code;
-      /** 出错的 RPC 方法（斜杠式，如 `session/list`） */
-      method;
-      constructor(method, code, message) {
-        super(message);
-        this.name = "DshRpcError";
-        this.method = method;
-        this.code = code;
-      }
-    };
-    OFFICIAL_ERROR_CODES = {
-      CONTEXT_WINDOW_EXCEEDED: "\u672C\u8F6E\u5BF9\u8BDD\u8D85\u51FA\u4E86\u6A21\u578B\u7684\u4E0A\u4E0B\u6587\u5BB9\u91CF\u2014\u2014\u4E0A\u4E0B\u6587\u5DF2\u6EE1\uFF0C\u6A21\u578B\u65E0\u6CD5\u518D\u63A5\u6536\u65B0\u5185\u5BB9\u3002\u5EFA\u8BAE\uFF1A\u56DE\u9000\u82E5\u5E72\u8F6E\u3001\u5220\u9664\u65E0\u5173\u957F\u697C\u5C42\uFF0C\u6216\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u6362\u7528\u4E0A\u4E0B\u6587\u66F4\u5927\u7684\u6A21\u578B\u540E\u91CD\u8BD5\u3002",
-      EMPTY_RESPONSE: "\u6A21\u578B\u8FD4\u56DE\u4E86\u7A7A\u56DE\u590D\uFF08\u6CA1\u6709\u5185\u5BB9\u5757\uFF09\u2014\u2014\u901A\u5E38\u662F\u4E0A\u6E38\u77AC\u65F6\u5F02\u5E38\uFF0C\u91CD\u65B0\u751F\u6210\u4E00\u6B21\u5373\u53EF\u3002",
-      QUOTA: "\u6A21\u578B\u670D\u52A1\u989D\u5EA6\u4E0D\u8DB3\uFF08\u914D\u989D\u5DF2\u7528\u5C3D\u6216\u89E6\u53D1\u9650\u6D41\uFF09\u2014\u2014\u8BF7\u68C0\u67E5\u8D26\u6237\u989D\u5EA6\uFF0C\u7A0D\u540E\u518D\u8BD5\u3002",
-      INVALID_CREDENTIAL: "\u9274\u6743\u5931\u8D25\uFF1AAPI Key \u65E0\u6548\u6216\u5DF2\u8FC7\u671F\u2014\u2014\u8BF7\u5230\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u91CD\u65B0\u586B\u5199\u3002",
-      INVALID_REQUEST: "\u8BF7\u6C42\u88AB\u6A21\u578B\u670D\u52A1\u62D2\u7EDD\uFF08\u53C2\u6570\u6216\u5185\u5BB9\u4E0D\u88AB\u63A5\u53D7\uFF09\u2014\u2014\u82E5\u521A\u6362\u8FC7\u6A21\u578B\uFF0C\u53EF\u80FD\u662F\u8BE5\u6A21\u578B\u4E0D\u652F\u6301\u5F53\u524D\u8BF7\u6C42\uFF1B\u4E5F\u53EF\u80FD\u662F\u5355\u6B21\u5185\u5BB9\u8FC7\u5927\uFF0C\u8BF7\u51CF\u5C11\u672C\u8F6E\u5185\u5BB9\u540E\u91CD\u8BD5\u3002",
-      MAX_TOKENS: "\u672C\u8F6E\u8F93\u51FA\u8FBE\u5230\u4E86\u957F\u5EA6\u4E0A\u9650\u88AB\u622A\u65AD\u2014\u2014\u53EF\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u8C03\u5927\u6700\u5927\u8F93\u51FA\u957F\u5EA6\uFF0C\u6216\u8BA9\u5B83\u5206\u6BB5\u7EE7\u7EED\u3002",
-      LLM_STREAM_IDLE_TIMEOUT: "\u6A21\u578B\u670D\u52A1\u957F\u65F6\u95F4\u6CA1\u6709\u8FD4\u56DE\u6570\u636E\uFF08\u8FDE\u63A5\u7A7A\u95F2\u8D85\u65F6\uFF09\u2014\u2014\u901A\u5E38\u662F\u4E0A\u6E38\u5361\u4F4F\uFF0C\u91CD\u65B0\u751F\u6210\u4E00\u6B21\u5373\u53EF\u3002",
-      "gateway/service-unavailable": "\u5BBF\u4E3B\u670D\u52A1\u6B63\u5728\u91CD\u8F7D\uFF0C\u7A0D\u540E\u4F1A\u81EA\u52A8\u6062\u590D\u2014\u2014\u8BF7\u518D\u70B9\u4E00\u6B21\u3002",
-      // 【E4 2026-09-14 设备实测补充】以下码由 M7 旅程在真机上捕获到（错误面板原文
-      // `provider "ts-custom" model "google/gemini-3.7-flash" does not support reasoning effort "auto"`
-      // + 尾码 `UNSUPPORTED_REASONING_EFFORT`），当时表里没有它 ⇒ **整段英文原文直透用户面**，
-      // 且把内部 provider id（`ts-custom`）与内部路由形态（`google/…`）一并暴露。
-      // 这正是 F1「官方内部实现细节泄漏」的**第二种形态**：不是 SDK 名，而是**错误码未收录**。
-      UNSUPPORTED_REASONING_EFFORT: "\u5F53\u524D\u6A21\u578B\u4E0D\u652F\u6301\u6240\u9009\u7684\u300C\u601D\u8003\u5F3A\u5EA6\u300D\u2014\u2014\u8BF7\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u628A\u8BE5\u6A21\u578B\u7684\u601D\u8003\u5F3A\u5EA6\u6539\u4E3A\u5B83\u652F\u6301\u7684\u503C\uFF08\u4F8B\u5982\u300C\u81EA\u52A8\u300D\u6216\u300C\u5173\u95ED\u300D\uFF09\uFF0C\u6216\u6362\u7528\u652F\u6301\u8BE5\u5F3A\u5EA6\u7684\u6A21\u578B\u540E\u91CD\u8BD5\u3002",
-      UNSUPPORTED_MODEL: "\u5F53\u524D\u6240\u9009\u6A21\u578B\u4E0D\u88AB\u8BE5\u670D\u52A1\u63D0\u4F9B\u65B9\u652F\u6301\u2014\u2014\u8BF7\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u91CD\u65B0\u9009\u62E9\u4E00\u4E2A\u53EF\u7528\u6A21\u578B\u3002",
-      INVALID_MODEL: "\u6A21\u578B\u6807\u8BC6\u65E0\u6548\uFF08\u53EF\u80FD\u5DF2\u88AB\u4E0B\u7EBF\u6216\u6539\u540D\uFF09\u2014\u2014\u8BF7\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u91CD\u65B0\u9009\u62E9\u3002",
-      RATE_LIMITED: "\u89E6\u53D1\u4E86\u670D\u52A1\u65B9\u7684\u901F\u7387\u9650\u5236\u2014\u2014\u8BF7\u7A0D\u5019\u7247\u523B\u518D\u91CD\u8BD5\u3002",
-      NETWORK_ERROR: "\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25\uFF08\u65E0\u6CD5\u5230\u8FBE\u6A21\u578B\u670D\u52A1\uFF09\u2014\u2014\u8BF7\u68C0\u67E5\u7F51\u7EDC\u8FDE\u63A5\u540E\u91CD\u8BD5\u3002"
-    };
-    INTERNAL_LEAK_RULES = [
-      // 上下文超限（官方 llm-pi-ai 的 mapStopReason 字面量，含 SDK 名 "pi-ai"）
-      {
-        match: /context overflow|CONTEXT_WINDOW_EXCEEDED|context window (?:exceeded|is full)/i,
-        toUser: (raw) => {
-          const m = /model\s+"([^"]+)"/i.exec(raw);
-          const name = m?.[1]?.includes("/") === true ? m[1].split("/").pop() : m?.[1];
-          const which = name !== void 0 && name !== "" ? `\uFF08\u6A21\u578B ${name}\uFF09` : "";
-          return `\u672C\u8F6E\u5BF9\u8BDD\u8D85\u51FA\u4E86\u6A21\u578B\u7684\u4E0A\u4E0B\u6587\u5BB9\u91CF${which}\u2014\u2014\u4E0A\u4E0B\u6587\u5DF2\u6EE1\uFF0C\u6A21\u578B\u65E0\u6CD5\u518D\u63A5\u6536\u65B0\u5185\u5BB9\u3002\u5EFA\u8BAE\uFF1A\u56DE\u9000\u82E5\u5E72\u8F6E\u3001\u5220\u9664\u65E0\u5173\u957F\u697C\u5C42\uFF0C\u6216\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u6362\u7528\u4E0A\u4E0B\u6587\u66F4\u5927\u7684\u6A21\u578B\u540E\u91CD\u8BD5\u3002`;
-        }
-      },
-      // 空回复（官方文案：model "x" returned a completed response with no content）
-      {
-        match: /returned a completed response with no content|EMPTY_RESPONSE/i,
-        toUser: (raw) => {
-          const m = /model\s+"([^"]+)"/i.exec(raw);
-          return `\u6A21\u578B${m?.[1] !== void 0 ? ` ${m[1]}` : ""}\u8FD4\u56DE\u4E86\u7A7A\u56DE\u590D\uFF08\u6CA1\u6709\u5185\u5BB9\u5757\uFF09\u2014\u2014\u901A\u5E38\u662F\u4E0A\u6E38\u77AC\u65F6\u5F02\u5E38\uFF0C\u91CD\u65B0\u751F\u6210\u4E00\u6B21\u5373\u53EF\u3002`;
-        }
-      },
-      // 其余把 SDK/包名拼进文案的形态：只做**名字隔离**，保留其余可读部分
-      {
-        match: /\bpi-ai\b|\bpi_ai\b|@earendil-works\/[\w.-]+/i,
-        toUser: () => "\u6A21\u578B\u670D\u52A1\u8FD4\u56DE\u4E86\u9519\u8BEF\u2014\u2014\u8FD9\u662F\u4E0A\u6E38\u9002\u914D\u5C42\u7684\u5185\u90E8\u9519\u8BEF\uFF0C\u4E0E\u4F60\u7684\u64CD\u4F5C\u65E0\u5173\uFF1B\u8BF7\u91CD\u8BD5\uFF0C\u82E5\u6301\u7EED\u51FA\u73B0\u8BF7\u67E5\u770B\u8FD0\u884C\u65F6\u65E5\u5FD7\u3002"
-      },
-      // 【E4 2026-09-14 设备实测新增】官方把**内部 provider id** 拼进用户可见文案的形态：
-      //   provider "ts-custom" model "google/gemini-3.7-flash" does not support reasoning effort "auto"
-      // 其中 `ts-custom` 是内部 provider 路由名、`google/…` 是内部 `provider/model` 形态——
-      // 对用户**毫无意义**，且暴露我方技术栈。此规则是**通用模式**（非逐串替换）：
-      // 只剥 provider 前缀、保留用户真正需要的**模型名**，并要求「把思考强度改掉」这一可操作建议。
-      {
-        match: /does not support reasoning effort|UNSUPPORTED_REASONING_EFFORT/i,
-        toUser: (raw) => {
-          const m = /model\s+"([^"]+)"/i.exec(raw);
-          const name = m?.[1]?.includes("/") === true ? m[1].split("/").pop() : m?.[1];
-          const which = name !== void 0 && name !== "" ? `\uFF08\u6A21\u578B ${name}\uFF09` : "";
-          const eff = /reasoning effort\s+"([^"]+)"/i.exec(raw)?.[1];
-          const cur = eff !== void 0 ? `\u5F53\u524D\u8BF7\u6C42\u7684\u5F3A\u5EA6\u662F\u300C${eff}\u300D` : "\u5F53\u524D\u601D\u8003\u5F3A\u5EA6\u4E0D\u88AB\u652F\u6301";
-          return `${which}${cur}\uFF0C\u8BE5\u6A21\u578B\u4E0D\u652F\u6301\u5B83\u2014\u2014\u8BF7\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u628A\u8BE5\u6A21\u578B\u7684\u601D\u8003\u5F3A\u5EA6\u6539\u6210\u5B83\u652F\u6301\u7684\u503C\uFF08\u4F8B\u5982\u300C\u81EA\u52A8\u300D/\u300C\u5173\u95ED\u300D\uFF09\uFF0C\u6216\u6362\u7528\u652F\u6301\u8BE5\u5F3A\u5EA6\u7684\u6A21\u578B\u540E\u91CD\u8BD5\u3002`;
-        }
-      },
-      // 内部包名/类名/源文件路径外泄（通用兜底形态）
-      {
-        match: /@deepseek-ai\/[\w.-]+|lib\/index\.js:\d+|node_modules\/[\w@/.-]+/i,
-        toUser: () => "\u672C\u5730\u8FD0\u884C\u65F6\u5185\u90E8\u9519\u8BEF\u2014\u2014\u8BF7\u91CD\u8BD5\uFF1B\u82E5\u6301\u7EED\u51FA\u73B0\u8BF7\u9644\u5E26\u8FD0\u884C\u65F6\u65E5\u5FD7\u53CD\u9988\uFF08\u8BE6\u60C5\u4E2D\u4FDD\u7559\u4E86\u539F\u59CB\u4FE1\u606F\uFF09\u3002"
-      }
-    ];
-  }
-});
-
 // src/dsht-rp-ui/src/client/toast.ts
 var toast_exports = {};
 __export(toast_exports, {
@@ -10459,11 +10258,191 @@ function installHostVendor(host = globalThis) {
 
 // src/dsht-rp-ui/src/client/RpOverlay.tsx
 var import_react19 = require("react");
-init_rpc();
+
+// src/dsht-rp-ui/src/client/rpc.ts
+var rpcSeq = 0;
+var DshRpcError = class extends Error {
+  /** gateway 错误码（如 `gateway/service-unavailable`）；信封缺 code 时为 undefined */
+  code;
+  /** 出错的 RPC 方法（斜杠式，如 `session/list`） */
+  method;
+  constructor(method, code, message) {
+    super(message);
+    this.name = "DshRpcError";
+    this.method = method;
+    this.code = code;
+  }
+};
+function isServiceUnavailable(e) {
+  return e instanceof DshRpcError && e.code === "gateway/service-unavailable";
+}
+function humanizeError(e) {
+  if (e === null || e === void 0) return "\u672A\u77E5\u9519\u8BEF";
+  const err = e;
+  const raw = err?.message ?? String(e);
+  const code = err?.code ?? "";
+  const byCode = humanizeErrorCode(code, raw);
+  if (byCode !== null) return byCode;
+  const leaked = humanizeLeakedInternals(raw, code);
+  if (leaked !== null) return leaked;
+  if (err?.name === "TypeError" && /fetch|network|failed to fetch/i.test(raw)) {
+    return "\u65E0\u6CD5\u8FDE\u63A5\u5230\u672C\u5730\u670D\u52A1\uFF08DSH \u8FD0\u884C\u65F6\u53EF\u80FD\u5C1A\u672A\u542F\u52A8\u6216\u5DF2\u505C\u6B62\uFF09\u2014\u2014\u8BF7\u7A0D\u5019\u91CD\u8BD5\uFF0C\u82E5\u6301\u7EED\u51FA\u73B0\u8BF7\u5230\u300C\u8BBE\u7F6E \u2192 \u63D2\u4EF6\u300D\u67E5\u770B\u8FD0\u884C\u65F6\u72B6\u6001";
+  }
+  const httpMatch = raw.match(/HTTP\s+(\d{3})/);
+  if (httpMatch) {
+    const s = Number(httpMatch[1]);
+    if (s === 401 || s === 403) return "\u9274\u6743\u5931\u8D25\uFF1A\u8BF7\u68C0\u67E5 API Key \u662F\u5426\u6709\u6548\uFF08\u8BBE\u7F6E \u2192 \u6A21\u578B\uFF09";
+    if (s === 404) return "\u8BE5\u529F\u80FD\u5728\u5F53\u524D\u7248\u672C\u4E0D\u53EF\u7528\uFF08\u63A5\u53E3\u4E0D\u5B58\u5728\uFF09\u2014\u2014\u53EF\u80FD\u662F\u63D2\u4EF6\u7248\u672C\u4E0D\u5339\u914D";
+    if (s === 413) return "\u5185\u5BB9\u8FC7\u5927\u88AB\u670D\u52A1\u62D2\u7EDD\u2014\u2014\u8BF7\u51CF\u5C11\u5355\u6B21\u5BFC\u5165\u7684\u6570\u636E\u91CF";
+    if (s >= 500) return "\u672C\u5730\u670D\u52A1\u5185\u90E8\u9519\u8BEF\uFF08HTTP 5xx\uFF09\u2014\u2014\u8BF7\u91CD\u8BD5\uFF1B\u82E5\u6301\u7EED\u51FA\u73B0\u8BF7\u67E5\u770B\u8FD0\u884C\u65F6\u65E5\u5FD7";
+    if (s >= 400) return `\u8BF7\u6C42\u88AB\u62D2\u7EDD\uFF08HTTP ${s}\uFF09\u2014\u2014\u8BF7\u68C0\u67E5\u8F93\u5165\u540E\u91CD\u8BD5`;
+  }
+  if (/unknown endpoint|not found/i.test(raw) && /endpoint|route/i.test(raw)) {
+    return "\u8BE5\u63A5\u53E3\u5728\u5F53\u524D\u63D2\u4EF6\u7248\u672C\u4E2D\u4E0D\u5B58\u5728\u2014\u2014\u8BF7\u786E\u8BA4\u5DF2\u5B89\u88C5\u6700\u65B0\u7248\u63D2\u4EF6";
+  }
+  const missing = raw.match(/^(\w+)\s+required$/i);
+  if (missing) return `\u7F3A\u5C11\u5FC5\u8981\u53C2\u6570\u300C${missing[1]}\u300D\u2014\u2014\u8FD9\u662F\u5185\u90E8\u9519\u8BEF\uFF0C\u8BF7\u53CD\u9988\u6B64\u63D0\u793A`;
+  if (/JSON|Unexpected token/i.test(raw)) {
+    return "\u6587\u4EF6\u5185\u5BB9\u4E0D\u662F\u5408\u6CD5 JSON\u2014\u2014\u53EF\u80FD\u662F\u6587\u4EF6\u635F\u574F\u6216\u4E0D\u662F\u672C\u529F\u80FD\u652F\u6301\u7684\u6570\u636E\u683C\u5F0F";
+  }
+  return raw;
+}
+var OFFICIAL_ERROR_CODES = {
+  CONTEXT_WINDOW_EXCEEDED: "\u672C\u8F6E\u5BF9\u8BDD\u8D85\u51FA\u4E86\u6A21\u578B\u7684\u4E0A\u4E0B\u6587\u5BB9\u91CF\u2014\u2014\u4E0A\u4E0B\u6587\u5DF2\u6EE1\uFF0C\u6A21\u578B\u65E0\u6CD5\u518D\u63A5\u6536\u65B0\u5185\u5BB9\u3002\u5EFA\u8BAE\uFF1A\u56DE\u9000\u82E5\u5E72\u8F6E\u3001\u5220\u9664\u65E0\u5173\u957F\u697C\u5C42\uFF0C\u6216\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u6362\u7528\u4E0A\u4E0B\u6587\u66F4\u5927\u7684\u6A21\u578B\u540E\u91CD\u8BD5\u3002",
+  EMPTY_RESPONSE: "\u6A21\u578B\u8FD4\u56DE\u4E86\u7A7A\u56DE\u590D\uFF08\u6CA1\u6709\u5185\u5BB9\u5757\uFF09\u2014\u2014\u901A\u5E38\u662F\u4E0A\u6E38\u77AC\u65F6\u5F02\u5E38\uFF0C\u91CD\u65B0\u751F\u6210\u4E00\u6B21\u5373\u53EF\u3002",
+  QUOTA: "\u6A21\u578B\u670D\u52A1\u989D\u5EA6\u4E0D\u8DB3\uFF08\u914D\u989D\u5DF2\u7528\u5C3D\u6216\u89E6\u53D1\u9650\u6D41\uFF09\u2014\u2014\u8BF7\u68C0\u67E5\u8D26\u6237\u989D\u5EA6\uFF0C\u7A0D\u540E\u518D\u8BD5\u3002",
+  INVALID_CREDENTIAL: "\u9274\u6743\u5931\u8D25\uFF1AAPI Key \u65E0\u6548\u6216\u5DF2\u8FC7\u671F\u2014\u2014\u8BF7\u5230\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u91CD\u65B0\u586B\u5199\u3002",
+  INVALID_REQUEST: "\u8BF7\u6C42\u88AB\u6A21\u578B\u670D\u52A1\u62D2\u7EDD\uFF08\u53C2\u6570\u6216\u5185\u5BB9\u4E0D\u88AB\u63A5\u53D7\uFF09\u2014\u2014\u82E5\u521A\u6362\u8FC7\u6A21\u578B\uFF0C\u53EF\u80FD\u662F\u8BE5\u6A21\u578B\u4E0D\u652F\u6301\u5F53\u524D\u8BF7\u6C42\uFF1B\u4E5F\u53EF\u80FD\u662F\u5355\u6B21\u5185\u5BB9\u8FC7\u5927\uFF0C\u8BF7\u51CF\u5C11\u672C\u8F6E\u5185\u5BB9\u540E\u91CD\u8BD5\u3002",
+  MAX_TOKENS: "\u672C\u8F6E\u8F93\u51FA\u8FBE\u5230\u4E86\u957F\u5EA6\u4E0A\u9650\u88AB\u622A\u65AD\u2014\u2014\u53EF\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u8C03\u5927\u6700\u5927\u8F93\u51FA\u957F\u5EA6\uFF0C\u6216\u8BA9\u5B83\u5206\u6BB5\u7EE7\u7EED\u3002",
+  LLM_STREAM_IDLE_TIMEOUT: "\u6A21\u578B\u670D\u52A1\u957F\u65F6\u95F4\u6CA1\u6709\u8FD4\u56DE\u6570\u636E\uFF08\u8FDE\u63A5\u7A7A\u95F2\u8D85\u65F6\uFF09\u2014\u2014\u901A\u5E38\u662F\u4E0A\u6E38\u5361\u4F4F\uFF0C\u91CD\u65B0\u751F\u6210\u4E00\u6B21\u5373\u53EF\u3002",
+  "gateway/service-unavailable": "\u5BBF\u4E3B\u670D\u52A1\u6B63\u5728\u91CD\u8F7D\uFF0C\u7A0D\u540E\u4F1A\u81EA\u52A8\u6062\u590D\u2014\u2014\u8BF7\u518D\u70B9\u4E00\u6B21\u3002",
+  // 【E4 2026-09-14 设备实测补充】以下码由 M7 旅程在真机上捕获到（错误面板原文
+  // `provider "ts-custom" model "google/gemini-3.7-flash" does not support reasoning effort "auto"`
+  // + 尾码 `UNSUPPORTED_REASONING_EFFORT`），当时表里没有它 ⇒ **整段英文原文直透用户面**，
+  // 且把内部 provider id（`ts-custom`）与内部路由形态（`google/…`）一并暴露。
+  // 这正是 F1「官方内部实现细节泄漏」的**第二种形态**：不是 SDK 名，而是**错误码未收录**。
+  UNSUPPORTED_REASONING_EFFORT: "\u5F53\u524D\u6A21\u578B\u4E0D\u652F\u6301\u6240\u9009\u7684\u300C\u601D\u8003\u5F3A\u5EA6\u300D\u2014\u2014\u8BF7\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u628A\u8BE5\u6A21\u578B\u7684\u601D\u8003\u5F3A\u5EA6\u6539\u4E3A\u5B83\u652F\u6301\u7684\u503C\uFF08\u4F8B\u5982\u300C\u81EA\u52A8\u300D\u6216\u300C\u5173\u95ED\u300D\uFF09\uFF0C\u6216\u6362\u7528\u652F\u6301\u8BE5\u5F3A\u5EA6\u7684\u6A21\u578B\u540E\u91CD\u8BD5\u3002",
+  UNSUPPORTED_MODEL: "\u5F53\u524D\u6240\u9009\u6A21\u578B\u4E0D\u88AB\u8BE5\u670D\u52A1\u63D0\u4F9B\u65B9\u652F\u6301\u2014\u2014\u8BF7\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u91CD\u65B0\u9009\u62E9\u4E00\u4E2A\u53EF\u7528\u6A21\u578B\u3002",
+  INVALID_MODEL: "\u6A21\u578B\u6807\u8BC6\u65E0\u6548\uFF08\u53EF\u80FD\u5DF2\u88AB\u4E0B\u7EBF\u6216\u6539\u540D\uFF09\u2014\u2014\u8BF7\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u91CD\u65B0\u9009\u62E9\u3002",
+  RATE_LIMITED: "\u89E6\u53D1\u4E86\u670D\u52A1\u65B9\u7684\u901F\u7387\u9650\u5236\u2014\u2014\u8BF7\u7A0D\u5019\u7247\u523B\u518D\u91CD\u8BD5\u3002",
+  NETWORK_ERROR: "\u7F51\u7EDC\u8BF7\u6C42\u5931\u8D25\uFF08\u65E0\u6CD5\u5230\u8FBE\u6A21\u578B\u670D\u52A1\uFF09\u2014\u2014\u8BF7\u68C0\u67E5\u7F51\u7EDC\u8FDE\u63A5\u540E\u91CD\u8BD5\u3002"
+};
+function humanizeErrorCode(code, raw = "") {
+  if (code === "") return null;
+  const base = OFFICIAL_ERROR_CODES[code];
+  if (base === void 0) return null;
+  const m = /model\s+"([^"]+)"/i.exec(raw);
+  const name = m?.[1]?.includes("/") === true ? m[1].split("/").pop() : m?.[1];
+  if (name === void 0 || name === "") return base;
+  return `\uFF08\u6A21\u578B ${name}\uFF09${base}`;
+}
+var INTERNAL_LEAK_RULES = [
+  // 上下文超限（官方 llm-pi-ai 的 mapStopReason 字面量，含 SDK 名 "pi-ai"）
+  {
+    match: /context overflow|CONTEXT_WINDOW_EXCEEDED|context window (?:exceeded|is full)/i,
+    toUser: (raw) => {
+      const m = /model\s+"([^"]+)"/i.exec(raw);
+      const name = m?.[1]?.includes("/") === true ? m[1].split("/").pop() : m?.[1];
+      const which = name !== void 0 && name !== "" ? `\uFF08\u6A21\u578B ${name}\uFF09` : "";
+      return `\u672C\u8F6E\u5BF9\u8BDD\u8D85\u51FA\u4E86\u6A21\u578B\u7684\u4E0A\u4E0B\u6587\u5BB9\u91CF${which}\u2014\u2014\u4E0A\u4E0B\u6587\u5DF2\u6EE1\uFF0C\u6A21\u578B\u65E0\u6CD5\u518D\u63A5\u6536\u65B0\u5185\u5BB9\u3002\u5EFA\u8BAE\uFF1A\u56DE\u9000\u82E5\u5E72\u8F6E\u3001\u5220\u9664\u65E0\u5173\u957F\u697C\u5C42\uFF0C\u6216\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u6362\u7528\u4E0A\u4E0B\u6587\u66F4\u5927\u7684\u6A21\u578B\u540E\u91CD\u8BD5\u3002`;
+    }
+  },
+  // 空回复（官方文案：model "x" returned a completed response with no content）
+  {
+    match: /returned a completed response with no content|EMPTY_RESPONSE/i,
+    toUser: (raw) => {
+      const m = /model\s+"([^"]+)"/i.exec(raw);
+      return `\u6A21\u578B${m?.[1] !== void 0 ? ` ${m[1]}` : ""}\u8FD4\u56DE\u4E86\u7A7A\u56DE\u590D\uFF08\u6CA1\u6709\u5185\u5BB9\u5757\uFF09\u2014\u2014\u901A\u5E38\u662F\u4E0A\u6E38\u77AC\u65F6\u5F02\u5E38\uFF0C\u91CD\u65B0\u751F\u6210\u4E00\u6B21\u5373\u53EF\u3002`;
+    }
+  },
+  // 其余把 SDK/包名拼进文案的形态：只做**名字隔离**，保留其余可读部分
+  {
+    match: /\bpi-ai\b|\bpi_ai\b|@earendil-works\/[\w.-]+/i,
+    toUser: () => "\u6A21\u578B\u670D\u52A1\u8FD4\u56DE\u4E86\u9519\u8BEF\u2014\u2014\u8FD9\u662F\u4E0A\u6E38\u9002\u914D\u5C42\u7684\u5185\u90E8\u9519\u8BEF\uFF0C\u4E0E\u4F60\u7684\u64CD\u4F5C\u65E0\u5173\uFF1B\u8BF7\u91CD\u8BD5\uFF0C\u82E5\u6301\u7EED\u51FA\u73B0\u8BF7\u67E5\u770B\u8FD0\u884C\u65F6\u65E5\u5FD7\u3002"
+  },
+  // 【E4 2026-09-14 设备实测新增】官方把**内部 provider id** 拼进用户可见文案的形态：
+  //   provider "ts-custom" model "google/gemini-3.7-flash" does not support reasoning effort "auto"
+  // 其中 `ts-custom` 是内部 provider 路由名、`google/…` 是内部 `provider/model` 形态——
+  // 对用户**毫无意义**，且暴露我方技术栈。此规则是**通用模式**（非逐串替换）：
+  // 只剥 provider 前缀、保留用户真正需要的**模型名**，并要求「把思考强度改掉」这一可操作建议。
+  {
+    match: /does not support reasoning effort|UNSUPPORTED_REASONING_EFFORT/i,
+    toUser: (raw) => {
+      const m = /model\s+"([^"]+)"/i.exec(raw);
+      const name = m?.[1]?.includes("/") === true ? m[1].split("/").pop() : m?.[1];
+      const which = name !== void 0 && name !== "" ? `\uFF08\u6A21\u578B ${name}\uFF09` : "";
+      const eff = /reasoning effort\s+"([^"]+)"/i.exec(raw)?.[1];
+      const cur = eff !== void 0 ? `\u5F53\u524D\u8BF7\u6C42\u7684\u5F3A\u5EA6\u662F\u300C${eff}\u300D` : "\u5F53\u524D\u601D\u8003\u5F3A\u5EA6\u4E0D\u88AB\u652F\u6301";
+      return `${which}${cur}\uFF0C\u8BE5\u6A21\u578B\u4E0D\u652F\u6301\u5B83\u2014\u2014\u8BF7\u5728\u300C\u8BBE\u7F6E \u2192 \u6A21\u578B\u300D\u628A\u8BE5\u6A21\u578B\u7684\u601D\u8003\u5F3A\u5EA6\u6539\u6210\u5B83\u652F\u6301\u7684\u503C\uFF08\u4F8B\u5982\u300C\u81EA\u52A8\u300D/\u300C\u5173\u95ED\u300D\uFF09\uFF0C\u6216\u6362\u7528\u652F\u6301\u8BE5\u5F3A\u5EA6\u7684\u6A21\u578B\u540E\u91CD\u8BD5\u3002`;
+    }
+  },
+  // 内部包名/类名/源文件路径外泄（通用兜底形态）
+  {
+    match: /@deepseek-ai\/[\w.-]+|lib\/index\.js:\d+|node_modules\/[\w@/.-]+/i,
+    toUser: () => "\u672C\u5730\u8FD0\u884C\u65F6\u5185\u90E8\u9519\u8BEF\u2014\u2014\u8BF7\u91CD\u8BD5\uFF1B\u82E5\u6301\u7EED\u51FA\u73B0\u8BF7\u9644\u5E26\u8FD0\u884C\u65F6\u65E5\u5FD7\u53CD\u9988\uFF08\u8BE6\u60C5\u4E2D\u4FDD\u7559\u4E86\u539F\u59CB\u4FE1\u606F\uFF09\u3002"
+  }
+];
+function humanizeLeakedInternals(raw, code = "") {
+  const hay = `${code} ${raw}`;
+  for (const rule of INTERNAL_LEAK_RULES) {
+    if (rule.match.test(hay)) return rule.toUser(raw);
+  }
+  return null;
+}
+async function dshRpc(method, payload = {}) {
+  const wire = method.replace(/\./g, "/");
+  const resp = await fetch(`/api/${wire}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "client-request", rpcId: `dsht-rp-ui-${++rpcSeq}`, method: wire, payload: { args: payload } })
+  });
+  if (!resp.ok) throw new DshRpcError(wire, `http/${resp.status}`, `${method}: HTTP ${resp.status}`);
+  const envelope = await resp.json();
+  const result = envelope.result;
+  if (!result || result.ok === false) {
+    throw new DshRpcError(wire, result?.error?.code, result?.error?.message ?? `${method} failed`);
+  }
+  return result.value;
+}
+async function rpApi(path, payload = {}) {
+  const resp = await fetch(`/dsht-rp/${path.replace(/^\//, "")}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const body = await resp.json();
+  if (body.error) throw new Error(String(body.error));
+  return body;
+}
+async function thApi(path, payload = {}) {
+  const resp = await fetch(`/dsht-tavern-helper/${path.replace(/^\//, "")}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const body = await resp.json();
+  if (body.error) throw new Error(String(body.error));
+  return body;
+}
+async function memApi(path, payload = {}) {
+  const resp = await fetch(`/dsht-memory/${path.replace(/^\//, "")}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const body = await resp.json();
+  if (body.error) throw new Error(String(body.error));
+  return body;
+}
+async function memGet(path, query) {
+  const resp = await fetch(`/dsht-memory/${path.replace(/^\//, "")}${query ? `?${query}` : ""}`);
+  const body = await resp.json();
+  if (body.error) throw new Error(String(body.error));
+  return body;
+}
 
 // src/dsht-rp-ui/src/client/RegexPanel.tsx
 var import_react = require("react");
-init_rpc();
 var import_jsx_runtime = require("react/jsx-runtime");
 var PLACEMENT_LABELS = {
   1: "\u7528\u6237\u8F93\u5165",
@@ -10830,7 +10809,6 @@ ${r.result}`);
 
 // src/dsht-rp-ui/src/client/PresetPanel.tsx
 var import_react2 = require("react");
-init_rpc();
 init_toast();
 var import_jsx_runtime2 = require("react/jsx-runtime");
 var PATH_LABELS = {
@@ -11246,13 +11224,11 @@ function PresetPanel() {
 
 // src/dsht-rp-ui/src/client/BooksPanel.tsx
 var import_react14 = require("react");
-init_rpc();
 
 // src/dsht-rp-ui/src/client/RpNativeChat.tsx
 var import_react10 = require("react");
 var import_react11 = require("react");
 var import_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
-init_rpc();
 init_toast();
 
 // src/dsht-rp-ui/src/client/time-zone.ts
@@ -13082,16 +13058,11 @@ function pollWhileVisible(fn, intervalMs) {
   };
 }
 
-// src/dsht-rp-ui/src/client/RpScriptHost.tsx
-init_rpc();
-
 // src/dsht-rp-ui/src/client/RpStateFloat.tsx
 var import_react8 = require("react");
-init_rpc();
 
 // src/dsht-rp-ui/src/client/RpStateView.tsx
 var import_react4 = require("react");
-init_rpc();
 
 // src/dsht-rp-ui/src/client/a11y-props.ts
 var import_react3 = require("react");
@@ -13383,7 +13354,6 @@ function RpStateView(props) {
 
 // src/dsht-rp-ui/src/client/RpSearchPanel.tsx
 var import_react5 = require("react");
-init_rpc();
 
 // src/dsht-rp-ui/src/client/search-core.ts
 var SEARCH_RESULT_LIMIT = 50;
@@ -13582,7 +13552,6 @@ function RpSearchPanel(props) {
 
 // src/dsht-rp-ui/src/client/RpTablesView.tsx
 var import_react6 = require("react");
-init_rpc();
 var import_jsx_runtime5 = require("react/jsx-runtime");
 var cellStyle = {
   border: "1px solid var(--dsw-alias-border-l1)",
@@ -20962,7 +20931,6 @@ var RpUserNodeView = (0, import_react10.memo)(function RpUserNodeView2({
 
 // src/dsht-rp-ui/src/client/RpLorePanel.tsx
 var import_react13 = require("react");
-init_rpc();
 
 // src/dsht-rp-ui/src/client/CodeTextarea.tsx
 var import_react12 = require("react");
@@ -21447,7 +21415,6 @@ function BooksPanel({ workspaces, onChanged }) {
 
 // src/dsht-rp-ui/src/client/MigrationStatusPanel.tsx
 var import_react15 = require("react");
-init_rpc();
 
 // src/dsht-rp-ui/src/client/probes.ts
 async function postJson2(url, body) {
@@ -21670,7 +21637,6 @@ function MigrationStatusPanel() {
 
 // src/dsht-rp-ui/src/client/UpdatePanel.tsx
 var import_react16 = require("react");
-init_rpc();
 var import_jsx_runtime14 = require("react/jsx-runtime");
 var fmtSize = (n) => {
   if (n === null || !Number.isFinite(n)) return "";
@@ -21894,7 +21860,6 @@ function UpdatePanel() {
 
 // src/dsht-rp-ui/src/client/PersonaPanel.tsx
 var import_react17 = require("react");
-init_rpc();
 var import_jsx_runtime15 = require("react/jsx-runtime");
 var EMPTY = { schemaVersion: 1, active: null, list: [] };
 async function loadPersona() {
@@ -22102,7 +22067,6 @@ function PersonaPanel() {
 
 // src/dsht-rp-ui/src/client/SessionsPanel.tsx
 var import_react18 = require("react");
-init_rpc();
 init_toast();
 var import_jsx_runtime16 = require("react/jsx-runtime");
 var KIND_LABEL = {
@@ -22740,7 +22704,6 @@ function ImportFrame({ onClose, onImported, onKickoff }) {
 
 // src/dsht-rp-ui/src/client/RpPresetSwitch.tsx
 var import_react20 = require("react");
-init_rpc();
 var import_jsx_runtime18 = require("react/jsx-runtime");
 function RpPresetSwitch({ useSession, sessionId }) {
   const [presets, setPresets] = (0, import_react20.useState)([]);
@@ -22832,7 +22795,6 @@ function RpImportDockEntry(_props) {
 
 // src/dsht-rp-ui/src/client/RpGreetingDock.tsx
 var import_react21 = require("react");
-init_rpc();
 init_toast();
 var import_jsx_runtime20 = require("react/jsx-runtime");
 var dismissed = /* @__PURE__ */ new Set();
@@ -23013,11 +22975,9 @@ function ensureWebviewApiGuard(g = globalThis) {
 
 // src/dsht-rp-ui/src/client/RpTokenMeter.tsx
 var import_react23 = require("react");
-init_rpc();
 
 // src/dsht-rp-ui/src/client/RpContextPanel.tsx
 var import_react22 = require("react");
-init_rpc();
 var import_jsx_runtime21 = require("react/jsx-runtime");
 var FLOOR_MIN = 0;
 var FLOOR_MAX = 500;
@@ -23388,7 +23348,6 @@ function RpTokenMeter(props) {
 
 // src/dsht-rp-ui/src/client/PluginCards.tsx
 var import_react24 = require("react");
-init_rpc();
 var import_jsx_runtime23 = require("react/jsx-runtime");
 function thApi3(path, payload) {
   return fetch(`/dsht-tavern-helper/${path}`, {
@@ -24062,9 +24021,6 @@ function DshtPluginsTabPage() {
   ] });
 }
 
-// src/dsht-rp-ui/src/client/index.tsx
-init_rpc();
-
 // src/dsht-rp-ui/src/client/composer-enter-fix.ts
 function installComposerEnterFix() {
   const isTouch = () => {
@@ -24130,8 +24086,8 @@ async function schedulePulseCheck(submittedAt) {
   });
   if (lastApiPostAt !== submittedAt) return;
   try {
-    const { rpApi: rpApi2 } = await Promise.resolve().then(() => (init_rpc(), rpc_exports));
-    const r = await rpApi2("send-pulse");
+    const resp = await fetch("/dsht-rp/send-pulse", { method: "GET" });
+    const r = await resp.json();
     if (r.lastPulse !== null && r.lastPulse.at >= submittedAt) return;
     if (Date.now() - lastNotifiedAt < NOTIFY_GAP_MS) return;
     lastNotifiedAt = Date.now();
