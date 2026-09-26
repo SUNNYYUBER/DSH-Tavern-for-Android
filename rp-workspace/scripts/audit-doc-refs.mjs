@@ -141,8 +141,19 @@ export const E_H_DOCS = [
 export const SSOT_DOCS = [
   ['GOAL.md', path.join(ROOT, 'docs', 'GOAL.md')]
 ]
-/** 本闸门的**实际扫描面**（E-H 四份 + SSOT） */
-export const SCAN_DOCS = [...E_H_DOCS, ...SSOT_DOCS]
+/**
+ * ★★ **MASTER_TODO**（**体检 2026-09-26 扩** —— 见 docs/HEALTHCHECK-D-ASSET-DRIFT-2026-09-26.md H5）。
+ *
+ * 为什么它必须被扫：`MASTER_TODO.md`（仓库根）**自称「唯一活文档」**（第 1 行），
+ * 却不在本闸门扫描面内 ⇒ 它里面的引用悬空了**没有机器知道**。
+ * ★ 体检实测（H5 当场抓到）：其 L2141 仍写 `tools-cu/cu.py … ✅ 实测通过`，
+ *   而该文件当时**已不在仓库且从未入库**（D-01）—— 闸门报绿、悬空照旧。
+ */
+export const MASTER_TODO_DOCS = [
+  ['MASTER_TODO.md', path.join(ROOT, 'MASTER_TODO.md')]
+]
+/** 本闸门的**实际扫描面**（E-H 四份 + SSOT + MASTER_TODO） */
+export const SCAN_DOCS = [...E_H_DOCS, ...SSOT_DOCS, ...MASTER_TODO_DOCS]
 
 /**
  * ★★ **判据⑥：受守面清单必须与它声称的单源一致**（**W65 新增**）。
@@ -375,6 +386,22 @@ export function scanLineRefProblems (text, docLabel, resolveRef) {
         continue
       }
       if (r.total === null || !Number.isFinite(r.total)) { external += 1; continue }
+      // ⑸ ★★（体检 2026-09-26 新增）裸 basename 命中**我方兼容 shim/资产** + 行号**远超**其行数
+      //    ⇒ 疑似**指向上游同名文件** —— 出声不判（P-43：无判据力不判 FAIL；P-45：防假红）。
+      //    背景：MASTER_TODO 叙述区的 `script.js:9352` 等处，语义指向**当时本地的上游
+      //    ST 源码副本**（1.5 万行量级）；该名在本仓唯一命中我方 T-63 兼容 shim
+      //    （`st-modules/script.js`，49 行）⇒ 「唯一命中」但**语义错位** —— 口径⑵的残余形态。
+      //    判据取**交集**（两条都满足才豁免，防把真越界洗白 —— selftest 负控
+      //    `build-dsht.ps1:9999` 必须**仍然报红**）：
+      //      · 引用为裸 basename（无目录前缀 —— 前缀即指名道姓，不享受豁免）；
+      //      · 命中目标位于**资产/兼容层目录**（assets/ 或 st-modules/ —— 这些是我方
+      //        对上游同名资产的复刻位，同名异文件的现实来源）。
+      const SHIM_RE = /(^|\/)(assets|st-modules)\//.test(r.target)
+      if (!ref.includes('/') && SHIM_RE && a > r.total * 2) {
+        notes.push(`${docLabel} 第 ${i + 1} 行：\`${ref}:${a}\` 起始行超出本仓同名文件（${r.total} 行）两倍以上`
+          + ` ⇒ 疑似指向上游/外部同名文件 ⇒ **不判**（P-46）`)
+        continue
+      }
       checked += 1
       const span = b === null ? `${a}` : `${a}-${b}`
       if (b !== null && b < a) {
@@ -465,7 +492,11 @@ export const HISTORY_SECTION_RE = {
   'MOBILE-TEST-METHODOLOGY.md': /^##\s*六、/,
   'ST-COMPAT-PACT.md': /^##\s*附录/,
   'README.md': null,
-  'THIRD_PARTY_LICENSES.md': null
+  'THIRD_PARTY_LICENSES.md': null,
+  // ★ 体检 2026-09-26（H5 扩面）：MASTER_TODO 是「现状区（≤L783：一句话现状/三阶段/
+  //   投诉/差距/剩什么/拍板）+ 逐轮心跳史实区（## 心跳 N 做了什么…）」结构 ——
+  //   心跳区全是「写下时是真的」的行号/文件引用，必须 mask（P-38 同款教训）。
+  'MASTER_TODO.md': /^##\s*心跳/
 }
 
 /**
@@ -1011,7 +1042,7 @@ if (process.argv.includes('--selftest')) {
   // ---- ★★ 扫描面（W49）：SSOT 必须在内，且**真的被扫到** ----
   t('★正控（扫描面）：SSOT（`docs/GOAL.md`）在 `SCAN_DOCS` 内（此前它**不在任何引用闸门的扫描面**）',
     SCAN_DOCS.some(([n]) => n === 'GOAL.md'), SCAN_DOCS.map(([n]) => n).join(' '))
-  t('★正控（扫描面）：E-H 四份**仍在**（扩面不得挤掉原面）', E_H_DOCS.length === 4 && SCAN_DOCS.length === 5, `E_H=${E_H_DOCS.length} SCAN=${SCAN_DOCS.length}`)
+  t('★正控（扫描面）：E-H 四份**仍在**（扩面不得挤掉原面）', E_H_DOCS.length === 4 && SCAN_DOCS.length === 6, `E_H=${E_H_DOCS.length} SCAN=${SCAN_DOCS.length}`)
   t('★真实仓库：SSOT 文件存在（否则扩面只是空声明）', fs.existsSync(path.join(ROOT, 'docs', 'GOAL.md')), '')
   t('★真实仓库：判据⑤ 可用（git 可达 ⇒ 判据⑤ 有判据力；不可达时主流程会出声）',
     makeVcsChecker().ignored('README.md') !== null, '')
@@ -1409,7 +1440,7 @@ if (isMain) {
   const soft = uniq.filter(p => p.kind.startsWith('ⓘ'))
 
   const maskedNote = historyMasked ? `（史实区已按区段语义 mask：${historyMasked} 份）` : ''
-  console.log(`[文档引用] 扫描 ${scanned} 份（E-H 四份 + SSOT）· 悬空/误导/控制外引用 ${hard.length} 处 · ⓘ 信息项 ${soft.length} 处${maskedNote}`)
+  console.log(`[文档引用] 扫描 ${scanned} 份（E-H 四份 + SSOT + MASTER_TODO）· 悬空/误导/控制外引用 ${hard.length} 处 · ⓘ 信息项 ${soft.length} 处${maskedNote}`)
   if (hard.length === 0) {
     for (const p of soft) console.log(`[文档引用] ⓘ ${p.doc} 第 ${p.line} 行（${p.kind}）：\`${p.ref}\` ⇒ 本机存在但不在版本控制内（**叙述性引用**，读者不会照抄 ⇒ 只出声，不判 FAIL，守 P-38）`)
     console.log('[文档引用] OK —— 文档里点名的脚本/文档**全部真实存在**（可执行引用 + scripts/docs 位置声明 + 并列装置位置一致 + ★ 可执行引用的目标在版本控制内，五面）')

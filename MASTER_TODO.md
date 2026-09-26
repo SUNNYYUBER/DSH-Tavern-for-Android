@@ -2138,7 +2138,7 @@ APK 内载荷标记（含中文转义）与产物新鲜度均核验；设备侧�
 | `scripts/upgrade-runtime.sh` | 一键升级编排（install/patch/plugins/sync/check/all） | ✅ 建成 |
 | `scripts/stage3-migration-test.sh` | 阶段 3 设备端迁移验证流程 | ✅ 建成 |
 | `tools/verify-session-migration.py` | 会话迁移验证（baseline/compare/scan） | ✅ 实测通过 |
-| `tools-cu/cu.py` + `computer-use` skill | Windows 桌面级 computer use | ✅ 实测通过 |
+| `tools-cu/cu.py` + `computer-use` skill | Windows 桌面级 computer use | ✅ 重建入库（2026-09-26：13 子命令 --dry-run 烟雾全过 + 真实截图可视觉核验；原版曾搬离仓库且未入库致流失，教训见 docs/HEALTHCHECK-D-ASSET-DRIFT-2026-09-26.md D-01） |
 
 ### 关键实证结论（3 条）
 
