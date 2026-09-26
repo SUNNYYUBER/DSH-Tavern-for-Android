@@ -32,6 +32,10 @@
  *   ④ **设备对照（可选）**：能连 adb 时，读设备上正在跑的 dsh 版本与**真实数据里的
  *      字段名**，与单源比对；降级（设备版本 > 单源版本）**出声报错**。
  *      设备不可达 ⇒ 记 SKIP 并出声（P-17：区分「事实是否定」与「我们测不出来」）。
+ *   ⑥ **文档面版本一致性（2026-09-26 体检新增）**：README（中英双语）的
+ *      「当前版本 / Current version」声明行必须与权威源一致 ——
+ *      App 版本锚 `build.gradle.kts` 的 versionName，内嵌 DSH 版本锚本单源。
+ *      背景：README 曾停在 0.2.2/0.1.5-rc.1 落后实际 5 个版本而零感知（体检 A #1）。
  *
  * 【为什么 ③ 比 ② 更重要】
  *   版本号是**代理量**，字段名才是**决定数据能否被读出的那个事实**。
@@ -79,6 +83,48 @@ const PKG = 'com.dshtavern.app'
 // ---------------------------------------------------------------------------
 // 纯函数区（可被 selftest 直接调用 —— 判据单源，P-1）
 // ---------------------------------------------------------------------------
+
+/**
+ * 从 README 全文抽「当前版本 / Current version」声明（**中英双语各一处**）。
+ *
+ * 【体检 2026-09-26 新增 · 判据⑥的解析器】为什么必须抽成纯函数：
+ * 解析器漏形态 ⇒ 结论反向（把门面漂移判成一致）—— 与 `parseReplaceOpFields`
+ * 的教训同构（P-41 推论四：解析出来的事实多一层失效面，必须能自证）。
+ * 正则的两种合法形态（README 既有格式）：
+ *   中文：`**当前版本**：`0.2.7`（内嵌 DSH `0.1.7-rc.1`）`
+ *   英文：`**Current version**: `0.2.7` (bundles DSH `0.1.7-rc.1`)`
+ * @param {string} readme README.md 全文
+ * @returns {{ zh: [string,string]|null, en: [string,string]|null, evidence: string }}
+ *   zh/en 各为 [appVersion, dshVersion]；任一缺失即为 null（调用方必须 FAIL，不许跳过）
+ */
+export function parseReadmeVersionLine (readme) {
+  const zh = /\*\*当前版本\*\*：`(\d+\.\d+\.\d+)`（内嵌 DSH `([^`]+)`）/.exec(readme)
+  const en = /\*\*Current version\*\*: `(\d+\.\d+\.\d+)` \(bundles DSH `([^`]+)`\)/.exec(readme)
+  const found = [zh !== null, en !== null].filter(Boolean).length
+  const evidence = `中文声明 ${zh ? `✓ ${zh[1]}/${zh[2]}` : '✗ 缺失'} · 英文声明 ${en ? `✓ ${en[1]}/${en[2]}` : '✗ 缺失'}（命中 ${found}/2）`
+  return {
+    zh: zh ? [zh[1], zh[2]] : null,
+    en: en ? [en[1], en[2]] : null,
+    evidence,
+  }
+}
+
+/**
+ * 汇总判据⑥的四组比对（appVersion×2 + dshVersion×2），给出可分辨的问题清单。
+ * @returns {{ ok: boolean, note: string }}
+ */
+export function checkReadmeVersionLine (parsed, appVer, dshVer) {
+  if (parsed.zh === null || parsed.en === null) {
+    return { ok: false, note: `README 找不到「当前版本 / Current version」声明行（中英都要有）—— ${parsed.evidence}` }
+  }
+  const problems = []
+  if (parsed.zh[0] !== appVer) problems.push(`中文声明 ${parsed.zh[0]} ≠ gradle versionName ${appVer}`)
+  if (parsed.en[0] !== appVer) problems.push(`英文声明 ${parsed.en[0]} ≠ gradle versionName ${appVer}`)
+  if (parsed.zh[1] !== dshVer) problems.push(`中文内嵌 DSH ${parsed.zh[1]} ≠ 单源 ${dshVer}`)
+  if (parsed.en[1] !== dshVer) problems.push(`英文内嵌 DSH ${parsed.en[1]} ≠ 单源 ${dshVer}`)
+  if (problems.length === 0) return { ok: true, note: `README 中英均 ${appVer}（内嵌 DSH ${dshVer}）—— 与权威源一致` }
+  return { ok: false, note: problems.join('；') + '　⇒ 用户按 README 判断是否升级，门面写错 = 危害与装错版本同级' }
+}
 
 /**
  * 读一个 JSON 文件并解析，**容忍 UTF-8 BOM**。
@@ -329,6 +375,43 @@ if (process.argv.includes('--selftest')) {
   ok(rLever.ok === false && rCross.ok === false && rClean.ok === true,
     '★杠杆 同一 dist 换单源版本线 ⇒ 跨代 FAIL / 同代 PASS（判据能区分世代）')
 
+  // ★ 判据⑥ 文档面版本一致性（体检 2026-09-26 新增）：解析器 + 汇总判据都要有正负控。
+  //   背景：README 停在 0.2.2 落后 5 个版本而全仓零感知 —— 解析器漏形态会把
+  //   「门面漂移」判成「一致」（P-41 推论四），故必须自证。
+  {
+    const GOOD = '**当前版本**：`0.2.7`（内嵌 DSH `0.1.7-rc.1`）　|　**状态**：v0.2.7 正式版\n' +
+      'xx\n**Current version**: `0.2.7` (bundles DSH `0.1.7-rc.1`)　|　**Status**: stable'
+    // 正控 8：两语齐全且一致 ⇒ ok
+    const pGood = parseReadmeVersionLine(GOOD)
+    ok(pGood.zh !== null && pGood.en !== null && pGood.zh[0] === '0.2.7' && pGood.zh[1] === '0.1.7-rc.1',
+      `正控8 README 双语声明行抽出 ${pGood.evidence.slice(0, 50)}`)
+    const rGood = checkReadmeVersionLine(pGood, '0.2.7', '0.1.7-rc.1')
+    ok(rGood.ok === true, `正控9 与权威源一致 ⇒ ok：${rGood.note.slice(0, 40)}`)
+
+    // 正控 10（★ 真实事故形态）：README 停旧版本 ⇒ 必须 FAIL（这就是 0.2.2 事故的复现）
+    const STALE = GOOD.replaceAll('0.2.7', '0.2.2').replaceAll('0.1.7-rc.1', '0.1.5-rc.1')
+    const pStale = parseReadmeVersionLine(STALE)
+    const rStale = checkReadmeVersionLine(pStale, '0.2.7', '0.1.7-rc.1')
+    ok(rStale.ok === false && /0\.2\.2/.test(rStale.note),
+      `正控10 门面落后（0.2.2 vs 0.2.7）⇒ FAIL：${rStale.note.slice(0, 60)}`)
+
+    // 负控 8：中文行被删 ⇒ 必须 FAIL（不许只核英文就放行）
+    const pNoZh = parseReadmeVersionLine('**Current version**: `0.2.7` (bundles DSH `0.1.7-rc.1`)')
+    ok(pNoZh.zh === null && checkReadmeVersionLine(pNoZh, '0.2.7', '0.1.7-rc.1').ok === false,
+      '负控8 缺中文声明行 ⇒ FAIL（中英缺一不可）')
+
+    // 负控 9：英文行被删 ⇒ 同样 FAIL
+    const pNoEn = parseReadmeVersionLine('**当前版本**：`0.2.7`（内嵌 DSH `0.1.7-rc.1`）')
+    ok(pNoEn.en === null && checkReadmeVersionLine(pNoEn, '0.2.7', '0.1.7-rc.1').ok === false,
+      '负控9 缺英文声明行 ⇒ FAIL（中英缺一不可）')
+
+    // 负控 10：只改了 app 版本没改内嵌 DSH ⇒ 两条问题都必须被分辨出来（P-1）
+    const HALF = GOOD.replace('`0.2.7`（内嵌 DSH `0.1.7-rc.1`）', '`0.2.8`（内嵌 DSH `0.1.7-rc.1`）')
+    const rHalf = checkReadmeVersionLine(parseReadmeVersionLine(HALF), '0.2.8', '0.1.7-rc.1')
+    ok(rHalf.ok === false && /英文声明 0\.2\.7/.test(rHalf.note),
+      `负控10 只改中文没改英文 ⇒ FAIL 且指认英文：${rHalf.note.slice(0, 50)}`)
+  }
+
   // ★ 单源输出契约（W44 建立）：W45 第二轮实测发现本闸门**未接入**（收尾是旧形态
   //   `[audit-dsh-version selftest] 9/9 PASS`）⇒ 而文档声明着它的分数 ⇒ **无法被证伪**（P-50 纪律①）。
   reportSelftest('dsh-version', pass, pass + fail.length)
@@ -499,6 +582,40 @@ if (NO_DEVICE) {
     if (devVer === null) rec('④ 设备对照', 'SKIP', `设备 package.json 解析不出 version：${dataNote}`)
     else if (devNewer) rec('④ 设备对照', 'FAIL', `设备跑的 ${devVer} **比单源 ${ssot.dshVersion} 更新** ⇒ 本仓 runtime 相对设备是**降级**，构建前必须显式确认（R21）。${dataNote}`)
     else rec('④ 设备对照', 'OK', `设备 ${devVer} · 单源 ${ssot.dshVersion}（升或同级，放行）。${dataNote}`)
+  }
+}
+
+// ---- ⑥ ★ 文档面版本一致性（2026-09-26 体检新增：README 门面版本的机器守） ----
+//
+// 【为什么需要（体检 A #1 / doc-auditor 🔴-1）】
+// README 中英双语当时停在 `0.2.2（内嵌 DSH 0.1.5-rc.1）`，而实际已是 0.2.7 / 0.1.7-rc.1
+// —— 门面落后 5 个版本，且**没有任何门禁管它**。本项目文档可信度的规律
+// （体检总报告 §4.2）：**可信度可由「该面有没有机器守」精确预测**。
+// ⇒ 本判据把 README 门面纳入机器守：
+//   · App 版本（0.2.7）权威源 = `rp-workspace/android/app/build.gradle.kts` 的 versionName
+//     （「检查更新」的比较基准也从它来，见 build.gradle.kts L55 注释）；
+//   · 内嵌 DSH 版本权威源 = 本脚本已有的单源 `dsh-version.json`。
+// 判读 README（中英两处）是否与两者一致；**README 缺失/被改坏 ⇒ FAIL**（fail-closed），
+// 不是 SKIP —— 门面版本写错与 runtime 版本装错同样危害（用户按旧版本判断要不要升级）。
+{
+  const gradlePath = path.join(WS, 'android', 'app', 'build.gradle.kts')
+  const readmePath = path.join(path.resolve(WS, '..'), 'README.md')
+  if (!fs.existsSync(gradlePath) || !fs.existsSync(readmePath)) {
+    rec('⑥ 文档面版本一致性（README）', 'SKIP',
+      `${!fs.existsSync(gradlePath) ? gradlePath : readmePath} 不存在 —— 非完整检出（瘦身克隆？），不冒充通过`)
+  } else {
+    // 从 gradle 读权威 versionName（容忍 \r，autocrlf 环境）
+    const gradleSrc = fs.readFileSync(gradlePath, 'utf8')
+    const mVer = /versionName\s*=\s*"(\d+\.\d+\.\d+)"/.exec(gradleSrc)
+    if (mVer === null) {
+      rec('⑥ 文档面版本一致性（README）', 'FAIL', `build.gradle.kts 里解析不出 versionName（判据锚点断了，先修 gradle 或本判据）`)
+    } else {
+      const appVer = mVer[1]
+      const readme = fs.readFileSync(readmePath, 'utf8')
+      const parsedReadme = parseReadmeVersionLine(readme)
+      const r6 = checkReadmeVersionLine(parsedReadme, appVer, ssot.dshVersion)
+      rec('⑥ 文档面版本一致性（README）', r6.ok ? 'OK' : 'FAIL', r6.note)
+    }
   }
 }
 
