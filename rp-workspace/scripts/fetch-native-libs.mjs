@@ -6,10 +6,10 @@
  * （proot / busybox）：
  *
  *   libnode.so        ← nodejs_{arch}.deb        · MIT
- *   libproot.so       ← proot_5.1.107.94_{arch}.deb   · **GPLv2**
+ *   libproot.so       ← proot_5.1.107.95_{arch}.deb   · **GPLv2**
  *   libbusybox.so     ← busybox_1.38.0-1_{arch}.deb   · **GPLv2**
  *   libcares.so       ← c-ares_1.34.8_{arch}.deb · MIT
- *   libc++_shared.so  ← libc++_29_{arch}.deb     · Apache-2.0 WITH LLVM-exception
+ *   libc++_shared.so  ← libc++_30_{arch}.deb     · Apache-2.0 WITH LLVM-exception
  *   libffi.so         ← libffi_3.5.2_{arch}.deb  · MIT
  *   libsqlite3.so     ← libsqlite_3.53.4_{arch}.deb   · Public Domain
  *
@@ -74,10 +74,10 @@ const TARGETS = [
   // 走 dir 型：解出 `usr/include/node/` 平铺到部署目录。
   // ★ 头与架构无关 ⇒ 两轮 arch 循环产出同一份（第二次 destReady 命中即跳过，幂等）。
   { dir: true, deb: { x86_64: 'nodejs_x86_64.deb', aarch64: 'nodejs_aarch64.deb' }, inner: 'include/node', dest: 'node-headers', lic: 'MIT' },
-  { so: 'libproot.so', deb: { x86_64: 'proot_5.1.107.94_x86_64.deb', aarch64: 'proot_5.1.107.94_aarch64.deb' }, inner: 'bin/proot', lic: 'GPLv2' },
+  { so: 'libproot.so', deb: { x86_64: 'proot_5.1.107.95_x86_64.deb', aarch64: 'proot_5.1.107.95_aarch64.deb' }, inner: 'bin/proot', lic: 'GPLv2' },
   { so: 'libbusybox.so', deb: { x86_64: 'busybox_1.38.0-1_x86_64.deb', aarch64: 'busybox_1.38.0-1_aarch64.deb' }, inner: 'bin/busybox', lic: 'GPLv2' },
   { so: 'libcares.so', deb: { x86_64: 'c-ares_x86_64.deb', aarch64: 'c-ares_1.34.8_aarch64.deb' }, inner: 'lib/libcares.so', lic: 'MIT' },
-  { so: 'libc++_shared.so', deb: { x86_64: 'libc++_29_x86_64.deb', aarch64: 'libc++_29_aarch64.deb' }, inner: 'lib/libc++_shared.so', lic: 'Apache-2.0 WITH LLVM-exception' },
+  { so: 'libc++_shared.so', deb: { x86_64: 'libc++_30_x86_64.deb', aarch64: 'libc++_30_aarch64.deb' }, inner: 'lib/libc++_shared.so', lic: 'Apache-2.0 WITH LLVM-exception' },
   { so: 'libffi.so', deb: { x86_64: 'libffi_3.8.0_x86_64.deb', aarch64: 'libffi_3.8.0_aarch64.deb' }, inner: 'lib/libffi.so', lic: 'MIT' },
   { so: 'libsqlite3.so', deb: { x86_64: 'libsqlite_x86_64.deb', aarch64: 'libsqlite_3.53.4_aarch64.deb' }, inner: 'lib/libsqlite3.so', lic: 'Public Domain' },
 
@@ -220,14 +220,14 @@ const SHA256 = {
   // ---- 既有 ----
   'nodejs_aarch64.deb': 'eaf3ed8a6e4b72ebaa8c2cb3bad778c577cdf9ea87ca91761213d8a3940fc090',
   'nodejs_x86_64.deb': 'd3a0e7b8e110ba87969a56f45a8fa63730100e9faec413a6f377ebc76c5b616e',
-  'proot_5.1.107.94_aarch64.deb': 'b6fa26884d162f5234b0aba9f8a98971aad793706099464f7bd7eb1e21d63935',
-  'proot_5.1.107.94_x86_64.deb': '826cdf66f9eb04bb9faf7f1eb36078abc75b086c074e937b53d1abbf08ccfb85',
+  'proot_5.1.107.95_aarch64.deb': '0a1b3d0f6ef76436c5ed924cd8e8f5a6b7186e99e1650eb2d9bc734e218a74cb',
+  'proot_5.1.107.95_x86_64.deb': 'f63ce9bd0d38715eae0163a3772f3395913587444c7ce7232091c6d359afe3c3',
   'busybox_1.38.0-1_aarch64.deb': '1bb7f1d4c00cadd0e1117b6dd7110311b8bf749ef00b486e96cfdc11c98f8fd9',
   'busybox_1.38.0-1_x86_64.deb': '519b57623dd076b4d6cf6d389ed976dd222410e3a0b9b9b58c14d8535b6eef48',
   'c-ares_1.34.8_aarch64.deb': '7681fc23e822d7988ba8b2adf3468f93ae68f724dda365cff1385096a9fa87e6',
   'c-ares_x86_64.deb': 'c5d6194d69a04089040ca50dad96ed7df8773bd3c3d7c4be7d1dd5661ceae6b4',
-  'libc++_29_aarch64.deb': 'bb9f12113c137aa0e8513bb51cc49fe77a5ce3ca39ab9e92c57d228ecdf00222',
-  'libc++_29_x86_64.deb': 'a4325afa2ecde73742499766e2a46202003e5cb3dcd2b7773ae25f386f3fecfa',
+  'libc++_30_aarch64.deb': '53d0b84a7ba7459024257cb94d5b136fe13ef858567f65a8064b35950799f2ca',
+  'libc++_30_x86_64.deb': 'c9bcd9a8067a19c9c0e4893a72d314a2e37d6b67ce8dd05c67b9bbacad044b4f',
   'libffi_3.8.0_aarch64.deb': '4f255badf74cd31f6a2801c17fa1444199c84c834b517b7c843e2fe9ebe91d77',
   'libffi_3.8.0_x86_64.deb': '59121ca4bc5f5735d7bb603bd99548983064e8fde97d236e97122cb87d3452a3',
   'libsqlite_3.53.4_aarch64.deb': '0e909ce0d50fe123305446cd22e0c5edf535d40344b9b065fbdcdee52f53198d',
@@ -462,7 +462,13 @@ if (isMain) {
     if (!data) throw new Error('deb 里找不到 data.tar.*：' + debPath)
     const dataPath = path.join(workDir, data.name)
     fs.writeFileSync(dataPath, data.data)
-    execFileSync('tar', ['-xf', dataPath, '-C', workDir], { stdio: 'pipe' })
+    // ★ 体检 2026-09-27（与 build-dsht.ps1 System32\tar 同族 · P-1）：PATH 里 MSYS/Git 的
+    //   /usr/bin/tar 在前时会把 `D:\` 当远程主机（"Cannot connect to D: resolve failed"）。
+    //   deb 的 data.tar 常是 zstd/xz 压缩 ⇒ 必须 bsdtar（Windows 自带）⇒ 绝对路径调用，
+    //   不依赖 PATH 顺序（CI 与本机 PATH 布局可能不同）。
+    const tarBin = process.env.SystemRoot ? path.join(process.env.SystemRoot, 'System32', 'tar.exe') : 'tar'
+    const tar = fs.existsSync(tarBin) ? tarBin : 'tar'
+    execFileSync(tar, ['-xf', dataPath, '-C', workDir], { stdio: 'pipe' })
     return workDir
   }
 
