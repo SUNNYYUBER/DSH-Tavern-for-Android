@@ -10,6 +10,24 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
+> 最后更新：2026-09-27（**体检修复轮 + v0.2.8 发布 · DSH 会话接手 Trae 断点后的第一轮**）：
+>
+> **先说到哪了**：**v0.2.8 已发布**（https://github.com/SUNNYYUBER/DSH-Tavern-for-Android/releases/tag/v0.2.8，
+> arm64 release / versionCode 10 / 内嵌 DSH 0.1.7-rc.1 不变）。本轮 = 2026-09-26 全面体检
+> （总报告 `docs/HEALTHCHECK-2026-09-26.md` + A/B/C/D 四分册）后把 **P0 五项 + P1 六项全部修复**：
+> API 面板假绿灯改三态、发消息静默失败加发送哨兵（pre-step 心跳 + `/rp/send-pulse` + 前端 toast）、
+> README 纳入版本门禁（判据⑥，selftest 20/20）、`audit-bom-eol` 硬闸 + `.gitattributes` 全仓 LF、
+> MASTER_TODO 纳入 audit-doc-refs 受守面、A14 布局漂移归一化、card-event-surface 修活、
+> verifyLib SKIP 出声、`build-plugins.sh` 缺源 die、Python 门禁编码前置、`tools-cu/cu.py` 重建入库。
+> **新门禁在自家构建上当场抓到 4 个真缺陷并修复**（route-contract / selftest-claims 声明过期 /
+> GBK 编码 / MSYS tar 抢 PATH）—— 判据体系自证有效的又一次实证。
+> 验证：vitest **1851 passed + 2 skipped**（86 文件）· typecheck 0 错 · Step 0.5 全套门禁 exit 0 ·
+> APK 独立核验（签名 CN=DSH Tavern / 版本 0.2.8 / P0-4 三态文案 + P0-5 哨兵全链在包内已解码验证）。
+> **诚实边界**：发送哨兵的「未接手 → toast」路径未在设备端到端实跑（逻辑链已测试 + 产物在包）；
+> 真机 B0 五条 + 鸿蒙回填仍待用户（`docs/B-DEVICE-VERIFY-CHECKLIST.md` 回归矩阵占位未动）。
+>
+> 📌 **以下为心跳 74 的详细记录，保留备查**
+>
 > 最后更新：2026-09-12（**心跳 74 · 收口 T-80H 三条事件投递的实机闭环 + 闸门覆盖边界三处扩展 + 顺带挖出并修掉「楼层帧事件静默失败」（T-82）**）：
 >
 > **先说到哪了**：升级目标（度量 **5/5**）已达成；**阶段一 / 二 / 三 / 四 均已通过**；
