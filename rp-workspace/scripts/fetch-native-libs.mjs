@@ -106,7 +106,7 @@ const TARGETS = [
   // （remote-http 等）须在 app_data_file 下被 exec，SELinux 必拒，带了也是死重；builtin
   // （init/add/commit/diff/log/branch/tag）由主二进制直接运行，不 exec helpers。
   // 远程 clone 会如实报「无法加载 git-remote-https」（R8 出声）。
-  { so: 'libdsht-git.so', deb: { x86_64: 'git_2.55.0_x86_64.deb', aarch64: 'git_2.55.0_aarch64.deb' }, inner: 'bin/git', lic: 'GPL-2.0' },
+  { so: 'libdsht-git.so', deb: { x86_64: 'git_2.56.0_x86_64.deb', aarch64: 'git_2.56.0_aarch64.deb' }, inner: 'bin/git', lic: 'GPL-2.0' },
 
   // ───────────────────────────────────────────────────────────────────────
   // 【2026-09-21 真实事故修复】libnode.so 的 DT_NEEDED 闭合补全
@@ -184,8 +184,8 @@ const SHA256 = {
   //   （CI v0.2.7 第三跑实测报红，本地重下新包实算，与 CI 报的期望值互证一致）
   'bash_5.3.20_aarch64.deb': '26b5b3ab5b0ac0e3b372ac1e7ddd89270519c1eb25b88fe4175485c2de8086b2',
   'bash_5.3.20_x86_64.deb': 'f8c984e68269df3df2efae9f2835a9d9af381a8f80d08b34160772bc16cd0910',
-  'git_2.55.0_aarch64.deb': '21b16fa06837e5bf94ad257da532c40eb049c120d21f6cb60a6411c0bcee7197',
-  'git_2.55.0_x86_64.deb': '35cf9a5bd6d3b48fa6cb314f41f90f37eb0a9f584d5b8b5b3c57f3de7e12b92e',
+  'git_2.56.0_aarch64.deb': 'dcdd22c5fdf7bdb5b825a03a17441d43858ed8515fea57fbb37eb42e733ca82f',
+  'git_2.56.0_x86_64.deb': '9af296495286bffe22f8abda910c29fd09e561ddc668c2d45c94785b91cbb129',
   'libandroid-support_29-1_aarch64.deb': 'f2f145d6135ad4843ac9670153be3e3944dc1e6f1736d46d2306c28f2b86f517',
   'libandroid-support_29-1_x86_64.deb': '665900760c05959ec076082a0941f05bd452f301e5a70bdfa7383fd3404d44d5',
   'libiconv_1.19_aarch64.deb': 'fe9481b1dc101c6c3552943f25435109fd522aecc615ae49594f9fbee863bb37',
