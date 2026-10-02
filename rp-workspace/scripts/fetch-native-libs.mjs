@@ -204,7 +204,7 @@ const SHA256 = {
   'zlib_1.3.2_aarch64.deb': '75e7d0af17fcc3b40004309fdc00a1ddb9ae08346dce5e269902c34ac3966ac9',
   'zlib_1.3.2_x86_64.deb': 'c61b089dd30981452f5953b2bad4c4e7857062b2abd971f87fb0aec441bc02f4',
   // openssl：注意 x86_64 文件名不带版本号（上游 Termux pool 实际命名）
-  'openssl_1%3A3.6.5_aarch64.deb': '86760e9ce736f463236f2c15b1eb3a3fdcfc5778d0fd7077a917448dcc90f3aa',
+  'openssl_1%3A3.6.5_aarch64.deb': 'a2fb7856875e63ef6b90442752e05974813372c3ca86d2513a78ea43c67a0f8b',
   'openssl_x86_64.deb': '540f144592d23d35672976e175ede1b5d8cf464f153f646df5d4e6dcd8491a15',
   'libicu_78.3_aarch64.deb': 'f536403f65a08fe0df6e7304184e902d54def77d5c3bd5edfd9109d57601d276',
   'libicu_78.3_x86_64.deb': '19fa8c4d828719f465d523983b1e0d833e4130bb22790104638965d97e27fe60',
