@@ -74,7 +74,7 @@ const TARGETS = [
   // 走 dir 型：解出 `usr/include/node/` 平铺到部署目录。
   // ★ 头与架构无关 ⇒ 两轮 arch 循环产出同一份（第二次 destReady 命中即跳过，幂等）。
   { dir: true, deb: { x86_64: 'nodejs_x86_64.deb', aarch64: 'nodejs_aarch64.deb' }, inner: 'include/node', dest: 'node-headers', lic: 'MIT' },
-  { so: 'libproot.so', deb: { x86_64: 'proot_5.1.107.95_x86_64.deb', aarch64: 'proot_5.1.107.95_aarch64.deb' }, inner: 'bin/proot', lic: 'GPLv2' },
+  { so: 'libproot.so', deb: { x86_64: 'proot_5.1.107.96_x86_64.deb', aarch64: 'proot_5.1.107.96_aarch64.deb' }, inner: 'bin/proot', lic: 'GPLv2' },
   { so: 'libbusybox.so', deb: { x86_64: 'busybox_1.38.0-1_x86_64.deb', aarch64: 'busybox_1.38.0-1_aarch64.deb' }, inner: 'bin/busybox', lic: 'GPLv2' },
   { so: 'libcares.so', deb: { x86_64: 'c-ares_x86_64.deb', aarch64: 'c-ares_1.34.8_aarch64.deb' }, inner: 'lib/libcares.so', lic: 'MIT' },
   { so: 'libc++_shared.so', deb: { x86_64: 'libc++_30_x86_64.deb', aarch64: 'libc++_30_aarch64.deb' }, inner: 'lib/libc++_shared.so', lic: 'Apache-2.0 WITH LLVM-exception' },
@@ -220,8 +220,8 @@ const SHA256 = {
   // ---- 既有 ----
   'nodejs_aarch64.deb': 'eaf3ed8a6e4b72ebaa8c2cb3bad778c577cdf9ea87ca91761213d8a3940fc090',
   'nodejs_x86_64.deb': 'd3a0e7b8e110ba87969a56f45a8fa63730100e9faec413a6f377ebc76c5b616e',
-  'proot_5.1.107.95_aarch64.deb': '0a1b3d0f6ef76436c5ed924cd8e8f5a6b7186e99e1650eb2d9bc734e218a74cb',
-  'proot_5.1.107.95_x86_64.deb': 'f63ce9bd0d38715eae0163a3772f3395913587444c7ce7232091c6d359afe3c3',
+  'proot_5.1.107.96_aarch64.deb': '0a1b3d0f6ef76436c5ed924cd8e8f5a6b7186e99e1650eb2d9bc734e218a74cb',
+  'proot_5.1.107.96_x86_64.deb': 'f63ce9bd0d38715eae0163a3772f3395913587444c7ce7232091c6d359afe3c3',
   'busybox_1.38.0-1_aarch64.deb': '1bb7f1d4c00cadd0e1117b6dd7110311b8bf749ef00b486e96cfdc11c98f8fd9',
   'busybox_1.38.0-1_x86_64.deb': '519b57623dd076b4d6cf6d389ed976dd222410e3a0b9b9b58c14d8535b6eef48',
   'c-ares_1.34.8_aarch64.deb': '7681fc23e822d7988ba8b2adf3468f93ae68f724dda365cff1385096a9fa87e6',
