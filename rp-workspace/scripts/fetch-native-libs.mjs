@@ -220,7 +220,7 @@ const SHA256 = {
   // ---- 既有 ----
   'nodejs_aarch64.deb': 'eaf3ed8a6e4b72ebaa8c2cb3bad778c577cdf9ea87ca91761213d8a3940fc090',
   'nodejs_x86_64.deb': 'd3a0e7b8e110ba87969a56f45a8fa63730100e9faec413a6f377ebc76c5b616e',
-  'proot_5.1.107.96_aarch64.deb': '0a1b3d0f6ef76436c5ed924cd8e8f5a6b7186e99e1650eb2d9bc734e218a74cb',
+  'proot_5.1.107.96_aarch64.deb': '8199dca06dccb693ec09fb1759e3e1ad08b4863f0c11c612f89c20bd9ecdc1a0',
   'proot_5.1.107.96_x86_64.deb': '77ea45540071ca543adda2b51aca2bc3761c52904d013fd0890682288eff9455',
   'busybox_1.38.0-1_aarch64.deb': '1bb7f1d4c00cadd0e1117b6dd7110311b8bf749ef00b486e96cfdc11c98f8fd9',
   'busybox_1.38.0-1_x86_64.deb': '519b57623dd076b4d6cf6d389ed976dd222410e3a0b9b9b58c14d8535b6eef48',
