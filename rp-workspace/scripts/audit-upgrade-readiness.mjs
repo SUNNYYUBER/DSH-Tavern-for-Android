@@ -576,7 +576,10 @@ const run = (file, args = []) => {
     let out = ''
     let code = 0
     try {
-      out = execFileSync(py, [path.join(HERE, 'apply-platform-patches.py'), RT, '--check'], { encoding: 'utf8', timeout: 300000 })
+      // ★★ 2026-10-02（0.2.0-rc.2 升级轮）：补 env PYTHONIOENCODING —— Windows 上 Python
+      //   默认 GBK 编码，`--check` 输出含 ✓/✗ ⇒ UnicodeEncodeError 崩溃 ⇒ 汇总行缺失 ⇒
+      //   本判据恒 UNKNOWN（「体检 B §3.1 本地/CI 编码不对称」同族；CI 有此 env 而本地无）。
+      out = execFileSync(py, [path.join(HERE, 'apply-platform-patches.py'), RT, '--check'], { encoding: 'utf8', timeout: 300000, env: { ...process.env, PYTHONIOENCODING: 'utf-8' } })
     } catch (e) { out = (e.stdout ?? '') + (e.stderr ?? ''); code = e.status ?? -1 }
     const m = /检查完成：(\d+) 项检查 —— 已打补丁 (\d+)，未打可打 (\d+)，跳过 (\d+)，失败 (\d+)/.exec(out)
     if (m === null) rec('② 补丁面（13 条 patch 的命中与幂等）', 'UNKNOWN', '解析不出 --check 汇总行 ⇒ 必须人工看输出（不许当通过）')

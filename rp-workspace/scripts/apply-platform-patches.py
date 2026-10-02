@@ -497,12 +497,16 @@ patch(
     "P1-3c runRipgrep android 短路",
 )
 
-# --- P1-4  dsh-terminal-bash：默认 shell / 启动参数适配 mksh
+# --- P1-4  dsh-terminal-bash：默认 shell / 启动参数适配——P1 能力包内置 bash 后用真 bash
+# ★★ 2026-10-02（0.2.0-rc.2 升级轮 · U3 真漂移修复）：与 build-dsht.ps1:1506-1517 **同源同值**（P-1）。
+#   此前 py 侧是弱化版（一律 /system/bin/sh），ps1 侧是增强版（DSHT_RUNTIME_BIN_DIR/bash →
+#   nativeLibraryDir 伪装 .so 的真 bash，缺席回退 /system/bin/sh）。指纹跨代比对抓出两侧漂移
+#   ⇒ 把 py 侧升级为 ps1 同款。build-wb.sh 链路（bash 构建）与 build-dsht.ps1 链路（CI）从此同语义。
 patch(
     os.path.join(NM, "dsh-terminal-bash", "lib", "index.js"),
     "DSHT-ANDROID-TERM-SHELL",
     r'const DEFAULT_BASH_SHELL = "/bin/bash";',
-    'const DEFAULT_BASH_SHELL = process.platform === "android" ? "/system/bin/sh" : "/bin/bash"; /* DSHT-ANDROID-TERM-SHELL */',
+    'const DEFAULT_BASH_SHELL = process.platform === "android" ? (process.env.DSHT_RUNTIME_BIN_DIR ? process.env.DSHT_RUNTIME_BIN_DIR + "/bash" : "/system/bin/sh") : "/bin/bash"; /* DSHT-ANDROID-TERM-SHELL */',
     1,
     "P1-4a terminal-bash DEFAULT_BASH_SHELL",
 )
@@ -511,7 +515,7 @@ patch(
     os.path.join(NM, "dsh-terminal-bash", "lib", "index.js"),
     "DSHT-ANDROID-TERM-ARGS",
     r'const DEFAULT_BASH_ARGS = \[\r?\n\t"--noprofile",\r?\n\t"--norc",\r?\n\t"-i"\r?\n\];',
-    'const DEFAULT_BASH_ARGS = process.platform === "android" ? ["-i"] /* DSHT-ANDROID-TERM-ARGS */ : [\n\t"--noprofile",\n\t"--norc",\n\t"-i"\n];',
+    'const DEFAULT_BASH_ARGS = (process.platform === "android" && !process.env.DSHT_RUNTIME_BIN_DIR) ? ["-i"] /* DSHT-ANDROID-TERM-ARGS */ : [\n\t"--noprofile",\n\t"--norc",\n\t"-i"\n];',
     1,
     "P1-4b terminal-bash DEFAULT_BASH_ARGS",
 )

@@ -26,8 +26,11 @@ AUDIT = os.path.join(SCRIPTS, "audit-build-path-parity.py")
 with io.open(TARGET, "r", encoding="utf-8", newline="") as f:
     original = f.read()
 
-KEEP = 'const DEFAULT_BASH_SHELL = process.platform === "android" ? "/system/bin/sh" : "/bin/bash"; /* DSHT-ANDROID-TERM-SHELL */'
-STRIP = 'const DEFAULT_BASH_SHELL = process.platform === "android" ? "/system/bin/sh" : "/bin/bash";'
+# ★★ 2026-10-02（0.2.0-rc.2 升级轮）：P1-4a repl 已升级为 DSHT_RUNTIME_BIN_DIR 强版
+#   （与 build-dsht.ps1:1509 同源同值，见 apply-platform-patches.py 同轮注释）
+#   ⇒ 本探针的 KEEP/STRIP 行同步更新（探针锚的是「repl 里有 marker、剥掉后幂等检测失效」）。
+KEEP = 'const DEFAULT_BASH_SHELL = process.platform === "android" ? (process.env.DSHT_RUNTIME_BIN_DIR ? process.env.DSHT_RUNTIME_BIN_DIR + "/bash" : "/system/bin/sh") : "/bin/bash"; /* DSHT-ANDROID-TERM-SHELL */'
+STRIP = 'const DEFAULT_BASH_SHELL = process.platform === "android" ? (process.env.DSHT_RUNTIME_BIN_DIR ? process.env.DSHT_RUNTIME_BIN_DIR + "/bash" : "/system/bin/sh") : "/bin/bash";'
 if KEEP not in original:
     print("✗ 探针前提不成立：未找到待改动行（脚本形态变了？）")
     sys.exit(2)

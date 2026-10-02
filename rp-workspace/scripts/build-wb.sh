@@ -37,10 +37,10 @@ build_one() {
   local GRADLE_TASK BUILD_TYPE ABI_PROP APK_ARTIFACT APK_OUT LIB_SRC
   if [ "$ARCH" = "x86_64" ]; then
     GRADLE_TASK=assembleDebug; BUILD_TYPE=debug; ABI_PROP="-PtargetAbi=x86_64"
-    APK_OUT="$ROOT/DSH-Tavern-0.2.2-x86_64-debug.apk"; LIB_SRC="$WS/dsh-runtime-x64/lib"
+    APK_OUT="$ROOT/DSH-Tavern-0.2.9-x86_64-debug.apk"; LIB_SRC="$WS/dsh-runtime-x64/lib"
   else
     GRADLE_TASK=assembleRelease; BUILD_TYPE=release; ABI_PROP=""
-    APK_OUT="$ROOT/DSH-Tavern-0.2.2-arm64-release.apk"; LIB_SRC="$WS/dsh-runtime/lib"
+    APK_OUT="$ROOT/DSH-Tavern-0.2.9-arm64-release.apk"; LIB_SRC="$WS/dsh-runtime/lib"
   fi
   local APK_ARTIFACT="$ANDROID/app/build/outputs/apk/$BUILD_TYPE/app-$BUILD_TYPE.apk"
 
@@ -62,7 +62,9 @@ build_one() {
   # `[build-wb][FATAL] 平台补丁失败`，看起来像补丁脚本坏了，实际**重跑一次即可**（预算按轮重置）。
   # 这与「构建/部署断链」家族第 ⑧ 类（rm -rf 撞 50 文件闸 → 构建静默中止）同源，只是触发方不同。
   local PATCH_LOG
-  PATCH_LOG="$("$PY" "$WS/scripts/apply-platform-patches.py" "$DST" 2>&1)" && PATCH_RC=0 || PATCH_RC=$?
+  # ★★ 2026-10-02（0.2.0-rc.2 升级轮）：PYTHONIOENCODING 前置——Windows Python 默认 GBK，
+  #   补丁输出含 ✓/✗ ⇒ UnicodeEncodeError ⇒ 构建假死（体检 B §3.1 同族；ps1 侧已前置）。
+  PATCH_LOG="$(PYTHONIOENCODING=utf-8 "$PY" "$WS/scripts/apply-platform-patches.py" "$DST" 2>&1)" && PATCH_RC=0 || PATCH_RC=$?
   printf '%s\n' "$PATCH_LOG"
   if [ "${PATCH_RC:-1}" != "0" ]; then
     if printf '%s' "$PATCH_LOG" | grep -q "SAFE_DELETE_BULK_CONFIRM_REQUIRED"; then
@@ -209,16 +211,16 @@ build_one() {
   "$NODE" "$WS/scripts/audit-cross-package-css.mjs" \
     || die "A15: 存在跨包写对方自有组件类名的规则（层叠胜负不可控 ⇒ 静默失效）"
 
-  say "[1/6] esbuild dsh-plugin（绝对 outfile, A1）"
-  "$NODE" "$ESB" "$PKG/src/dsh-plugin/index.ts" --bundle --format=esm --platform=node \
-    --outfile="$DST/node_modules/dsht-rp-plugin/lib/index.js" >/dev/null
+  say "[1/6] esbuild dsh-plugin（绝对 outfile, A1；★ 2026-10-02 cwd=packages 口径统一）"
+  (cd "$PKG" && "$NODE" "$ESB" "src/dsh-plugin/index.ts" --bundle --format=esm --platform=node \
+    --outfile="$DST/node_modules/dsht-rp-plugin/lib/index.js" >/dev/null)
   say "[A2] 产物 fixTag 抽验"
   FIX=$(grep -a -c "wb-fix-0908\|promptOnly" "$DST/node_modules/dsht-rp-plugin/lib/index.js" || true)
   [ "$FIX" -ge 1 ] || die "A2: 产物无 fixTag——esbuild 写错位置或源码不对（坑#22）"
 
-  say "[2/6] esbuild 导入引擎 app.js（绝对 outfile）"
-  "$NODE" "$ESB" "$PKG/src/import/browser-entry.ts" --bundle --format=iife --global-name=DSHT \
-    --outfile="$DST/node_modules/dsht-rp-plugin/assets/app.js" >/dev/null
+  say "[2/6] esbuild 导入引擎 app.js（绝对 outfile；★ 2026-10-02 cwd=packages 口径统一）"
+  (cd "$PKG" && "$NODE" "$ESB" "src/import/browser-entry.ts" --bundle --format=iife --global-name=DSHT \
+    --outfile="$DST/node_modules/dsht-rp-plugin/assets/app.js" >/dev/null)
 
   say "[3/6] lib 换架构 ($ARCH)"
   # 【不用 rm】lib 有 60+ 个文件，`rm -rf` 会命中 >50 文件的批量删除安全闸（构建直接中止）。

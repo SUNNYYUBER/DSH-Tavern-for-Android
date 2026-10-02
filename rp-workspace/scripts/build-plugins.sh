@@ -29,6 +29,12 @@ NM="$DST/node_modules"
 say() { echo "[plugins] $*"; }
 die() { echo "[plugins][FATAL] $*" >&2; exit 1; }
 
+# 【2026-10-02 0.2.0-rc.2 升级轮】插件 `peerDependencies`——与 rebuild-plugins.ps1 的
+# $DSHT_PEER / build-dsht.ps1 的 $DSHT_PEER / NodeService.kt 的 dshtPeer 逐字同值（P-1）。
+# `workspace:*` ⇒ 官方 evaluatePluginCompatibility 替换成当前 runtime 版本 ⇒ 永远满足。
+# 背景：audit-upgrade-readiness ⑤ 判据要求全部自研插件声明官方 peer；未声明 ⇒ BLOCK。
+DSHT_PEER='{"@deepseek-ai/dsh":"workspace:*","@deepseek-ai/dsh-client-ui-layout":"workspace:*","@deepseek-ai/dsh-client-ui-sidebar":"workspace:*","@deepseek-ai/dsh-client-ui-conversation":"workspace:*","@deepseek-ai/dsh-client-ui-settings-plugins":"workspace:*"}'
+
 [ -f "$ESB" ] || die "esbuild 不存在: $ESB"
 [ -d "$NM" ] || die "runtime node_modules 不存在: $NM"
 
@@ -37,9 +43,11 @@ build_node_plugin() {
   local pkg="$1" entry="$2"
   local dir="$NM/$pkg"
   mkdir -p "$dir/lib"
-  printf '{"name":"%s","version":"1.0.0","type":"module","main":"lib/index.js"}' "$pkg" > "$dir/package.json"
-  "$NODE" "$ESB" "$PKG/$entry" --bundle --format=esm --platform=node \
-    --outfile="$dir/lib/index.js" --log-level=warning >/dev/null
+  printf '{"name":"%s","version":"1.0.0","type":"module","main":"lib/index.js","peerDependencies":%s}' "$pkg" "$DSHT_PEER" > "$dir/package.json"
+  # ★★ 2026-10-02（0.2.0-rc.2 升级轮 · A14 口径统一）：cwd=packages 再编译（与 ps1 侧 /
+  #   audit-artifact-freshness 的重编译 cwd 一致，否则产物路径注记成 packages/src/... ⇒ 恒报陈旧）。
+  (cd "$PKG" && "$NODE" "$ESB" "$entry" --bundle --format=esm --platform=node \
+    --outfile="$dir/lib/index.js" --log-level=warning >/dev/null)
   local kb=$(( $(stat -c%s "$dir/lib/index.js") / 1024 ))
   say "  ✓ $pkg  ${kb} KB"
 }
@@ -50,8 +58,8 @@ say "=== 构建我方插件 → $DST ==="
 say "[1/7] dsht-rp-plugin（宿主插件 + 导入中心资产）"
 RP="$NM/dsht-rp-plugin"
 mkdir -p "$RP/lib" "$RP/assets"
-"$NODE" "$ESB" "$PKG/src/dsh-plugin/index.ts" --bundle --format=esm --platform=node \
-  --outfile="$RP/lib/index.js" --log-level=warning >/dev/null
+(cd "$PKG" && "$NODE" "$ESB" "src/dsh-plugin/index.ts" --bundle --format=esm --platform=node \
+  --outfile="$RP/lib/index.js" --log-level=warning >/dev/null)
 # 资产树（import-center.html + skills/st-migration + agent-presets/dsht-adapter）
 if [ -d "$PKG/src/dsh-plugin/assets" ]; then
   cp -r "$PKG/src/dsh-plugin/assets/." "$RP/assets/"
@@ -65,12 +73,16 @@ build_node_plugin "dsht-plugin-mvu"             "src/dsht-plugin-mvu/index.ts"
 build_node_plugin "dsht-plugin-tavern-helper"   "src/dsht-plugin-tavern-helper/index.ts"
 build_node_plugin "dsht-plugin-prompt-template" "src/dsht-plugin-prompt-template/index.ts"
 build_node_plugin "dsht-plugin-memory"          "src/dsht-plugin-memory/index.ts"
+# 【T-88/W-3】设备能力插件（与 build-dsht.ps1 的 $r10Plugins / rebuild-plugins.ps1 对齐）
+build_node_plugin "dsht-plugin-device"          "src/dsht-plugin-device/index.ts"
 
 # ---------------------------------------------------------------- 2b. EJS worker
 say "[3/7] EJS worker bundle"
-"$NODE" "$ESB" "$PKG/src/dsht-plugin-prompt-template/worker.ts" --bundle --format=esm --platform=node \
-  --outfile="$NM/dsht-plugin-prompt-template/lib/ejs-worker.js" --log-level=warning >/dev/null
+(cd "$PKG" && "$NODE" "$ESB" "src/dsht-plugin-prompt-template/worker.ts" --bundle --format=esm --platform=node \
+  --outfile="$NM/dsht-plugin-prompt-template/lib/ejs-worker.js" --log-level=warning >/dev/null)
 say "  ✓ ejs-worker.js"
+# ★★ 2026-10-02（A14 口径统一）：worker 的最终形态带后处理包装（__ModuleLoader__ banner），
+#   逐字节判据不适用（skipByteCompare / 符号判据）——此行改 cwd 仅为产物注记一致性（P-1）。
 
 # ---------------------------------------------------------------- 6. dsht-plugin-undo
 say "[4/7] dsht-plugin-undo"
@@ -101,7 +113,7 @@ say "[5/7] dsht-rp-ui client bundle（并入 dsht-rp-plugin）"
 cp "$PKG/src/dsht-rp-ui/lib/client.js" "$RP/lib/client.js"
 say "  ✓ client.js $(( $(stat -c%s "$RP/lib/client.js") / 1024 )) KB 已并入"
 # package.json（host + client 双面形态）
-printf '%s' '{"name":"dsht-rp-plugin","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"dsh":{"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-sidebar","@deepseek-ai/dsh-client-ui-layout","@deepseek-ai/dsh-client-ui-conversation","@deepseek-ai/dsh-client-ui-settings-plugins"]}}}' > "$RP/package.json"
+printf '%s' '{"name":"dsht-rp-plugin","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"peerDependencies":'"$DSHT_PEER"',"dsh":{"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-sidebar","@deepseek-ai/dsh-client-ui-layout","@deepseek-ai/dsh-client-ui-conversation","@deepseek-ai/dsh-client-ui-settings-plugins"]}}}' > "$RP/package.json"
 
 # ---------------------------------------------------------------- 8. dsht-plugin-mobile
 say "[6/7] dsht-plugin-mobile（node 空壳 + client）"
@@ -110,13 +122,17 @@ MB="$NM/dsht-plugin-mobile"
 mkdir -p "$MB/lib"
 cp "$PKG/src/dsht-plugin-mobile/lib/index.js"  "$MB/lib/index.js"
 cp "$PKG/src/dsht-plugin-mobile/lib/client.js" "$MB/lib/client.js"
-printf '%s' '{"name":"dsht-plugin-mobile","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"dsh":{"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-layout"]}}}' > "$MB/package.json"
+printf '%s' '{"name":"dsht-plugin-mobile","version":"1.0.0","type":"module","main":"lib/index.js","exports":{".":"./lib/index.js","./client":"./lib/client.js","./package.json":"./package.json"},"peerDependencies":'"$DSHT_PEER"',"dsh":{"client":{"platform":"web","external":["@deepseek-ai/dsh-client-ui-layout"]}}}' > "$MB/package.json"
 say "  ✓ dsht-plugin-mobile（client $(( $(stat -c%s "$MB/lib/client.js") / 1024 )) KB）"
 
 # ---------------------------------------------------------------- 9. app.js（导入引擎）
 say "[7/7] 导入引擎 app.js"
-"$NODE" "$ESB" "$PKG/src/import/browser-entry.ts" --bundle --format=iife --global-name=DSHT \
-  --outfile="$RP/assets/app.js" --log-level=warning >/dev/null
+# ★★ 2026-10-02（0.2.0-rc.2 升级轮 · A14 口径统一）：cwd=packages 后再编译。
+#   esbuild 的模块路径注记按 cwd 相对路径写入产物；audit-artifact-freshness 重编译
+#   统一 cwd=PKG ⇒ 产出口径必须与其一致（ps1 侧 Step 5 一直 Push-Location packages，
+#   bash 侧漏了 ⇒ 产物注记成 packages/src/... ⇒ A14 恒报陈旧）。node 侧产物同理。
+(cd "$PKG" && "$NODE" "$ESB" "src/import/browser-entry.ts" --bundle --format=iife --global-name=DSHT \
+  --outfile="$RP/assets/app.js" --log-level=warning >/dev/null)
 say "  ✓ app.js $(( $(stat -c%s "$RP/assets/app.js") / 1024 )) KB"
 
 # ---------------------------------------------------------------- 汇总

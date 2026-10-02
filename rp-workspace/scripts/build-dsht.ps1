@@ -14,7 +14,7 @@ param(
     [int]$SentinelV = 0,
     # bychv/dsh-preset-enhance 的版本（MIT；预设机制外移的第一个外部包，见 docs/T-88 §五）。
     # 与 DshVersion 同参数面：升级预设插件 = 重新构建（产物内容可复现，不靠运行时拉取）。
-    [string]$PresetEnhanceVersion = '0.3.2-rc.1'
+    [string]$PresetEnhanceVersion = '0.3.4-rc.3'
 )
 
 $ErrorActionPreference = 'Stop'
