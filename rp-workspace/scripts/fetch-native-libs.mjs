@@ -138,8 +138,8 @@ const TARGETS = [
   // （两者必须同包同版本 —— 否则会与系统 libcrypto 混版导致符号错配）
   // 【命名注意】Termux pool 里这两个包的 x86_64 文件名**不带版本号**（openssl_x86_64.deb），
   //   与 zlib/libicu 的带版本号形态不同 —— 这是上游实际命名，照抄即正解。
-  { so: 'libcrypto.so.3', dest: 'runtime-lib', deb: { x86_64: 'openssl_x86_64.deb', aarch64: 'openssl_1%3A3.6.3_aarch64.deb' }, inner: 'lib/libcrypto.so.3', lic: 'Apache-2.0' },
-  { so: 'libssl.so.3', dest: 'runtime-lib', deb: { x86_64: 'openssl_x86_64.deb', aarch64: 'openssl_1%3A3.6.3_aarch64.deb' }, inner: 'lib/libssl.so.3', lic: 'Apache-2.0' },
+  { so: 'libcrypto.so.3', dest: 'runtime-lib', deb: { x86_64: 'openssl_x86_64.deb', aarch64: 'openssl_1%3A3.6.5_aarch64.deb' }, inner: 'lib/libcrypto.so.3', lic: 'Apache-2.0' },
+  { so: 'libssl.so.3', dest: 'runtime-lib', deb: { x86_64: 'openssl_x86_64.deb', aarch64: 'openssl_1%3A3.6.5_aarch64.deb' }, inner: 'lib/libssl.so.3', lic: 'Apache-2.0' },
   // ICU：libnode 需要 icuuc/icui18n（Node 的 Intl 实现）。
   // libicui18n NEEDED libicuuc NEEDED libicudata —— 三角必须齐全，缺一即链接失败。
   { so: 'libicuuc.so.78', dest: 'runtime-lib', deb: { x86_64: 'libicu_78.3_x86_64.deb', aarch64: 'libicu_78.3_aarch64.deb' }, inner: 'lib/libicuuc.so.78.3', lic: 'Unicode-3.0' },
@@ -204,8 +204,8 @@ const SHA256 = {
   'zlib_1.3.2_aarch64.deb': '75e7d0af17fcc3b40004309fdc00a1ddb9ae08346dce5e269902c34ac3966ac9',
   'zlib_1.3.2_x86_64.deb': 'c61b089dd30981452f5953b2bad4c4e7857062b2abd971f87fb0aec441bc02f4',
   // openssl：注意 x86_64 文件名不带版本号（上游 Termux pool 实际命名）
-  'openssl_1%3A3.6.3_aarch64.deb': '86760e9ce736f463236f2c15b1eb3a3fdcfc5778d0fd7077a917448dcc90f3aa',
-  'openssl_x86_64.deb': 'b58fedf8d3accda418b69b636bb1f8b789a5a75a375bda4a1c4fccb2c6e30380',
+  'openssl_1%3A3.6.5_aarch64.deb': '86760e9ce736f463236f2c15b1eb3a3fdcfc5778d0fd7077a917448dcc90f3aa',
+  'openssl_x86_64.deb': '540f144592d23d35672976e175ede1b5d8cf464f153f646df5d4e6dcd8491a15',
   'libicu_78.3_aarch64.deb': 'f536403f65a08fe0df6e7304184e902d54def77d5c3bd5edfd9109d57601d276',
   'libicu_78.3_x86_64.deb': '19fa8c4d828719f465d523983b1e0d833e4130bb22790104638965d97e27fe60',
   'pcre2_10.47_aarch64.deb': '51f915d22de639bfca6ec029ae613987bbe3bc73626eede13319fd2e95f50b63',
