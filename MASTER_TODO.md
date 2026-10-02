@@ -10,7 +10,20 @@
 # 【状态总览】只看这一页就够
 
 > **更新规则**：本页每次工作轮次（心跳）结束时更新。**其余章节是流水账，不必读。**
-> 最后更新：2026-09-27（**体检修复轮 + v0.2.8 发布 · DSH 会话接手 Trae 断点后的第一轮**）：
+> 最后更新：2026-10-02（**0.2.0-rc.2 升级轮 + v0.2.9 发布准备 + 记忆引擎 M1/M2**）：
+>
+> **先说到哪了**：runtime 升级 0.1.7-rc.1 → **0.2.0-rc.2** 完成（勘察报告 docs/DSH-0.2.0-UPGRADE-PROBE-2026-10-02.md：
+> 包集 277→288 纯增量、会话代次 4→4 未换代、isReplaceOp 三键未变、12/12 补丁锚点命中、升级六判据全绿）。
+> 双架构 APK 已构建（x86_64 sentinel v395 / arm64 v396，A14 产物新鲜度全绿）；已推送 GitHub 并触发 CI。
+> **新增记忆引擎 M1/M2**（用户拍板自研，仅思路参考柏宝书公开 README）：memory-forest.ts（sidecar 数据层 +
+> 台账 derive 纯函数重放 + 回退裁叶自愈）+ summarize-delta.ts（一次调用双产出协议，fail-open 降级），
+> 20 条正负控全绿、typecheck 0 错。**诚实边界**：①模拟器实测阻塞——Android 16 模拟器 system_server
+> 周期性崩溃（crash 缓冲 17 条），每次重启包被重置 stopped=true，PM/AM resolver 无法同时就绪，
+> 判据⑥（历史会话打开）本轮未绿，待稳定模拟器复测（非 APK 缺陷）；②CI 因 termux 上游滚动
+> （git 2.55→2.56、openssl 3.6.3→3.6.5）两次 404，已实算 SHA 重钉（fetch-native-libs.mjs）。
+> **记忆引擎设计要点**（用户拍板）：两阶段生成循环——阶段 A agent 多轮调 memory_* 工具查摘要/原文，
+> 阶段 B 记忆简报进 SLOT_ORDERS.memory=30 槽位与预设/世界书一起组装；正文不导出 md 文档（保留楼层富渲染），
+> 代价=生成后不可编辑只能回退重 roll；undo 退役由社区 dsh-rewind-plugin（MIT）接位。
 >
 > **先说到哪了**：**v0.2.8 已发布**（https://github.com/SUNNYYUBER/DSH-Tavern-for-Android/releases/tag/v0.2.8，
 > arm64 release / versionCode 10 / 内嵌 DSH 0.1.7-rc.1 不变）。本轮 = 2026-09-26 全面体检
