@@ -150,7 +150,7 @@ const TARGETS = [
   //   （没有 `libpcre2-8.so.0.14.0` 实体）。故 inner 必须写不版本号的那个 ——
   //   本项曾因照抄「.so.0.14.0」而在 CI 上 fail-closed 报错
   //   「deb 内找不到 libpcre2-8.so.0.14.0」，这里按上游实际布局修正。
-  { so: 'libpcre2-8.so', dest: 'runtime-lib', deb: { x86_64: 'pcre2_10.47_x86_64.deb', aarch64: 'pcre2_10.47_aarch64.deb' }, inner: 'lib/libpcre2-8.so', lic: 'BSD-3-Clause' },
+  { so: 'libpcre2-8.so', dest: 'runtime-lib', deb: { x86_64: 'pcre2_10.49_x86_64.deb', aarch64: 'pcre2_10.49_aarch64.deb' }, inner: 'lib/libpcre2-8.so', lic: 'BSD-3-Clause' },
 
   // ───────────────────────────────────────────────────────────────────────
   // 【2026-09-21 第二次补齐】proot 资产面的依赖库 —— 此前**只在注释里声明**
@@ -208,8 +208,8 @@ const SHA256 = {
   'openssl_x86_64.deb': '540f144592d23d35672976e175ede1b5d8cf464f153f646df5d4e6dcd8491a15',
   'libicu_78.3_aarch64.deb': 'f536403f65a08fe0df6e7304184e902d54def77d5c3bd5edfd9109d57601d276',
   'libicu_78.3_x86_64.deb': '19fa8c4d828719f465d523983b1e0d833e4130bb22790104638965d97e27fe60',
-  'pcre2_10.47_aarch64.deb': '51f915d22de639bfca6ec029ae613987bbe3bc73626eede13319fd2e95f50b63',
-  'pcre2_10.47_x86_64.deb': '8e4fb14ba014f9b2d5e07b6ed9c519b31d00a6e7ddeb5804c3b076a6c841c2fb',
+  'pcre2_10.49_aarch64.deb': '51f915d22de639bfca6ec029ae613987bbe3bc73626eede13319fd2e95f50b63',
+  'pcre2_10.49_x86_64.deb': '8e4fb14ba014f9b2d5e07b6ed9c519b31d00a6e7ddeb5804c3b076a6c841c2fb',
   // ---- proot 资产面依赖库（2026-09-21 第二次补齐；哈希取自 build-dsht.ps1 既有记录）----
   'libtalloc_2.4.3_aarch64.deb': 'ac81ad623d74c209718b9f3acb2dd702cc8a88c431e820d212229910b4db29da',
   'libtalloc_2.4.3_x86_64.deb': '7ca2eaae2e53b28228a01301bc410b62845403d6317c25b8e0a7f40681de0628',
