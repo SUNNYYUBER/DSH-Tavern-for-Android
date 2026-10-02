@@ -208,7 +208,7 @@ const SHA256 = {
   'openssl_x86_64.deb': '540f144592d23d35672976e175ede1b5d8cf464f153f646df5d4e6dcd8491a15',
   'libicu_78.3_aarch64.deb': 'f536403f65a08fe0df6e7304184e902d54def77d5c3bd5edfd9109d57601d276',
   'libicu_78.3_x86_64.deb': '19fa8c4d828719f465d523983b1e0d833e4130bb22790104638965d97e27fe60',
-  'pcre2_10.49_aarch64.deb': '51f915d22de639bfca6ec029ae613987bbe3bc73626eede13319fd2e95f50b63',
+  'pcre2_10.49_aarch64.deb': 'c27995e5f52b8ecc9b8b3e662eb08e49f82a18bfd3f34343936acc7b23964724',
   'pcre2_10.49_x86_64.deb': '4a6f66ac12565342897ce9b5cd11ba8ce6fce1fd1a91ae679c3468d7fc2ee541',
   // ---- proot 资产面依赖库（2026-09-21 第二次补齐；哈希取自 build-dsht.ps1 既有记录）----
   'libtalloc_2.4.3_aarch64.deb': 'ac81ad623d74c209718b9f3acb2dd702cc8a88c431e820d212229910b4db29da',
